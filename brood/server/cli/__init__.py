@@ -5,10 +5,14 @@
   brood server createsuperuser        an account for the admin at /admin/
   brood server runserver [addr:port]  the development server
   brood server test [label ...]       every check of brood, or the named ones
+  brood server serve --bind ADDR      serve under gunicorn, as the deployed server does
+  brood server ensureadmin            create DJANGO_SUPERUSER_USERNAME unless it exists
 
-Settings come from the working copy's .env: DJANGO_SECRET_KEY and
-DJANGO_DEBUG (1 or 0). `brood dev setup` creates the venv with Django and
-adds both to .env.
+Settings come from the environment, then the working copy's .env:
+DJANGO_SECRET_KEY, DJANGO_DEBUG (1 or 0), DJANGO_ALLOWED_HOSTS (comma-separated).
+With POSTGRES_HOST set the database is Postgres (POSTGRES_DB, POSTGRES_USER,
+POSTGRES_PASSWORD, POSTGRES_PORT), otherwise the working copy's SQLite.
+`brood dev setup` creates the venv with Django and adds the first two to .env.
 """
 from brood.server import manage
 

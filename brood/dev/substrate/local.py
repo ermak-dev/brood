@@ -15,6 +15,7 @@ kubectl не меняется. Checkout -- SUBSTRATE_SOURCE разработчи
 командлет, и вывод процессов идёт туда, куда она его направит.
 """
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -39,6 +40,10 @@ HOSTS_TOML = f'[host."http://{REGISTRY}:5000"]\n'
 NAMESPACE = "ate-system"
 KUBECTL_VERSION = "v1.37.1"
 KIND_CONFIG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "kind.yaml")
+# Входы стенда: настройка с портом хоста -> NodePort Service brood-server
+# (brood/dev/deploy/manifests/server.yaml). kind публикует порты узла только
+# при создании кластера, поэтому они -- часть установки, а не выкладки.
+EDGE = (("BROOD_HTTP_PORT", 30080), ("BROOD_HTTPS_PORT", 30443))
 API_DEADLINE = 300
 # docker проверяет `docker info` до всего остального; go собирает Substrate.
 TOOLS = ("go",)
@@ -129,6 +134,45 @@ def environment(base, source):
     return env
 
 
+def edge_ports(get):
+    """Настройки (get -- config.get) -> {порт узла: порт хоста}. Чистая
+    функция. Не задана -- порта нет: на машине разработчика сервер достают
+    port-forward'ом."""
+    out = {}
+    for name, node_port in EDGE:
+        value = get(name)
+        if not value:
+            continue
+        if not value.isdigit() or not 0 < int(value) < 65536:
+            raise RuntimeError(f"{name} in .env must be a TCP port, got {value!r}")
+        out[node_port] = int(value)
+    return out
+
+
+def kind_config(text, ports):
+    """Текст kind.yaml -> он же с extraPortMappings узла. Чистая функция."""
+    if not ports:
+        return text
+    anchor = "- role: control-plane\n"
+    if anchor not in text:
+        raise RuntimeError(f"{KIND_CONFIG} has no control-plane node to publish ports on")
+    mappings = "".join(f"  - containerPort: {node}\n    hostPort: {host}\n"
+                       for node, host in sorted(ports.items()))
+    return text.replace(anchor, anchor + "  extraPortMappings:\n" + mappings, 1)
+
+
+def published(bindings):
+    """PortBindings узла из docker inspect -> {порт узла: порт хоста} входов
+    стенда. Чистая функция: прочие порты (API-сервер) не входы."""
+    edge = {node for _, node in EDGE}
+    out = {}
+    for port, binds in (bindings or {}).items():
+        node = int(port.split("/")[0])
+        if node in edge and binds:
+            out[node] = int(binds[0]["HostPort"])
+    return out
+
+
 def reason(err, code):
     """Причина отказа процесса: первая непустая строка stderr либо код."""
     return next((line.strip() for line in (err or "").splitlines() if line.strip()),
@@ -195,8 +239,10 @@ class LocalCluster:
     через shell; скачивание, ожидание и часы передаются, чтобы проверки не
     ходили в сеть и не спали."""
 
-    def __init__(self, source, shell, fetch=fetch, sleep=time.sleep, clock=time.monotonic):
+    def __init__(self, source, shell, fetch=fetch, sleep=time.sleep, clock=time.monotonic,
+                 ports=None):
         self.source, self.shell = source, shell
+        self.ports = ports or {}
         self.fetch, self.sleep, self.clock = fetch, sleep, clock
         self.state = state_dir(source)
         self.kubeconfig = os.path.join(self.state, "kubeconfig")
@@ -232,10 +278,18 @@ class LocalCluster:
         else:
             run("docker", "start", REGISTRY)
         if not self._exists(NODE):
-            self._kind("create", "cluster", "--name", CLUSTER, "--config", KIND_CONFIG,
+            config_path = KIND_CONFIG
+            if self.ports:
+                with open(KIND_CONFIG, encoding="utf-8") as f:
+                    rendered = kind_config(f.read(), self.ports)
+                config_path = os.path.join(self.state, "kind.yaml")
+                with open(config_path, "w", encoding="utf-8") as f:
+                    f.write(rendered)
+            self._kind("create", "cluster", "--name", CLUSTER, "--config", config_path,
                        "--wait", "180s")
             self._record(NODE)
         else:
+            self._check_ports()
             run("docker", "start", NODE)
         if self._inspect("{{json .NetworkSettings.Networks.kind}}", REGISTRY) == "null":
             run("docker", "network", "connect", "kind", REGISTRY)
@@ -276,7 +330,28 @@ class LocalCluster:
             except FileNotFoundError:
                 pass
 
+    def check(self):
+        """Сверка владения для соседних команд (brood deploy): отказ до их
+        первой правки в кластере."""
+        self._docker()
+        self._check_ownership()
+        if not self._exists(NODE):
+            raise RuntimeError("Substrate is incomplete: run brood substrate install")
+
     # ─── шаги ────────────────────────────────────────────────────────────
+    def _check_ports(self):
+        """Порты узла сходятся с настройками -- иначе отказ: kind задаёт их
+        только при создании, а пересоздание стирает кластер, и решать это
+        человеку, а не установке."""
+        have = published(json.loads(self._inspect("{{json .HostConfig.PortBindings}}", NODE)))
+        if have != self.ports:
+            def show(ports):
+                return ", ".join(f"{h}->{n}" for n, h in sorted(ports.items())) or "none"
+            raise RuntimeError(f"{NODE} publishes host ports {show(have)}, .env wants "
+                               f"{show(self.ports)}: kind sets them only when it creates the "
+                               f"cluster; recreate it with brood substrate uninstall, then "
+                               f"brood substrate install")
+
     def _start(self):
         self._check_ownership()
         if not (self._exists(NODE) and self._exists(REGISTRY)):

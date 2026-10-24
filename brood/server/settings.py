@@ -17,7 +17,14 @@ if not SECRET_KEY:
 DEBUG = {"1": True, "0": False, "": False}.get(config.get("DJANGO_DEBUG"))
 if DEBUG is None:
     raise ImproperlyConfigured("DJANGO_DEBUG in .env: 1 or 0")
-ALLOWED_HOSTS = []
+# Имена, под которыми сервер отвечает: через запятую, `brood,brood.corp.ermak.dev`.
+# Пусто -- только localhost отладки.
+ALLOWED_HOSTS = [h.strip() for h in config.get("DJANGO_ALLOWED_HOSTS").split(",") if h.strip()]
+# TLS снимает nginx перед сервером (brood/dev/deploy/manifests/nginx.conf) и
+# сам ставит этот заголовок. Без него Django считал бы запрос http, и вход в
+# админку падал бы на проверке Origin.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = not DEBUG
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -26,9 +33,12 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "brood.server.base",
 ]
 
 MIDDLEWARE = [
+    # Первой: проба готовности отвечает до проверки Host, которой у kubelet нет.
+    "brood.server.base.middleware.healthz",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -57,12 +67,32 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "brood.server.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.path.join(config.PROJECT, "db.sqlite3"),
+# Postgres -- когда задан POSTGRES_HOST: так сервер живёт в кластере (brood
+# deploy server). Без него -- SQLite рабочей копии, на нём runserver
+# разработчика и brood server test.
+POSTGRES_HOST = config.get("POSTGRES_HOST")
+if POSTGRES_HOST:
+    POSTGRES = {name: config.get(f"POSTGRES_{name}") for name in ("DB", "USER", "PASSWORD")}
+    missing = [f"POSTGRES_{name}" for name, value in POSTGRES.items() if not value]
+    if missing:
+        raise ImproperlyConfigured(f"POSTGRES_HOST is set, but not {', '.join(missing)}")
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "HOST": POSTGRES_HOST,
+            "PORT": config.get("POSTGRES_PORT") or "5432",
+            "NAME": POSTGRES["DB"],
+            "USER": POSTGRES["USER"],
+            "PASSWORD": POSTGRES["PASSWORD"],
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.path.join(config.PROJECT, "db.sqlite3"),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -77,6 +107,12 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# collectstatic собирает сюда статику при сборке образа; без отладки её отдаёт
+# whitenoise, в отладке -- runserver.
+STATIC_ROOT = os.path.join(config.PROJECT, "static")
+if not DEBUG:
+    MIDDLEWARE.insert(MIDDLEWARE.index("django.middleware.security.SecurityMiddleware") + 1,
+                      "whitenoise.middleware.WhiteNoiseMiddleware")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

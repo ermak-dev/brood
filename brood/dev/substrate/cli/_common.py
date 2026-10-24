@@ -23,7 +23,8 @@ def cluster(environ=os.environ, fetch=False):
         elif not os.path.isdir(source):
             raise RuntimeError("Substrate is not installed: run brood substrate install")
     source = local.checkout(source)
-    return local.LocalCluster(source, local.Shell(local.environment(environ, source), source))
+    return local.LocalCluster(source, local.Shell(local.environment(environ, source), source),
+                              ports=local.edge_ports(config.get))
 
 
 def no_arguments(verb, argv):

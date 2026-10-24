@@ -1,0 +1,8 @@
+# Метка владения: brood deploy server не пишет в namespace brood, который
+# завёл кто-то другой.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: brood
+  labels:
+    app.kubernetes.io/managed-by: brood
