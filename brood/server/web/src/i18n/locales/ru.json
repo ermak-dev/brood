@@ -65,6 +65,14 @@
     "subtitle": "Центр управления"
   },
   "login": {
+    "username_label": "Логин:",
+    "username_placeholder": "Ваш логин brood",
+    "password_label": "Пароль:",
+    "password_placeholder": "Ваш пароль brood",
+    "show_password": "Показать пароль",
+    "hide_password": "Скрыть пароль",
+    "error_credentials_required": "Введите логин и пароль",
+    "error_bad_credentials": "Неверный логин или пароль",
     "subtitle": "Подключение к CLI Proxy API v8 или новее",
     "connection_current": "Текущий URL",
     "connection_auto_hint": "Система автоматически использует текущий URL для подключения",

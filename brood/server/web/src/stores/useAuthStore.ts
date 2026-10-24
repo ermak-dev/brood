@@ -9,11 +9,11 @@ import type { AuthState, LoginCredentials, ConnectionStatus } from '@/types';
 import { STORAGE_KEY_AUTH } from '@/utils/constants';
 import { obfuscatedStorage } from '@/services/storage/secureStorage';
 import { apiClient } from '@/services/api/client';
-import { LegacyBackendError, probeLegacyBackend } from '@/services/api/legacyBackendProbe';
+import * as broodSession from '@/services/brood/session';
 import { useConfigStore } from './useConfigStore';
 import { useModelsStore } from './useModelsStore';
 import { useQuotaStore } from './useQuotaStore';
-import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
+import { detectApiBaseFromLocation } from '@/utils/connection';
 
 interface AuthStoreState extends AuthState {
   connectionStatus: ConnectionStatus;
@@ -29,6 +29,30 @@ interface AuthStoreState extends AuthState {
 
 let restoreSessionPromise: Promise<boolean> | null = null;
 
+// Connect the API client to this origin and prove the session reaches the
+// management API: the first config fetch is the check.
+async function connect(): Promise<void> {
+  const apiBase = detectApiBaseFromLocation();
+  const set = useAuthStore.setState;
+  try {
+    set({
+      connectionStatus: 'connecting',
+      serverVersion: null,
+      serverBuildDate: null,
+      supportsPlugin: false,
+    });
+    useConfigStore.getState().clearCache();
+    useModelsStore.getState().clearCache();
+    useQuotaStore.getState().clearQuotaCache();
+    apiClient.setConfig({ apiBase, managementKey: '' });
+    await useConfigStore.getState().fetchConfig(true);
+    set({ isAuthenticated: true, apiBase, managementKey: '', connectionStatus: 'connected' });
+  } catch (error: unknown) {
+    set({ connectionStatus: 'error' });
+    throw error;
+  }
+}
+
 export const useAuthStore = create<AuthStoreState>()(
   persist(
     (set, get) => ({
@@ -42,115 +66,37 @@ export const useAuthStore = create<AuthStoreState>()(
       supportsPlugin: false,
       connectionStatus: 'disconnected',
 
-      // 恢复会话并自动登录
+      // brood: the session lives in the brood server's cookie, so restoring it is asking
+      // the server. The API base is always this page's origin: the brood edge proxies
+      // /v8/management to CLIProxyAPI and adds the management key there.
       restoreSession: () => {
         if (restoreSessionPromise) return restoreSessionPromise;
 
         restoreSessionPromise = (async () => {
-          obfuscatedStorage.migratePlaintextKeys(['apiBase', 'apiUrl', 'managementKey']);
-
-          const wasLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
-          const legacyBase =
-            obfuscatedStorage.getItem<string>('apiBase') ||
-            obfuscatedStorage.getItem<string>('apiUrl', { encrypt: true });
-          const legacyKey = obfuscatedStorage.getItem<string>('managementKey');
-
-          const { apiBase, managementKey, rememberPassword } = get();
-          const resolvedBase = normalizeApiBase(
-            apiBase || legacyBase || detectApiBaseFromLocation()
-          );
-          const resolvedKey = managementKey || legacyKey || '';
-          const resolvedRememberPassword =
-            rememberPassword || Boolean(managementKey) || Boolean(legacyKey);
-
-          set({
-            apiBase: resolvedBase,
-            managementKey: resolvedKey,
-            rememberPassword: resolvedRememberPassword,
-          });
-          apiClient.setConfig({ apiBase: resolvedBase, managementKey: resolvedKey });
-
-          if (wasLoggedIn && resolvedBase && resolvedKey) {
-            try {
-              await get().login({
-                apiBase: resolvedBase,
-                managementKey: resolvedKey,
-                rememberPassword: resolvedRememberPassword,
-              });
-              return true;
-            } catch (error) {
-              console.warn('Auto login failed:', error);
-              return false;
-            }
+          try {
+            const session = await broodSession.getSession();
+            if (!session.authenticated) return false;
+            await connect();
+            return true;
+          } catch (error) {
+            console.warn('Session restore failed:', error);
+            return false;
+          } finally {
+            restoreSessionPromise = null;
           }
-
-          return false;
         })();
 
         return restoreSessionPromise;
       },
 
-      // 登录
       login: async (credentials) => {
-        const apiBase = normalizeApiBase(credentials.apiBase);
-        const managementKey = credentials.managementKey.trim();
-        const rememberPassword = credentials.rememberPassword ?? get().rememberPassword ?? false;
-
-        try {
-          set({
-            connectionStatus: 'connecting',
-            serverVersion: null,
-            serverBuildDate: null,
-            supportsPlugin: false,
-          });
-          useConfigStore.getState().clearCache();
-          useModelsStore.getState().clearCache();
-          useQuotaStore.getState().clearQuotaCache();
-
-          // 配置 API 客户端
-          apiClient.setConfig({
-            apiBase,
-            managementKey,
-          });
-
-          // 测试连接 - 获取配置。只在 v8 路由不存在时诊断旧版后端。
-          const revision = apiClient.getConnectionRevision();
-          try {
-            await useConfigStore.getState().fetchConfig(true);
-          } catch (error) {
-            if (
-              (error as { status?: number })?.status === 404 &&
-              revision === apiClient.getConnectionRevision() &&
-              (await probeLegacyBackend(apiBase, managementKey)) &&
-              revision === apiClient.getConnectionRevision()
-            ) {
-              throw new LegacyBackendError();
-            }
-            throw error;
-          }
-
-          // 登录成功
-          set({
-            isAuthenticated: true,
-            apiBase,
-            managementKey,
-            rememberPassword,
-            connectionStatus: 'connected',
-          });
-          if (rememberPassword) {
-            localStorage.setItem('isLoggedIn', 'true');
-          } else {
-            localStorage.removeItem('isLoggedIn');
-          }
-        } catch (error: unknown) {
-          set({ connectionStatus: 'error' });
-          throw error;
-        }
+        await broodSession.login(credentials.username.trim(), credentials.password);
+        await connect();
       },
 
-      // 登出
       logout: () => {
         restoreSessionPromise = null;
+        broodSession.logout().catch(() => undefined);
         apiClient.setConfig({ apiBase: '', managementKey: '' });
         useConfigStore.getState().clearCache();
         useModelsStore.getState().clearCache();
@@ -167,34 +113,18 @@ export const useAuthStore = create<AuthStoreState>()(
         localStorage.removeItem('isLoggedIn');
       },
 
-      // 检查认证状态
       checkAuth: async () => {
-        const { managementKey, apiBase } = get();
-
-        if (!managementKey || !apiBase) {
-          return false;
-        }
+        const { apiBase } = get();
+        if (!apiBase) return false;
 
         try {
-          // 重新配置客户端
-          apiClient.setConfig({ apiBase, managementKey });
+          apiClient.setConfig({ apiBase, managementKey: '' });
           set({ supportsPlugin: false });
-
-          // 验证连接
           await useConfigStore.getState().fetchConfig();
-
-          set({
-            isAuthenticated: true,
-            connectionStatus: 'connected',
-          });
-
+          set({ isAuthenticated: true, connectionStatus: 'connected' });
           return true;
         } catch {
-          set({
-            isAuthenticated: false,
-            connectionStatus: 'error',
-            supportsPlugin: false,
-          });
+          set({ isAuthenticated: false, connectionStatus: 'error', supportsPlugin: false });
           return false;
         }
       },
@@ -225,10 +155,9 @@ export const useAuthStore = create<AuthStoreState>()(
           obfuscatedStorage.removeItem(name);
         },
       })),
+      // No secret is persisted: the session is the server's cookie.
       partialize: (state) => ({
         apiBase: state.apiBase,
-        ...(state.rememberPassword ? { managementKey: state.managementKey } : {}),
-        rememberPassword: state.rememberPassword,
         serverVersion: state.serverVersion,
         serverBuildDate: state.serverBuildDate,
       }),

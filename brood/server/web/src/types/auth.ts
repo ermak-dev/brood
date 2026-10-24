@@ -3,11 +3,10 @@
  * 基于原项目 src/modules/login.js 和 src/core/connection.js
  */
 
-// 登录凭据
+// 登录凭据: brood signs people in with the brood server's own accounts.
 export interface LoginCredentials {
-  apiBase: string;
-  managementKey: string;
-  rememberPassword?: boolean;
+  username: string;
+  password: string;
 }
 
 // 认证状态

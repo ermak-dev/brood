@@ -65,6 +65,14 @@
     "subtitle": "Trung tâm Quản lý"
   },
   "login": {
+    "username_label": "Tên đăng nhập:",
+    "username_placeholder": "Tên đăng nhập brood của bạn",
+    "password_label": "Mật khẩu:",
+    "password_placeholder": "Mật khẩu brood của bạn",
+    "show_password": "Hiện mật khẩu",
+    "hide_password": "Ẩn mật khẩu",
+    "error_credentials_required": "Nhập tên đăng nhập và mật khẩu",
+    "error_bad_credentials": "Sai tên đăng nhập hoặc mật khẩu",
     "subtitle": "Vui lòng nhập thông tin kết nối để truy cập giao diện quản lý",
     "connection_current": "URL hiện tại",
     "connection_auto_hint": "Hệ thống sẽ tự động dùng URL hiện tại để kết nối",

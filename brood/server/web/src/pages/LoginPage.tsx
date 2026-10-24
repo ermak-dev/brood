@@ -4,15 +4,15 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { IconEye, IconEyeOff } from '@/components/ui/icons';
 import { useAuthStore, useLanguageStore, useNotificationStore } from '@/stores';
-import { detectApiBaseFromLocation, normalizeApiBase } from '@/utils/connection';
+import { detectApiBaseFromLocation } from '@/utils/connection';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
 import type { ApiError } from '@/types';
 import { LegacyBackendError } from '@/services/api/legacyBackendProbe';
+import { BroodAuthError } from '@/services/brood/session';
 import styles from './LoginPage.module.scss';
 
 /**
@@ -22,6 +22,10 @@ type RedirectState = { from?: { pathname?: string } };
 
 function getLocalizedErrorMessage(error: unknown, t: (key: string) => string): string {
   if (error instanceof LegacyBackendError) return t('login.error_legacy_backend');
+  // brood: a refusal of the brood sign-in itself, not of the management API.
+  if (error instanceof BroodAuthError) {
+    return error.status === 401 ? t('login.error_bad_credentials') : error.message;
+  }
   const apiError = error as Partial<ApiError>;
   const status = typeof apiError.status === 'number' ? apiError.status : undefined;
   const code = typeof apiError.code === 'string' ? apiError.code : undefined;
@@ -93,15 +97,9 @@ export function LoginPage() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const login = useAuthStore((state) => state.login);
   const restoreSession = useAuthStore((state) => state.restoreSession);
-  const storedBase = useAuthStore((state) => state.apiBase);
-  const storedKey = useAuthStore((state) => state.managementKey);
-  const storedRememberPassword = useAuthStore((state) => state.rememberPassword);
-
-  const [apiBase, setApiBase] = useState('');
-  const [managementKey, setManagementKey] = useState('');
-  const [showCustomBase, setShowCustomBase] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [showKey, setShowKey] = useState(false);
-  const [rememberPassword, setRememberPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [autoLoading, setAutoLoading] = useState(true);
   const [autoLoginSuccess, setAutoLoginSuccess] = useState(false);
@@ -137,10 +135,6 @@ export function LoginPage() {
             const redirect = (location.state as RedirectState | null)?.from?.pathname || '/';
             navigate(redirect, { replace: true });
           }, 1500);
-        } else {
-          setApiBase(storedBase || detectedBase);
-          setManagementKey(storedKey || '');
-          setRememberPassword(storedRememberPassword || Boolean(storedKey));
         }
       } finally {
         // 自动登录成功时 showSplash 仍由 autoLoginSuccess 维持，可无条件结束 loading
@@ -153,20 +147,15 @@ export function LoginPage() {
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!managementKey.trim()) {
-      setError(t('login.error_required'));
+    if (!username.trim() || !password) {
+      setError(t('login.error_credentials_required'));
       return;
     }
 
-    const baseToUse = apiBase ? normalizeApiBase(apiBase) : detectedBase;
     setLoading(true);
     setError('');
     try {
-      await login({
-        apiBase: baseToUse,
-        managementKey: managementKey.trim(),
-        rememberPassword,
-      });
+      await login({ username, password });
       showNotification(t('common.connected_status'), 'success');
       navigate('/', { replace: true });
     } catch (err: unknown) {
@@ -176,16 +165,7 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
-  }, [
-    apiBase,
-    detectedBase,
-    login,
-    managementKey,
-    navigate,
-    rememberPassword,
-    showNotification,
-    t,
-  ]);
+  }, [login, navigate, password, showNotification, t, username]);
 
   const handleSubmitKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -253,70 +233,41 @@ export function LoginPage() {
 
               <div className={styles.connectionBox}>
                 <div className={styles.label}>{t('login.connection_current')}</div>
-                <div className={styles.value}>{apiBase || detectedBase}</div>
-                <div className={styles.hint}>{t('login.connection_auto_hint')}</div>
+                <div className={styles.value}>{detectedBase}</div>
               </div>
-
-              <div className={styles.toggleAdvanced}>
-                <SelectionCheckbox
-                  checked={showCustomBase}
-                  onChange={setShowCustomBase}
-                  ariaLabel={t('login.custom_connection_label')}
-                  label={t('login.custom_connection_label')}
-                  labelClassName={styles.toggleLabel}
-                />
-              </div>
-
-              {showCustomBase && (
-                <Input
-                  label={t('login.custom_connection_label')}
-                  placeholder={t('login.custom_connection_placeholder')}
-                  value={apiBase}
-                  onChange={(e) => setApiBase(e.target.value)}
-                  hint={t('login.custom_connection_hint')}
-                />
-              )}
 
               <Input
                 autoFocus
-                label={t('login.management_key_label')}
-                placeholder={t('login.management_key_placeholder')}
+                label={t('login.username_label')}
+                placeholder={t('login.username_placeholder')}
+                name="username"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={handleSubmitKeyDown}
+              />
+
+              <Input
+                label={t('login.password_label')}
+                placeholder={t('login.password_placeholder')}
                 type={showKey ? 'text' : 'password'}
-                name="cpa-management-key"
+                name="password"
                 autoComplete="current-password"
-                value={managementKey}
-                onChange={(e) => setManagementKey(e.target.value)}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={handleSubmitKeyDown}
                 rightElement={
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm"
                     onClick={() => setShowKey((prev) => !prev)}
-                    aria-label={
-                      showKey
-                        ? t('login.hide_key', { defaultValue: '隐藏密钥' })
-                        : t('login.show_key', { defaultValue: '显示密钥' })
-                    }
-                    title={
-                      showKey
-                        ? t('login.hide_key', { defaultValue: '隐藏密钥' })
-                        : t('login.show_key', { defaultValue: '显示密钥' })
-                    }
+                    aria-label={showKey ? t('login.hide_password') : t('login.show_password')}
+                    title={showKey ? t('login.hide_password') : t('login.show_password')}
                   >
                     {showKey ? <IconEyeOff size={16} /> : <IconEye size={16} />}
                   </button>
                 }
               />
-
-              <div className={styles.toggleAdvanced}>
-                <SelectionCheckbox
-                  checked={rememberPassword}
-                  onChange={setRememberPassword}
-                  ariaLabel={t('login.remember_password_label')}
-                  label={t('login.remember_password_label')}
-                  labelClassName={styles.toggleLabel}
-                />
-              </div>
 
               <Button fullWidth onClick={handleSubmit} loading={loading}>
                 {loading ? t('login.submitting') : t('login.submit_button')}

@@ -65,6 +65,14 @@
     "subtitle": "管理中心"
   },
   "login": {
+    "username_label": "使用者名稱：",
+    "username_placeholder": "你的 brood 使用者名稱",
+    "password_label": "密碼：",
+    "password_placeholder": "你的 brood 密碼",
+    "show_password": "顯示密碼",
+    "hide_password": "隱藏密碼",
+    "error_credentials_required": "請輸入使用者名稱和密碼",
+    "error_bad_credentials": "使用者名稱或密碼錯誤",
     "subtitle": "連線至 CLI Proxy API v8 或更新版本",
     "connection_current": "目前位址",
     "connection_auto_hint": "系統將自動使用目前存取位址進行連線",

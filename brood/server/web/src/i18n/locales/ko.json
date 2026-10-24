@@ -65,6 +65,14 @@
     "subtitle": "관리 센터"
   },
   "login": {
+    "username_label": "사용자 이름:",
+    "username_placeholder": "brood 사용자 이름",
+    "password_label": "비밀번호:",
+    "password_placeholder": "brood 비밀번호",
+    "show_password": "비밀번호 표시",
+    "hide_password": "비밀번호 숨기기",
+    "error_credentials_required": "사용자 이름과 비밀번호를 입력하세요",
+    "error_bad_credentials": "사용자 이름 또는 비밀번호가 올바르지 않습니다",
     "subtitle": "CLI Proxy API v8 이상 버전에 연결",
     "connection_current": "현재 URL",
     "connection_auto_hint": "시스템이 자동으로 현재 URL을 사용하여 연결합니다",
