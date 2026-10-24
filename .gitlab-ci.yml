@@ -1,0 +1,13 @@
+# Пайплайн brood: проверки на каждый push. Шаги -- скриптами в .ci/, чтобы
+# их видел shellcheck.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+
+stages: [test]
+
+test:
+  stage: test
+  tags: [docker]
+  script:
+    - .ci/test.sh
