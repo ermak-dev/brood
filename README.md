@@ -41,7 +41,9 @@ brood substrate install     # локальный Substrate в kind из офиц
 brood substrate stop        # остановить, данные кластера остаются
 brood substrate start       # поднять и дождаться готовности
 brood substrate uninstall   # удалить вместе с данными
-brood deploy server         # сервер с Postgres в кластер локального Substrate
+brood deploy server         # сервер, CLIProxyAPI, Postgres и вход с панелью в кластер локального Substrate
+brood dev web build         # собрать панель (brood/server/web)
+brood dev web test          # проверки панели: тесты, eslint, сборка
 brood dev ci set --file VAR=<файл>   # защищённая переменная CI
 brood dev ci vars           # переменные CI без значений
 ```

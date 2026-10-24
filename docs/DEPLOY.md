@@ -105,17 +105,43 @@ sudo deploy/provision.sh ci.pub <адрес builder>
 `brood deploy server` (`brood/dev/deploy`) раскатывает в кластер установки
 namespace `brood`:
 
+- `edge` -- вход: nginx с TLS, http -> https, панель на корне
+  (`docs/WEB.md`); Service NodePort `30080`/`30443`, kind публикует их на
+  порты хоста `BROOD_HTTP_PORT`/`BROOD_HTTPS_PORT`. Отдельным Deployment'ом:
+  перекатка Django и прокси не рвёт стримы LLM на входе;
+- `django` -- init `migrate` и `ensureadmin`, Django под gunicorn на `:8000`;
+  NetworkPolicy пускает только edge (Django верит его `X-Forwarded-Proto`);
+- `cliproxy` -- CLIProxyAPI из официального образа, состояние (`config.yaml`,
+  `auths/`, журналы, плагины) на томе `cliproxy-data`; NetworkPolicy пускает
+  только edge;
 - `postgres` -- StatefulSet с тем же образом, что bundled Postgres Substrate,
-  том 1Gi; NetworkPolicy пускает к нему только сервер;
-- `brood-server` -- под из init `migrate` и `ensureadmin`, Django под
-  gunicorn на `127.0.0.1:8000` и nginx перед ним: TLS, http -> https;
-- Service NodePort `30080`/`30443`; kind публикует их на порты хоста
-  `BROOD_HTTP_PORT`/`BROOD_HTTPS_PORT`.
+  том 1Gi; NetworkPolicy пускает только Django.
 
-Образ собирается из `brood/dev/deploy/Dockerfile` и кладётся в реестр
-установки (`localhost:5002`) по digest. В конце команда проверяет, что
-страница входа админки отвечает по https на `BROOD_HTTPS_PORT` и отдаёт
-ровно выложенный сертификат.
+Маршруты входа:
+
+| путь | куда |
+|---|---|
+| `/` | панель (один файл) |
+| `/admin/`, `/static/`, `/auth/`, `/healthz` | Django |
+| `/v1/`, `/v1beta/`, `/openai/v1/`, `/backend-api/codex/` | CLIProxyAPI, клиентский ключ проверяет он сам |
+| `/v8/management/` | CLIProxyAPI, только с сессией суперпользователя brood; ключ ставит вход |
+| `/{anthropic,codex,antigravity,devin}/callback`, `/callback` | CLIProxyAPI: возвраты OAuth провайдеров |
+| прочее | 404, в том числе `/v0/management` и встроенная панель прокси |
+
+Образы brood -- сервер (`brood/dev/deploy/Dockerfile`) и вход с панелью
+(`brood/dev/deploy/edge/Dockerfile`) -- собираются и кладутся в реестр
+установки (`localhost:5002`) по digest. В конце команда проверяет по https на
+`BROOD_HTTPS_PORT` ровно выложенным сертификатом, что отвечают панель,
+страница входа админки, ворота management (401 без сессии) и `/v1/models` с
+клиентским ключом.
+
+Ключ management прокси -- `MANAGEMENT_PASSWORD` из Secret, а не
+`secret-key` в `config.yaml`: конфиг правит панель, и её сохранение ключ не
+теряет. Первый `config.yaml` заводит init-контейнер из
+`manifests/cliproxy-config.yaml` с клиентским ключом и дальше его не трогает:
+`CLIPROXY_CLIENT_KEY` в `.env` после первой выкладки меняет только
+проверку выкладки, ключи прокси правятся панелью. Без единого ключа в
+`access.api-keys` прокси открыт всем -- последний ключ из панели не удалять.
 
 `.env` стенда -- не `.env` разработчика (в том отладка и личный
 `GITLAB_TOKEN`); держите его вне репозитория и загружайте `brood dev ci set`:
@@ -127,10 +153,12 @@ namespace `brood`:
 | `POSTGRES_PASSWORD` | пароль базы; читается только при первом initdb, потом -- `ALTER USER` |
 | `DJANGO_SUPERUSER_USERNAME`, `DJANGO_SUPERUSER_PASSWORD` | админ: заводится, если его нет, пароль не сбрасывается |
 | `DJANGO_SUPERUSER_EMAIL` | необязательно |
+| `CLIPROXY_MANAGEMENT_KEY` | ключ management прокси; знают только прокси и вход |
+| `CLIPROXY_CLIENT_KEY` | первый клиентский ключ `/v1` |
 | `BROOD_HTTPS_PORT`, `BROOD_HTTP_PORT` | `443` и `80`: порты хоста стенда |
 
 В кластер едут только эти ключи: серверу -- свои, учётка админа -- только
-init-контейнеру `ensureadmin`. Сменился `.env` или сертификат -- новый
+init-контейнеру `ensureadmin`, ключи прокси -- прокси и входу. Сменился `.env` или сертификат -- новый
 `brood dev ci set` и перезапуск джобы `deploy` (`brood dev ci retry <job>`):
 хэш в имени Secret'а перекатит под.
 

@@ -24,7 +24,8 @@ UPPERCASE-именем.
    диспетчер командлетов (`brood/common/cli`)
  - `brood/client` — машина оператора и шелл мастера
  - `brood/server` — сервер установки: проект Django (`settings.py`,
-   `urls.py`, `manage.py`), приложения — подпакетами рядом
+   `urls.py`, `manage.py`), приложения — подпакетами рядом; веб-интерфейс —
+   `brood/server/web`
  - `brood/dev` — инструменты разработчика: venv рабочей копии, трекер и CI
    (`brood/dev/gitlab.py`), командлеты `brood dev` (`brood/dev/cli`),
    локальный Substrate в kind (`brood/dev/substrate`, `brood substrate`),
@@ -46,7 +47,9 @@ UPPERCASE-именем.
 
  - **MUST** Код — Python 3.12+, Go не пишем. Фичи mop переносятся по
    частям с его устройством: командлет — модуль, группа — подпакет,
-   докстринг модуля — справка
+   докстринг модуля — справка. Исключение одно — веб-интерфейс на
+   TypeScript в `brood/server/web`: форк панели CLIProxyAPI, `git subtree`
+   с апстримом, внутри — его соглашения (`docs/WEB.md`)
  - **MUST** Весь код лежит в одном из модулей `common`, `client`, `server`,
    `dev`: дистрибутив собирается каталогами, без вырезания. Импорт — только
    внутри своего дистрибутива: `common` берёт stdlib и `common`; `client`,
