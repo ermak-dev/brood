@@ -1,0 +1,26 @@
+"""brood dev ci why <id>: why a pipeline failed
+
+Each job that failed the pipeline, with the last lines of its log. A failed
+job with allow_failure is named as one that did NOT fail the pipeline. When
+no job failed at all, the pipeline's own reason: a rejected .gitlab-ci.yml
+fails with no jobs.
+"""
+from brood.dev import gitlab
+from brood.dev.cli._common import plain
+from brood.dev.cli.ci._common import parser
+
+# Хвост короче, чем у `log`: провалившихся джоб бывает несколько, а
+# подробности одной -- это уже `brood dev ci log`.
+LINES = 30
+
+
+def main(argv):
+    p = parser("why")
+    p.add_argument("id", type=int)
+    a = p.parse_args(argv)
+    pipe = gitlab.pipeline_by_id(a.id)
+    jobs = gitlab.jobs(a.id)
+    tails = {j["id"]: gitlab.tail(plain(gitlab.trace(j["id"])), LINES)
+             for j in jobs if gitlab.is_failure(j)}
+    print("\n".join(gitlab.why_lines(pipe, jobs, tails)))
+    return 0

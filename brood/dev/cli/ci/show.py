@@ -1,0 +1,27 @@
+"""brood dev ci show <id> [--failed]: a pipeline's jobs
+
+The pipeline's line, then one line per job: status, id, stage, name,
+duration. A job marked "(allow_failure)" may fail without failing the
+pipeline; --failed lists only the jobs that did fail it.
+"""
+from brood.common.render import table
+from brood.dev import gitlab
+from brood.dev.cli.ci._common import parser
+
+
+def main(argv):
+    p = parser("show")
+    p.add_argument("id", type=int)
+    p.add_argument("--failed", action="store_true")
+    a = p.parse_args(argv)
+    pipe = gitlab.pipeline_by_id(a.id)
+    jobs = gitlab.jobs(a.id)
+    if a.failed:
+        jobs = [j for j in jobs if gitlab.is_failure(j)]
+    print("\n".join(table([gitlab.pipeline_line(pipe)])))
+    if not jobs:
+        print("no failed jobs" if a.failed else "no jobs")
+        return 0
+    print()
+    print("\n".join(table([gitlab.job_line(j) for j in jobs])))
+    return 0

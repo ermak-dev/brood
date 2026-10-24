@@ -1,0 +1,11 @@
+[project]
+name = "brood"
+version = "0.1.0"
+description = "An agent pool on Agent Substrate"
+requires-python = ">=3.12"
+
+# Зависимости по модулям: дистрибутив берёт extra своего модуля. Ставит их
+# в venv рабочей копии `brood dev setup`; common и client обходятся stdlib.
+[project.optional-dependencies]
+server = ["Django==5.2.18"]
+dev = ["ruff==0.15.16"]

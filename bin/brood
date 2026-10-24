@@ -1,0 +1,35 @@
+#!/bin/bash -pe
+# brood: the single entry point. The commandlets are modules of the package
+# (brood/common/cli dispatches them); this launcher only picks the tree and
+# activates its venv.
+#
+# Симлинк резолвим до конца: наружу торчит ~/bin/brood, а дерево проекта
+# надо найти относительно настоящего файла.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+    DIR="$( cd -P "$( /usr/bin/dirname "$SOURCE" )" && pwd )"
+    SOURCE="$(/usr/bin/readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+OWN="$( cd -P "$( /usr/bin/dirname "$SOURCE" )/.." && pwd )"
+# Дерево -- рабочая копия, в которой стоят, если это brood; иначе дерево
+# самого лаунчера. ~/bin/brood -- симлинк в одну копию, и без этого команда
+# в другой копии (worktree) шла бы на чужом коде с чужим .env. Маркер --
+# bin/brood и brood/common/cli: чужой проект деревом brood не считается.
+# git -- в условии if: под -e упавшая голая команда убила бы лаунчер.
+if top="$(git rev-parse --show-toplevel 2>/dev/null)" &&
+        [[ -f "$top/bin/brood" && -d "$top/brood/common/cli" ]]; then
+    PROJECT="$top"
+else
+    PROJECT="$OWN"
+fi
+# venv рабочей копии (brood dev setup): python, pip и django-admin -- его.
+# Без venv -- системный python3, которым brood dev setup venv и заводит.
+if [[ -f "$PROJECT/venv/bin/activate" ]]; then
+    # shellcheck disable=SC1091
+    source "$PROJECT/venv/bin/activate"
+fi
+# Пакет находится по PYTHONPATH, а не по текущему каталогу: зовут из любого.
+# -P: файл в текущем каталоге не подменяет модуль пакета.
+export PYTHONPATH="$PROJECT${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -P -m brood.common.cli "$@"

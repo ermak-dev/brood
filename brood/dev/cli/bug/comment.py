@@ -1,0 +1,14 @@
+"""brood dev bug comment <iid> "<text>" | - | --body-file F: comment on an issue
+"""
+from brood.dev import gitlab
+from brood.dev.cli.bug._common import parser, read_body
+
+
+def main(argv):
+    p = parser("comment")
+    p.add_argument("iid")
+    p.add_argument("text", nargs="?")
+    p.add_argument("--body-file")
+    a = p.parse_args(argv)
+    gitlab.comment(a.iid, read_body(a.text, a.body_file))
+    print(f"#{a.iid} commented")

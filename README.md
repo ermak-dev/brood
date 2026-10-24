@@ -1,21 +1,27 @@
 # brood
 
 Пул агентов на [Agent Substrate](https://github.com/agent-substrate/substrate):
-оркестратор раздаёт работу акторам. Наследник mop: трекер, CI и master-loop,
-портированные на Go.
+оркестратор раздаёт работу акторам. Наследник mop: фичи переносятся из него
+по частям, на Python, с тем же устройством командлетов. Сервер установки —
+проект Django.
 
 ## Установка
 
-Требуется Go 1.27+.
+Требуется Python 3.12+ с модулем venv.
 
 ```sh
 cp ~/mop/.env.example .env 2>/dev/null || true   # или создайте свой
 # GITLAB_SITE='git.ermak.dev'
 # GITLAB_TOKEN='glpat-...'   # личный токен с правом api
 
-go build -o bin/brood ./cmd/brood
+ln -s "$PWD/bin/brood" ~/bin/brood
+brood dev setup              # venv/ с Django и ruff; DJANGO_SECRET_KEY и DJANGO_DEBUG в .env
+brood server migrate
+brood server createsuperuser
+brood server runserver       # админка: http://127.0.0.1:8000/admin/
 ```
 
+`bin/brood` сам активирует `venv/` рабочей копии, в которой его зовут.
 Координаты трекера берутся из git origin рабочей копии; `.env` переопределяет.
 
 ## Команды
@@ -29,7 +35,9 @@ brood dev bug close <iid> --comment "..."
 brood dev ci                # последние пайплайны
 brood dev ci why <id>       # почему красный
 brood dev ci log <job>      # лог джобы
-brood dev ci lint           # проверка .gitlab-ci.yml
+brood server <command>      # manage.py сервера: migrate, shell, test, ...
+brood server test           # все проверки brood
 ```
 
-Полная справка — `brood` без аргументов; правила разработки — `CLAUDE.md`.
+Полная справка — `brood` без аргументов и `brood <группа>`; правила
+разработки — `CLAUDE.md`.

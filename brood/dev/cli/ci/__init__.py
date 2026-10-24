@@ -1,0 +1,39 @@
+"""pipelines, job logs, lint and runners: GitLab CI from the terminal
+
+  brood dev ci                           the latest 15 pipelines
+  brood dev ci <id> [--failed]           a pipeline's jobs; --failed: only real failures
+  brood dev ci show <id> [--failed]      the same
+  brood dev ci why <id>                  why it failed: failing jobs with their log tails
+  brood dev ci log <job> [--lines N] [--full]
+                                         a job's log, the last 60 lines by default
+  brood dev ci lint [file]               validate a .gitlab-ci.yml, the working copy's by default
+  brood dev ci retry <job>               run a finished job again
+  brood dev ci retry --pipeline <id>     rerun a pipeline's failed jobs
+  brood dev ci cancel <id>               cancel a pipeline that is still going
+  brood dev ci runners                   the project's runners and what each is running
+
+Coordinates and credentials are those of `brood dev bug`: the working copy's
+git origin, GITLAB_TOKEN in .env.
+"""
+import importlib
+
+from brood.dev.cli._common import usage
+
+
+def route(argv):
+    """argv без глагола -> (глагол, argv) либо None. Пусто -- список, число --
+    пайплайн: самое частое -- самое короткое. Глагол со своим модулем сюда
+    не доходит: его отдаёт диспетчер."""
+    if not argv:
+        return "list", []
+    if argv[0].isdigit():
+        return "show", [*argv]
+    return None
+
+
+def main(argv):
+    found = route(argv)
+    if found is None:
+        usage(__doc__)
+    verb, rest = found
+    return importlib.import_module(f"brood.dev.cli.ci.{verb}").main(rest)
