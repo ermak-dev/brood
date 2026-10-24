@@ -27,7 +27,8 @@ UPPERCASE-именем.
    `urls.py`, `manage.py`), приложения — подпакетами рядом
  - `brood/dev` — инструменты разработчика: venv рабочей копии, трекер и CI
    (`brood/dev/gitlab.py`), командлеты `brood dev` (`brood/dev/cli`),
-   локальный Substrate в kind (`brood/dev/substrate`, `brood substrate`).
+   локальный Substrate в kind (`brood/dev/substrate`, `brood substrate`),
+   выкладка сервера в его кластер (`brood/dev/deploy`, `brood deploy`).
    В дистрибутивы не едет
  - `brood/<модуль>/tests/` — проверки модуля по конвенции Django;
    `brood/common/tests/test_layout.py` держит границы модулей
@@ -38,7 +39,7 @@ UPPERCASE-именем.
    `deploy/` — машина деплоя и принудительная команда выкладки
    (`docs/DEPLOY.md`)
  - `docs/` — по одному файлу на подсистему, UPPERCASE-слово
- - `.env` — секреты установки; в git не попадает, как `inventory.yaml`,
+ - `.env` и `secrets/` — секреты установки; в git не попадают, как `inventory.yaml`,
    `venv/` и `db.sqlite3`
 
 ## Правила
@@ -90,7 +91,10 @@ UPPERCASE-именем.
  - **MUST** Секреты — только в `.env`: `GITLAB_TOKEN` и
    `DJANGO_SECRET_KEY`; в код, настройки на узлы и вывод они не попадают.
    Секреты выкладки — защищённые переменные CI (`BROOD_DEPLOY_*`), в
-   репозитории нет ни адреса машины деплоя, ни ключа
+   репозитории нет ни адреса машины деплоя, ни ключа. `.env` стенда и его
+   TLS (`secrets/tls.crt`, `secrets/tls.key`) — тоже переменные CI, их
+   заводит `brood dev ci set`; на стенд они едут в дереве релиза, в кластер —
+   Secret'ами, и только ключи, нужные серверу
  - **MUST** Ключ выкладки умеет одно: в `authorized_keys` машины деплоя у него
    `restrict,from=<builder>,command=brood-deploy`. Новое действие на машине —
    правка `deploy/brood-deploy.sh`, а не второй ключ или шелл

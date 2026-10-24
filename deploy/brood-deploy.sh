@@ -5,10 +5,11 @@
 #
 # Клиент -- джоба deploy на builder (.ci/deploy.sh) -- шлёт полный sha коммита
 # командой ssh (SSH_ORIGINAL_COMMAND), а на stdin -- tar его дерева (git
-# archive). Дерево распаковывается в чистый releases/<sha>, и из него
-# ставится Substrate: brood substrate install, затем start. Состояние
-# установки живёт в каталоге данных пользователя, не в релизе: старый релиз
-# удаляется после удачного деплоя.
+# archive) с дописанными .env и secrets/ стенда. Дерево распаковывается в
+# чистый releases/<sha>, и из него ставится Substrate -- brood substrate
+# install, затем start, -- и сервер: brood deploy server. Состояние установки
+# живёт в каталоге данных пользователя, не в релизе: старый релиз вместе с его
+# секретами удаляется после удачного деплоя.
 set -o errexit -o nounset -o pipefail
 
 SHA="${SSH_ORIGINAL_COMMAND:-}"
@@ -34,6 +35,7 @@ cd "$RELEASE"
 echo "brood-deploy: ${SHA}"
 bin/brood substrate install
 bin/brood substrate start
+bin/brood deploy server
 
 ln -sfn "$RELEASE" "$RELEASES/current"
 find "$RELEASES" -mindepth 1 -maxdepth 1 -type d ! -name "$SHA" -exec rm -rf {} +
