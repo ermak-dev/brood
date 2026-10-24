@@ -25,9 +25,10 @@ class BearerToken(grpc.AuthMetadataPlugin):
         super().__init__()
         self.path = path
 
-    def __call__(self, callback, service_url=None):
-        """gRPC зовет это при каждом запросе; metadata -- асинхронно, через
-        callback, но чтение маленького файла здесь синхронно и мгновенно."""
+    def __call__(self, _context, callback):
+        """gRPC зовет это при каждом запросе, в отдельном потоке; metadata --
+        асинхронно, через callback, но чтение маленького файла здесь
+        синхронно и мгновенно."""
         with open(self.path, encoding="utf-8") as f:
             callback((("authorization", f"Bearer {f.read().strip()}"),), None)
 
