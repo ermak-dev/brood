@@ -75,6 +75,40 @@ class Client:
             ateapi_pb2.DeleteAtespaceRequest(
                 atespace=ateapi_pb2.ObjectRef(name=name)))
 
+    # ─── Actor ───────────────────────────────────────────────────────────
+    def list_actors(self, atespace, page_token=""):
+        """Все акторы atespace постранично -> [ateapi_pb2.Actor]."""
+        out = []
+        while True:
+            request = ateapi_pb2.ListActorsRequest(
+                atespace=atespace,
+                options=ateapi_pb2.ListOptions(page_token=page_token))
+            response = self._stub().ListActors(request)
+            out.extend(response.actors)
+            page_token = response.next_page_token
+            if not page_token:
+                return out
+
+    def get_actor(self, atespace, name):
+        return self._stub().GetActor(
+            ateapi_pb2.GetActorRequest(actor=self._ref(atespace, name)))
+
+    def suspend_actor(self, atespace, name):
+        return self._stub().SuspendActor(
+            ateapi_pb2.SuspendActorRequest(actor=self._ref(atespace, name))).actor
+
+    def resume_actor(self, atespace, name):
+        return self._stub().ResumeActor(
+            ateapi_pb2.ResumeActorRequest(actor=self._ref(atespace, name))).actor
+
+    def delete_actor(self, atespace, name):
+        return self._stub().DeleteActor(
+            ateapi_pb2.DeleteActorRequest(actor=self._ref(atespace, name)))
+
+    def _ref(self, atespace, name):
+        """Ссылка на ресурс: atespace + имя."""
+        return ateapi_pb2.ObjectRef(atespace=atespace, name=name)
+
     def _stub(self):
         return ateapi_pb2_grpc.ControlStub(self.channel)
 

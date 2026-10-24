@@ -2346,6 +2346,27 @@
     "delete_failed_not_empty": "Chưa xóa được dự án: {{detail}}",
     "empty": "Chưa có dự án",
     "empty_description": "Tạo dự án đầu tiên -- một atespace cho actor",
-    "load_failed": "Không tải được dự án"
+    "load_failed": "Không tải được dự án",
+    "state": "Trạng thái",
+    "actors_title": "Actor: {{project}}",
+    "actors_description": "Đơn vị công việc trong atespace của dự án; suspend đóng băng actor thành snapshot, resume đánh thức nó",
+    "actor_suspend": "Tạm dừng",
+    "actor_resume": "Đánh thức",
+    "actor_suspended": "Actor {{name}} đã tạm dừng",
+    "actor_resumed": "Actor {{name}} đã đánh thức",
+    "actor_delete_title": "Xóa actor",
+    "actor_delete_message": "Xóa actor {{name}}? Snapshot của nó cũng đi theo.",
+    "actor_deleted": "Actor {{name}} đã xóa",
+    "actors_empty": "Chưa có actor",
+    "actors_empty_description": "Actor do brood master tạo; chúng sẽ hiện ở đây",
+    "actor_state": {
+      "resuming": "đang đánh thức",
+      "running": "đang chạy",
+      "suspending": "đang đóng băng",
+      "suspended": "đã đóng băng",
+      "crashed": "đã sập",
+      "deleting": "đang xóa",
+      "reverting": "đang hoàn tác"
+    }
   }
 }

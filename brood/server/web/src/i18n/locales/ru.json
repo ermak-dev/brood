@@ -2334,6 +2334,27 @@
     "delete_failed_not_empty": "Проект не удалён: {{detail}}",
     "empty": "Проектов нет",
     "empty_description": "Создайте первый проект -- atespace для акторов",
-    "load_failed": "Не удалось загрузить проекты"
+    "load_failed": "Не удалось загрузить проекты",
+    "state": "Состояние",
+    "actors_title": "Акторы: {{project}}",
+    "actors_description": "Единицы работы в atespace проекта; suspend замораживает актор снапшотом, resume будит",
+    "actor_suspend": "Приостановить",
+    "actor_resume": "Разбудить",
+    "actor_suspended": "Актор {{name}} приостановлен",
+    "actor_resumed": "Актор {{name}} разбужен",
+    "actor_delete_title": "Удалить актора",
+    "actor_delete_message": "Удалить актора {{name}}? Его снапшоты уйдут вместе с ним.",
+    "actor_deleted": "Актор {{name}} удалён",
+    "actors_empty": "Акторов нет",
+    "actors_empty_description": "Акторы создаёт мастер brood; здесь они появятся",
+    "actor_state": {
+      "resuming": "просыпается",
+      "running": "работает",
+      "suspending": "замораживается",
+      "suspended": "заморожен",
+      "crashed": "упал",
+      "deleting": "удаляется",
+      "reverting": "откатывается"
+    }
   }
 }

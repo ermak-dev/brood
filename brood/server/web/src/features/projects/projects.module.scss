@@ -36,3 +36,10 @@
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* Кнопки в строке таблицы: suspend/resume/delete актора. */
+.rowActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

@@ -2340,6 +2340,27 @@
     "delete_failed_not_empty": "프로젝트가 삭제되지 않았습니다: {{detail}}",
     "empty": "프로젝트 없음",
     "empty_description": "첫 프로젝트를 만들어 보세요 -- actor의 atespace",
-    "load_failed": "프로젝트를 불러오지 못했습니다"
+    "load_failed": "프로젝트를 불러오지 못했습니다",
+    "state": "상태",
+    "actors_title": "Actor: {{project}}",
+    "actors_description": "프로젝트 atespace의 작업 단위; suspend는 actor를 스냅샷으로 얼리고 resume은 깨웁니다",
+    "actor_suspend": "일시중지",
+    "actor_resume": "재개",
+    "actor_suspended": "Actor {{name}} 일시중지됨",
+    "actor_resumed": "Actor {{name}} 재개됨",
+    "actor_delete_title": "actor 삭제",
+    "actor_delete_message": "actor {{name}}을(를) 삭제할까요? 스냅샷도 함께 삭제됩니다.",
+    "actor_deleted": "Actor {{name}} 삭제됨",
+    "actors_empty": "actor 없음",
+    "actors_empty_description": "actor는 brood master가 만듭니다; 여기에 나타납니다",
+    "actor_state": {
+      "resuming": "재개 중",
+      "running": "실행 중",
+      "suspending": "일시중지 중",
+      "suspended": "일시중지됨",
+      "crashed": "충돌",
+      "deleting": "삭제 중",
+      "reverting": "되돌리는 중"
+    }
   }
 }

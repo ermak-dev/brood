@@ -13,6 +13,17 @@ export interface BroodProject {
   update_time: string;
 }
 
+export interface BroodActor {
+  name: string;
+  uid: string;
+  version: number;
+  state: string;
+  create_time: string;
+  update_time: string;
+}
+
+export type ActorAction = 'suspend' | 'resume';
+
 export class ProjectsApiError extends Error {
   status: number;
 
@@ -74,5 +85,48 @@ export async function deleteProject(name: string): Promise<void> {
     credentials: 'same-origin',
     headers: { 'X-CSRFToken': csrfToken() },
   });
+  await read(response);
+}
+
+export async function listActors(project: string): Promise<BroodActor[]> {
+  const response = await fetch(`/api/projects/${encodeURIComponent(project)}/actors`, {
+    credentials: 'same-origin',
+  });
+  const body = await read(response);
+  const results =
+    body && typeof body === 'object' && Array.isArray((body as { results?: unknown }).results)
+      ? (body as { results: BroodActor[] }).results
+      : [];
+  return results;
+}
+
+export async function actorAction(
+  project: string,
+  name: string,
+  action: ActorAction
+): Promise<BroodActor> {
+  await ensureCsrf();
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(project)}/actors/${encodeURIComponent(name)}`,
+    {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+      body: JSON.stringify({ action }),
+    }
+  );
+  return (await read(response)) as BroodActor;
+}
+
+export async function deleteActor(project: string, name: string): Promise<void> {
+  await ensureCsrf();
+  const response = await fetch(
+    `/api/projects/${encodeURIComponent(project)}/actors/${encodeURIComponent(name)}`,
+    {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: { 'X-CSRFToken': csrfToken() },
+    }
+  );
   await read(response);
 }

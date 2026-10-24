@@ -2340,6 +2340,27 @@
     "delete_failed_not_empty": "Project not deleted: {{detail}}",
     "empty": "No projects",
     "empty_description": "Create the first project -- an atespace for actors",
-    "load_failed": "Failed to load projects"
+    "load_failed": "Failed to load projects",
+    "state": "State",
+    "actors_title": "Actors: {{project}}",
+    "actors_description": "Units of work in the project's atespace; suspend freezes an actor into a snapshot, resume wakes it",
+    "actor_suspend": "Suspend",
+    "actor_resume": "Resume",
+    "actor_suspended": "Actor {{name}} suspended",
+    "actor_resumed": "Actor {{name}} resumed",
+    "actor_delete_title": "Delete actor",
+    "actor_delete_message": "Delete actor {{name}}? Its snapshots go with it.",
+    "actor_deleted": "Actor {{name}} deleted",
+    "actors_empty": "No actors",
+    "actors_empty_description": "The brood master creates actors; they will appear here",
+    "actor_state": {
+      "resuming": "resuming",
+      "running": "running",
+      "suspending": "suspending",
+      "suspended": "suspended",
+      "crashed": "crashed",
+      "deleting": "deleting",
+      "reverting": "reverting"
+    }
   }
 }

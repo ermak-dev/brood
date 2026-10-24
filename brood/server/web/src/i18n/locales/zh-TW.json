@@ -2366,6 +2366,27 @@
     "delete_failed_not_empty": "專案未刪除：{{detail}}",
     "empty": "尚無專案",
     "empty_description": "建立第一個專案，作為 actor 的 atespace",
-    "load_failed": "專案載入失敗"
+    "load_failed": "專案載入失敗",
+    "state": "狀態",
+    "actors_title": "Actor：{{project}}",
+    "actors_description": "專案 atespace 中的工作單元；suspend 將 actor 凍結為快照，resume 喚醒它",
+    "actor_suspend": "凍結",
+    "actor_resume": "喚醒",
+    "actor_suspended": "Actor {{name}} 已凍結",
+    "actor_resumed": "Actor {{name}} 已喚醒",
+    "actor_delete_title": "刪除 actor",
+    "actor_delete_message": "刪除 actor {{name}}？其快照將一併刪除。",
+    "actor_deleted": "Actor {{name}} 已刪除",
+    "actors_empty": "尚無 actor",
+    "actors_empty_description": "actor 由 brood master 建立；它們會出現在這裡",
+    "actor_state": {
+      "resuming": "喚醒中",
+      "running": "執行中",
+      "suspending": "凍結中",
+      "suspended": "已凍結",
+      "crashed": "已當機",
+      "deleting": "刪除中",
+      "reverting": "回滾中"
+    }
   }
 }

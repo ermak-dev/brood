@@ -2338,6 +2338,27 @@
     "delete_failed_not_empty": "项目未删除：{{detail}}",
     "empty": "暂无项目",
     "empty_description": "创建第一个项目，作为 actor 的 atespace",
-    "load_failed": "项目加载失败"
+    "load_failed": "项目加载失败",
+    "state": "状态",
+    "actors_title": "Actor：{{project}}",
+    "actors_description": "项目 atespace 中的工作单元；suspend 将 actor 冻结为快照，resume 唤醒它",
+    "actor_suspend": "冻结",
+    "actor_resume": "唤醒",
+    "actor_suspended": "Actor {{name}} 已冻结",
+    "actor_resumed": "Actor {{name}} 已唤醒",
+    "actor_delete_title": "删除 actor",
+    "actor_delete_message": "删除 actor {{name}}？其快照将一并删除。",
+    "actor_deleted": "Actor {{name}} 已删除",
+    "actors_empty": "暂无 actor",
+    "actors_empty_description": "actor 由 brood master 创建；它们会出现在这里",
+    "actor_state": {
+      "resuming": "唤醒中",
+      "running": "运行中",
+      "suspending": "冻结中",
+      "suspended": "已冻结",
+      "crashed": "已崩溃",
+      "deleting": "删除中",
+      "reverting": "回滚中"
+    }
   }
 }

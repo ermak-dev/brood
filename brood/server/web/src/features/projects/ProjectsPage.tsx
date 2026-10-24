@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -126,7 +127,11 @@ export function ProjectsPage() {
           <TableBody>
             {projects.map((project) => (
               <TableRow key={project.uid}>
-                <TableCell>{project.name}</TableCell>
+                <TableCell>
+                  <Link to={`/projects/${encodeURIComponent(project.name)}/actors`}>
+                    {project.name}
+                  </Link>
+                </TableCell>
                 <TableCell>
                   {project.create_time
                     ? formatDateValue(project.create_time, i18n.language)
