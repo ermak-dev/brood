@@ -2,11 +2,14 @@
 import contextlib
 import io
 import os
+import tempfile
 import unittest
 
 from brood.common import cli
 
-TREE = {"dev": {"bug": {"list": {}, "new": {}}, "ci": {"show": {}}}}
+TREE = {"dev": {"bug": {"list": {}, "new": {}}, "ci": {"show": {}}},
+        "substrate": {"start": {}}}
+MODULES = {"dev": "brood.dev.cli", "substrate": "brood.dev.substrate.cli"}
 
 RESOLVE = [
     (["dev"], ("brood.dev.cli", [])),
@@ -17,35 +20,61 @@ RESOLVE = [
     (["dev", "nope"], ("brood.dev.cli", ["nope"])),
     # Модуль -- дно: слово после него -- аргумент, а не глагол.
     (["dev", "bug", "list", "new"], ("brood.dev.cli.bug.list", ["new"])),
+    # Группа подпакета -- со своим модулем, не с модулем brood.
+    (["substrate", "start"], ("brood.dev.substrate.cli.start", [])),
     (["server"], None),
     ([], None),
 ]
 
 
-def verb_files(words, tree):
+def verb_files(words, base, tree):
     """Каждая команда группы -> (слова команды, файл её модуля)."""
-    base = os.path.join(cli.PACKAGE, words[0], "cli", *words[1:])
     yield words, os.path.join(base, "__init__.py")
     for verb, sub in tree.items():
         if sub or os.path.isdir(os.path.join(base, verb)):
-            yield from verb_files(words + [verb], sub)
+            yield from verb_files(words + [verb], os.path.join(base, verb), sub)
         else:
             yield words + [verb], os.path.join(base, verb + ".py")
+
+
+def package(root, *paths):
+    """Дерево пакетов во временном каталоге: путь -- каталог с __init__.py."""
+    for path in paths:
+        os.makedirs(os.path.join(root, path))
+        open(os.path.join(root, path, "__init__.py"), "w").close()
 
 
 class DispatchTests(unittest.TestCase):
     def test_resolve(self):
         for argv, want in RESOLVE:
             with self.subTest(argv=argv):
-                self.assertEqual(cli.resolve(argv, TREE), want)
+                self.assertEqual(cli.resolve(argv, TREE, MODULES), want)
 
     def test_dispatcher_is_not_a_group(self):
         self.assertNotIn("common", cli.groups())
 
+    def test_scan_finds_module_and_subpackage_groups(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "brood")
+            package(root, "", "common", "common/cli", "dev", "dev/cli", "dev/substrate",
+                    "dev/substrate/cli", "server", "server/tests", "server/_private",
+                    "server/_private/cli")
+            self.assertEqual(cli.scan(root), {"dev": "brood.dev.cli",
+                                              "substrate": "brood.dev.substrate.cli"})
+
+    def test_group_defined_twice_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "brood")
+            package(root, "", "dev", "dev/cli", "server", "server/dev", "server/dev/cli")
+            with self.assertRaisesRegex(RuntimeError, "command group dev is defined twice: "
+                                                      "brood.dev.cli and brood.server.dev.cli"):
+                cli.scan(root)
+
     def test_every_command_has_usage(self):
         """Докстринг -- справка команды; у глагола он начинается с команды."""
+        modules = cli.scan()
         for group, tree in cli.groups().items():
-            for words, path in verb_files([group], tree):
+            for words, path in verb_files([group], cli.location(modules[group]), tree):
                 with self.subTest(path=path):
                     doc = cli.docstring(path)
                     self.assertTrue(doc, "no docstring")

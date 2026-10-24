@@ -1,11 +1,15 @@
 """Диспетчер командлетов: `brood <группа> [<глагол> ...] [аргументы]`.
 
-Порт диспетчера mop. Командлеты модуля живут в его пакете cli; группа --
-подпакет, глагол -- модуль в нём:
-  brood/dev/cli/__init__.py      ->  brood dev
-  brood/dev/cli/bug/__init__.py  ->  brood dev bug
-  brood/dev/cli/bug/list.py      ->  brood dev bug list
+Порт диспетчера mop. Группа -- пакет cli модуля или подпакета модуля,
+глагол -- модуль в нём:
+  brood/dev/cli/__init__.py            ->  brood dev
+  brood/dev/cli/bug/list.py            ->  brood dev bug list
+  brood/dev/substrate/cli/__init__.py  ->  brood substrate
+  brood/dev/substrate/cli/start.py     ->  brood substrate start
 Пакет без названного глагола отвечает сам и получает остаток argv.
+
+Подпакет со своим cli -- пространство команд, которое не названо модулем:
+код остаётся в модуле своего дистрибутива, а команда -- короткой.
 
 Группы находятся обходом каталогов, а не списком и не импортом по имени:
 дистрибутив без модуля не видит его команд, а common не зависит от
@@ -26,16 +30,45 @@ PACKAGE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__fil
 SELF = "common"
 
 
-def groups(package=PACKAGE):
-    """Обход модулей -> {группа: дерево глаголов}. Группа -- модуль brood с
-    пакетом cli. В дереве модуль -- {}, подпакет -- его дерево; служебное
-    (_*) -- не глаголы."""
+def scan(package=PACKAGE):
+    """Обход модулей -> {группа: модуль её пакета cli}. Группа -- модуль brood
+    с пакетом cli либо подпакет модуля с пакетом cli. Одно имя в двух местах
+    -- отказ, а не «кто первый»: разойдясь, две одноимённые группы молча
+    выбирались бы порядком обхода."""
+    top = os.path.basename(package)
+    found = []
+    for module in _entries(package):
+        if module == SELF:
+            continue
+        if _is_package(os.path.join(package, module, "cli")):
+            found.append((module, f"{top}.{module}.cli"))
+        for sub in _entries(os.path.join(package, module)):
+            if sub != "cli" and _is_package(os.path.join(package, module, sub, "cli")):
+                found.append((sub, f"{top}.{module}.{sub}.cli"))
     out = {}
-    for entry in sorted(os.listdir(package)):
-        cli = os.path.join(package, entry, "cli")
-        if entry != SELF and not entry.startswith("_") and _is_package(cli):
-            out[entry] = _tree(cli)
+    for name, mod in found:
+        if name in out:
+            raise RuntimeError(f"command group {name} is defined twice: {out[name]} and {mod}")
+        out[name] = mod
     return out
+
+
+def _entries(path):
+    """Подкаталоги-пакеты без служебных (_*)."""
+    return [e for e in sorted(os.listdir(path))
+            if not e.startswith("_") and _is_package(os.path.join(path, e))]
+
+
+def location(mod, package=PACKAGE):
+    """Модуль пакета cli -> его каталог."""
+    return os.path.join(os.path.dirname(package), *mod.split("."))
+
+
+def groups(package=PACKAGE, modules=None):
+    """{группа: дерево глаголов}; modules -- готовый scan(). В дереве модуль --
+    {}, подпакет -- его дерево; служебное (_*) -- не глаголы."""
+    modules = scan(package) if modules is None else modules
+    return {name: _tree(location(mod, package)) for name, mod in modules.items()}
 
 
 def _is_package(path):
@@ -55,12 +88,14 @@ def _tree(path):
     return out
 
 
-def resolve(argv, tree):
-    """argv -> (модуль, остаток argv) либо None, если группы нет. Чистая
-    функция. Спуск по дереву: подпакет -- ещё уровень, модуль -- дно."""
+def resolve(argv, tree, modules=None):
+    """argv -> (модуль, остаток argv) либо None, если группы нет. tree --
+    groups(), modules -- scan(); с обоими это чистая функция. Спуск по
+    дереву: подпакет -- ещё уровень, модуль -- дно."""
     if not argv or argv[0] not in tree:
         return None
-    mod, tree, rest = f"brood.{argv[0]}.cli", tree[argv[0]], list(argv[1:])
+    modules = scan() if modules is None else modules
+    mod, tree, rest = modules[argv[0]], tree[argv[0]], list(argv[1:])
     while rest and rest[0] in tree:
         mod, tree, rest = f"{mod}.{rest[0]}", tree[rest[0]], rest[1:]
     return mod, rest
@@ -82,22 +117,26 @@ def describe(path):
     return doc.splitlines()[0].strip() if doc else ""
 
 
-def help_text(tree, package=PACKAGE):
+def help_text(modules, package=PACKAGE):
     """Список групп -- ответ на `brood` без аргументов."""
     lines = ["brood: an agent pool on Agent Substrate", "",
              "  brood <group> <verb> [arguments]; a group alone lists its verbs", ""]
-    lines += [f"  {g:<10} {describe(os.path.join(package, g, 'cli', '__init__.py'))}"
-              for g in tree]
+    lines += [f"  {g:<10} {describe(os.path.join(location(m, package), '__init__.py'))}"
+              for g, m in sorted(modules.items())]
     lines += ["", "  brood help  this list"]
     return "\n".join(lines)
 
 
 def main(argv):
-    tree = groups()
+    try:
+        modules = scan()
+    except RuntimeError as e:
+        print(f"brood: {e}", file=sys.stderr)
+        return 1
     if not argv or argv[0] in ("help", "-h", "--help"):
-        print(help_text(tree))
+        print(help_text(modules))
         return 0
-    found = resolve(argv, tree)
+    found = resolve(argv, groups(modules=modules), modules)
     if found is None:
         print(f"brood: unknown command {argv[0]!r}; run 'brood help'", file=sys.stderr)
         return 1
