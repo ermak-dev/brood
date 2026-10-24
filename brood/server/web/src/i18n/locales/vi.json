@@ -57,11 +57,11 @@
     "unsaved_changes_message": "Bạn có thay đổi chưa lưu. Rời đi bây giờ sẽ mất các thay đổi đó. Bạn có muốn rời đi không?"
   },
   "title": {
-    "login": "Trung tâm Quản lý CLI Proxy API",
-    "abbr": "CPAMC"
+    "login": "Trung tâm Quản lý Brood",
+    "abbr": "Brood"
   },
   "splash": {
-    "title": "CLI Proxy API",
+    "title": "Brood",
     "subtitle": "Trung tâm Quản lý"
   },
   "login": {
@@ -1757,7 +1757,7 @@
   },
   "system_info": {
     "title": "Thông tin Trung tâm Quản lý",
-    "about_title": "Trung tâm Quản lý CLI Proxy API",
+    "about_title": "Trung tâm Quản lý Brood",
     "models_title": "Model khả dụng",
     "models_desc": "Hiển thị phản hồi /models và tự động dùng API key đã lưu để xác thực.",
     "models_loading": "Đang tải model khả dụng...",
@@ -1826,7 +1826,7 @@
     "toggle_collapse": "Thu gọn thanh bên",
     "expand": "Mở rộng",
     "collapse": "Thu gọn",
-    "subtitle": "Bảng điều khiển CLI Proxy API",
+    "subtitle": "Trung tâm Quản lý",
     "auth_files_count": "File xác thực: {{count}}"
   },
   "footer": {

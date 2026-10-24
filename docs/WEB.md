@@ -33,11 +33,36 @@ Bun, стиль, i18n во всех шести локалях, тесты в `te
   бы дёрнуть management от имени вошедшего;
 - 401 ворот панель понимает как выход и показывает форму входа.
 
-Правки форка против апстрима: `src/services/brood/session.ts` (новый),
-`src/stores/useAuthStore.ts`, `src/pages/LoginPage.tsx`, `src/types/auth.ts`,
-строки `login.*` в локалях, `tests/broodSession.test.ts` вместо
-`tests/legacyBackendProbe.test.ts` (вход по ключу с пробой `/v0` в форке
-не существует).
+## Брендинг
+
+Панель называется Brood: заголовки, сокращение в боковой панели, слово на
+странице входа, `<title>`. Логотип -- `docs/logo.png` (тёмный знак на
+прозрачном фоне); в панели он -- плитка 256 px, знак на белом скруглённом
+квадрате, чтобы читаться и в тёмной теме, и во вкладке браузера:
+`src/assets/logoInline.ts` (`INLINE_LOGO`, ею же `main.tsx` ставит favicon) и
+плитка 64 px favicon'ом в `index.html`. Новый логотип -- новые плитки из
+`docs/logo.png` (Pillow: знак по альфа-каналу, 80% стороны, радиус 20%).
+
+Страница входа не показывает адрес бэкенда и подзаголовок про версию
+CLIProxyAPI: бэкенд всегда этот же сайт. Спонсорского «Быстрого старта»
+(APIKEY.FUN) нет: ни пункта меню, ни страницы, `/quick-start` уводит в
+AI Providers.
+
+## Правки форка
+
+Против апстрима правлены:
+
+- вход: `src/services/brood/session.ts` (новый), `src/stores/useAuthStore.ts`,
+  `src/pages/LoginPage.tsx`, `src/types/auth.ts`, строки `login.*` в
+  локалях, `tests/broodSession.test.ts` вместо
+  `tests/legacyBackendProbe.test.ts` (вход по ключу с пробой `/v0` в форке
+  не существует);
+- брендинг: `index.html`, `src/main.tsx`, `src/assets/logoInline.ts`,
+  `src/pages/LoginPage.module.scss`, логотип в `LoginPage`, `SystemPage` и
+  `MainLayout`, строки `title.*`, `splash.title`, `sidebar.subtitle`,
+  `system_info.about_title` в локалях;
+- без быстрого старта: `src/router/MainRoutes.tsx`,
+  `src/components/layout/MainLayout.tsx`.
 
 ## Сборка и проверки
 
@@ -59,7 +84,7 @@ git subtree pull --prefix=brood/server/web \
     https://github.com/router-for-me/Cli-Proxy-API-Management-Center.git vX.Y.Z --squash
 ```
 
-Затем -- конфликты в файлах из списка правок выше, `brood dev web test`,
+Затем -- конфликты в файлах из «Правок форка», `brood dev web test`,
 версия в `VERSION=` стадии `panel` образа входа и, если панель требует
 нового прокси, образ CLIProxyAPI в `brood/dev/deploy/manifests/cliproxy.yaml`.
 Сейчас: панель v1.26.7, CLIProxyAPI v8.0.41.

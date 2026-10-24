@@ -6,10 +6,9 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { IconEye, IconEyeOff } from '@/components/ui/icons';
 import { useAuthStore, useLanguageStore, useNotificationStore } from '@/stores';
-import { detectApiBaseFromLocation } from '@/utils/connection';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
-import { INLINE_LOGO_JPEG } from '@/assets/logoInline';
+import { INLINE_LOGO } from '@/assets/logoInline';
 import type { ApiError } from '@/types';
 import { LegacyBackendError } from '@/services/api/legacyBackendProbe';
 import { BroodAuthError } from '@/services/brood/session';
@@ -105,7 +104,6 @@ export function LoginPage() {
   const [autoLoginSuccess, setAutoLoginSuccess] = useState(false);
   const [error, setError] = useState('');
 
-  const detectedBase = useMemo(() => detectApiBaseFromLocation(), []);
   const languageOptions = useMemo(
     () =>
       LANGUAGE_ORDER.map((lang) => ({
@@ -190,9 +188,7 @@ export function LoginPage() {
       {/* 左侧品牌展示区 */}
       <div className={styles.brandPanel}>
         <div className={styles.brandContent}>
-          <span className={styles.brandWord}>CLI</span>
-          <span className={styles.brandWord}>PROXY</span>
-          <span className={styles.brandWord}>API</span>
+          <span className={styles.brandWord}>BROOD</span>
         </div>
       </div>
 
@@ -201,7 +197,7 @@ export function LoginPage() {
         {showSplash ? (
           /* 启动动画 */
           <div className={styles.splashContent}>
-            <img src={INLINE_LOGO_JPEG} alt="CPAMC" className={styles.splashLogo} />
+            <img src={INLINE_LOGO} alt="Brood" className={styles.splashLogo} />
             <h1 className={styles.splashTitle}>{t('splash.title')}</h1>
             <p className={styles.splashSubtitle}>{t('splash.subtitle')}</p>
             <div className={styles.splashLoader}>
@@ -212,7 +208,7 @@ export function LoginPage() {
           /* 登录表单 */
           <div className={styles.formContent}>
             {/* Logo */}
-            <img src={INLINE_LOGO_JPEG} alt="Logo" className={styles.logo} />
+            <img src={INLINE_LOGO} alt="Logo" className={styles.logo} />
 
             {/* 登录表单卡片 */}
             <div className={styles.loginCard}>
@@ -228,12 +224,6 @@ export function LoginPage() {
                     ariaLabel={t('language.switch')}
                   />
                 </div>
-                <div className={styles.subtitle}>{t('login.subtitle')}</div>
-              </div>
-
-              <div className={styles.connectionBox}>
-                <div className={styles.label}>{t('login.connection_current')}</div>
-                <div className={styles.value}>{detectedBase}</div>
               </div>
 
               <Input
