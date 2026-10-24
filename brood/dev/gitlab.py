@@ -266,6 +266,33 @@ def running_jobs():
     return _paged("/jobs", {"scope[]": "running"})
 
 
+VARIABLE_NAME = re.compile(r"^[A-Za-z0-9_]{1,255}$")
+
+
+def variables():
+    """Переменные CI/CD проекта без значений: значение секрета не должно
+    доехать до вывода даже по ошибке командлета."""
+    return [{k: v for k, v in var.items() if k != "value"}
+            for var in _paged("/variables", {})]
+
+
+def set_variable(key, value, file=False):
+    """Завести или обновить переменную CI/CD -> "created" | "updated".
+
+    Всегда protected -- её видят только конвейеры защищённых веток -- и raw:
+    без raw GitLab раскрыл бы $NAME внутри значения. Маски нет: многострочное
+    значение GitLab замаскировать не даёт."""
+    if not VARIABLE_NAME.match(key):
+        raise RuntimeError(f"bad CI variable name {key!r}: letters, digits and _ only")
+    payload = {"value": value, "variable_type": "file" if file else "env_var",
+               "protected": True, "raw": True, "masked": False}
+    if key in {var["key"] for var in variables()}:
+        call("PUT", f"/variables/{key}", payload)
+        return "updated"
+    call("POST", "/variables", {"key": key, **payload})
+    return "created"
+
+
 # ─── чистое: метки, эпики, ветки ─────────────────────────────────────────
 def sev_key(i):
     return (SEV_ORDER.get(scoped(i.get("labels") or [], "sev::"), 3), i["iid"])

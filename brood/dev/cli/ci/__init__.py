@@ -11,6 +11,9 @@
   brood dev ci retry --pipeline <id>     rerun a pipeline's failed jobs
   brood dev ci cancel <id>               cancel a pipeline that is still going
   brood dev ci runners                   the project's runners and what each is running
+  brood dev ci set VAR=VALUE ... [--file VAR=PATH ...]
+                                         create or update protected CI/CD variables
+  brood dev ci vars                      CI/CD variables with type and flags, without values
 
 Coordinates and credentials are those of `brood dev bug`: the working copy's
 git origin, GITLAB_TOKEN in .env.

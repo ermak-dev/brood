@@ -38,7 +38,7 @@ class DevCommandsTests(unittest.TestCase):
         self.assertEqual(set(tree["bug"]), {"close", "comment", "edit", "epic", "evidence",
                                             "labels", "list", "new", "relabel", "show", "start"})
         self.assertEqual(set(tree["ci"]), {"cancel", "lint", "list", "log", "retry",
-                                           "runners", "show", "why"})
+                                           "runners", "set", "show", "vars", "why"})
 
     def test_ci_route(self):
         for argv, want in ROUTES:
