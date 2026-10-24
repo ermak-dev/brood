@@ -26,7 +26,8 @@ UPPERCASE-именем.
  - `brood/server` — сервер установки: проект Django (`settings.py`,
    `urls.py`, `manage.py`), приложения — подпакетами рядом
  - `brood/dev` — инструменты разработчика: venv рабочей копии, трекер и CI
-   (`brood/dev/gitlab.py`), командлеты `brood dev` (`brood/dev/cli`).
+   (`brood/dev/gitlab.py`), командлеты `brood dev` (`brood/dev/cli`),
+   локальный Substrate в kind (`brood/dev/substrate`, `brood substrate`).
    В дистрибутивы не едет
  - `brood/<модуль>/tests/` — проверки модуля по конвенции Django;
    `brood/common/tests/test_layout.py` держит границы модулей
@@ -51,9 +52,12 @@ UPPERCASE-именем.
    в каждый дистрибутив. Относительных импортов нет: их не видит проверка
    границ в `brood/common/tests/test_layout.py`
  - **MUST** Командлеты модуля живут в его пакете `cli`:
-   `brood/dev/cli/bug/list.py` → `brood dev bug list`. Диспетчер находит
-   их обходом каталогов, а не импортом по имени, поэтому дистрибутив без
-   модуля просто не видит его команд
+   `brood/dev/cli/bug/list.py` → `brood dev bug list`. Пространство команд,
+   не названное модулем, — пакет `cli` подпакета модуля:
+   `brood/dev/substrate/cli/start.py` → `brood substrate start`; код
+   остаётся в модуле своего дистрибутива. Одно имя группы в двух местах —
+   отказ диспетчера. Диспетчер находит их обходом каталогов, а не импортом
+   по имени, поэтому дистрибутив без модуля просто не видит его команд
  - **MUST** Сервер — Django, и `brood server <команда>` — его `manage.py`.
    Новая команда сервера — management command приложения
    (`<app>/management/commands/`), а не модуль в `brood/server/cli`
@@ -76,6 +80,9 @@ UPPERCASE-именем.
  - **MUST** Координаты трекера — из git origin рабочей копии, а не из
    настройки: проект в трекере и проект в git — один проект. `.env`
    переопределяет (`GITLAB_SITE`, `GITLAB_PROJECT`)
+ - **MUST** Свойство машины (путь, адрес) — настройка `.env` без дефолта в
+   коде: `SUBSTRATE_SOURCE`, checkout substrate. Зашитый дефолт отдаёт
+   машину автора; отказ называет настройку
  - **MUST** Секреты — только в `.env`: `GITLAB_TOKEN` и
    `DJANGO_SECRET_KEY`; в код, настройки на узлы и вывод они не попадают
  - **MUST** Отказ несёт причину тому, кто его читает (CLI, модель):
@@ -107,6 +114,13 @@ UPPERCASE-именем.
    без rebase, чтобы ревьюер видел, что поменялось
 
 ## Ловушки (каждая оплачена отладкой)
+
+ - Имена контейнеров локального Substrate постоянные
+   (`substrate-control-plane`, `substrate-registry`): каждая команда
+   `brood substrate` сверяет метки и Id с записями владения до первой
+   правки, иначе остановит или удалит чужой кластер
+ - Envoy Substrate не поднимается без IPv6 в ядре Docker даже в кластере
+   IPv4: `ipv6.disable=1` — отказ до раскатки, хост не трогаем
 
  - `.env` в mop хранит значения в кавычках (`GITLAB_SITE='git.ermak.dev'`)
    — парсер снимает кавычки, а не режет значение по первому `=`
