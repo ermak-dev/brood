@@ -115,7 +115,8 @@
     "plugin_store": "Plugin Store",
     "config_management": "Config Panel",
     "logs": "Logs Viewer",
-    "system_info": "Management Center Info"
+    "system_info": "Management Center Info",
+    "projects": "Projects"
   },
   "nav_groups": {
     "operate": "Operate",
@@ -135,7 +136,8 @@
     "plugin_store": "Discover & install plugins",
     "logs": "Request tracing",
     "config_management": "Gateway configuration",
-    "system_info": "Runtime & diagnostics"
+    "system_info": "Runtime & diagnostics",
+    "projects": "Substrate atespaces"
   },
   "dashboard": {
     "hero_verdict_good": "All systems steady",
@@ -2318,5 +2320,26 @@
     "error": "Binding failed. Please start over.",
     "unsupported": "This backend does not support SIWC binding.",
     "expired": "The binding session expired. Please start over."
+  },
+  "projects": {
+    "title": "Projects",
+    "description": "A project is a Substrate atespace: a room for the install's actors",
+    "create": "Create project",
+    "create_title": "New project",
+    "name_label": "Name",
+    "name_placeholder": "e.g. brood",
+    "name": "Name",
+    "created_at": "Created",
+    "updated_at": "Updated",
+    "delete": "Delete",
+    "delete_title": "Delete project",
+    "delete_message": "Delete project {{name}}? It must hold no actors or tags.",
+    "delete_confirm": "Delete",
+    "deleted": "Project {{name}} deleted",
+    "created": "Project {{name}} created",
+    "delete_failed_not_empty": "Project not deleted: {{detail}}",
+    "empty": "No projects",
+    "empty_description": "Create the first project -- an atespace for actors",
+    "load_failed": "Failed to load projects"
   }
 }

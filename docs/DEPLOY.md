@@ -110,7 +110,15 @@ namespace `brood`:
   порты хоста `BROOD_HTTP_PORT`/`BROOD_HTTPS_PORT`. Отдельным Deployment'ом:
   перекатка Django и прокси не рвёт стримы LLM на входе;
 - `django` -- init `migrate` и `ensureadmin`, Django под gunicorn на `:8000`;
-  NetworkPolicy пускает только edge (Django верит его `X-Forwarded-Proto`);
+  NetworkPolicy пускает только edge (Django верит его `X-Forwarded-Proto`),
+  egress -- только к postgres и ateapi. Отдельный ServiceAccount `django` с
+  projected-томом: токен с audience `api.ate-system.svc` и ClusterTrustBundle
+  signer'а `servicedns.podcert.ate.dev/identity` -- клиент проектов
+  (`brood/server/ateapi`, `brood server test` не ходит в сеть: клиент
+  подменяется). Метка `ate.dev/api-access=true` на namespace открывает
+  NetworkPolicy ate-system к ateapi; принципал -- bootstrap-owner ateapi
+  (флаг установки в `brood/dev/substrate/local.py`), поэтому проекты панели
+  создают и удаляют atespace;
 - `cliproxy` -- CLIProxyAPI из официального образа, состояние (`config.yaml`,
   `auths/`, журналы, плагины) на томе `cliproxy-data`; NetworkPolicy пускает
   только edge;
@@ -122,7 +130,7 @@ namespace `brood`:
 | путь | куда |
 |---|---|
 | `/` | панель (один файл) |
-| `/admin/`, `/static/`, `/auth/`, `/healthz` | Django |
+| `/admin/`, `/static/`, `/auth/`, `/api/`, `/healthz` | Django |
 | `/v1/`, `/v1beta/`, `/openai/v1/`, `/backend-api/codex/` | CLIProxyAPI, клиентский ключ проверяет он сам |
 | `/v8/management/` | CLIProxyAPI, только с сессией суперпользователя brood; ключ ставит вход |
 | `/{anthropic,codex,antigravity,devin}/callback`, `/callback` | CLIProxyAPI: возвраты OAuth провайдеров |

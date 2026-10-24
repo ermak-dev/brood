@@ -115,7 +115,8 @@
     "plugin_store": "Магазин плагинов",
     "config_management": "Панель конфигурации",
     "logs": "Просмотр логов",
-    "system_info": "Информация системы"
+    "system_info": "Информация системы",
+    "projects": "Проекты"
   },
   "nav_groups": {
     "operate": "Работа",
@@ -134,7 +135,8 @@
     "plugin_store": "Поиск и установка плагинов",
     "logs": "Трассировка запросов",
     "config_management": "Базовая конфигурация шлюза",
-    "system_info": "Состояние и диагностика"
+    "system_info": "Состояние и диагностика",
+    "projects": "Atespace Substrate"
   },
   "dashboard": {
     "hero_verdict_good": "Всё стабильно",
@@ -2312,5 +2314,26 @@
     "error": "Привязка не удалась. Начните заново.",
     "unsupported": "Этот сервер не поддерживает привязку SIWC.",
     "expired": "Сеанс привязки истёк. Начните заново."
+  },
+  "projects": {
+    "title": "Проекты",
+    "description": "Проект -- atespace Substrate: пространство акторов установки",
+    "create": "Создать проект",
+    "create_title": "Новый проект",
+    "name_label": "Имя",
+    "name_placeholder": "например, brood",
+    "name": "Имя",
+    "created_at": "Создан",
+    "updated_at": "Изменён",
+    "delete": "Удалить",
+    "delete_title": "Удалить проект",
+    "delete_message": "Удалить проект {{name}}? Акторов и тегов в нём быть не должно.",
+    "delete_confirm": "Удалить",
+    "deleted": "Проект {{name}} удалён",
+    "created": "Проект {{name}} создан",
+    "delete_failed_not_empty": "Проект не удалён: {{detail}}",
+    "empty": "Проектов нет",
+    "empty_description": "Создайте первый проект -- atespace для акторов",
+    "load_failed": "Не удалось загрузить проекты"
   }
 }

@@ -31,6 +31,25 @@ spec:
       # духе docker link, и Service postgres дал бы POSTGRES_PORT=tcp://...
       # поверх настройки порта базы.
       enableServiceLinks: false
+      serviceAccountName: django
+      volumes:
+        # Токен с audience api.ate-system.svc и доверенный корень ateapi:
+        # ClusterTrustBundle signer'а servicedns.podcert.ate.dev/identity,
+        # live-серия -- действующий корень (см. internal/ateclient/builder.go
+        # Substrate). kubelet ротирует их на месте.
+        - name: ateapi-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: api.ate-system.svc
+                  expirationSeconds: 3600
+                  path: token
+              - clusterTrustBundle:
+                  signerName: servicedns.podcert.ate.dev/identity
+                  labelSelector:
+                    matchLabels:
+                      podcert.ate.dev/canarying: live
+                  path: trust-bundle.pem
       initContainers:
         - name: migrate
           image: brood-server
@@ -47,6 +66,11 @@ spec:
               value: brood
             - name: POSTGRES_USER
               value: brood
+            # Клиент проектов (brood/server/ateapi): projected-том выше.
+            - name: ATEAPI_TOKEN
+              value: /var/run/ateapi/token
+            - name: ATEAPI_CA
+              value: /var/run/ateapi/trust-bundle.pem
         # Учётка администратора видна только этому контейнеру.
         - name: ensureadmin
           image: brood-server
@@ -64,6 +88,10 @@ spec:
           ports:
             - name: http
               containerPort: 8000
+          volumeMounts:
+            - name: ateapi-token
+              mountPath: /var/run/ateapi
+              readOnly: true
           # /healthz отвечает до проверки Host: у kubelet её нет.
           readinessProbe:
             httpGet:
@@ -74,6 +102,30 @@ spec:
             - secretRef:
                 name: brood-env
           env: *env
+---
+# Egress django: только ateapi в ate-system (443) и postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: django-egress
+spec:
+  podSelector:
+    matchLabels:
+      app: django
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ate-system
+      ports:
+        - port: 443
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

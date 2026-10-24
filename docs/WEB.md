@@ -62,7 +62,12 @@ AI Providers.
   `MainLayout`, строки `title.*`, `splash.title`, `sidebar.subtitle`,
   `system_info.about_title` в локалях;
 - без быстрого старта: `src/router/MainRoutes.tsx`,
-  `src/components/layout/MainLayout.tsx`.
+  `src/components/layout/MainLayout.tsx`;
+- проекты (atespace Substrate за `/api/projects` сервера brood):
+  `src/features/projects/` (новый), `src/services/brood/projects.ts` (новый),
+  `IconSidebarProjects` в `src/components/ui/icons.tsx`, пункт в nav-группе
+  operate `MainLayout.tsx`, маршрут в `MainRoutes.tsx`, строки `nav.projects`,
+  `nav_meta.projects`, `projects.*` в локалях.
 
 ## Сборка и проверки
 

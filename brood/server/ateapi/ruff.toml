@@ -1,0 +1,5 @@
+# Стабы gRPC ateapi: сгенерированы grpcio-tools из api/ateapi/v1/ateapi.proto
+# Substrate (brood dev proto). Файлы читаются, а не пишутся руками: правка
+# стабов -- правка закреплённого коммита в brood/dev/substrate/local.py и
+# повторная генерация. Рефлексия protobuf тоже код: ruff их не линит.
+extend-exclude = ["ateapi_pb2.py", "ateapi_pb2_grpc.py"]

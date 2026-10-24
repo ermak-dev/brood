@@ -24,6 +24,7 @@ import {
   IconSidebarLogs,
   IconSidebarOauth,
   IconSidebarPlugins,
+  IconSidebarProjects,
   IconSidebarProviders,
   IconSidebarQuota,
   IconSidebarStore,
@@ -53,6 +54,7 @@ import type { Theme } from '@/types';
 
 const sidebarIcons: Record<string, ReactNode> = {
   dashboard: <IconSidebarDashboard size={18} />,
+  projects: <IconSidebarProjects size={18} />,
   aiProviders: <IconSidebarProviders size={18} />,
   authFiles: <IconSidebarAuthFiles size={18} />,
   oauth: <IconSidebarOauth size={18} />,
@@ -589,6 +591,13 @@ export function MainLayout() {
           labelKey: 'nav.dashboard',
           metaKey: 'nav_meta.dashboard',
           icon: sidebarIcons.dashboard,
+        },
+        // brood: проекты -- atespace'ы установки, своё API сервера.
+        {
+          path: '/projects',
+          labelKey: 'nav.projects',
+          metaKey: 'nav_meta.projects',
+          icon: sidebarIcons.projects,
         },
       ],
     },

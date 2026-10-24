@@ -33,7 +33,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework",
     "brood.server.base",
+    "brood.server.projects",
 ]
 
 MIDDLEWARE = [
@@ -115,5 +117,19 @@ if not DEBUG:
                       "whitenoise.middleware.WhiteNoiseMiddleware")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ─── ateapi Substrate ─────────────────────────────────────────────────────
+# Клиент проектов (brood/server/projects). В под -- projected ServiceAccount
+# токен с audience api.ate-system.svc и ClusterTrustBundle -- CA serving
+# сертификата ateapi (brood/dev/deploy/manifests/django.yaml). Свойства
+# машины установки -- настройки .env, не дефолты кода; без них проекта нет,
+# и /api/projects отвечает 503 с причиной.
+ATEAPI_TOKEN = config.get("ATEAPI_TOKEN")
+ATEAPI_CA = config.get("ATEAPI_CA")
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAdminUser"],
+}
 
 TEST_RUNNER = "brood.server.runner.Runner"

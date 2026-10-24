@@ -58,6 +58,11 @@ server {
     location /auth/ {
         include /etc/nginx/brood/django.inc;
     }
+    # API brood (проекты): сессию и CSRF решает сам Django, панель шлёт
+    # X-CSRFToken.
+    location /api/ {
+        include /etc/nginx/brood/django.inc;
+    }
     location = /healthz {
         include /etc/nginx/brood/django.inc;
     }

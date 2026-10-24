@@ -7,5 +7,7 @@ requires-python = ">=3.12"
 # Зависимости по модулям: дистрибутив берёт extra своего модуля. Ставит их
 # в venv рабочей копии `brood dev setup`; common и client обходятся stdlib.
 [project.optional-dependencies]
-server = ["Django==5.2.18", "psycopg[binary]==3.3.6", "gunicorn==26.2.0", "whitenoise==6.12.0"]
-dev = ["ruff==0.15.16"]
+server = ["Django==5.2.18", "djangorestframework==3.18.3", "grpcio==1.84.1",
+          "protobuf==7.36.2", "psycopg[binary]==3.3.6", "gunicorn==26.2.0",
+          "whitenoise==6.12.0"]
+dev = ["ruff==0.15.16", "grpcio-tools==1.84.1"]

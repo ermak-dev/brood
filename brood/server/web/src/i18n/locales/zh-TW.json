@@ -115,7 +115,8 @@
     "plugin_store": "插件商店",
     "config_management": "設定面板",
     "logs": "記錄檢視",
-    "system_info": "中心資訊"
+    "system_info": "中心資訊",
+    "projects": "專案"
   },
   "nav_groups": {
     "operate": "運行",
@@ -135,7 +136,8 @@
     "plugin_store": "探索並安裝插件",
     "logs": "請求追蹤與排查",
     "config_management": "閘道基礎設定",
-    "system_info": "運行與診斷資訊"
+    "system_info": "運行與診斷資訊",
+    "projects": "Substrate atespace"
   },
   "dashboard": {
     "hero_verdict_good": "運行平穩",
@@ -557,7 +559,6 @@
     "reset_confirm_button": "確認重置",
     "reset_not_confirmed": "尚未確認額度重置成功，請重新整理額度後再決定是否重試。",
     "reset_cooldown_failed": "額度已重置，但代理冷卻清除失敗。請在原連線的認證檔案頁面使用「清除冷卻」，不要再次消耗重置卡。",
-
     "reset_success": "已重置「{{name}}」的 Codex 配額",
     "reset_failed": "重置「{{name}}」的 Codex 配額失敗：{{message}}",
     "plan_plus": "Plus",
@@ -2345,5 +2346,26 @@
     "error": "綁定失敗，請重新開始。",
     "unsupported": "目前後端不支援 SIWC 綁定。",
     "expired": "綁定工作階段已過期，請重新開始。"
+  },
+  "projects": {
+    "title": "專案",
+    "description": "專案即 Substrate atespace：本安裝中 actor 的空間",
+    "create": "新增專案",
+    "create_title": "新增專案",
+    "name_label": "名稱",
+    "name_placeholder": "例如 brood",
+    "name": "名稱",
+    "created_at": "建立時間",
+    "updated_at": "更新時間",
+    "delete": "刪除",
+    "delete_title": "刪除專案",
+    "delete_message": "刪除專案 {{name}}？其中不能有 actor 或標籤。",
+    "delete_confirm": "刪除",
+    "deleted": "專案 {{name}} 已刪除",
+    "created": "專案 {{name}} 已建立",
+    "delete_failed_not_empty": "專案未刪除：{{detail}}",
+    "empty": "尚無專案",
+    "empty_description": "建立第一個專案，作為 actor 的 atespace",
+    "load_failed": "專案載入失敗"
   }
 }

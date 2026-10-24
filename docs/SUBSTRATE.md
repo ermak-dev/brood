@@ -24,7 +24,12 @@ github.com/agent-substrate/substrate на коммите `COMMIT` из
 не ходят.
 
 Новый Substrate — правка `COMMIT`, после того как флаги `DEPLOY` сверены с
-`hack/install-ate-kind.sh` этого коммита.
+`hack/install-ate-kind.sh` этого коммита. `DEPLOY` также держит
+`--ateapi-authz-bootstrap-owners`: глобальные владельцы ateapi, устанавливает
+их `ate-setup` флагом на Deployment ate-api-server. Под `django` сервера brood
+(`system:serviceaccount:brood:django`) нужен панельной странице «Проекты»:
+CRUD atespace требует global owner. Общий `ate-client` оставлен: без него
+`kubectl ate` и демо не работают.
 
 `SUBSTRATE_SOURCE` в `.env` — свой клон разработчика вместо этого: он берётся
 как есть, без fetch и checkout.

@@ -115,7 +115,8 @@
     "plugin_store": "插件商店",
     "config_management": "配置面板",
     "logs": "日志查看",
-    "system_info": "中心信息"
+    "system_info": "中心信息",
+    "projects": "项目"
   },
   "nav_groups": {
     "operate": "运行",
@@ -135,7 +136,8 @@
     "plugin_store": "发现并安装插件",
     "logs": "请求追踪与排查",
     "config_management": "网关基础配置",
-    "system_info": "运行与诊断信息"
+    "system_info": "运行与诊断信息",
+    "projects": "Substrate atespace"
   },
   "dashboard": {
     "hero_verdict_good": "运行平稳",
@@ -557,7 +559,6 @@
     "reset_confirm_button": "确认重置",
     "reset_not_confirmed": "未确认额度重置成功，请刷新额度后再决定是否重试。",
     "reset_cooldown_failed": "额度已重置，但代理冷却清除失败。请在原连接的认证文件页面使用“清除冷却”，不要再次消耗重置卡。",
-
     "reset_success": "已重置 \"{{name}}\" 的 Codex 额度",
     "reset_failed": "重置 \"{{name}}\" 的 Codex 额度失败：{{message}}",
     "plan_plus": "Plus",
@@ -2317,5 +2318,26 @@
     "error": "绑定失败，请重新开始。",
     "unsupported": "当前后端不支持 SIWC 绑定。",
     "expired": "绑定会话已过期，请重新开始。"
+  },
+  "projects": {
+    "title": "项目",
+    "description": "项目即 Substrate atespace：本安装中 actor 的空间",
+    "create": "新建项目",
+    "create_title": "新建项目",
+    "name_label": "名称",
+    "name_placeholder": "例如 brood",
+    "name": "名称",
+    "created_at": "创建时间",
+    "updated_at": "更新时间",
+    "delete": "删除",
+    "delete_title": "删除项目",
+    "delete_message": "删除项目 {{name}}？其中不能有 actor 或标签。",
+    "delete_confirm": "删除",
+    "deleted": "项目 {{name}} 已删除",
+    "created": "项目 {{name}} 已创建",
+    "delete_failed_not_empty": "项目未删除：{{detail}}",
+    "empty": "暂无项目",
+    "empty_description": "创建第一个项目，作为 actor 的 atespace",
+    "load_failed": "项目加载失败"
   }
 }

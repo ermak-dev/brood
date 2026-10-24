@@ -115,7 +115,8 @@
     "plugin_store": "Cửa hàng Plugin",
     "config_management": "Bảng cấu hình",
     "logs": "Trình xem Log",
-    "system_info": "Thông tin Trung tâm Quản lý"
+    "system_info": "Thông tin Trung tâm Quản lý",
+    "projects": "Dự án"
   },
   "nav_groups": {
     "operate": "Vận hành",
@@ -135,7 +136,8 @@
     "plugin_store": "Khám phá & cài đặt plugin",
     "logs": "Truy vết yêu cầu",
     "config_management": "Cấu hình gateway",
-    "system_info": "Runtime & chẩn đoán"
+    "system_info": "Runtime & chẩn đoán",
+    "projects": "Atespace Substrate"
   },
   "dashboard": {
     "hero_verdict_good": "Mọi hệ thống ổn định",
@@ -2324,5 +2326,26 @@
     "error": "Liên kết thất bại. Hãy bắt đầu lại.",
     "unsupported": "Máy chủ này không hỗ trợ liên kết SIWC.",
     "expired": "Phiên liên kết đã hết hạn. Hãy bắt đầu lại."
+  },
+  "projects": {
+    "title": "Dự án",
+    "description": "Dự án là một atespace Substrate: không gian cho actor của bản cài",
+    "create": "Tạo dự án",
+    "create_title": "Dự án mới",
+    "name_label": "Tên",
+    "name_placeholder": "ví dụ: brood",
+    "name": "Tên",
+    "created_at": "Tạo",
+    "updated_at": "Cập nhật",
+    "delete": "Xóa",
+    "delete_title": "Xóa dự án",
+    "delete_message": "Xóa dự án {{name}}? Nó không được chứa actor hay thẻ.",
+    "delete_confirm": "Xóa",
+    "deleted": "Đã xóa dự án {{name}}",
+    "created": "Đã tạo dự án {{name}}",
+    "delete_failed_not_empty": "Chưa xóa được dự án: {{detail}}",
+    "empty": "Chưa có dự án",
+    "empty_description": "Tạo dự án đầu tiên -- một atespace cho actor",
+    "load_failed": "Không tải được dự án"
   }
 }

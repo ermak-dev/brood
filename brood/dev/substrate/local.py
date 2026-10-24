@@ -49,7 +49,12 @@ API_DEADLINE = 300
 TOOLS = ("go",)
 DEPLOY = ("deploy", NAMESPACE, '--credential-provider={"name":"k8s.io"}',
           f"--ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/{NAMESPACE}/sa/ate-client",
-          "--rollout-timeout=10m", f"--namespace={NAMESPACE}", "--atenet-dataplane=envoy")
+          "--rollout-timeout=10m", f"--namespace={NAMESPACE}", "--atenet-dataplane=envoy",
+          # Под django brood -- глобальный владелец ateapi: проекты панели
+          # создают и удаляют atespace. Общий ate-client не расшариваем:
+          # его токен заминтовал бы любой с RBAC на его ServiceAccount.
+          "--ateapi-authz-bootstrap-owners="
+          f"system:serviceaccount:brood:django,system:serviceaccount:{NAMESPACE}:ate-client")
 # По ним checkout substrate отличается от любого другого каталога.
 MARKERS = ("hack/kind.sh", "hack/install-ate-kind.sh", "cmd/kubectl-ate")
 # Что ставит install без SUBSTRATE_SOURCE. Коммит закреплён, как образ реестра
