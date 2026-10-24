@@ -8,10 +8,11 @@
 # один docker run. Контейнер -- от пользователя раннера: venv/ и .env,
 # которые он пишет в checkout, следующая джоба вычистит сама. Окружения
 # раннера и секретов установки в контейнере нет; DJANGO_SECRET_KEY заводит
-# brood dev setup.
+# brood dev setup. Образ полный, не slim: проверкам brood substrate нужен
+# настоящий git, а ставить пакеты непривилегированный контейнер не может.
 set -o errexit -o nounset -o pipefail
 
-IMAGE="python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704"
+IMAGE="python:3.12@sha256:0d0db5b17f11b1b7d1aafa74ceadaa64ba0944b267ff6fc22008a197acd6b9ad"
 
 exec docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
     --volume "$PWD:/src" --workdir /src "$IMAGE" \

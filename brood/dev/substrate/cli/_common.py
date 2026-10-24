@@ -6,14 +6,23 @@ from brood.common import config
 from brood.dev.substrate import local
 
 
-def cluster(environ=os.environ):
-    """LocalCluster checkout'а из SUBSTRATE_SOURCE; вывод процессов -- в
-    терминал командлета. Дефолта нет: путь к checkout'у -- свойство машины."""
+def cluster(environ=os.environ, fetch=False):
+    """LocalCluster checkout'а; вывод процессов -- в терминал командлета.
+
+    SUBSTRATE_SOURCE -- клон разработчика, его не трогаем. Без него -- клон
+    официального репозитория в каталоге данных: fetch (только install)
+    заводит его и переводит на закреплённый коммит, остальные глаголы берут
+    как есть и в сеть не ходят."""
     source = config.get("SUBSTRATE_SOURCE")
-    if not source:
-        raise RuntimeError("no Substrate checkout: set SUBSTRATE_SOURCE in .env to a clone "
-                           "of agent-substrate/substrate")
-    source = local.checkout(os.path.expanduser(source))
+    if source:
+        source = os.path.expanduser(source)
+    else:
+        source = local.managed_checkout(environ)
+        if fetch:
+            local.sync(local.Shell(dict(environ), None), source)
+        elif not os.path.isdir(source):
+            raise RuntimeError("Substrate is not installed: run brood substrate install")
+    source = local.checkout(source)
     return local.LocalCluster(source, local.Shell(local.environment(environ, source), source))
 
 

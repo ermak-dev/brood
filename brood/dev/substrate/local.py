@@ -1,8 +1,9 @@
 """Локальный Substrate: кластер kind `substrate` и реестр образов рядом с ним.
 
-Порт hack/substrate.sh. Substrate собирается из checkout'а substrate
-(SUBSTRATE_SOURCE) и раскатывается в отдельный кластер kind со своим
-kubeconfig: текущий контекст kubectl не меняется. Состояние лежит в
+Порт hack/substrate.sh. Substrate собирается из checkout'а substrate и
+раскатывается в отдельный кластер kind со своим kubeconfig: текущий контекст
+kubectl не меняется. Checkout -- SUBSTRATE_SOURCE разработчика либо свой
+клон официального репозитория на закреплённом коммите (sync). Состояние лежит в
 <checkout>/bin/substrate, там же, где его держал скрипт: kubectl, kubeconfig
 и записи владения. Установка, сделанная скриптом, остаётся той же установкой.
 
@@ -46,6 +47,55 @@ DEPLOY = ("deploy", NAMESPACE, '--credential-provider={"name":"k8s.io"}',
           "--rollout-timeout=10m", f"--namespace={NAMESPACE}", "--atenet-dataplane=envoy")
 # По ним checkout substrate отличается от любого другого каталога.
 MARKERS = ("hack/kind.sh", "hack/install-ate-kind.sh", "cmd/kubectl-ate")
+# Что ставит install без SUBSTRATE_SOURCE. Коммит закреплён, как образ реестра
+# по digest: раскатка одного коммита brood всегда ставит один и тот же
+# Substrate. Новый Substrate -- правка этой строки, после того как DEPLOY
+# сверен с его hack/install-ate-kind.sh.
+REPOSITORY = "https://github.com/agent-substrate/substrate.git"
+COMMIT = "4ebd668d62e3f55753765a46579fc6deb81b2f7f"
+
+
+def managed_checkout(environ):
+    """Каталог своего клона -> путь. Чистая функция.
+
+    Каталог данных пользователя ($XDG_DATA_HOME, без него ~/.local/share), а
+    не рабочая копия brood: у CI она своя на каждую джобу, а записи владения
+    кластера в <клон>/bin/substrate обязаны пережить джобу."""
+    data = environ.get("XDG_DATA_HOME", "")
+    if not os.path.isabs(data):
+        data = os.path.join(environ.get("HOME") or os.path.expanduser("~"), ".local", "share")
+    return os.path.join(data, "brood", "substrate")
+
+
+def sync(shell, path, repository=REPOSITORY, commit=COMMIT):
+    """Клон repository в path на коммите commit -> path.
+
+    Нет клона -- заводится; клон уже на commit -- сеть не нужна; иначе
+    fetch одного коммита и переход на него. Неотслеживаемое (bin/substrate с
+    записями владения) переживает переход. Отказ до правок: каталог не клон
+    и не пуст, origin другой, в отслеживаемых файлах правки -- это чужое."""
+    git = ("git", "-C", path)
+    if not os.path.isdir(os.path.join(path, ".git")):
+        if os.path.isdir(path) and os.listdir(path):
+            raise RuntimeError(f"{path} exists and is not a git checkout; refusing to use it")
+        os.makedirs(path, exist_ok=True)
+        shell.run("git", "init", "-q", path)
+        shell.run(*git, "remote", "add", "origin", repository)
+    code, out, err = shell.output(*git, "remote", "get-url", "origin")
+    if code:
+        raise RuntimeError(f"git remote get-url in {path}: {reason(err, code)}")
+    if out.strip() != repository:
+        raise RuntimeError(f"{path}: origin is {out.strip()}, not {repository}; "
+                           f"refusing to change it")
+    code, out, _ = shell.output(*git, "rev-parse", "--verify", "-q", "HEAD")
+    if code == 0 and out.strip() == commit:
+        return path
+    code, out, err = shell.output(*git, "status", "--porcelain", "--untracked-files=no")
+    if code or out.strip():
+        raise RuntimeError(f"{path} has local changes; refusing to check out {commit[:12]}")
+    shell.run(*git, "fetch", "-q", "--depth", "1", "origin", commit)
+    shell.run(*git, "checkout", "-q", "--detach", commit)
+    return path
 
 
 def checkout(path):
@@ -86,8 +136,12 @@ def reason(err, code):
 
 
 def step(argv):
-    """Как назвать процесс в отказе: имя программы и два первых аргумента."""
-    return " ".join([os.path.basename(argv[0]), *argv[1:3]])
+    """Как назвать процесс в отказе: имя программы и два первых аргумента.
+    `-C <каталог>` git пропускается: шаг -- подкоманда, а не каталог."""
+    words = list(argv[1:])
+    if words[:1] == ["-C"]:
+        words = words[2:]
+    return " ".join([os.path.basename(argv[0]), *words[:2]])
 
 
 class Shell:

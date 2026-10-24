@@ -1,8 +1,8 @@
 # SUBSTRATE
 
-Локальный Agent Substrate для разработки: отдельный кластер kind, собранный
-из checkout'а substrate. Команды — `brood substrate`, код —
-`brood/dev/substrate` (порт `hack/substrate.sh` из checkout'а substrate).
+Локальный Agent Substrate: отдельный кластер kind, собранный из checkout'а
+substrate. Команды — `brood substrate`, код — `brood/dev/substrate` (порт
+`hack/substrate.sh`).
 
 ```sh
 brood substrate install    # собрать из checkout'а и раскатать; повтор раскатывает изменения
@@ -11,10 +11,28 @@ brood substrate start      # поднять и дождаться готовно
 brood substrate uninstall  # удалить кластер вместе с данными
 ```
 
+## Откуда Substrate
+
+Без настроек `install` ставит официальный репозиторий
+github.com/agent-substrate/substrate на коммите `COMMIT` из
+`brood/dev/substrate/local.py`. Свой клон лежит в каталоге данных
+пользователя, `$XDG_DATA_HOME/brood/substrate` (по умолчанию
+`~/.local/share/brood/substrate`), а не в рабочей копии brood: записи владения
+кластера в `<checkout>/bin/substrate` переживают джобу CI. `install` заводит
+клон или переводит его на `COMMIT`; клон с правками в отслеживаемых файлах или
+с другим origin — отказ. `start`, `stop` и `uninstall` клон не трогают и в сеть
+не ходят.
+
+Новый Substrate — правка `COMMIT`, после того как флаги `DEPLOY` сверены с
+`hack/install-ate-kind.sh` этого коммита.
+
+`SUBSTRATE_SOURCE` в `.env` — свой клон разработчика вместо этого: он берётся
+как есть, без fetch и checkout.
+
 ## Настройка
 
-`SUBSTRATE_SOURCE` в `.env` — путь к клону agent-substrate/substrate. Дефолта
-нет: путь — свойство машины. Нужны Linux, Docker и Go (для `install`).
+Нужны Linux, Docker, git и Go (для `install`; нужный Substrate toolchain Go
+скачивает сам).
 
 Ядро Docker должно уметь IPv6, хотя кластер IPv4: Envoy слушает dual-stack.
 Хост, загруженный с `ipv6.disable=1`, этот dataplane не поднимет. Команда

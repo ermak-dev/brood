@@ -37,14 +37,15 @@ brood dev ci why <id>       # почему красный
 brood dev ci log <job>      # лог джобы
 brood server <command>      # manage.py сервера: migrate, shell, test, ...
 brood server test           # все проверки brood
-brood substrate install     # локальный Substrate в kind из checkout'а SUBSTRATE_SOURCE
+brood substrate install     # локальный Substrate в kind из официального репозитория
 brood substrate stop        # остановить, данные кластера остаются
 brood substrate start       # поднять и дождаться готовности
 brood substrate uninstall   # удалить вместе с данными
 ```
 
-Локальный Substrate: `SUBSTRATE_SOURCE` в `.env` — клон agent-substrate/substrate;
-подробности — `docs/SUBSTRATE.md`.
+Локальный Substrate ставится из github.com/agent-substrate/substrate на
+закреплённом коммите; свой клон — `SUBSTRATE_SOURCE` в `.env`. Подробности —
+`docs/SUBSTRATE.md`.
 
 Полная справка — `brood` без аргументов и `brood <группа>`; правила
 разработки — `CLAUDE.md`.

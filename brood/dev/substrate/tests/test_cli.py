@@ -30,9 +30,40 @@ class GroupTests(unittest.TestCase):
 
 
 class ClusterTests(unittest.TestCase):
-    def test_no_source_refuses(self):
-        with settings(), self.assertRaisesRegex(RuntimeError, "set SUBSTRATE_SOURCE in .env"):
-            _common.cluster()
+    def test_without_source_uses_managed_checkout(self):
+        """Без SUBSTRATE_SOURCE -- свой клон; install переводит его на COMMIT."""
+        with tempfile.TemporaryDirectory() as tmp, settings():
+            managed = os.path.join(tmp, "brood", "substrate")
+            synced = []
+
+            def sync(shell, path, repository=local.REPOSITORY, commit=local.COMMIT):
+                synced.append((path, repository, commit))
+                for marker in local.MARKERS:
+                    os.makedirs(os.path.join(path, marker))
+                return path
+            with mock.patch.object(local, "sync", sync):
+                c = _common.cluster({"XDG_DATA_HOME": tmp, "PATH": "/usr/bin"}, fetch=True)
+        self.assertEqual(synced, [(managed, local.REPOSITORY, local.COMMIT)])
+        self.assertEqual(c.source, managed)
+
+    def test_without_source_others_do_not_fetch(self):
+        """stop, start, uninstall не ходят в сеть и не меняют коммит клона."""
+        with tempfile.TemporaryDirectory() as tmp, settings():
+            with mock.patch.object(local, "sync", side_effect=AssertionError("fetched")):
+                with self.assertRaisesRegex(RuntimeError, "not installed: run brood "
+                                                          "substrate install"):
+                    _common.cluster({"XDG_DATA_HOME": tmp})
+                managed = os.path.join(tmp, "brood", "substrate")
+                for marker in local.MARKERS:
+                    os.makedirs(os.path.join(managed, marker))
+                self.assertEqual(_common.cluster({"XDG_DATA_HOME": tmp}).source, managed)
+
+    def test_source_is_never_fetched(self):
+        with tempfile.TemporaryDirectory() as tmp, settings(SUBSTRATE_SOURCE=tmp):
+            for marker in local.MARKERS:
+                os.makedirs(os.path.join(tmp, marker))
+            with mock.patch.object(local, "sync", side_effect=AssertionError("fetched")):
+                self.assertEqual(_common.cluster({}, fetch=True).source, tmp)
 
     def test_source_must_be_a_checkout(self):
         with tempfile.TemporaryDirectory() as tmp, settings(SUBSTRATE_SOURCE=tmp):
