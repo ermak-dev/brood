@@ -78,6 +78,6 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: brood-server
+              app: django
       ports:
         - port: 5432

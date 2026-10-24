@@ -1,0 +1,93 @@
+# Django brood под gunicorn. Снаружи до него доходят только через вход (edge):
+# он снимает TLS и ставит X-Forwarded-Proto, которому Django верит, поэтому
+# NetworkPolicy пускает к нему только edge.
+apiVersion: v1
+kind: Service
+metadata:
+  name: django
+spec:
+  selector:
+    app: django
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: django
+  template:
+    metadata:
+      labels:
+        app: django
+    spec:
+      # Без service links: Kubernetes кладёт в под переменные Service'ов в
+      # духе docker link, и Service postgres дал бы POSTGRES_PORT=tcp://...
+      # поверх настройки порта базы.
+      enableServiceLinks: false
+      initContainers:
+        - name: migrate
+          image: brood-server
+          args: ["migrate", "--noinput"]
+          envFrom:
+            - secretRef:
+                name: brood-env
+          env: &env
+            - name: DJANGO_DEBUG
+              value: "0"
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_DB
+              value: brood
+            - name: POSTGRES_USER
+              value: brood
+        # Учётка администратора видна только этому контейнеру.
+        - name: ensureadmin
+          image: brood-server
+          args: ["ensureadmin"]
+          envFrom:
+            - secretRef:
+                name: brood-env
+            - secretRef:
+                name: brood-admin
+          env: *env
+      containers:
+        - name: django
+          image: brood-server
+          args: ["serve", "--bind", "0.0.0.0:8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          # /healthz отвечает до проверки Host: у kubelet её нет.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          envFrom:
+            - secretRef:
+                name: brood-env
+          env: *env
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: django
+spec:
+  podSelector:
+    matchLabels:
+      app: django
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: edge
+      ports:
+        - port: 8000

@@ -6,5 +6,7 @@
 !brood/__init__.py
 !brood/common
 !brood/server
+# Панель едет в образе входа (edge), не сервера.
+brood/server/web
 **/__pycache__
 **/tests

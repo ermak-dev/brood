@@ -1,11 +1,13 @@
 """Сервер brood в кластере локального Substrate (brood deploy server).
 
-Образ собирается из Dockerfile рядом и кладётся в реестр установки по
-digest -- так Substrate кладёт свои образы из Dockerfile (ate-setup,
+Три Deployment за одним входом: edge (nginx с TLS и панелью), django и
+cliproxy (CLIProxyAPI), плюс postgres. Образы brood -- сервер и вход --
+собираются из Dockerfile'ов рядом и кладутся в реестр установки по digest,
+так Substrate кладёт свои образы из Dockerfile (ate-setup,
 images.BuildDockerfileImage). Манифесты -- база kustomize в manifests/.
-Выкладка копирует её во временный каталог, дописывает оверлей -- образ по
+Выкладка копирует её во временный каталог, дописывает оверлей -- образы по
 digest и Secret'ы из .env и secrets/ рабочей копии -- и применяет его
-server-side apply. Хэш в имени сгенерированного Secret'а перекатывает под,
+server-side apply. Хэш в имени сгенерированного Secret'а перекатывает поды,
 когда меняется .env или сертификат.
 
 Модуль ничего не печатает: процессы идут через Shell установки, и их вывод
@@ -24,32 +26,42 @@ from brood.dev.substrate import local
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 MANIFESTS = os.path.join(HERE, "manifests")
-DOCKERFILE = os.path.join(HERE, "Dockerfile")
 NAMESPACE = "brood"
 OWNER = ("app.kubernetes.io/managed-by", "brood")
-IMAGE = "brood-server"
-REPOSITORY = f"localhost:{local.REGISTRY_PORT}/{IMAGE}"
+REGISTRY = f"localhost:{local.REGISTRY_PORT}"
+# Образ в манифестах -> его Dockerfile.
+IMAGES = {"brood-server": os.path.join(HERE, "Dockerfile"),
+          "brood-edge": os.path.join(HERE, "edge", "Dockerfile")}
 # Что из .env едет в кластер: серверу -- его настройки, учётка
 # администратора -- только init-контейнеру, который её заводит. GITLAB_TOKEN
 # и прочее остаются на машине.
 SERVER_KEYS = ("DJANGO_SECRET_KEY", "DJANGO_ALLOWED_HOSTS", "POSTGRES_PASSWORD")
 ADMIN_KEYS = ("DJANGO_SUPERUSER_USERNAME", "DJANGO_SUPERUSER_PASSWORD", "DJANGO_SUPERUSER_EMAIL")
 OPTIONAL = ("DJANGO_SUPERUSER_EMAIL",)
+# Ключи CLIProxyAPI: management -- его ставит только вход, клиентский -- для
+# /v1, первым в config.yaml.
+CLIPROXY_KEYS = ("CLIPROXY_MANAGEMENT_KEY", "CLIPROXY_CLIENT_KEY")
 # Сертификат и ключ -- секреты установки рядом с .env, в secrets/ рабочей
 # копии; на стенд их кладёт выкладка из переменных CI (.ci/deploy.sh).
 TLS = {"tls.crt": "secrets/tls.crt", "tls.key": "secrets/tls.key"}
-ROLLOUT = ("statefulset/postgres", "deployment/brood-server")
+ROLLOUT = ("statefulset/postgres", "deployment/django", "deployment/cliproxy",
+           "deployment/edge")
+# Раскладка до входа отдельным Deployment'ом: под с Django и nginx и его
+# NodePort-Service. Их NodePort'ы нужны edge, поэтому они уходят до apply.
+LEGACY = ("deployment/brood-server", "service/brood-server")
 EDGE_DEADLINE = 60
 
 
 def settings(get):
-    """Настройки -> (сервера, администратора). Чистая функция (get --
+    """Настройки -> (сервера, администратора, прокси). Чистая функция (get --
     config.get). Недостающие -- одним отказом со всеми именами."""
-    missing = [k for k in SERVER_KEYS + ADMIN_KEYS if k not in OPTIONAL and not get(k)]
+    every = SERVER_KEYS + ADMIN_KEYS + CLIPROXY_KEYS
+    missing = [k for k in every if k not in OPTIONAL and not get(k)]
     if missing:
         raise RuntimeError(f"brood deploy server needs in .env: {', '.join(missing)}")
     return ({k: get(k) for k in SERVER_KEYS},
-            {k: get(k) for k in ADMIN_KEYS if get(k)})
+            {k: get(k) for k in ADMIN_KEYS if get(k)},
+            {k: get(k) for k in CLIPROXY_KEYS})
 
 
 def env_file(values):
@@ -62,17 +74,19 @@ def env_file(values):
     return "".join(f"{key}={value}\n" for key, value in values.items())
 
 
-def kustomization(digest):
-    """Оверлей поверх base/ -> текст kustomization.yaml (JSON -- тоже YAML).
-    Чистая функция."""
+def kustomization(digests):
+    """Оверлей поверх base/ ({образ: digest}) -> текст kustomization.yaml
+    (JSON -- тоже YAML). Чистая функция."""
     return json.dumps({
         "apiVersion": "kustomize.config.k8s.io/v1beta1",
         "kind": "Kustomization",
         "resources": ["base"],
-        "images": [{"name": IMAGE, "newName": REPOSITORY, "digest": digest}],
+        "images": [{"name": name, "newName": f"{REGISTRY}/{name}", "digest": digest}
+                   for name, digest in sorted(digests.items())],
         "secretGenerator": [
             {"name": "brood-env", "namespace": NAMESPACE, "envs": ["server.env"]},
             {"name": "brood-admin", "namespace": NAMESPACE, "envs": ["admin.env"]},
+            {"name": "brood-cliproxy", "namespace": NAMESPACE, "envs": ["cliproxy.env"]},
             {"name": "brood-tls", "namespace": NAMESPACE, "type": "kubernetes.io/tls",
              "files": sorted(TLS)},
         ],
@@ -99,28 +113,28 @@ class Deploy:
         self.clock, self.sleep = clock, sleep
 
     def server(self):
-        """Собрать образ, раскатать сервер с базой и дождаться, пока он
-        отвечает -> (ссылка на образ, адрес входа или None)."""
-        server, admin = settings(self.get)
+        """Собрать образы, раскатать сервер, прокси и вход с базой и
+        дождаться, пока вход отвечает -> ({образ: digest}, адрес или None)."""
+        server, admin, cliproxy = settings(self.get)
         tls = self._tls()
         self.cluster.check()
         self._namespace_is_ours()
-        digest = self._image()
+        digests = {name: self._image(name, dockerfile) for name, dockerfile in IMAGES.items()}
         workdir = tempfile.mkdtemp(prefix="brood-deploy.")
         try:
-            self._overlay(workdir, digest, server, admin, tls)
+            self._overlay(workdir, digests, server, admin, cliproxy, tls)
+            self._kubectl("delete", *LEGACY, "-n", NAMESPACE, "--ignore-not-found")
             self._kubectl("apply", "--server-side", "--force-conflicts", "-k", workdir)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         for what in ROLLOUT:
             self._kubectl("rollout", "status", what, "-n", NAMESPACE, "--timeout=600s")
-        ref = f"{REPOSITORY}@{digest}"
         port = local.edge_ports(self.get).get(dict(local.EDGE)["BROOD_HTTPS_PORT"])
         if not port:
-            return ref, None
+            return digests, None
         host = first_host(server["DJANGO_ALLOWED_HOSTS"])
-        self._edge(port, host, tls["tls.crt"])
-        return ref, f"https://{host}" + ("" if port == 443 else f":{port}") + "/admin/"
+        self._edge(port, host, tls["tls.crt"], cliproxy["CLIPROXY_CLIENT_KEY"])
+        return digests, f"https://{host}" + ("" if port == 443 else f":{port}") + "/"
 
     # ─── шаги ────────────────────────────────────────────────────────────
     def _tls(self):
@@ -153,11 +167,11 @@ class Deploy:
             raise RuntimeError(f"namespace {NAMESPACE} exists without label {key}={owner}: "
                                f"it is not brood's; refusing to deploy into it")
 
-    def _image(self):
+    def _image(self, name, dockerfile):
         """Собрать и запушить образ -> digest. Тег -- только имя, под которым
         пушить: в манифест едет digest, и устаревший тег не разрешится."""
-        tag = f"{REPOSITORY}:build-{int(time.time())}"
-        self.shell.run("docker", "buildx", "build", "--push", "-f", DOCKERFILE, "-t", tag,
+        tag = f"{REGISTRY}/{name}:build-{int(time.time())}"
+        self.shell.run("docker", "buildx", "build", "--push", "-f", dockerfile, "-t", tag,
                        self.project)
         code, out, err = self.shell.output("docker", "buildx", "imagetools", "inspect", tag,
                                            "--format", "{{json .Manifest}}")
@@ -168,21 +182,31 @@ class Deploy:
             raise RuntimeError(f"no digest for {tag} in the registry")
         return digest
 
-    def _overlay(self, workdir, digest, server, admin, tls):
+    def _overlay(self, workdir, digests, server, admin, cliproxy, tls):
         os.chmod(workdir, 0o700)
         shutil.copytree(MANIFESTS, os.path.join(workdir, "base"))
-        files = {"kustomization.yaml": kustomization(digest),
-                 "server.env": env_file(server), "admin.env": env_file(admin), **tls}
+        files = {"kustomization.yaml": kustomization(digests),
+                 "server.env": env_file(server), "admin.env": env_file(admin),
+                 "cliproxy.env": env_file(cliproxy), **tls}
         for name, text in files.items():
             fd = os.open(os.path.join(workdir, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
 
-    def _edge(self, port, host, cert):
-        """Вход стенда отвечает: страница входа админки по https на порту
-        хоста и ровно тот сертификат, что выложен. NodePort доезжает до
-        kube-proxy не мгновенно -- поэтому с повтором."""
-        want = ssl.PEM_cert_to_DER_cert(cert)
+    def _edge(self, port, host, cert, client_key):
+        """Вход стенда отвечает по https на порту хоста ровно выложенным
+        сертификатом, и каждый его маршрут доходит до своего соседа: панель,
+        Django, ворота management без сессии и LLM API прокси с клиентским
+        ключом. NodePort доезжает до kube-proxy не мгновенно -- поэтому с
+        повтором."""
+        checks = ((("GET", "/", {}), 200), (("GET", "/admin/login/", {}), 200),
+                  (("GET", "/v8/management/config", {}), 401),
+                  (("GET", "/v1/models", {"Authorization": f"Bearer {client_key}"}), 200))
+        for (method, path, headers), want in checks:
+            self._answers(port, host, cert, method, path, headers, want)
+
+    def _answers(self, port, host, cert, method, path, headers, want):
+        expected = ssl.PEM_cert_to_DER_cert(cert)
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -191,21 +215,21 @@ class Deploy:
             try:
                 conn = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=5)
                 try:
-                    conn.request("GET", "/admin/login/", headers={"Host": host})
+                    conn.request(method, path, headers={"Host": host, **headers})
                     status = conn.getresponse().status
                     served = conn.sock.getpeercert(binary_form=True)
                 finally:
                     conn.close()
-                if served != want:
+                if served != expected:
                     raise RuntimeError(f"https on port {port} serves another certificate than "
                                        f"{TLS['tls.crt']}")
-                if status == 200:
+                if status == want:
                     return
-                last = f"HTTP {status}"
+                last = f"HTTP {status}, want {want}"
             except OSError as e:
                 last = str(e)
             if self.clock() >= deadline:
-                raise RuntimeError(f"https://{host}/admin/login/ via 127.0.0.1:{port} did not "
+                raise RuntimeError(f"{method} https://{host}{path} via 127.0.0.1:{port} did not "
                                    f"answer within {EDGE_DEADLINE} seconds: {last}")
             self.sleep(2)
 

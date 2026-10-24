@@ -1,0 +1,38 @@
+# Первый config.yaml CLIProxyAPI (cliproxy.yaml, init-контейнер seed). Формат --
+# config-version 8, как config.example.yaml прокси. Дальше файл правит панель.
+
+config-version: 8
+
+server:
+  host: 0.0.0.0
+  port: 8317
+
+management:
+  # Ключ -- MANAGEMENT_PASSWORD (Secret), здесь его нет; удалённый доступ им
+  # и так разрешён, а закрывает порт NetworkPolicy.
+  allow-remote: true
+  secret-key: ""
+  # Панель -- своя, на корне входа brood; встроенная прокси не нужна и не
+  # должна скачиваться с GitHub.
+  disable-control-panel: true
+  disable-auto-update-panel: true
+
+access:
+  # Клиентский ключ: им представляются мастера и акторы на /v1.
+  api-keys:
+    - "@CLIPROXY_CLIENT_KEY@"
+
+oauth:
+  auth-dir: /data/auths
+
+plugins:
+  enabled: true
+  dir: /data/plugins
+
+observability:
+  logs:
+    # Страница журналов панели читает файлы прокси.
+    logging-to-file: true
+    logs-max-total-size-mb: 100
+    # Тела запросов не пишем; включается из панели для разбора.
+    request-log: false

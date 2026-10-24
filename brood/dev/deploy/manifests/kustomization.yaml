@@ -1,5 +1,5 @@
 # База kustomize сервера brood. Выкладка дописывает к ней оверлей во
-# временном каталоге: образ по digest и Secret'ы из .env и secrets/
+# временном каталоге: образы по digest и Secret'ы из .env и secrets/
 # (brood/dev/deploy/server.py).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -7,8 +7,10 @@ namespace: brood
 resources:
   - namespace.yaml
   - postgres.yaml
-  - server.yaml
+  - django.yaml
+  - cliproxy.yaml
+  - edge.yaml
 configMapGenerator:
-  - name: brood-nginx
+  - name: cliproxy-seed
     files:
-      - default.conf=nginx.conf
+      - config.yaml=cliproxy-config.yaml
