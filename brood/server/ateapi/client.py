@@ -15,19 +15,21 @@ AUDIENCE = "api.ate-system.svc"
 ENDPOINT = f"{AUDIENCE}:443"
 
 
-class BearerToken:
+class BearerToken(grpc.AuthMetadataPlugin):
     """Токен из файла -- в каждый вызов: kubelet ротирует его подточку,
-    канал пересобирать не нужно."""
+    канал пересобирать не нужно. Оборачивается metadata_call_credentials:
+    composite_channel_credentials принимает только CallCredentials, голый
+    класс с GetRequestMetadata падает AttributeError'ом."""
 
     def __init__(self, path):
+        super().__init__()
         self.path = path
 
-    def GetRequestMetadata(self, _callback=None):  # noqa: N802 -- имя gRPC
+    def __call__(self, callback, service_url=None):
+        """gRPC зовет это при каждом запросе; metadata -- асинхронно, через
+        callback, но чтение маленького файла здесь синхронно и мгновенно."""
         with open(self.path, encoding="utf-8") as f:
-            return (("authorization", f"Bearer {f.read().strip()}"),)
-
-    def RequireTransportSecurity(self):  # noqa: N802 -- имя gRPC
-        return True
+            callback((("authorization", f"Bearer {f.read().strip()}"),), None)
 
 
 class Client:
@@ -38,7 +40,8 @@ class Client:
         self.channel = grpc.secure_channel(
             endpoint,
             grpc.composite_channel_credentials(
-                _server_credentials(ca_file), BearerToken(token_file)))
+                _server_credentials(ca_file),
+                grpc.metadata_call_credentials(BearerToken(token_file))))
 
     def close(self):
         self.channel.close()
