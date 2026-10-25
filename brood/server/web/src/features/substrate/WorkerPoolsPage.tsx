@@ -4,15 +4,16 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { Select } from '@/components/ui/Select';
 import { BroodApiError, errorMessage } from '@/services/brood/http';
 import { workerPoolsApi, type WorkerPool } from '@/services/brood/substrate';
 import { EditorSheet } from './components/EditorSheet';
 import { EntityTable, type Column } from './components/EntityTable';
-import { Section } from './components/form';
+import { Field, Section } from './components/form';
 import { PageHeader } from './components/PageHeader';
 import { DASH } from './format';
 import { useActions, useResource } from './hooks';
-import { newPoolDraft, poolDraft, poolPayload, validatePoolDraft, type PoolDraft } from './workerPoolDraft';
+import { newPoolDraft, poolDraft, poolPayload, validatePoolDraft, workerPoolImages, type PoolDraft } from './workerPoolDraft';
 import styles from './substrate.module.scss';
 
 const versioned = (pool: WorkerPool) => Boolean(pool.metadata.uid && pool.metadata.resourceVersion);
@@ -87,13 +88,14 @@ function PoolEditor({ name, onClose, refresh }: EditorProps) {
   const load = useCallback(async () => {
     if (name !== undefined) {
       const source = await workerPoolsApi.get(name);
-      return { source, draft: poolDraft(source) };
+      return { source, draft: poolDraft(source), images: {} };
     }
-    const defaults = await workerPoolsApi.defaults();
-    return { source: null, draft: newPoolDraft(defaults.workerImage ?? '') };
+    const images = workerPoolImages(await workerPoolsApi.defaults());
+    const sandboxClass = Object.keys(images)[0] ?? '';
+    return { source: null, draft: newPoolDraft(images[sandboxClass] ?? '', sandboxClass), images };
   }, [name]);
   const resource = useResource(load, { headerRefresh: false });
-  if (resource.data) return <PoolForm source={resource.data.source} initial={resource.data.draft} onClose={onClose} refresh={refresh} />;
+  if (resource.data) return <PoolForm source={resource.data.source} initial={resource.data.draft} images={resource.data.images} onClose={onClose} refresh={refresh} />;
   return (
     <EditorSheet open onClose={onClose} title={name ?? t('worker_pools.create')}>
       {resource.error ? <EmptyState title={t('substrate.load_failed')} description={resource.error}
@@ -105,9 +107,10 @@ function PoolEditor({ name, onClose, refresh }: EditorProps) {
 interface FormProps extends Omit<EditorProps, 'name'> {
   source: WorkerPool | null;
   initial: PoolDraft;
+  images: Record<string, string>;
 }
 
-function PoolForm({ source: loadedSource, initial: loadedDraft, onClose, refresh }: FormProps) {
+function PoolForm({ source: loadedSource, initial: loadedDraft, images, onClose, refresh }: FormProps) {
   const { t } = useTranslation();
   // Обновление списка из шапки не меняет предусловие открытого черновика.
   const [{ source, initial }] = useState(() => ({ source: loadedSource, initial: loadedDraft }));
@@ -135,7 +138,7 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, onClose, refresh
     if (ok) onClose();
   };
   const input = (field: keyof PoolDraft, label: string, hint?: string) => (
-    <Input label={label} value={draft[field]} disabled={saving || (field === 'name' && source !== null)}
+    <Input label={label} value={draft[field]} disabled={saving || field === 'workerImage' || (field === 'name' && source !== null)}
       hint={hint} error={errors[field] ? t(`worker_pools.validation.${errors[field]}`) : undefined}
       onChange={(event) => setDraft({ ...draft, [field]: event.target.value })}
       {...(field === 'replicas' ? { type: 'number', min: 0, max: 2147483647, step: 1 } : {})} />
@@ -150,8 +153,21 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, onClose, refresh
         <Section title={t('worker_pools.configuration')}>
           {input('name', t('substrate.name'))}
           {input('replicas', t('worker_pools.replicas'))}
+          {source ? (
+            <Input label={t('worker_pools.sandbox')} disabled
+              value={source.spec.sandboxClasses.map((entry) => entry.name).join(', ')} />
+          ) : (
+            <Field label={t('worker_pools.sandbox')}
+              error={errors.sandboxClass ? t('worker_pools.validation.image') : undefined}>
+              {(id) => <Select id={id} value={draft.sandboxClass} disabled={saving}
+                ariaLabel={t('worker_pools.sandbox')} ariaInvalid={Boolean(errors.sandboxClass)}
+                options={Object.keys(images).map((value) => ({ value, label: value }))}
+                onChange={(sandboxClass) => setDraft({
+                  ...draft, sandboxClass, workerImage: images[sandboxClass],
+                })} />}
+            </Field>
+          )}
           {input('workerImage', t('worker_pools.image'), t('worker_pools.image_hint'))}
-          <p className={styles.fieldHint}>{t('worker_pools.sandbox')}: {source?.spec.sandboxClasses.map((entry) => entry.name).join(', ') ?? 'gvisor'}</p>
         </Section>
         <Section title={t('worker_pools.resources')} hint={t('worker_pools.resources_hint')}>
           <div className={styles.grid2}>
