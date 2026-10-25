@@ -171,8 +171,10 @@ class Deploy:
         self._namespace_is_ours()
         api_rules = self._api_egress()
         digests = {name: self._image(name, dockerfile) for name, dockerfile in IMAGES.items()}
-        worker_image = self._worker_image()
+        worker_images = self._worker_images()
+        worker_image = worker_images["gvisor"]
         server["WORKER_POOL_IMAGE"] = worker_image
+        server["WORKER_POOL_IMAGES"] = json.dumps(worker_images, sort_keys=True)
         workdir = tempfile.mkdtemp(prefix="brood-deploy.")
         try:
             self._overlay(workdir, digests, server, admin, cliproxy, tls, api_rules)
@@ -250,6 +252,24 @@ class Deploy:
             except ValueError:
                 raise RuntimeError(f"Kubernetes API discovery: invalid JSON for {resource}") from None
         return api_egress(*objects)
+
+    def _worker_images(self):
+        code, out, err = self.shell.output(
+            "kubectl", f"--context={local.CONTEXT}", "get", "sandboxconfig", "microvm",
+            "--ignore-not-found", "-o", "json", "--request-timeout=30s")
+        if code:
+            raise RuntimeError(f"cannot inspect microvm SandboxConfig: {local.reason(err, code)}")
+        available = False
+        if out.strip():
+            try:
+                config = json.loads(out)
+                if config["spec"]["sandboxClass"] != "microvm":
+                    raise ValueError("sandbox class does not match microvm")
+                available = True
+            except (ValueError, KeyError, TypeError):
+                raise RuntimeError("cannot inspect microvm SandboxConfig: invalid JSON or class") from None
+        classes = ("gvisor", "microvm") if available else ("gvisor",)
+        return {runtime: self._worker_image(runtime) for runtime in classes}
 
     def _worker_image(self, sandbox_class="gvisor"):
         """Тот же pinned ko, .ko.yaml, version stamp и host platform, что ate-setup.
