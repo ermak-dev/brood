@@ -57,6 +57,9 @@ CRUD atespace требует global owner. Общий `ate-client` оставл�
 - кластер kind `substrate` (контейнер `substrate-control-plane`), конфиг —
   `brood/dev/substrate/kind.yaml`;
 - реестр `substrate-registry` на `127.0.0.1:5002`, в него `ko` кладёт образы;
+  containerd и atelet обращаются к нему как `substrate-registry:5000`. После
+  upstream deploy установка согласует флаг `--localhost-registry-replacement`
+  atelet с этим именем, не меняя остальные аргументы и чужие контейнеры;
 - Substrate в `ate-system`: gVisor, dataplane envoy. Ingress пускает
   identity ServiceAccount `ate-system/ate-client`; credential provider
   стартует со своей политикой default-deny по namespace;
