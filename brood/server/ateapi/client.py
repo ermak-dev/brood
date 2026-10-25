@@ -13,6 +13,8 @@ from brood.server.ateapi import ateapi_pb2, ateapi_pb2_grpc
 # Адрес и audience api.ate-system.svc: ateapi проверяет ровно его.
 AUDIENCE = "api.ate-system.svc"
 ENDPOINT = f"{AUDIENCE}:443"
+# Политика доступа -- синглтон скоупа, другого имени ateapi не примет.
+POLICY = "default"
 
 
 class BearerToken(grpc.AuthMetadataPlugin):
@@ -38,151 +40,136 @@ class Client:
     чтобы подменять их в проверках."""
 
     def __init__(self, token_file, ca_file, endpoint=ENDPOINT):
+        # Другой адрес -- port-forward разработчика, как у kubectl ate: TLS
+        # всё равно сверяет имя сервиса, на которое выписан сертификат ateapi.
+        options = [] if endpoint == ENDPOINT else [("grpc.ssl_target_name_override", AUDIENCE)]
         self.channel = grpc.secure_channel(
             endpoint,
             grpc.composite_channel_credentials(
                 _server_credentials(ca_file),
-                grpc.metadata_call_credentials(BearerToken(token_file))))
+                grpc.metadata_call_credentials(BearerToken(token_file))),
+            options=options)
 
     def close(self):
         self.channel.close()
 
     # ─── Atespace ────────────────────────────────────────────────────────
-    def list_atespaces(self, page_token=""):
-        """Все atespace постранично -> [ateapi_pb2.Atespace]."""
-        out = []
-        while True:
-            request = ateapi_pb2.ListAtespacesRequest(
-                options=ateapi_pb2.ListOptions(page_token=page_token))
-            response = self._stub().ListAtespaces(request)
-            out.extend(response.atespaces)
-            page_token = response.next_page_token
-            if not page_token:
-                return out
+    def list_atespaces(self):
+        return self._list("ListAtespaces", "atespaces", ateapi_pb2.ListAtespacesRequest())
 
     def get_atespace(self, name):
-        return self._stub().GetAtespace(
-            ateapi_pb2.GetAtespaceRequest(atespace=ateapi_pb2.ObjectRef(name=name)))
+        return self._stub().GetAtespace(ateapi_pb2.GetAtespaceRequest(atespace=_ref(name)))
 
-    def create_atespace(self, name):
-        return self._stub().CreateAtespace(
-            ateapi_pb2.CreateAtespaceRequest(
-                atespace=ateapi_pb2.Atespace(
-                    metadata=ateapi_pb2.ResourceMetadata(name=name))))
+    def create_atespace(self, atespace):
+        return self._stub().CreateAtespace(ateapi_pb2.CreateAtespaceRequest(atespace=atespace))
 
     def delete_atespace(self, name):
-        return self._stub().DeleteAtespace(
-            ateapi_pb2.DeleteAtespaceRequest(
-                atespace=ateapi_pb2.ObjectRef(name=name)))
+        return self._stub().DeleteAtespace(ateapi_pb2.DeleteAtespaceRequest(atespace=_ref(name)))
 
     # ─── Actor ───────────────────────────────────────────────────────────
-    def list_actors(self, atespace, page_token=""):
-        """Все акторы atespace постранично -> [ateapi_pb2.Actor]."""
-        out = []
-        while True:
-            request = ateapi_pb2.ListActorsRequest(
-                atespace=atespace,
-                options=ateapi_pb2.ListOptions(page_token=page_token))
-            response = self._stub().ListActors(request)
-            out.extend(response.actors)
-            page_token = response.next_page_token
-            if not page_token:
-                return out
+    def list_actors(self, atespace):
+        return self._list("ListActors", "actors",
+                          ateapi_pb2.ListActorsRequest(atespace=atespace))
 
     def get_actor(self, atespace, name):
-        return self._stub().GetActor(
-            ateapi_pb2.GetActorRequest(actor=self._ref(atespace, name)))
+        return self._stub().GetActor(ateapi_pb2.GetActorRequest(actor=_ref(name, atespace)))
+
+    def create_actor(self, actor):
+        return self._stub().CreateActor(ateapi_pb2.CreateActorRequest(actor=actor))
+
+    def update_actor(self, actor):
+        """Замена изменяемых полей (шаблон, workerSelector); uid и version в
+        metadata -- предусловие: ateapi откажет ABORTED, если актор менялся."""
+        return self._stub().UpdateActor(ateapi_pb2.UpdateActorRequest(actor=actor))
 
     def suspend_actor(self, atespace, name):
         return self._stub().SuspendActor(
-            ateapi_pb2.SuspendActorRequest(actor=self._ref(atespace, name))).actor
+            ateapi_pb2.SuspendActorRequest(actor=_ref(name, atespace))).actor
 
     def resume_actor(self, atespace, name):
         return self._stub().ResumeActor(
-            ateapi_pb2.ResumeActorRequest(actor=self._ref(atespace, name))).actor
+            ateapi_pb2.ResumeActorRequest(actor=_ref(name, atespace))).actor
 
     def delete_actor(self, atespace, name):
-        return self._stub().DeleteActor(
-            ateapi_pb2.DeleteActorRequest(actor=self._ref(atespace, name)))
+        return self._stub().DeleteActor(ateapi_pb2.DeleteActorRequest(actor=_ref(name, atespace)))
 
-    # ─── ActorTemplate ───────────────────────────────────────────────────
-    def list_actor_templates(self, atespace, page_token=""):
-        """Все шаблоны акторов atespace постранично -> [ateapi_pb2.ActorTemplate]."""
-        out = []
-        while True:
-            request = ateapi_pb2.ListActorTemplatesRequest(
-                atespace=atespace,
-                options=ateapi_pb2.ListOptions(page_token=page_token))
-            response = self._stub().ListActorTemplates(request)
-            out.extend(response.actor_templates)
-            page_token = response.next_page_token
-            if not page_token:
-                return out
+    # ─── ActorTemplate: неизменяем, Update в ateapi нет ──────────────────
+    def list_actor_templates(self, atespace):
+        return self._list("ListActorTemplates", "actor_templates",
+                          ateapi_pb2.ListActorTemplatesRequest(atespace=atespace))
 
     def get_actor_template(self, atespace, name):
         return self._stub().GetActorTemplate(
-            ateapi_pb2.GetActorTemplateRequest(actor_template=self._ref(atespace, name)))
+            ateapi_pb2.GetActorTemplateRequest(actor_template=_ref(name, atespace)))
+
+    def create_actor_template(self, template):
+        return self._stub().CreateActorTemplate(
+            ateapi_pb2.CreateActorTemplateRequest(actor_template=template))
 
     def delete_actor_template(self, atespace, name):
         return self._stub().DeleteActorTemplate(
-            ateapi_pb2.DeleteActorTemplateRequest(actor_template=self._ref(atespace, name)))
+            ateapi_pb2.DeleteActorTemplateRequest(actor_template=_ref(name, atespace)))
 
-    # ─── Worker ──────────────────────────────────────────────────────────
-    def list_workers(self, page_token=""):
-        """Все воркеры установки постранично -> [ateapi_pb2.Worker]."""
-        out = []
-        while True:
-            request = ateapi_pb2.ListWorkersRequest(
-                options=ateapi_pb2.ListOptions(page_token=page_token))
-            response = self._stub().ListWorkers(request)
-            out.extend(response.workers)
-            page_token = response.next_page_token
-            if not page_token:
-                return out
+    # ─── Worker: зеркало пода, пишет ate-controller ─────────────────────
+    def list_workers(self):
+        return self._list("ListWorkers", "workers", ateapi_pb2.ListWorkersRequest())
 
     def get_worker(self, name):
-        return self._stub().GetWorker(
-            ateapi_pb2.GetWorkerRequest(worker=ateapi_pb2.ObjectRef(name=name)))
+        return self._stub().GetWorker(ateapi_pb2.GetWorkerRequest(worker=_ref(name)))
 
     def drain_worker(self, name):
-        return self._stub().DrainWorker(
-            ateapi_pb2.DrainWorkerRequest(worker=ateapi_pb2.ObjectRef(name=name))).worker
+        return self._stub().DrainWorker(ateapi_pb2.DrainWorkerRequest(worker=_ref(name))).worker
 
-    # ─── AccessPolicy ────────────────────────────────────────────────────
-    def get_global_access_policy(self, name="default"):
+    # ─── AccessPolicy: одна на скоуп, имя default ────────────────────────
+    def get_global_access_policy(self):
         return self._stub().GetGlobalAccessPolicy(
-            ateapi_pb2.GetGlobalAccessPolicyRequest(name=name))
+            ateapi_pb2.GetGlobalAccessPolicyRequest(name=POLICY))
+
+    def create_global_access_policy(self, policy):
+        return self._stub().CreateGlobalAccessPolicy(
+            ateapi_pb2.CreateGlobalAccessPolicyRequest(access_policy=policy))
 
     def update_global_access_policy(self, policy):
         return self._stub().UpdateGlobalAccessPolicy(
             ateapi_pb2.UpdateGlobalAccessPolicyRequest(access_policy=policy))
 
-    def get_atespace_access_policy(self, atespace, name="default"):
+    def get_atespace_access_policy(self, atespace):
         return self._stub().GetAtespaceAccessPolicy(
-            ateapi_pb2.GetAtespaceAccessPolicyRequest(
-                atespace=ateapi_pb2.ObjectRef(name=atespace), name=name))
+            ateapi_pb2.GetAtespaceAccessPolicyRequest(atespace=_ref(atespace), name=POLICY))
 
     def create_atespace_access_policy(self, atespace, policy):
         return self._stub().CreateAtespaceAccessPolicy(
-            ateapi_pb2.CreateAtespaceAccessPolicyRequest(
-                atespace=ateapi_pb2.ObjectRef(name=atespace), access_policy=policy))
+            ateapi_pb2.CreateAtespaceAccessPolicyRequest(atespace=_ref(atespace),
+                                                         access_policy=policy))
 
     def update_atespace_access_policy(self, atespace, policy):
         return self._stub().UpdateAtespaceAccessPolicy(
-            ateapi_pb2.UpdateAtespaceAccessPolicyRequest(
-                atespace=ateapi_pb2.ObjectRef(name=atespace), access_policy=policy))
+            ateapi_pb2.UpdateAtespaceAccessPolicyRequest(atespace=_ref(atespace),
+                                                         access_policy=policy))
 
-    def delete_atespace_access_policy(self, atespace, name="default"):
+    def delete_atespace_access_policy(self, atespace):
         return self._stub().DeleteAtespaceAccessPolicy(
-            ateapi_pb2.DeleteAtespaceAccessPolicyRequest(
-                atespace=ateapi_pb2.ObjectRef(name=atespace), name=name))
+            ateapi_pb2.DeleteAtespaceAccessPolicyRequest(atespace=_ref(atespace), name=POLICY))
 
-    def _ref(self, atespace, name):
-        """Ссылка на ресурс: atespace + имя."""
-        return ateapi_pb2.ObjectRef(atespace=atespace, name=name)
+    # ─── шаги ────────────────────────────────────────────────────────────
+    def _list(self, rpc, field, request):
+        """Все элементы List-RPC постранично (потолок страницы ateapi --
+        1000) -> список сообщений из поля field ответа."""
+        out = []
+        while True:
+            response = getattr(self._stub(), rpc)(request)
+            out.extend(getattr(response, field))
+            if not response.next_page_token:
+                return out
+            request.options.page_token = response.next_page_token
 
     def _stub(self):
         return ateapi_pb2_grpc.ControlStub(self.channel)
+
+
+def _ref(name, atespace=""):
+    """Ссылка на ресурс; atespace пуст у глобальных (Atespace, Worker)."""
+    return ateapi_pb2.ObjectRef(atespace=atespace, name=name)
 
 
 def _server_credentials(ca_file):

@@ -6,6 +6,8 @@
  * API client sends no Authorization header at all.
  */
 
+import { csrfToken } from './http';
+
 export interface BroodSession {
   authenticated: boolean;
   username: string;
@@ -25,11 +27,6 @@ export class BroodAuthError extends Error {
 const SESSION_URL = '/auth/session';
 const LOGIN_URL = '/auth/login';
 const LOGOUT_URL = '/auth/logout';
-
-function csrfToken(): string {
-  const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : '';
-}
 
 async function readSession(response: Response): Promise<BroodSession> {
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;

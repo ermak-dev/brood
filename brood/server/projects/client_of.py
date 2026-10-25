@@ -14,7 +14,8 @@ _testing = None
 
 @functools.cache
 def _client():
-    return ateapi.Client(settings.ATEAPI_TOKEN, settings.ATEAPI_CA)
+    return ateapi.Client(settings.ATEAPI_TOKEN, settings.ATEAPI_CA,
+                         settings.ATEAPI_ENDPOINT or ateapi.ENDPOINT)
 
 
 def client_of():

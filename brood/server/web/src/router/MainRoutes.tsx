@@ -1,10 +1,10 @@
 import { Navigate, useRoutes, type Location } from 'react-router-dom';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
-import { ProjectsPage } from '@/features/projects/ProjectsPage';
-import { ProjectActorsPage } from '@/features/projects/ProjectActorsPage';
-import { TemplatesPage } from '@/features/projects/TemplatesPage';
-import { WorkersPage } from '@/features/projects/WorkersPage';
-import { PolicyPage } from '@/features/projects/PolicyPage';
+import { ActorsPage } from '@/features/substrate/ActorsPage';
+import { PolicyPage } from '@/features/substrate/PolicyPage';
+import { ProjectsPage } from '@/features/substrate/ProjectsPage';
+import { TemplatesPage } from '@/features/substrate/TemplatesPage';
+import { WorkersPage } from '@/features/substrate/WorkersPage';
 import { ProvidersWorkbenchPage } from '@/features/providers/ProvidersWorkbenchPage';
 import { AuthFilesPage } from '@/features/authFiles/AuthFilesPage';
 import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
@@ -25,8 +25,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   // brood: проекты -- atespace'ы Substrate установки; их сущности и воркеры
   // с политикой -- свои разделы.
   { path: '/projects', element: <ProjectsPage /> },
-  { path: '/projects/:project/actors', element: <ProjectActorsPage /> },
-  { path: '/actors', element: <ProjectActorsPage /> },
+  { path: '/actors', element: <ActorsPage /> },
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
   { path: '/policy', element: <PolicyPage /> },

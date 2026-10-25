@@ -1,0 +1,188 @@
+/**
+ * brood: Substrate entities through the brood server (/api, Django -> ateapi).
+ *
+ * Objects travel in ateapi's canonical protojson -- the shape `kubectl ate get
+ * -o yaml` prints and Substrate's demo templates use: camelCase fields, int64
+ * as strings, enums by name. Editors change the fields they know on the object
+ * as read and send the rest back untouched, so nothing a form does not show is
+ * lost.
+ */
+
+import { request } from './http';
+
+export interface Meta {
+  name: string;
+  atespace?: string;
+  uid?: string;
+  version?: string;
+  createTime?: string;
+  updateTime?: string;
+}
+
+export interface ObjectRef {
+  atespace?: string;
+  name: string;
+}
+
+export interface Selector {
+  matchLabels?: Record<string, string>;
+}
+
+export interface Atespace {
+  metadata: Meta;
+}
+
+export interface ActorStatus {
+  state?: string;
+  assignedNode?: string;
+  workerAssignment?: { worker?: ObjectRef; workerPod?: string; nodeName?: string };
+  crash?: Record<string, unknown>;
+  snapshots?: unknown[];
+}
+
+export interface Actor {
+  metadata: Meta;
+  actorTemplate?: ObjectRef;
+  workerSelector?: Selector;
+  sourceTag?: ObjectRef;
+  status?: ActorStatus;
+}
+
+export interface EnvVar {
+  name: string;
+  value?: string;
+}
+
+export interface VolumeMount {
+  name: string;
+  mountPath: string;
+}
+
+export interface Container {
+  name: string;
+  image: string;
+  command?: string[];
+  args?: string[];
+  env?: EnvVar[];
+  volumeMounts?: VolumeMount[];
+  [field: string]: unknown;
+}
+
+export interface Volume {
+  name: string;
+  [source: string]: unknown;
+}
+
+export interface Limits {
+  cpuMillicores?: string;
+  memoryBytes?: string;
+}
+
+export interface ActorTemplate {
+  metadata: Meta;
+  workerSelector?: Selector;
+  containers: Container[];
+  volumes?: Volume[];
+  resources?: { limits?: Limits };
+  snapshotConfig?: {
+    preferredFidelity?: string;
+    storageLocation?: string;
+    goldenSnapshotConfig?: { mode?: string };
+    [field: string]: unknown;
+  };
+  /** Output only: the golden snapshot ateapi takes from the template's golden
+   * actor (named by the template's uid). */
+  status?: {
+    goldenSnapshotStatus?: { goldenTag?: ObjectRef; snapshotTime?: string; errorMessage?: string };
+  };
+  [field: string]: unknown;
+}
+
+export interface WorkerResources {
+  cpuMillicores?: string;
+  memoryBytes?: string;
+  actors?: number;
+}
+
+export interface Worker {
+  metadata: Meta;
+  workerNamespace?: string;
+  workerPool?: string;
+  workerPod?: string;
+  nodeName?: string;
+  workerSpiffeId?: string;
+  labels?: Record<string, string>;
+  status?: {
+    state?: string;
+    capacity?: WorkerResources;
+    allocated?: WorkerResources;
+    ips?: string[];
+    sandboxClasses?: unknown[];
+  };
+}
+
+export interface Binding {
+  role: string;
+  members?: string[];
+}
+
+export interface AccessPolicy {
+  metadata?: Meta;
+  bindings?: Binding[];
+}
+
+export type ActorAction = 'suspend' | 'resume';
+
+const path = encodeURIComponent;
+const projectPath = (project: string) => `/api/projects/${path(project)}`;
+/** '' -- the whole install, otherwise the project's own policy. */
+const policyPath = (project: string) =>
+  project ? `/api/policy/projects/${path(project)}` : '/api/policy/global';
+
+async function list<T>(url: string): Promise<T[]> {
+  const body = await request<{ results?: T[] }>('GET', url);
+  return body?.results ?? [];
+}
+
+export const projectsApi = {
+  list: () => list<Atespace>('/api/projects'),
+  create: (name: string) => request<Atespace>('POST', '/api/projects', { metadata: { name } }),
+  remove: (name: string) => request<null>('DELETE', `/api/projects/${path(name)}`),
+};
+
+export const actorsApi = {
+  list: (project: string) => list<Actor>(`${projectPath(project)}/actors`),
+  get: (project: string, name: string) =>
+    request<Actor>('GET', `${projectPath(project)}/actors/${path(name)}`),
+  create: (project: string, actor: Actor) =>
+    request<Actor>('POST', `${projectPath(project)}/actors`, actor),
+  update: (project: string, actor: Actor) =>
+    request<Actor>('PUT', `${projectPath(project)}/actors/${path(actor.metadata.name)}`, actor),
+  act: (project: string, name: string, action: ActorAction) =>
+    request<Actor>('POST', `${projectPath(project)}/actors/${path(name)}`, { action }),
+  remove: (project: string, name: string) =>
+    request<null>('DELETE', `${projectPath(project)}/actors/${path(name)}`),
+};
+
+export const templatesApi = {
+  list: (project: string) => list<ActorTemplate>(`${projectPath(project)}/templates`),
+  create: (project: string, template: ActorTemplate) =>
+    request<ActorTemplate>('POST', `${projectPath(project)}/templates`, template),
+  remove: (project: string, name: string) =>
+    request<null>('DELETE', `${projectPath(project)}/templates/${path(name)}`),
+};
+
+export const workersApi = {
+  list: () => list<Worker>('/api/workers'),
+  drain: (name: string) =>
+    request<Worker>('POST', `/api/workers/${path(name)}`, { action: 'drain' }),
+};
+
+export const policyApi = {
+  get: (project: string) => request<AccessPolicy>('GET', policyPath(project)),
+  create: (project: string, policy: AccessPolicy) =>
+    request<AccessPolicy>('POST', policyPath(project), policy),
+  update: (project: string, policy: AccessPolicy) =>
+    request<AccessPolicy>('PUT', policyPath(project), policy),
+  remove: (project: string) => request<null>('DELETE', policyPath(project)),
+};

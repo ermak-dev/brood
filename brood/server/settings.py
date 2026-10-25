@@ -126,6 +126,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # и /api/projects отвечает 503 с причиной.
 ATEAPI_TOKEN = config.get("ATEAPI_TOKEN")
 ATEAPI_CA = config.get("ATEAPI_CA")
+# Пусто -- сервис ateapi внутри кластера. Разработчик с сервером вне кластера
+# ставит адрес своего port-forward (kubectl port-forward -n ate-system svc/api).
+ATEAPI_ENDPOINT = config.get("ATEAPI_ENDPOINT")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],

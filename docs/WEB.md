@@ -63,17 +63,60 @@ AI Providers.
   `system_info.about_title` в локалях;
 - без быстрого старта: `src/router/MainRoutes.tsx`,
   `src/components/layout/MainLayout.tsx`;
-- сущности Substrate за API сервера brood: проекты (Atespace) --
-  `/api/projects`, акторы (Actor) и шаблоны (ActorTemplate) --
-  `/api/projects/<project>/actors|templates`, воркеры -- `/api/workers`,
-  политика доступа (AccessPolicy) -- `/api/policy/global|projects/<name>`.
-  Страницы: `src/features/projects/` (новый), API-модуль
-  `src/services/brood/projects.ts` (новый), иконки `IconSidebar*` в
-  `src/components/ui/icons.tsx`, пункты в nav-группе operate и переключатель
-  активного проекта в шапке (`ProjectSwitcher` в `MainLayout.tsx`, store
-  `src/stores/useProjectStore.ts`), маршруты в `MainRoutes.tsx`, строки
-  `nav.*`, `nav_meta.*`, `projects.*`, `templates.*`, `workers.*`,
-  `policy.*` в локалях.
+- сущности Substrate (раздел «Сущности Substrate» ниже): `src/features/substrate/`
+  (новый), `src/services/brood/http.ts` и `substrate.ts` (новые; `session.ts`
+  берёт из `http.ts` общий `csrfToken`), иконки `IconSidebar*` в
+  `src/components/ui/icons.tsx`, пункты nav-группы operate и переключатель
+  проекта в шапке (`MainLayout.tsx` подключает `ProjectSwitcher`, его кнопка
+  с подписью -- в `src/styles/layout.scss`), store
+  `src/stores/useProjectStore.ts`, маршруты в `MainRoutes.tsx`, строки
+  `nav.*`, `nav_meta.*`, `substrate.*`, `projects.*`, `actors.*`,
+  `templates.*`, `workers.*`, `policy.*` в локалях, `tests/substrateDraft.test.ts`
+  (новый).
+
+## Сущности Substrate
+
+Проекты (Atespace), акторы, шаблоны, воркеры и политика доступа -- свои
+пункты меню; акторы и шаблоны -- в активном проекте из переключателя шапки.
+Сервер brood (`brood/server/projects`) -- тонкий прокси к ateapi: объекты
+ходят в каноническом protojson ateapi (как `kubectl ate get -o yaml` и демо-
+шаблоны Substrate), редакторы меняют знакомые поля на прочитанном объекте и
+шлют остальное как есть. Что правится, решает ateapi, а не панель:
+
+- проект -- только имя: создать и удалить (непустой ateapi не удалит);
+- актор -- шаблон (лишь у приостановленного) и `workerSelector`; Update
+  заменяет объект целиком, поэтому прочитанный актор едет обратно со своим
+  `sourceTag`. Предусловие (`uid`/`version`) панель перечитывает перед
+  сохранением: ateapi поднимает версию и на каждой смене состояния актора, так
+  что прочитанная при открытии редактора устаревает; правленые поля побеждают;
+- шаблон неизменяем: «правка» -- копия; форма покрывает контейнеры, тома-
+  каталоги снапшота, ресурсы, размещение и снапшоты, вкладка JSON -- всё
+  остальное. Образ -- только по digest;
+- воркер -- зеркало пода, его пишет ate-controller: из панели -- только drain;
+- политика -- одна на скоуп (`default`): заводится POST, меняется PUT с
+  прочитанными `uid`/`version`, глобальная не удаляется. Её версию двигают
+  только правки политики, поэтому конфликт (409) значит чужую правку: черновик
+  остаётся, панель предупреждает и берёт свежее предусловие -- следующее
+  «Сохранить» заменит чужое осознанно.
+
+Актор, названный UID шаблона, -- золотой: его заводит ateapi для золотого
+снапшота шаблона; панель подписывает его и не даёт действий.
+
+Черновик шаблона -- чистые функции `templateDraft.ts`: JSON-вкладка
+проверяет форму полей, которые читает форма, до перехода на неё и до
+сохранения -- иначе кривой JSON ронял бы страницу.
+
+Каркас страниц общий: `PageHeader`, `EntityTable` (на телефоне -- карточки),
+`EditorSheet` (Sheet апстрима; спрашивает перед закрытием с несохранённым),
+`KeyValueEditor`, `ChipsInput`, `Segmented`; загрузка -- `useResource`,
+действия с уведомлением и подтверждением -- `useActions`.
+
+Сервер вне кластера (разработчик) ходит в ateapi через port-forward:
+`ATEAPI_ENDPOINT=127.0.0.1:<порт>` в `.env` при `kubectl port-forward -n
+ate-system svc/api <порт>:443`, плюс `ATEAPI_TOKEN` (токен с audience
+`api.ate-system.svc`) и `ATEAPI_CA` (ClusterTrustBundle signer'а
+`servicedns.podcert.ate.dev/identity`); TLS по-прежнему сверяет имя
+`api.ate-system.svc`.
 
 ## Сборка и проверки
 

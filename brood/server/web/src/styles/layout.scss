@@ -150,15 +150,6 @@
     gap: 4px;
     padding: 6px;
 
-    /* brood: подпись активного проекта в переключателе шапки. */
-    .project-switcher-label {
-      max-width: 140px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 13px;
-      font-weight: 500;
-    }
     border: 1px solid color-mix(in srgb, var(--border-color) 68%, transparent);
     border-radius: 16px;
     background: color-mix(in srgb, var(--bg-primary) 68%, transparent);
@@ -208,6 +199,34 @@
     &:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 26%, transparent);
+    }
+  }
+
+  /* brood: переключатель проекта -- кнопка с подписью, а не квадрат иконки:
+   * ширина по содержимому, подпись обрезается многоточием. */
+  .header-actions .project-switcher .btn {
+    width: auto;
+    padding: 0 10px;
+
+    > span {
+      gap: 6px;
+      line-height: 1;
+    }
+  }
+
+  .project-switcher-label {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    .project-switcher-label {
+      max-width: 72px;
     }
   }
 
