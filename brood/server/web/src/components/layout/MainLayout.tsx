@@ -25,8 +25,11 @@ import {
   IconSidebarOauth,
   IconSidebarPlugins,
   IconSidebarProjects,
-  IconSidebarProviders,
-  IconSidebarQuota,
+  IconSidebarActors,
+  IconSidebarTemplates,
+  IconSidebarWorkers,
+  IconSidebarPolicy,
+  IconSidebarProviders,  IconSidebarQuota,
   IconSidebarStore,
   IconSidebarSystem,
   IconChevronDown,
@@ -50,11 +53,102 @@ import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { getSidebarShortcutLabel, isSidebarToggleShortcut } from '@/utils/sidebarShortcut';
+import { listProjects } from '@/services/brood/projects';
+import { useProjectStore } from '@/stores/useProjectStore';
 import type { Theme } from '@/types';
+
+/** brood: глобальный переключатель активного проекта (atespace). Разделы
+ * акторов, шаблонов и политики проекта читают его; список -- /api/projects,
+ * так что меню появляется только в сессии суперпользователя. */
+function ProjectSwitcher() {
+  const { t } = useTranslation();
+  const project = useProjectStore((state) => state.project);
+  const setProject = useProjectStore((state) => state.setProject);
+  const [open, setOpen] = useState(false);
+  const [names, setNames] = useState<string[] | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (names !== null || !open) return;
+    void listProjects()
+      .then((projects) => setNames(projects.map((p) => p.name)))
+      .catch(() => setNames([]));
+  }, [open, names]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className={`language-menu ${open ? 'open' : ''}`} ref={menuRef}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setOpen((prev) => !prev)}
+        title={t('projects.switcher_title')}
+        aria-label={t('projects.switcher_title')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <IconSidebarProjects size={16} />
+        <span className="project-switcher-label">{project || t('projects.switcher_none')}</span>
+      </Button>
+      {open && (
+        <div className="notification entering language-menu-popover" role="menu">
+          <button
+            type="button"
+            className={`language-menu-option ${project === '' ? 'active' : ''}`}
+            role="menuitemradio"
+            aria-checked={project === ''}
+            onClick={() => {
+              setProject('');
+              setOpen(false);
+            }}
+          >
+            <span>{t('projects.switcher_none')}</span>
+            {project === '' ? <span className="language-menu-check">✓</span> : null}
+          </button>
+          {(names ?? []).map((name) => (
+            <button
+              key={name}
+              type="button"
+              className={`language-menu-option ${project === name ? 'active' : ''}`}
+              role="menuitemradio"
+              aria-checked={project === name}
+              onClick={() => {
+                setProject(name);
+                setOpen(false);
+              }}
+            >
+              <span>{name}</span>
+              {project === name ? <span className="language-menu-check">✓</span> : null}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const sidebarIcons: Record<string, ReactNode> = {
   dashboard: <IconSidebarDashboard size={18} />,
   projects: <IconSidebarProjects size={18} />,
+  actors: <IconSidebarActors size={18} />,
+  templates: <IconSidebarTemplates size={18} />,
+  workers: <IconSidebarWorkers size={18} />,
+  policy: <IconSidebarPolicy size={18} />,
   aiProviders: <IconSidebarProviders size={18} />,
   authFiles: <IconSidebarAuthFiles size={18} />,
   oauth: <IconSidebarOauth size={18} />,
@@ -592,12 +686,37 @@ export function MainLayout() {
           metaKey: 'nav_meta.dashboard',
           icon: sidebarIcons.dashboard,
         },
-        // brood: проекты -- atespace'ы установки, своё API сервера.
+        // brood: сущности Substrate установки -- проекты (atespace), акторы,
+        // шаблоны, воркеры и политика доступа.
         {
           path: '/projects',
           labelKey: 'nav.projects',
           metaKey: 'nav_meta.projects',
           icon: sidebarIcons.projects,
+        },
+        {
+          path: '/actors',
+          labelKey: 'nav.actors',
+          metaKey: 'nav_meta.actors',
+          icon: sidebarIcons.actors,
+        },
+        {
+          path: '/templates',
+          labelKey: 'nav.templates',
+          metaKey: 'nav_meta.templates',
+          icon: sidebarIcons.templates,
+        },
+        {
+          path: '/workers',
+          labelKey: 'nav.workers',
+          metaKey: 'nav_meta.workers',
+          icon: sidebarIcons.workers,
+        },
+        {
+          path: '/policy',
+          labelKey: 'nav.policy',
+          metaKey: 'nav_meta.policy',
+          icon: sidebarIcons.policy,
         },
       ],
     },
@@ -1010,6 +1129,8 @@ export function MainLayout() {
         </div>
 
         <div className="header-actions floating-actions">
+          {/* brood: глобальный переключатель активного проекта (atespace). */}
+          <ProjectSwitcher />
           <Button
             variant="ghost"
             size="sm"

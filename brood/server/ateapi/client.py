@@ -105,6 +105,78 @@ class Client:
         return self._stub().DeleteActor(
             ateapi_pb2.DeleteActorRequest(actor=self._ref(atespace, name)))
 
+    # ─── ActorTemplate ───────────────────────────────────────────────────
+    def list_actor_templates(self, atespace, page_token=""):
+        """Все шаблоны акторов atespace постранично -> [ateapi_pb2.ActorTemplate]."""
+        out = []
+        while True:
+            request = ateapi_pb2.ListActorTemplatesRequest(
+                atespace=atespace,
+                options=ateapi_pb2.ListOptions(page_token=page_token))
+            response = self._stub().ListActorTemplates(request)
+            out.extend(response.actor_templates)
+            page_token = response.next_page_token
+            if not page_token:
+                return out
+
+    def get_actor_template(self, atespace, name):
+        return self._stub().GetActorTemplate(
+            ateapi_pb2.GetActorTemplateRequest(actor_template=self._ref(atespace, name)))
+
+    def delete_actor_template(self, atespace, name):
+        return self._stub().DeleteActorTemplate(
+            ateapi_pb2.DeleteActorTemplateRequest(actor_template=self._ref(atespace, name)))
+
+    # ─── Worker ──────────────────────────────────────────────────────────
+    def list_workers(self, page_token=""):
+        """Все воркеры установки постранично -> [ateapi_pb2.Worker]."""
+        out = []
+        while True:
+            request = ateapi_pb2.ListWorkersRequest(
+                options=ateapi_pb2.ListOptions(page_token=page_token))
+            response = self._stub().ListWorkers(request)
+            out.extend(response.workers)
+            page_token = response.next_page_token
+            if not page_token:
+                return out
+
+    def get_worker(self, name):
+        return self._stub().GetWorker(
+            ateapi_pb2.GetWorkerRequest(worker=ateapi_pb2.ObjectRef(name=name)))
+
+    def drain_worker(self, name):
+        return self._stub().DrainWorker(
+            ateapi_pb2.DrainWorkerRequest(worker=ateapi_pb2.ObjectRef(name=name))).worker
+
+    # ─── AccessPolicy ────────────────────────────────────────────────────
+    def get_global_access_policy(self, name="default"):
+        return self._stub().GetGlobalAccessPolicy(
+            ateapi_pb2.GetGlobalAccessPolicyRequest(name=name))
+
+    def update_global_access_policy(self, policy):
+        return self._stub().UpdateGlobalAccessPolicy(
+            ateapi_pb2.UpdateGlobalAccessPolicyRequest(access_policy=policy))
+
+    def get_atespace_access_policy(self, atespace, name="default"):
+        return self._stub().GetAtespaceAccessPolicy(
+            ateapi_pb2.GetAtespaceAccessPolicyRequest(
+                atespace=ateapi_pb2.ObjectRef(name=atespace), name=name))
+
+    def create_atespace_access_policy(self, atespace, policy):
+        return self._stub().CreateAtespaceAccessPolicy(
+            ateapi_pb2.CreateAtespaceAccessPolicyRequest(
+                atespace=ateapi_pb2.ObjectRef(name=atespace), access_policy=policy))
+
+    def update_atespace_access_policy(self, atespace, policy):
+        return self._stub().UpdateAtespaceAccessPolicy(
+            ateapi_pb2.UpdateAtespaceAccessPolicyRequest(
+                atespace=ateapi_pb2.ObjectRef(name=atespace), access_policy=policy))
+
+    def delete_atespace_access_policy(self, atespace, name="default"):
+        return self._stub().DeleteAtespaceAccessPolicy(
+            ateapi_pb2.DeleteAtespaceAccessPolicyRequest(
+                atespace=ateapi_pb2.ObjectRef(name=atespace), name=name))
+
     def _ref(self, atespace, name):
         """Ссылка на ресурс: atespace + имя."""
         return ateapi_pb2.ObjectRef(atespace=atespace, name=name)

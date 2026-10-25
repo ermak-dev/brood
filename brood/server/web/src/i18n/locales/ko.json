@@ -116,7 +116,11 @@
     "config_management": "설정 패널",
     "logs": "로그 뷰어",
     "system_info": "관리 센터 정보",
-    "projects": "프로젝트"
+    "projects": "프로젝트",
+    "actors": "Actor",
+    "templates": "템플릿",
+    "workers": "워커",
+    "policy": "접근 정책"
   },
   "nav_groups": {
     "operate": "운영",
@@ -137,7 +141,11 @@
     "logs": "요청 추적",
     "config_management": "게이트웨이 설정",
     "system_info": "런타임 및 진단",
-    "projects": "Substrate atespace"
+    "projects": "Substrate atespace",
+    "actors": "프로젝트의 작업 단위",
+    "templates": "ActorTemplate: actor 이미지",
+    "workers": "actor를 호스팅하는 풀",
+    "policy": "역할과 주체"
   },
   "dashboard": {
     "hero_verdict_good": "모든 시스템 정상",
@@ -2361,6 +2369,61 @@
       "crashed": "충돌",
       "deleting": "삭제 중",
       "reverting": "되돌리는 중"
+    },
+    "switcher_title": "활성 프로젝트",
+    "switcher_none": "프로젝트 없음",
+    "none_selected": "프로젝트가 선택되지 않았습니다",
+    "none_selected_description": "상단 전환기 또는 '프로젝트' 페이지에서 선택하세요",
+    "none_selected_action": "프로젝트 열기"
+  },
+  "templates": {
+    "title": "Actor 템플릿",
+    "description": "프로젝트 {{project}}의 actor를 만드는 이미지; 생성은 master 계층입니다",
+    "containers": "컨테이너 수",
+    "empty": "템플릿 없음",
+    "empty_description": "템플릿은 actor의 컨테이너, 볼륨, 스냅샷 정책을 정의합니다",
+    "delete_title": "템플릿 삭제",
+    "delete_message": "템플릿 {{name}}을(를) 삭제할까요? 이 템플릿으로 만든 actor는 유지됩니다.",
+    "deleted": "템플릿 {{name}} 삭제됨"
+  },
+  "workers": {
+    "title": "워커",
+    "description": "설치의 풀: actor를 호스팅하는 pod, ate-controller가 미러링",
+    "pool": "풀",
+    "node": "노드",
+    "actors": "Actor",
+    "drain": "배수",
+    "drain_title": "워커 배수",
+    "drain_message": "워커 {{name}}을(를) 종료 예정으로 표시할까요? 스케줄러가 더 이상 actor를 배치하지 않습니다.",
+    "drained": "워커 {{name}} 배수됨",
+    "empty": "워커 없음",
+    "empty_description": "Substrate 설치가 풀을 배포하면 워커가 나타납니다",
+    "state": {
+      "active": "활성",
+      "draining": "배수 중",
+      "unavailable": "사용 불가"
     }
+  },
+  "policy": {
+    "title_global": "정책: 전체 설치",
+    "title_project": "정책: {{project}}",
+    "description": "스코프의 역할과 주체; 전체 교체, 충돌은 서버가 판정",
+    "save": "저장",
+    "saved": "정책 저장됨",
+    "delete": "삭제",
+    "delete_title": "프로젝트 정책 삭제",
+    "delete_message": "{{project}}의 접근 정책을 삭제할까요? 프로젝트에 자체 정책이 없어집니다.",
+    "deleted": "정책 삭제됨",
+    "role": "역할",
+    "role_owner": "소유자",
+    "role_editor": "편집자",
+    "role_viewer": "관찰자",
+    "add_binding": "역할 추가",
+    "add_member": "추가",
+    "remove_member": "구성원 제거",
+    "member_placeholder": "주체, 예: user:alice",
+    "missing_title": "자체 정책 없음",
+    "missing_description": "프로젝트에 접근 정책이 없습니다; 전역 정책이 적용됩니다",
+    "create_first": "정책 만들기"
   }
 }

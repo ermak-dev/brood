@@ -116,7 +116,11 @@
     "config_management": "設定面板",
     "logs": "記錄檢視",
     "system_info": "中心資訊",
-    "projects": "專案"
+    "projects": "專案",
+    "actors": "Actor",
+    "templates": "範本",
+    "workers": "工作節點",
+    "policy": "存取政策"
   },
   "nav_groups": {
     "operate": "運行",
@@ -137,7 +141,11 @@
     "logs": "請求追蹤與排查",
     "config_management": "閘道基礎設定",
     "system_info": "運行與診斷資訊",
-    "projects": "Substrate atespace"
+    "projects": "Substrate atespace",
+    "actors": "專案的工作單元",
+    "templates": "ActorTemplate：actor 映像",
+    "workers": "承載 actor 的池",
+    "policy": "角色與主體"
   },
   "dashboard": {
     "hero_verdict_good": "運行平穩",
@@ -2387,6 +2395,61 @@
       "crashed": "已當機",
       "deleting": "刪除中",
       "reverting": "回滾中"
+    },
+    "switcher_title": "目前專案",
+    "switcher_none": "未選專案",
+    "none_selected": "未選擇專案",
+    "none_selected_description": "在頂欄切換器或「專案」頁選擇專案",
+    "none_selected_action": "開啟專案"
+  },
+  "templates": {
+    "title": "Actor 範本",
+    "description": "專案 {{project}} 建立 actor 所用的映像；建立屬於 master 層",
+    "containers": "容器數",
+    "empty": "尚無範本",
+    "empty_description": "範本定義 actor 的容器、卷和快照政策",
+    "delete_title": "刪除範本",
+    "delete_message": "刪除範本 {{name}}？由它建立的 actor 會保留。",
+    "deleted": "範本 {{name}} 已刪除"
+  },
+  "workers": {
+    "title": "工作節點",
+    "description": "安裝的池：承載 actor 的 pod，由 ate-controller 鏡像",
+    "pool": "池",
+    "node": "節點",
+    "actors": "Actor",
+    "drain": "排空",
+    "drain_title": "排空工作節點",
+    "drain_message": "將工作節點 {{name}} 標記為終止？排程器將不再在其上放置 actor。",
+    "drained": "工作節點 {{name}} 已排空",
+    "empty": "尚無工作節點",
+    "empty_description": "Substrate 安裝部署池後工作節點才會出現",
+    "state": {
+      "active": "活躍",
+      "draining": "排空中",
+      "unavailable": "不可用"
     }
+  },
+  "policy": {
+    "title_global": "政策：整個安裝",
+    "title_project": "政策：{{project}}",
+    "description": "作用域的角色與主體；整體替換，衝突由伺服器裁決",
+    "save": "儲存",
+    "saved": "政策已儲存",
+    "delete": "刪除",
+    "delete_title": "刪除專案政策",
+    "delete_message": "刪除 {{project}} 的存取政策？專案將沒有自己的政策。",
+    "deleted": "政策已刪除",
+    "role": "角色",
+    "role_owner": "擁有者",
+    "role_editor": "編輯者",
+    "role_viewer": "觀察者",
+    "add_binding": "新增角色",
+    "add_member": "新增",
+    "remove_member": "移除成員",
+    "member_placeholder": "主體，如 user:alice",
+    "missing_title": "沒有自己的政策",
+    "missing_description": "專案沒有存取政策；沿用全域政策",
+    "create_first": "建立政策"
   }
 }

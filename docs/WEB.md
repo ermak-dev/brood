@@ -63,12 +63,17 @@ AI Providers.
   `system_info.about_title` в локалях;
 - без быстрого старта: `src/router/MainRoutes.tsx`,
   `src/components/layout/MainLayout.tsx`;
-- проекты (atespace Substrate за `/api/projects` сервера brood, акторы
-  проекта за `/api/projects/<name>/actors`): `src/features/projects/` (новый),
-  `src/services/brood/projects.ts` (новый), `IconSidebarProjects` в
-  `src/components/ui/icons.tsx`, пункт в nav-группе operate `MainLayout.tsx`,
-  маршруты в `MainRoutes.tsx`, строки `nav.projects`, `nav_meta.projects`,
-  `projects.*` в локалях.
+- сущности Substrate за API сервера brood: проекты (Atespace) --
+  `/api/projects`, акторы (Actor) и шаблоны (ActorTemplate) --
+  `/api/projects/<project>/actors|templates`, воркеры -- `/api/workers`,
+  политика доступа (AccessPolicy) -- `/api/policy/global|projects/<name>`.
+  Страницы: `src/features/projects/` (новый), API-модуль
+  `src/services/brood/projects.ts` (новый), иконки `IconSidebar*` в
+  `src/components/ui/icons.tsx`, пункты в nav-группе operate и переключатель
+  активного проекта в шапке (`ProjectSwitcher` в `MainLayout.tsx`, store
+  `src/stores/useProjectStore.ts`), маршруты в `MainRoutes.tsx`, строки
+  `nav.*`, `nav_meta.*`, `projects.*`, `templates.*`, `workers.*`,
+  `policy.*` в локалях.
 
 ## Сборка и проверки
 

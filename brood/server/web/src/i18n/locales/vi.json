@@ -116,7 +116,11 @@
     "config_management": "Bảng cấu hình",
     "logs": "Trình xem Log",
     "system_info": "Thông tin Trung tâm Quản lý",
-    "projects": "Dự án"
+    "projects": "Dự án",
+    "actors": "Actor",
+    "templates": "Mẫu",
+    "workers": "Worker",
+    "policy": "Chính sách truy cập"
   },
   "nav_groups": {
     "operate": "Vận hành",
@@ -137,7 +141,11 @@
     "logs": "Truy vết yêu cầu",
     "config_management": "Cấu hình gateway",
     "system_info": "Runtime & chẩn đoán",
-    "projects": "Atespace Substrate"
+    "projects": "Atespace Substrate",
+    "actors": "Đơn vị công việc của dự án",
+    "templates": "ActorTemplate: image của actor",
+    "workers": "Pool chứa actor",
+    "policy": "Vai trò và chủ thể"
   },
   "dashboard": {
     "hero_verdict_good": "Mọi hệ thống ổn định",
@@ -2367,6 +2375,61 @@
       "crashed": "đã sập",
       "deleting": "đang xóa",
       "reverting": "đang hoàn tác"
+    },
+    "switcher_title": "Dự án đang chọn",
+    "switcher_none": "Chưa chọn dự án",
+    "none_selected": "Chưa chọn dự án",
+    "none_selected_description": "Chọn dự án ở bộ chuyển phía trên hoặc trang Dự án",
+    "none_selected_action": "Mở dự án"
+  },
+  "templates": {
+    "title": "Mẫu actor",
+    "description": "Image tạo actor của dự án {{project}}; việc tạo thuộc tầng master",
+    "containers": "Số container",
+    "empty": "Chưa có mẫu",
+    "empty_description": "Mẫu định nghĩa container, volume và chính sách snapshot của actor",
+    "delete_title": "Xóa mẫu",
+    "delete_message": "Xóa mẫu {{name}}? Actor đã tạo từ nó vẫn còn.",
+    "deleted": "Mẫu {{name}} đã xóa"
+  },
+  "workers": {
+    "title": "Worker",
+    "description": "Pool của bản cài: pod chứa actor, ate-controller phản chiếu",
+    "pool": "Pool",
+    "node": "Node",
+    "actors": "Actor",
+    "drain": "Drain",
+    "drain_title": "Drain worker",
+    "drain_message": "Đánh dấu worker {{name}} đang chấm dứt? Bộ lập lịch sẽ không đặt actor lên nó nữa.",
+    "drained": "Worker {{name}} đã drain",
+    "empty": "Chưa có worker",
+    "empty_description": "Worker xuất hiện khi bản cài Substrate triển khai pool",
+    "state": {
+      "active": "đang hoạt động",
+      "draining": "đang drain",
+      "unavailable": "không khả dụng"
     }
+  },
+  "policy": {
+    "title_global": "Chính sách: toàn bộ bản cài",
+    "title_project": "Chính sách: {{project}}",
+    "description": "Vai trò và chủ thể của scope; thay toàn bộ, xung đột do server quyết",
+    "save": "Lưu",
+    "saved": "Đã lưu chính sách",
+    "delete": "Xóa",
+    "delete_title": "Xóa chính sách dự án",
+    "delete_message": "Xóa chính sách truy cập của {{project}}? Dự án sẽ không còn chính sách riêng.",
+    "deleted": "Đã xóa chính sách",
+    "role": "Vai trò",
+    "role_owner": "Chủ sở hữu",
+    "role_editor": "Biên tập",
+    "role_viewer": "Quan sát",
+    "add_binding": "Thêm vai trò",
+    "add_member": "Thêm",
+    "remove_member": "Bỏ thành viên",
+    "member_placeholder": "chủ thể, vd user:alice",
+    "missing_title": "Chưa có chính sách riêng",
+    "missing_description": "Dự án chưa có chính sách truy cập; áp dụng chính sách toàn cục",
+    "create_first": "Tạo chính sách"
   }
 }

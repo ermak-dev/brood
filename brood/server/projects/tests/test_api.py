@@ -28,6 +28,40 @@ def actor(name, atespace_name="brood", state=ateapi_pb2.ACTOR_STATE_RUNNING):
         status=ateapi_pb2.ActorStatus(state=state))
 
 
+def template(name, atespace_name="brood", containers=1):
+    """ActorTemplate -- как отдаёт ateapi."""
+    return ateapi_pb2.ActorTemplate(
+        metadata=ateapi_pb2.ResourceMetadata(
+            atespace=atespace_name, name=name, uid=f"tpl-{name}", version=2,
+            create_time=_timestamp("2026-10-24T10:00:00Z"),
+            update_time=_timestamp("2026-10-24T11:30:00Z")),
+        containers=[ateapi_pb2.Container() for _ in range(containers)])
+
+
+def worker(name, state=ateapi_pb2.WORKER_STATE_ACTIVE, capacity=4, allocated=1):
+    """Worker -- как отдаёт ateapi ( зеркало пода от контроллера)."""
+    return ateapi_pb2.Worker(
+        metadata=ateapi_pb2.ResourceMetadata(
+            name=name, uid=f"worker-{name}", version=1,
+            create_time=_timestamp("2026-10-24T10:00:00Z"),
+            update_time=_timestamp("2026-10-24T11:30:00Z")),
+        worker_pool="pool-1", node_name="node-1",
+        status=ateapi_pb2.WorkerStatus(
+            state=state,
+            capacity=ateapi_pb2.WorkerResources(actors=capacity),
+            allocated=ateapi_pb2.WorkerResources(actors=allocated)))
+
+
+def policy(atespace_name="", uid="policy-uid", version=5):
+    """AccessPolicy скоупа -- как отдаёт ateapi."""
+    return ateapi_pb2.AccessPolicy(
+        metadata=ateapi_pb2.ResourceMetadata(
+            atespace=atespace_name, name="default", uid=uid, version=version,
+            create_time=_timestamp("2026-10-24T10:00:00Z"),
+            update_time=_timestamp("2026-10-24T11:30:00Z")),
+        bindings=[ateapi_pb2.Binding(role="viewer", members=["user:alice"])])
+
+
 def _timestamp(iso):
     from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -37,13 +71,19 @@ def _timestamp(iso):
 
 
 class FakeClient:
-    """Ответы и отказы ateapi по списку имен -- чтобы не поднимать канал."""
+    """Ответы и отказы ateapi по спискам сущностей -- чтобы не поднимать
+    канал."""
 
-    def __init__(self, atespaces=(), actors=(), error=None):
+    def __init__(self, atespaces=(), actors=(), templates=(), workers=(),
+                 policies=(), error=None):
         self.atespaces = list(atespaces)
-        self.actors, self.error = list(actors), error
+        self.actors = list(actors)
+        self.templates = list(templates)
+        self.workers = list(workers)
+        self.policies = dict(policies)  # {atespace: AccessPolicy}, "" -- глобальная
+        self.error = error
         self.created, self.deleted = [], []
-        self.acted = []
+        self.acted, self.saved_policies = [], []
 
     def list_atespaces(self):
         if self.error:
@@ -98,6 +138,74 @@ class FakeClient:
         self.acted.append((action, atespace_name, name))
         actor.status.state = state
         return actor
+
+    # ─── шаблоны ─────────────────────────────────────────────────────────
+    def list_actor_templates(self, atespace_name):
+        if self.error:
+            raise self.error
+        return [t for t in self.templates if t.metadata.atespace == atespace_name]
+
+    def get_actor_template(self, atespace_name, name):
+        for t in self.templates:
+            if t.metadata.atespace == atespace_name and t.metadata.name == name:
+                return t
+        raise self.error
+
+    def delete_actor_template(self, atespace_name, name):
+        self.get_actor_template(atespace_name, name)
+        self.acted.append(("delete-template", atespace_name, name))
+
+    # ─── воркеры ─────────────────────────────────────────────────────────
+    def list_workers(self):
+        if self.error:
+            raise self.error
+        return self.workers
+
+    def get_worker(self, name):
+        for w in self.workers:
+            if w.metadata.name == name:
+                return w
+        raise self.error
+
+    def drain_worker(self, name):
+        found = self.get_worker(name)
+        self.acted.append(("drain", name))
+        found.status.state = ateapi_pb2.WORKER_STATE_DRAINING
+        return found
+
+    # ─── политики ────────────────────────────────────────────────────────
+    def get_global_access_policy(self):
+        return self._get_policy("")
+
+    def update_global_access_policy(self, p):
+        return self._save_policy("", p)
+
+    def get_atespace_access_policy(self, atespace_name):
+        return self._get_policy(atespace_name)
+
+    def create_atespace_access_policy(self, atespace_name, p):
+        return self._save_policy(atespace_name, p)
+
+    def update_atespace_access_policy(self, atespace_name, p):
+        return self._save_policy(atespace_name, p)
+
+    def delete_atespace_access_policy(self, atespace_name):
+        self._get_policy(atespace_name)
+        self.acted.append(("delete-policy", atespace_name))
+
+    def _get_policy(self, atespace_name):
+        if self.error:
+            raise self.error
+        try:
+            return self.policies[atespace_name]
+        except KeyError:
+            raise self.error from None
+
+    def _save_policy(self, atespace_name, p):
+        self.saved_policies.append((atespace_name, p))
+        p.metadata.version += 1
+        self.policies[atespace_name] = p
+        return p
 
 
 def rpc_error(code_name, details="boom"):
@@ -259,6 +367,117 @@ class ActorApiTests(TestCase):
     def test_anonymous_denied(self):
         self.client.logout()
         self.assertEqual(self.client.get("/api/projects/brood/actors").status_code, 403)
+
+
+class TemplateApiTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+
+        self.admin = User.objects.create_superuser("admin", "a@b.c", "pw")
+        self.client.force_login(self.admin)
+
+    def test_list_and_retrieve(self):
+        fake = FakeClient(templates=[template("claude", "brood", containers=2),
+                                     template("shell", "sandbox")])
+        with mock.patch.object(client_of, "_testing", fake):
+            listed = self.client.get("/api/projects/brood/templates").json()["results"]
+            got = self.client.get("/api/projects/brood/templates/claude")
+        self.assertEqual([t["name"] for t in listed], ["claude"])
+        self.assertEqual(listed[0]["containers"], 2)
+        self.assertEqual(got.json()["name"], "claude")
+
+    def test_delete(self):
+        fake = FakeClient(templates=[template("claude", "brood")])
+        with mock.patch.object(client_of, "_testing", fake):
+            got = self.client.delete("/api/projects/brood/templates/claude")
+        self.assertEqual(got.status_code, 204)
+        self.assertEqual(fake.acted, [("delete-template", "brood", "claude")])
+
+
+class WorkerApiTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+
+        self.admin = User.objects.create_superuser("admin", "a@b.c", "pw")
+        self.client.force_login(self.admin)
+
+    def test_list(self):
+        fake = FakeClient(workers=[worker("node-1-pool"),
+                                   worker("node-2-pool",
+                                          state=ateapi_pb2.WORKER_STATE_DRAINING)])
+        with mock.patch.object(client_of, "_testing", fake):
+            got = self.client.get("/api/workers")
+        results = got.json()["results"]
+        self.assertEqual([w["state"] for w in results], ["active", "draining"])
+        self.assertEqual(results[0]["actors_capacity"], 4)
+        self.assertEqual(results[0]["actors_allocated"], 1)
+
+    def test_drain_and_bad_action(self):
+        fake = FakeClient(workers=[worker("node-1-pool")])
+        with mock.patch.object(client_of, "_testing", fake):
+            drained = self.client.post("/api/workers/node-1-pool", {"action": "drain"})
+            bad = self.client.post("/api/workers/node-1-pool", {"action": "reboot"})
+        self.assertEqual(drained.status_code, 200)
+        self.assertEqual(drained.json()["state"], "draining")
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(fake.acted, [("drain", "node-1-pool")])
+
+
+class PolicyApiTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+
+        self.admin = User.objects.create_superuser("admin", "a@b.c", "pw")
+        self.client.force_login(self.admin)
+
+    def test_get_global(self):
+        fake = FakeClient(policies={"": policy()})
+        with mock.patch.object(client_of, "_testing", fake):
+            got = self.client.get("/api/policy/global")
+        body = got.json()
+        self.assertEqual(body["name"], "default")
+        self.assertEqual(body["uid"], "policy-uid")
+        self.assertEqual(body["bindings"],
+                         [{"role": "viewer", "members": ["user:alice"]}])
+
+    def test_missing_policy_is_404(self):
+        fake = FakeClient(error=rpc_error("NOT_FOUND", "policy not found"))
+        with mock.patch.object(client_of, "_testing", fake):
+            got = self.client.get("/api/policy/projects/brood")
+        self.assertEqual(got.status_code, 404)
+
+    def test_update_sends_read_identity(self):
+        """PUT несёт uid/version прочитанного: без них ateapi откажет
+        (оптимистичная блокировка)."""
+        fake = FakeClient(policies={"brood": policy()})
+        body = {"uid": "policy-uid", "version": 5,
+                "bindings": [{"role": "editor", "members": ["user:bob"]}]}
+        with mock.patch.object(client_of, "_testing", fake):
+            got = self.client.put("/api/policy/projects/brood", body, content_type="application/json")
+        self.assertEqual(got.status_code, 200)
+        scope, sent = fake.saved_policies[0]
+        self.assertEqual(scope, "brood")
+        # Отправлено прочитанное uid/version (фейк сохранения инкрементирует).
+        self.assertEqual(sent.metadata.uid, "policy-uid")
+        self.assertEqual(sent.metadata.version, 6)
+        self.assertEqual(got.json()["bindings"][0]["role"], "editor")
+
+    def test_update_rejects_foreign_role(self):
+        """editor -- роль atespace; глобальной политике не положена."""
+        fake = FakeClient(policies={"": policy()})
+        body = {"uid": "policy-uid", "version": 5,
+                "bindings": [{"role": "editor", "members": ["user:bob"]}]}
+        with mock.patch.object(client_of, "_testing", fake):
+            got = self.client.put("/api/policy/global", body, content_type="application/json")
+        self.assertEqual(got.status_code, 400)
+        self.assertEqual(fake.saved_policies, [])
+
+    def test_delete_atespace_policy(self):
+        fake = FakeClient(policies={"brood": policy()})
+        with mock.patch.object(client_of, "_testing", fake):
+            got = self.client.delete("/api/policy/projects/brood")
+        self.assertEqual(got.status_code, 204)
+        self.assertEqual(fake.acted, [("delete-policy", "brood")])
 
 
 if __name__ == "__main__":  # pragma: no cover

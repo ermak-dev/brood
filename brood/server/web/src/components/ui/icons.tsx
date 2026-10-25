@@ -509,6 +509,49 @@ export function IconSidebarProjects({ size = 20, ...props }: IconProps) {
   );
 }
 
+/** brood: акторы (Actor Substrate) */
+export function IconSidebarActors({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <rect width="8" height="8" x="3" y="3" rx="2" />
+      <rect width="8" height="8" x="13" y="3" rx="2" />
+      <rect width="8" height="8" x="3" y="13" rx="2" />
+      <path d="M17 13v8M13 17h8" />
+    </svg>
+  );
+}
+
+/** brood: шаблоны акторов (ActorTemplate) */
+export function IconSidebarTemplates({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M3 9h18M9 9v12" />
+    </svg>
+  );
+}
+
+/** brood: воркеры пула (Worker) */
+export function IconSidebarWorkers({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <rect width="8" height="8" x="2" y="6" rx="1" />
+      <rect width="8" height="8" x="14" y="6" rx="1" />
+      <path d="M6 6V3h12v3M6 14v4h12v-4" />
+    </svg>
+  );
+}
+
+/** brood: политика доступа (AccessPolicy) */
+export function IconSidebarPolicy({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10Z" />
+      <path d="m9 11 2 2 4-4" />
+    </svg>
+  );
+}
+
 export function IconSidebarSystem({ size = 20, ...props }: IconProps) {
   return (
     <svg {...baseSvgProps} width={size} height={size} {...props}>

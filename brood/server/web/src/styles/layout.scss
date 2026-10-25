@@ -149,6 +149,16 @@
     align-items: center;
     gap: 4px;
     padding: 6px;
+
+    /* brood: подпись активного проекта в переключателе шапки. */
+    .project-switcher-label {
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      font-weight: 500;
+    }
     border: 1px solid color-mix(in srgb, var(--border-color) 68%, transparent);
     border-radius: 16px;
     background: color-mix(in srgb, var(--bg-primary) 68%, transparent);

@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
-import { useNotificationStore } from '@/stores';
+import { useNotificationStore, useProjectStore } from '@/stores';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { formatDateValue } from '@/utils/format';
 import {
@@ -27,9 +27,12 @@ const DASH = '—';
 
 /** brood: акторы проекта -- Actor'ы Substrate его atespace. Suspend/resume --
  * снапшот и пробуждение, сердце мультиплексирования; действия идут через
- * /api/projects/<project>/actors сервера brood. */
+ * /api/projects/<project>/actors сервера brood. Проект -- из URL (ссылка
+ * со страницы проектов) или глобальный переключатель. */
 export function ProjectActorsPage() {
-  const { project = '' } = useParams();
+  const params = useParams<{ project?: string }>();
+  const storeProject = useProjectStore((state) => state.project);
+  const project = params.project || storeProject;
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
@@ -47,8 +50,9 @@ export function ProjectActorsPage() {
   }, [project]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (project) void refresh();
+    else setActors(null);
+  }, [project, refresh]);
 
   useHeaderRefresh(refresh);
 
@@ -158,8 +162,12 @@ export function ProjectActorsPage() {
         </Table>
       ) : (
         <EmptyState
-          title={t('projects.actors_empty')}
-          description={t('projects.actors_empty_description')}
+          title={project ? t('projects.actors_empty') : t('projects.none_selected')}
+          description={
+            project
+              ? t('projects.actors_empty_description')
+              : t('projects.none_selected_description')
+          }
         />
       )}
     </div>

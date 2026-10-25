@@ -116,7 +116,11 @@
     "config_management": "Config Panel",
     "logs": "Logs Viewer",
     "system_info": "Management Center Info",
-    "projects": "Projects"
+    "projects": "Projects",
+    "actors": "Actors",
+    "templates": "Templates",
+    "workers": "Workers",
+    "policy": "Access Policy"
   },
   "nav_groups": {
     "operate": "Operate",
@@ -137,7 +141,11 @@
     "logs": "Request tracing",
     "config_management": "Gateway configuration",
     "system_info": "Runtime & diagnostics",
-    "projects": "Substrate atespaces"
+    "projects": "Substrate atespaces",
+    "actors": "The project's units of work",
+    "templates": "ActorTemplate: actor images",
+    "workers": "The pool hosting actors",
+    "policy": "Roles and principals"
   },
   "dashboard": {
     "hero_verdict_good": "All systems steady",
@@ -2361,6 +2369,61 @@
       "crashed": "crashed",
       "deleting": "deleting",
       "reverting": "reverting"
+    },
+    "switcher_title": "Active project",
+    "switcher_none": "No project",
+    "none_selected": "No project selected",
+    "none_selected_description": "Pick a project in the header switcher or on the Projects page",
+    "none_selected_action": "Open projects"
+  },
+  "templates": {
+    "title": "Actor templates",
+    "description": "Images actors of project {{project}} are created from; creation is the master's layer",
+    "containers": "Containers",
+    "empty": "No templates",
+    "empty_description": "A template defines an actor's containers, volumes and snapshot policies",
+    "delete_title": "Delete template",
+    "delete_message": "Delete template {{name}}? Actors already created from it stay.",
+    "deleted": "Template {{name}} deleted"
+  },
+  "workers": {
+    "title": "Workers",
+    "description": "The install's pool: pods hosting actors, mirrored by ate-controller",
+    "pool": "Pool",
+    "node": "Node",
+    "actors": "Actors",
+    "drain": "Drain",
+    "drain_title": "Drain worker",
+    "drain_message": "Mark worker {{name}} terminating? The scheduler will stop placing actors on it.",
+    "drained": "Worker {{name}} drained",
+    "empty": "No workers",
+    "empty_description": "Workers appear when the Substrate install rolls out a pool",
+    "state": {
+      "active": "active",
+      "draining": "draining",
+      "unavailable": "unavailable"
     }
+  },
+  "policy": {
+    "title_global": "Policy: the whole install",
+    "title_project": "Policy: {{project}}",
+    "description": "Roles and principals of the scope; replaced wholesale, conflicts are the server's",
+    "save": "Save",
+    "saved": "Policy saved",
+    "delete": "Delete",
+    "delete_title": "Delete project policy",
+    "delete_message": "Delete the access policy of {{project}}? The project will have none of its own.",
+    "deleted": "Policy deleted",
+    "role": "Role",
+    "role_owner": "Owner",
+    "role_editor": "Editor",
+    "role_viewer": "Viewer",
+    "add_binding": "Add role",
+    "add_member": "Add",
+    "remove_member": "Remove member",
+    "member_placeholder": "principal, e.g. user:alice",
+    "missing_title": "No policy of its own",
+    "missing_description": "The project has no access policy; the global one applies",
+    "create_first": "Create policy"
   }
 }

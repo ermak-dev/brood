@@ -116,7 +116,11 @@
     "config_management": "配置面板",
     "logs": "日志查看",
     "system_info": "中心信息",
-    "projects": "项目"
+    "projects": "项目",
+    "actors": "Actor",
+    "templates": "模板",
+    "workers": "工作节点",
+    "policy": "访问策略"
   },
   "nav_groups": {
     "operate": "运行",
@@ -137,7 +141,11 @@
     "logs": "请求追踪与排查",
     "config_management": "网关基础配置",
     "system_info": "运行与诊断信息",
-    "projects": "Substrate atespace"
+    "projects": "Substrate atespace",
+    "actors": "项目的工作单元",
+    "templates": "ActorTemplate：actor 镜像",
+    "workers": "承载 actor 的池",
+    "policy": "角色与主体"
   },
   "dashboard": {
     "hero_verdict_good": "运行平稳",
@@ -2359,6 +2367,61 @@
       "crashed": "已崩溃",
       "deleting": "删除中",
       "reverting": "回滚中"
+    },
+    "switcher_title": "当前项目",
+    "switcher_none": "未选项目",
+    "none_selected": "未选择项目",
+    "none_selected_description": "在顶栏切换器或「项目」页选择项目",
+    "none_selected_action": "打开项目"
+  },
+  "templates": {
+    "title": "Actor 模板",
+    "description": "项目 {{project}} 创建 actor 所用的镜像；创建属于 master 层",
+    "containers": "容器数",
+    "empty": "暂无模板",
+    "empty_description": "模板定义 actor 的容器、卷和快照策略",
+    "delete_title": "删除模板",
+    "delete_message": "删除模板 {{name}}？由它创建的 actor 会保留。",
+    "deleted": "模板 {{name}} 已删除"
+  },
+  "workers": {
+    "title": "工作节点",
+    "description": "安装的池：承载 actor 的 pod，由 ate-controller 镜像",
+    "pool": "池",
+    "node": "节点",
+    "actors": "Actor",
+    "drain": "排空",
+    "drain_title": "排空工作节点",
+    "drain_message": "将工作节点 {{name}} 标记为终止？调度器将不再在其上放置 actor。",
+    "drained": "工作节点 {{name}} 已排空",
+    "empty": "暂无工作节点",
+    "empty_description": "Substrate 安装部署池后工作节点才会出现",
+    "state": {
+      "active": "活跃",
+      "draining": "排空中",
+      "unavailable": "不可用"
     }
+  },
+  "policy": {
+    "title_global": "策略：整个安装",
+    "title_project": "策略：{{project}}",
+    "description": "作用域的角色与主体；整体替换，冲突由服务器裁决",
+    "save": "保存",
+    "saved": "策略已保存",
+    "delete": "删除",
+    "delete_title": "删除项目策略",
+    "delete_message": "删除 {{project}} 的访问策略？项目将没有自己的策略。",
+    "deleted": "策略已删除",
+    "role": "角色",
+    "role_owner": "所有者",
+    "role_editor": "编辑者",
+    "role_viewer": "观察者",
+    "add_binding": "添加角色",
+    "add_member": "添加",
+    "remove_member": "移除成员",
+    "member_placeholder": "主体，如 user:alice",
+    "missing_title": "没有自己的策略",
+    "missing_description": "项目没有访问策略；沿用全局策略",
+    "create_first": "创建策略"
   }
 }

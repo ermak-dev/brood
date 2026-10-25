@@ -116,7 +116,11 @@
     "config_management": "Панель конфигурации",
     "logs": "Просмотр логов",
     "system_info": "Информация системы",
-    "projects": "Проекты"
+    "projects": "Проекты",
+    "actors": "Акторы",
+    "templates": "Шаблоны",
+    "workers": "Воркеры",
+    "policy": "Политика доступа"
   },
   "nav_groups": {
     "operate": "Работа",
@@ -136,7 +140,11 @@
     "logs": "Трассировка запросов",
     "config_management": "Базовая конфигурация шлюза",
     "system_info": "Состояние и диагностика",
-    "projects": "Atespace Substrate"
+    "projects": "Atespace Substrate",
+    "actors": "Единицы работы проекта",
+    "templates": "ActorTemplate: образы акторов",
+    "workers": "Пул: где живут акторы",
+    "policy": "Роли и принципалы"
   },
   "dashboard": {
     "hero_verdict_good": "Всё стабильно",
@@ -2355,6 +2363,61 @@
       "crashed": "упал",
       "deleting": "удаляется",
       "reverting": "откатывается"
+    },
+    "switcher_title": "Активный проект",
+    "switcher_none": "Проект не выбран",
+    "none_selected": "Проект не выбран",
+    "none_selected_description": "Выберите проект переключателем в шапке или на странице «Проекты»",
+    "none_selected_action": "Открыть проекты"
+  },
+  "templates": {
+    "title": "Шаблоны акторов",
+    "description": "Образы, из которых создаются акторы проекта {{project}}; создание -- слой мастера",
+    "containers": "Контейнеров",
+    "empty": "Шаблонов нет",
+    "empty_description": "Шаблон задаёт контейнеры, тома и снапшот-политики актора",
+    "delete_title": "Удалить шаблон",
+    "delete_message": "Удалить шаблон {{name}}? Акторы, созданные из него, останутся.",
+    "deleted": "Шаблон {{name}} удалён"
+  },
+  "workers": {
+    "title": "Воркеры",
+    "description": "Пул установки: поды, на которых живут акторы; зеркало создаёт ate-controller",
+    "pool": "Пул",
+    "node": "Узел",
+    "actors": "Акторы",
+    "drain": "Осушить",
+    "drain_title": "Осушить воркер",
+    "drain_message": "Пометить воркер {{name}} завершающимся? Планировщик перестанет сажать на него акторов.",
+    "drained": "Воркер {{name}} осушен",
+    "empty": "Воркеров нет",
+    "empty_description": "Воркеры появляются, когда установка Substrate раскатывает пул",
+    "state": {
+      "active": "активен",
+      "draining": "осушается",
+      "unavailable": "недоступен"
     }
+  },
+  "policy": {
+    "title_global": "Политика: вся установка",
+    "title_project": "Политика: {{project}}",
+    "description": "Роли и участники скоупа; замена целиком, конфликты видит сервер",
+    "save": "Сохранить",
+    "saved": "Политика сохранена",
+    "delete": "Удалить",
+    "delete_title": "Удалить политику проекта",
+    "delete_message": "Удалить политику доступа {{project}}? Проект останется без своей политики.",
+    "deleted": "Политика удалена",
+    "role": "Роль",
+    "role_owner": "Владелец",
+    "role_editor": "Редактор",
+    "role_viewer": "Наблюдатель",
+    "add_binding": "Добавить роль",
+    "add_member": "Добавить",
+    "remove_member": "Убрать участника",
+    "member_placeholder": "принципал, например user:alice",
+    "missing_title": "Своей политики нет",
+    "missing_description": "У проекта нет политики доступа; наследуется глобальная",
+    "create_first": "Создать политику"
   }
 }

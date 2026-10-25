@@ -2,6 +2,9 @@ import { Navigate, useRoutes, type Location } from 'react-router-dom';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { ProjectsPage } from '@/features/projects/ProjectsPage';
 import { ProjectActorsPage } from '@/features/projects/ProjectActorsPage';
+import { TemplatesPage } from '@/features/projects/TemplatesPage';
+import { WorkersPage } from '@/features/projects/WorkersPage';
+import { PolicyPage } from '@/features/projects/PolicyPage';
 import { ProvidersWorkbenchPage } from '@/features/providers/ProvidersWorkbenchPage';
 import { AuthFilesPage } from '@/features/authFiles/AuthFilesPage';
 import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
@@ -19,9 +22,14 @@ import { useAuthStore } from '@/stores';
 const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/', element: <DashboardPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
-  // brood: проекты -- atespace'ы Substrate установки.
+  // brood: проекты -- atespace'ы Substrate установки; их сущности и воркеры
+  // с политикой -- свои разделы.
   { path: '/projects', element: <ProjectsPage /> },
   { path: '/projects/:project/actors', element: <ProjectActorsPage /> },
+  { path: '/actors', element: <ProjectActorsPage /> },
+  { path: '/templates', element: <TemplatesPage /> },
+  { path: '/workers', element: <WorkersPage /> },
+  { path: '/policy', element: <PolicyPage /> },
   { path: '/settings', element: <Navigate to="/config" replace /> },
   { path: '/api-keys', element: <Navigate to="/config" replace /> },
   // brood: no sponsor quick start page; its old address goes to the providers.
