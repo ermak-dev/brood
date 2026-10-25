@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { newPoolDraft, poolDraft, poolPayload, validatePoolDraft } from '@/features/substrate/workerPoolDraft';
+import * as drafts from '@/features/substrate/workerPoolDraft';
 import type { WorkerPool } from '@/services/brood/substrate';
 
 // FEATURE: WorkerPool drafts validate Kubernetes inputs without losing unread fields.
@@ -22,6 +23,54 @@ const existing = (): WorkerPool => ({
     futureField: true,
   },
   status: { replicas: 2, readyReplicas: 1 },
+});
+
+// FEATURE: Создание пулов с установленными gvisor и microvm.
+// SPEC: Карта образов определяет выбор класса; старый ответ даёт только gvisor.
+// Класс и образ существующего пула неизменяемы, включая configRef.
+// IMPLEMENTATION: Карта установленных образов, выбор класса при создании и сохранение исходных полей.
+// RESULT: IMPLEMENTED — microvm использует свой образ, старый контракт сохраняет gvisor.
+// STATUS: DONE
+describe('worker pool runtime controls', () => {
+  const microvmImage = `registry/microvm@sha256:${'b'.repeat(64)}`;
+
+  test('installed supported classes use their matching image, never lxc', () => {
+    const images = drafts.workerPoolImages({ workerImage: image, workerImages: {
+      gvisor: image, microvm: microvmImage, lxc: 'unsupported',
+    } });
+    expect(images).toEqual({ gvisor: image, microvm: microvmImage });
+    const draft = { ...newPoolDraft(images.microvm, 'microvm'), name: 'microvm-pool' };
+    expect(validatePoolDraft(draft)).toEqual({});
+    expect(poolPayload(null, draft).spec).toEqual({
+      replicas: 1, workerImage: microvmImage, sandboxClasses: [{ name: 'microvm' }],
+    });
+    expect(validatePoolDraft({ ...draft, sandboxClass: 'lxc' })).toHaveProperty('sandboxClass');
+  });
+
+  test('legacy fallback applies only when the map is absent', () => {
+    expect(drafts.workerPoolImages({ workerImage: image })).toEqual({ gvisor: image });
+    expect(drafts.workerPoolImages({ workerImage: image, workerImages: {} })).toEqual({});
+    expect(drafts.workerPoolImages({ workerImage: image, workerImages: { microvm: microvmImage } }))
+      .toEqual({ microvm: microvmImage });
+    expect(drafts.workerPoolImages({ workerImage: '', workerImages: { gvisor: '', lxc: image } }))
+      .toEqual({});
+  });
+
+  test('replica and resource edits cannot replace existing microvm image or class', () => {
+    const source = existing();
+    source.spec.workerImage = microvmImage;
+    const draft = poolDraft(source);
+    expect(draft.sandboxClass).toBe('microvm');
+    expect(draft.workerImage).toBe(microvmImage);
+    const result = poolPayload(source, {
+      ...draft, replicas: '3', requestCpu: '1', workerImage: image, sandboxClass: 'gvisor',
+    });
+    expect(result.spec.workerImage).toBe(microvmImage);
+    expect(result.spec.sandboxClasses).toEqual([{ name: 'microvm', configRef: { name: 'custom' } }]);
+    expect(result.spec.replicas).toBe(3);
+    expect(result.spec.template?.resources?.requests?.cpu).toBe('1');
+    expect(source.spec.replicas).toBe(2);
+  });
 });
 
 describe('worker pool draft', () => {

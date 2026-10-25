@@ -1,19 +1,27 @@
-import type { WorkerPool } from '@/services/brood/substrate';
+import type { WorkerPool, WorkerPoolDefaults } from '@/services/brood/substrate';
 import { clone } from './format';
 
 export interface PoolDraft {
   name: string;
   replicas: string;
   workerImage: string;
+  sandboxClass: string;
   requestCpu: string;
   requestMemory: string;
   limitCpu: string;
   limitMemory: string;
 }
 
-export function newPoolDraft(workerImage: string): PoolDraft {
+export function workerPoolImages(defaults: WorkerPoolDefaults): Record<string, string> {
+  const images = defaults.workerImages ?? { gvisor: defaults.workerImage };
+  return Object.fromEntries(['gvisor', 'microvm']
+    .filter((name) => Boolean(images[name]))
+    .map((name) => [name, images[name]]));
+}
+
+export function newPoolDraft(workerImage: string, sandboxClass = 'gvisor'): PoolDraft {
   return {
-    name: '', replicas: '1', workerImage,
+    name: '', replicas: '1', workerImage, sandboxClass,
     requestCpu: '', requestMemory: '', limitCpu: '', limitMemory: '',
   };
 }
@@ -24,6 +32,7 @@ export function poolDraft(pool: WorkerPool): PoolDraft {
     name: pool.metadata.name,
     replicas: String(pool.spec.replicas),
     workerImage: pool.spec.workerImage,
+    sandboxClass: pool.spec.sandboxClasses[0]?.name ?? '',
     requestCpu: resources?.requests?.cpu ?? '',
     requestMemory: resources?.requests?.memory ?? '',
     limitCpu: resources?.limits?.cpu ?? '',
@@ -54,6 +63,7 @@ export function validatePoolDraft(draft: PoolDraft): Partial<Record<keyof PoolDr
   )) errors.name = 'name';
   if (!/^\d+$/.test(draft.replicas) || Number(draft.replicas) > 2147483647) errors.replicas = 'replicas';
   if (!draft.workerImage || /\s/.test(draft.workerImage)) errors.workerImage = 'image';
+  if (!['gvisor', 'microvm'].includes(draft.sandboxClass)) errors.sandboxClass = 'image';
   for (const key of ['requestCpu', 'requestMemory', 'limitCpu', 'limitMemory'] as const) {
     if (draft[key] !== '' && quantity(draft[key]) === null) errors[key] = 'quantity';
   }
@@ -69,11 +79,10 @@ export function validatePoolDraft(draft: PoolDraft): Partial<Record<keyof PoolDr
 export function poolPayload(source: WorkerPool | null, draft: PoolDraft): WorkerPool {
   const pool: WorkerPool = source ? clone(source) : {
     metadata: { name: draft.name },
-    spec: { replicas: 1, workerImage: '', sandboxClasses: [{ name: 'gvisor' }] },
+    spec: { replicas: 1, workerImage: draft.workerImage, sandboxClasses: [{ name: draft.sandboxClass }] },
   };
   delete pool.status;
   pool.spec.replicas = Number(draft.replicas);
-  pool.spec.workerImage = draft.workerImage;
   for (const [group, resource, field] of [
     ['requests', 'cpu', 'requestCpu'], ['requests', 'memory', 'requestMemory'],
     ['limits', 'cpu', 'limitCpu'], ['limits', 'memory', 'limitMemory'],

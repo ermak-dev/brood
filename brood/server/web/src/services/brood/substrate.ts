@@ -156,6 +156,11 @@ export interface WorkerPool {
   [field: string]: unknown;
 }
 
+export interface WorkerPoolDefaults {
+  workerImage: string;
+  workerImages?: Record<string, string>;
+}
+
 export interface Binding {
   role: string;
   members?: string[];
@@ -217,7 +222,7 @@ export const workersApi = {
 // чтения сохраняются: конфликт требует перечитать объект и повторить правку.
 export const workerPoolsApi = {
   list: () => list<WorkerPool>('/api/worker-pools'),
-  defaults: () => request<{ workerImage: string }>('GET', '/api/worker-pool-defaults'),
+  defaults: () => request<WorkerPoolDefaults>('GET', '/api/worker-pool-defaults'),
   get: (name: string) => request<WorkerPool>('GET', `/api/worker-pools/${path(name)}`),
   create: (pool: WorkerPool) => request<WorkerPool>('POST', '/api/worker-pools', pool),
   update: (pool: WorkerPool) =>

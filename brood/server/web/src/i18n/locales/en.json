@@ -2581,11 +2581,11 @@
     "retry": "Retry",
     "conflict": "The pool changed or was replaced since you opened it. Your draft is unchanged. Close and reopen the editor to read the current version, then reapply your changes.",
     "missing_version": "The server did not return uid and resourceVersion. Reopen the editor before changing this pool.",
-    "change_warning": "Scaling down or changing the image or resources can restart workers and interrupt running actors.",
+    "change_warning": "Scaling down or changing resources can restart workers and interrupt running actors. The sandbox class and image cannot be changed after creation.",
     "configuration": "Pool configuration",
     "image": "Worker image",
-    "image_hint": "Only the installation’s deployed digest-pinned worker image is accepted.",
-    "sandbox": "Sandbox class (immutable)",
+    "image_hint": "The deployed digest-pinned image is selected automatically for the sandbox class and cannot be edited.",
+    "sandbox": "Sandbox class",
     "resources": "Resources per worker",
     "resources_hint": "Kubernetes quantities: CPU 500m or 2; memory 512Mi or 2Gi. Leave blank to omit an explicit value. Only CPU and memory are supported.",
     "request_cpu": "CPU request",
@@ -2595,7 +2595,7 @@
     "validation": {
       "name": "Use a lowercase DNS name, at most 253 characters, with labels of at most 63 characters.",
       "replicas": "Enter a whole number from 0 to 2147483647.",
-      "image": "Enter a worker image without whitespace.",
+      "image": "No valid deployed worker image is available for this sandbox class.",
       "quantity": "Enter a nonnegative Kubernetes quantity.",
       "limit": "The limit must be at least the request."
     }
