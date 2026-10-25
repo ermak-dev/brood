@@ -130,6 +130,12 @@ ATEAPI_CA = config.get("ATEAPI_CA")
 # ставит адрес своего port-forward (kubectl port-forward -n ate-system svc/api).
 ATEAPI_ENDPOINT = config.get("ATEAPI_ENDPOINT")
 
+# Kubernetes имеет собственную audience: токен ateapi сюда не подходит.
+KUBE_API_URL = config.get("KUBE_API_URL")
+KUBE_API_TOKEN = config.get("KUBE_API_TOKEN")
+KUBE_API_CA = config.get("KUBE_API_CA")
+WORKER_POOL_IMAGE = config.get("WORKER_POOL_IMAGE")
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAdminUser"],

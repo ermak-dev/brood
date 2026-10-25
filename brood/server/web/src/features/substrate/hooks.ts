@@ -6,7 +6,10 @@ import { errorMessage } from '@/services/brood/http';
 
 /** brood: load once and on demand (the header's refresh button too). Pass a
  * memoized loader; null waits -- e.g. until a project is chosen. */
-export function useResource<T>(load: (() => Promise<T>) | null) {
+export function useResource<T>(
+  load: (() => Promise<T>) | null,
+  { headerRefresh = true }: { headerRefresh?: boolean } = {}
+) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Номер последнего запроса: ответ на прежний (другой проект, другой скоуп),
@@ -33,7 +36,7 @@ export function useResource<T>(load: (() => Promise<T>) | null) {
     void refresh();
   }, [refresh]);
 
-  useHeaderRefresh(refresh, Boolean(load));
+  useHeaderRefresh(refresh, Boolean(load) && headerRefresh);
 
   return { data, error, loading: data === null && error === null, refresh };
 }

@@ -5,6 +5,7 @@ import { PolicyPage } from '@/features/substrate/PolicyPage';
 import { ProjectsPage } from '@/features/substrate/ProjectsPage';
 import { TemplatesPage } from '@/features/substrate/TemplatesPage';
 import { WorkersPage } from '@/features/substrate/WorkersPage';
+import { WorkerPoolsPage } from '@/features/substrate/WorkerPoolsPage';
 import { ProvidersWorkbenchPage } from '@/features/providers/ProvidersWorkbenchPage';
 import { AuthFilesPage } from '@/features/authFiles/AuthFilesPage';
 import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
@@ -28,6 +29,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/actors', element: <ActorsPage /> },
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
+  { path: '/worker-pools', element: <WorkerPoolsPage /> },
   { path: '/policy', element: <PolicyPage /> },
   { path: '/settings', element: <Navigate to="/config" replace /> },
   { path: '/api-keys', element: <Navigate to="/config" replace /> },

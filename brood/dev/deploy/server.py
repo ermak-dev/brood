@@ -8,14 +8,18 @@ images.BuildDockerfileImage). Манифесты -- база kustomize в manife
 Выкладка копирует её во временный каталог, дописывает оверлей -- образы по
 digest и Secret'ы из .env и secrets/ рабочей копии -- и применяет его
 server-side apply. Хэш в имени сгенерированного Secret'а перекатывает поды,
-когда меняется .env или сертификат.
+когда меняется .env или сертификат. Образ gvisor-воркера собирается pinned ko
+из checkout'а Substrate; начальный WorkerPool создаётся отдельно, без apply,
+чтобы выкладка не сбрасывала пользовательские правки и версии пулов.
 
 Модуль ничего не печатает: процессы идут через Shell установки, и их вывод
 попадает туда, куда она его направит.
 """
 import http.client
+import ipaddress
 import json
 import os
+import re
 import shutil
 import ssl
 import tempfile
@@ -80,7 +84,7 @@ def kustomization(digests):
     return json.dumps({
         "apiVersion": "kustomize.config.k8s.io/v1beta1",
         "kind": "Kustomization",
-        "resources": ["base"],
+        "resources": ["base", "api-egress.json"],
         "images": [{"name": name, "newName": f"{REGISTRY}/{name}", "digest": digest}
                    for name, digest in sorted(digests.items())],
         "secretGenerator": [
@@ -91,6 +95,52 @@ def kustomization(digests):
              "files": sorted(TLS)},
         ],
     }, indent=2) + "\n"
+
+
+def initial_pool(image):
+    """Начальный пул: только создание, не часть применяемой базы kustomize."""
+    return {
+        "apiVersion": "ate.dev/v1", "kind": "WorkerPool",
+        "metadata": {"name": "brood", "namespace": NAMESPACE},
+        "spec": {"replicas": 1, "workerImage": image,
+                 "sandboxClasses": [{"name": "gvisor"}],
+                 "template": {"resources": {
+                     "requests": {"cpu": "250m", "memory": "2Gi"},
+                     "limits": {"cpu": "2", "memory": "2Gi"}}}}}
+
+
+def api_egress(service, endpoints):
+    """Точные адреса API до и после DNAT: Service:443 и endpoints:6443.
+
+    Неудачное discovery не расширяет доступ до всей сети или всех портов.
+    Порты берутся из живых объектов, а не из предположения о kind."""
+    def rule(addresses, ports):
+        if not addresses or not ports:
+            raise ValueError("no ready addresses or HTTPS ports")
+        cidrs = sorted({str(ipaddress.ip_network(ipaddress.ip_address(ip))) for ip in addresses})
+        if any(type(port) is not int or not 0 < port < 65536 for port in ports):
+            raise ValueError("invalid HTTPS port")
+        return {"to": [{"ipBlock": {"cidr": cidr}} for cidr in cidrs],
+                "ports": [{"protocol": "TCP", "port": port} for port in sorted(set(ports))]}
+
+    try:
+        spec = service["spec"]
+        https = next(p for p in spec["ports"]
+                     if p["port"] == 443 and p.get("protocol", "TCP") == "TCP")
+        ips = spec.get("clusterIPs") or [spec["clusterIP"]]
+        rules = [rule(ips, [https["port"]])]
+        subsets = endpoints["subsets"]
+        if not subsets:
+            raise ValueError("no endpoint subsets")
+        for subset in subsets:
+            ports = [p["port"] for p in subset["ports"]
+                     if p.get("name", "") == https.get("name", "")
+                     and p.get("protocol", "TCP") == "TCP"]
+            rules.append(rule([a["ip"] for a in subset["addresses"]], ports))
+        return rules
+    except (AttributeError, KeyError, TypeError, ValueError, StopIteration) as e:
+        raise RuntimeError(f"Kubernetes API discovery: unusable default/kubernetes Service "
+                           f"or Endpoints: {e or 'no HTTPS service port'}") from None
 
 
 def first_host(allowed):
@@ -119,14 +169,23 @@ class Deploy:
         tls = self._tls()
         self.cluster.check()
         self._namespace_is_ours()
+        api_rules = self._api_egress()
         digests = {name: self._image(name, dockerfile) for name, dockerfile in IMAGES.items()}
+        worker_image = self._worker_image()
+        server["WORKER_POOL_IMAGE"] = worker_image
         workdir = tempfile.mkdtemp(prefix="brood-deploy.")
         try:
-            self._overlay(workdir, digests, server, admin, cliproxy, tls)
+            self._overlay(workdir, digests, server, admin, cliproxy, tls, api_rules)
             self._kubectl("delete", *LEGACY, "-n", NAMESPACE, "--ignore-not-found")
             self._kubectl("apply", "--server-side", "--force-conflicts", "-k", workdir)
+            self._bootstrap_pool(workdir, worker_image)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+        # Контроллер создаёт Deployment с именем WorkerPool (workerpool_apply.go).
+        self._kubectl("wait", "--for=create", "deployment/brood", "-n", NAMESPACE,
+                      "--timeout=600s")
+        self._kubectl("rollout", "status", "deployment/brood", "-n", NAMESPACE,
+                      "--timeout=600s")
         for what in ROLLOUT:
             self._kubectl("rollout", "status", what, "-n", NAMESPACE, "--timeout=600s")
         port = local.edge_ports(self.get).get(dict(local.EDGE)["BROOD_HTTPS_PORT"])
@@ -160,12 +219,77 @@ class Deploy:
 
     def _namespace_is_ours(self):
         key, owner = OWNER
-        code, out, _ = self.shell.output(
+        code, out, err = self.shell.output(
             "kubectl", f"--context={local.CONTEXT}", "get", "namespace", NAMESPACE,
-            "-o", "jsonpath={.metadata.labels." + key.replace(".", "\\.") + "}")
-        if code == 0 and out.strip() != owner:
+            "--ignore-not-found", "-o", "json", "--request-timeout=15s")
+        if code:
+            raise RuntimeError(f"cannot inspect namespace {NAMESPACE}: {local.reason(err, code)}")
+        if not out.strip():
+            return
+        try:
+            labels = json.loads(out)["metadata"].get("labels", {})
+            if not isinstance(labels, dict):
+                raise ValueError("labels are not an object")
+        except (ValueError, AttributeError, KeyError, TypeError):
+            raise RuntimeError(f"cannot inspect namespace {NAMESPACE}: invalid JSON") from None
+        if labels.get(key) != owner:
             raise RuntimeError(f"namespace {NAMESPACE} exists without label {key}={owner}: "
                                f"it is not brood's; refusing to deploy into it")
+
+    def _api_egress(self):
+        objects = []
+        for resource in ("service", "endpoints"):
+            code, out, err = self.shell.output(
+                "kubectl", f"--context={local.CONTEXT}", "get", resource, "kubernetes",
+                "-n", "default", "-o", "json", "--request-timeout=15s")
+            if code:
+                raise RuntimeError(f"Kubernetes API discovery: get {resource} default/kubernetes: "
+                                   f"{local.reason(err, code)}")
+            try:
+                objects.append(json.loads(out))
+            except ValueError:
+                raise RuntimeError(f"Kubernetes API discovery: invalid JSON for {resource}") from None
+        return api_egress(*objects)
+
+    def _worker_image(self):
+        """Тот же pinned ko, .ko.yaml, version stamp и host platform, что ate-setup.
+
+        Go сохраняет кэш компиляции, KO_CACHE -- слои между релизами brood.
+        Своего кэша по git HEAD нет: он пропустил бы локальные правки source."""
+        env = dict(self.shell.env, KO_DOCKER_REPO=REGISTRY)
+        env.setdefault("KO_CACHE", os.path.join(local.state_dir(self.cluster.source), "ko-cache"))
+        shell = local.Shell(env, self.cluster.source)
+
+        def output(*args):
+            code, out, err = shell.output(*args)
+            if code:
+                raise RuntimeError(f"worker image {local.step(args)}: {local.reason(err, code)}")
+            return out.strip()
+
+        env["KO_DEFAULTPLATFORMS"] = "linux/" + output("go", "env", "GOARCH")
+        # ate-setup/internal/ko/ko.go: VERSION, затем git describe, затем dev.
+        version = env.get("VERSION")
+        if not version:
+            code, out, _ = shell.output("git", "describe", "--tags", "--always", "--dirty")
+            version = out.strip() if code == 0 and out.strip() else "dev"
+        out = output(os.path.join(self.cluster.source, "hack", "run-tool.sh"), "ko", "build",
+                     "go.ate.dev/substrate/cmd/ateworker-gvisor", "--base-import-paths",
+                     f"--ldflags=-X=go.ate.dev/substrate/internal/version.Version={version}")
+        image = out.split()[-1] if out else ""
+        if not re.fullmatch(re.escape(REGISTRY) + r"/ateworker-gvisor@sha256:[0-9a-f]{64}", image):
+            raise RuntimeError("worker image ko build returned no registry digest for ateworker-gvisor")
+        return image
+
+    def _bootstrap_pool(self, workdir, image):
+        path = os.path.join(workdir, "initial-pool.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(initial_pool(image), f)
+        code, _, err = self.shell.output("kubectl", f"--context={local.CONTEXT}",
+                                          "create", "-f", path)
+        # create атомарен: гонка с панелью не повод менять уже существующий пул.
+        if code and not re.search(r'\(AlreadyExists\): (?:error when creating "[^"\n]+": )?'
+                                  r'workerpools(?:\.ate\.dev)? "brood" already exists\s*$', err):
+            raise RuntimeError(f"create WorkerPool brood/brood: {local.reason(err, code)}")
 
     def _image(self, name, dockerfile):
         """Собрать и запушить образ -> digest. Тег -- только имя, под которым
@@ -182,10 +306,15 @@ class Deploy:
             raise RuntimeError(f"no digest for {tag} in the registry")
         return digest
 
-    def _overlay(self, workdir, digests, server, admin, cliproxy, tls):
+    def _overlay(self, workdir, digests, server, admin, cliproxy, tls, api_rules):
         os.chmod(workdir, 0o700)
         shutil.copytree(MANIFESTS, os.path.join(workdir, "base"))
+        policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                  "metadata": {"name": "django-kube-api", "namespace": NAMESPACE},
+                  "spec": {"podSelector": {"matchLabels": {"app": "django"}},
+                           "policyTypes": ["Egress"], "egress": api_rules}}
         files = {"kustomization.yaml": kustomization(digests),
+                 "api-egress.json": json.dumps(policy),
                  "server.env": env_file(server), "admin.env": env_file(admin),
                  "cliproxy.env": env_file(cliproxy), **tls}
         for name, text in files.items():

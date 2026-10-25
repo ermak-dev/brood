@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
@@ -32,6 +33,7 @@ function usage(
  * one lasting action: final, the scheduler stops placing actors there. */
 export function WorkersPage() {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const { data, error, loading, refresh } = useResource(workersApi.list);
   const { confirm } = useActions(refresh);
   const [viewing, setViewing] = useState<Worker | null>(null);
@@ -109,7 +111,8 @@ export function WorkersPage() {
         />
       ) : (
         <div className={styles.empty}>
-          <EmptyState title={t('workers.empty')} description={t('workers.empty_hint')} />
+          <EmptyState title={t('workers.empty')} description={t('workers.empty_hint')}
+            action={<Button onClick={() => navigate('/worker-pools')}>{t('nav.worker_pools')}</Button>} />
         </div>
       )}
 

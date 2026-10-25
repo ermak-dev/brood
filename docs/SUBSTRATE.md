@@ -62,6 +62,13 @@ CRUD atespace требует global owner. Общий `ate-client` оставл�
   стартует со своей политикой default-deny по namespace;
 - `<checkout>/bin/kubectl-ate`.
 
+`brood substrate install` ставит инфраструктуру без демо и без пулов.
+Начальный WorkerPool `brood` создаёт `brood deploy server` вместе с сервером
+(см. `docs/DEPLOY.md`). Остальные пулы namespace `brood` создаются в панели:
+раздел «Пулы воркеров» не зависит от активного проекта. WorkerPool задаёт
+число подов и их ресурсы; Worker в ateapi -- отражение конкретного пода,
+а ActorTemplate задаёт нагрузку внутри sandbox, не заменяет пул.
+
 Состояние — в `<checkout>/bin/substrate`: kubectl нужной версии, kubeconfig и
 записи владения (`owned`, Id контейнеров). Там же его держал
 `hack/substrate.sh`, поэтому установка скрипта и установка brood — одна и та

@@ -120,7 +120,8 @@
     "actors": "Actor",
     "templates": "템플릿",
     "workers": "워커",
-    "policy": "접근 정책"
+    "policy": "접근 정책",
+    "worker_pools": "워커 풀"
   },
   "nav_groups": {
     "operate": "운영",
@@ -145,7 +146,8 @@
     "actors": "프로젝트의 작업 단위",
     "templates": "ActorTemplate: actor 이미지",
     "workers": "actor를 호스팅하는 풀",
-    "policy": "역할과 주체"
+    "policy": "역할과 주체",
+    "worker_pools": "워커 용량을 제공할 풀을 만드세요."
   },
   "dashboard": {
     "hero_verdict_good": "모든 시스템 정상",
@@ -2435,7 +2437,7 @@
     "drain_message": "워커 {{name}}을(를) 배수할까요? 되돌릴 수 없습니다: 스케줄러가 더 이상 actor를 배치하지 않습니다.",
     "drained": "워커 {{name}} 배수 중",
     "empty": "워커 없음",
-    "empty_hint": "Substrate 설치가 WorkerPool을 배포하면 워커가 나타납니다",
+    "empty_hint": "워커를 추가하려면 워커 풀에서 풀을 만드세요.",
     "state": {
       "active": "활성",
       "draining": "배수 중",
@@ -2558,6 +2560,44 @@
       "crashed": "충돌",
       "deleting": "삭제 중",
       "reverting": "되돌리는 중"
+    }
+  },
+  "worker_pools": {
+    "title": "워커 풀",
+    "create": "워커 풀 만들기",
+    "scope_hint": "워커 풀은 활성 프로젝트와 관계없이 전체 설치에 용량을 제공합니다.",
+    "empty": "워커 풀 없음",
+    "empty_hint": "워커 용량을 제공할 풀을 만드세요.",
+    "replicas": "목표 복제본",
+    "observed": "관측된 복제본",
+    "ready": "준비된 복제본",
+    "resolution": "샌드박스 해석",
+    "unknown": "알 수 없음",
+    "pending_config": "대기 중인 설정: {{name}}",
+    "delete_title": "워커 풀을 삭제할까요?",
+    "delete_message": "“{{name}}”을 삭제할까요? 워커 파드가 제거되어 모든 프로젝트에서 실행 중인 액터가 중단될 수 있습니다. 취소할 수 없습니다.",
+    "deleted": "워커 풀 “{{name}}” 삭제됨",
+    "saved": "워커 풀 “{{name}}” 저장됨",
+    "retry": "다시 시도",
+    "conflict": "풀을 연 이후 변경되거나 교체되었습니다. 초안은 그대로 유지됩니다. 편집기를 닫았다 다시 열어 최신 버전을 읽고 변경 사항을 다시 적용하세요.",
+    "missing_version": "서버가 uid 및 resourceVersion을 반환하지 않았습니다. 풀을 변경하기 전에 편집기를 다시 여세요.",
+    "change_warning": "복제본 축소, 이미지 또는 리소스 변경은 워커를 재시작하고 액터를 중단시킬 수 있습니다.",
+    "configuration": "풀 설정",
+    "image": "워커 이미지",
+    "image_hint": "설치에 배포된 다이제스트 고정 워커 이미지만 허용됩니다.",
+    "sandbox": "샌드박스 클래스 (변경 불가)",
+    "resources": "워커별 리소스",
+    "resources_hint": "Kubernetes 수량: CPU 500m 또는 2, 메모리 512Mi 또는 2Gi. 비워 두면 명시적 값을 제거합니다. CPU와 메모리만 지원됩니다.",
+    "request_cpu": "CPU 요청",
+    "request_memory": "메모리 요청",
+    "limit_cpu": "CPU 제한",
+    "limit_memory": "메모리 제한",
+    "validation": {
+      "name": "소문자 DNS 이름을 사용하세요. 전체 253자, 각 레이블 63자 이내입니다.",
+      "replicas": "0에서 2147483647 사이의 정수를 입력하세요.",
+      "image": "공백 없는 워커 이미지를 입력하세요.",
+      "quantity": "음수가 아닌 Kubernetes 수량을 입력하세요.",
+      "limit": "제한은 요청 이상이어야 합니다."
     }
   }
 }

@@ -121,6 +121,41 @@ export interface Worker {
   };
 }
 
+export interface WorkerPool {
+  metadata: {
+    name: string;
+    uid?: string;
+    resourceVersion?: string;
+    creationTimestamp?: string;
+    [field: string]: unknown;
+  };
+  spec: {
+    replicas: number;
+    workerImage: string;
+    sandboxClasses: { name: string; [field: string]: unknown }[];
+    template?: {
+      resources?: {
+        requests?: Record<string, string>;
+        limits?: Record<string, string>;
+        [field: string]: unknown;
+      };
+      [field: string]: unknown;
+    };
+    [field: string]: unknown;
+  };
+  status?: {
+    replicas?: number;
+    readyReplicas?: number;
+    sandboxClasses?: {
+      name: string;
+      configRef?: { name: string };
+      pendingConfigRef?: { name: string };
+      conditions?: { type: string; status: string; reason?: string; message?: string }[];
+    }[];
+  };
+  [field: string]: unknown;
+}
+
 export interface Binding {
   role: string;
   members?: string[];
@@ -176,6 +211,21 @@ export const workersApi = {
   list: () => list<Worker>('/api/workers'),
   drain: (name: string) =>
     request<Worker>('POST', `/api/workers/${path(name)}`, { action: 'drain' }),
+};
+
+// WorkerPool — Kubernetes-объект, не protojson ateapi. Предусловия исходного
+// чтения сохраняются: конфликт требует перечитать объект и повторить правку.
+export const workerPoolsApi = {
+  list: () => list<WorkerPool>('/api/worker-pools'),
+  defaults: () => request<{ workerImage: string }>('GET', '/api/worker-pool-defaults'),
+  get: (name: string) => request<WorkerPool>('GET', `/api/worker-pools/${path(name)}`),
+  create: (pool: WorkerPool) => request<WorkerPool>('POST', '/api/worker-pools', pool),
+  update: (pool: WorkerPool) =>
+    request<WorkerPool>('PUT', `/api/worker-pools/${path(pool.metadata.name)}`, pool),
+  remove: (pool: WorkerPool) =>
+    request<null>('DELETE', `/api/worker-pools/${path(pool.metadata.name)}`, {
+      metadata: { uid: pool.metadata.uid, resourceVersion: pool.metadata.resourceVersion },
+    }),
 };
 
 export const policyApi = {

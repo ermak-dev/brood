@@ -120,7 +120,8 @@
     "actors": "Actor",
     "templates": "模板",
     "workers": "工作节点",
-    "policy": "访问策略"
+    "policy": "访问策略",
+    "worker_pools": "工作节点池"
   },
   "nav_groups": {
     "operate": "运行",
@@ -145,7 +146,8 @@
     "actors": "项目的工作单元",
     "templates": "ActorTemplate：actor 镜像",
     "workers": "承载 actor 的池",
-    "policy": "角色与主体"
+    "policy": "角色与主体",
+    "worker_pools": "创建池以提供工作节点容量。"
   },
   "dashboard": {
     "hero_verdict_good": "运行平稳",
@@ -2433,7 +2435,7 @@
     "drain_message": "排空工作节点 {{name}}？不可撤销：调度器将不再在其上放置 actor。",
     "drained": "工作节点 {{name}} 正在排空",
     "empty": "暂无工作节点",
-    "empty_hint": "Substrate 安装部署 WorkerPool 后节点才会出现",
+    "empty_hint": "要添加工作节点，请在工作池中创建池。",
     "state": {
       "active": "活跃",
       "draining": "排空中",
@@ -2556,6 +2558,44 @@
       "crashed": "已崩溃",
       "deleting": "删除中",
       "reverting": "回滚中"
+    }
+  },
+  "worker_pools": {
+    "title": "工作节点池",
+    "create": "创建工作节点池",
+    "scope_hint": "工作节点池为整个安装提供容量，与当前项目无关。",
+    "empty": "暂无工作节点池",
+    "empty_hint": "创建池以提供工作节点容量。",
+    "replicas": "期望副本数",
+    "observed": "实际副本数",
+    "ready": "就绪副本数",
+    "resolution": "沙箱解析",
+    "unknown": "未知",
+    "pending_config": "待生效配置：{{name}}",
+    "delete_title": "删除工作节点池？",
+    "delete_message": "删除“{{name}}”？这将移除其工作节点 Pod，并可能中断所有项目中运行的 Actor。此操作无法撤销。",
+    "deleted": "已删除工作节点池“{{name}}”",
+    "saved": "已保存工作节点池“{{name}}”",
+    "retry": "重试",
+    "conflict": "池自打开后已更改或被替换。草稿未变。请关闭并重新打开编辑器以读取最新版本，然后重新应用更改。",
+    "missing_version": "服务器未返回 uid 和 resourceVersion。请重新打开编辑器后再修改此池。",
+    "change_warning": "缩容、更改镜像或资源可能重启工作节点并中断运行中的 Actor。",
+    "configuration": "池配置",
+    "image": "工作节点镜像",
+    "image_hint": "仅允许使用安装中已部署且固定摘要的工作节点镜像。",
+    "sandbox": "沙箱类别（不可变）",
+    "resources": "每个工作节点的资源",
+    "resources_hint": "Kubernetes 数量：CPU 为 500m 或 2；内存为 512Mi 或 2Gi。留空以省略显式值。仅支持 CPU 和内存。",
+    "request_cpu": "CPU 请求",
+    "request_memory": "内存请求",
+    "limit_cpu": "CPU 限制",
+    "limit_memory": "内存限制",
+    "validation": {
+      "name": "使用小写 DNS 名称，总长不超过 253 字符，每段不超过 63 字符。",
+      "replicas": "输入 0 到 2147483647 之间的整数。",
+      "image": "输入不含空白的工作节点镜像。",
+      "quantity": "输入非负的 Kubernetes 数量。",
+      "limit": "限制值不得小于请求值。"
     }
   }
 }

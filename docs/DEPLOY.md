@@ -111,7 +111,8 @@ namespace `brood`:
   перекатка Django и прокси не рвёт стримы LLM на входе;
 - `django` -- init `migrate` и `ensureadmin`, Django под gunicorn на `:8000`;
   NetworkPolicy пускает только edge (Django верит его `X-Forwarded-Proto`),
-  egress -- только к postgres и ateapi. Отдельный ServiceAccount `django` с
+  egress -- DNS, postgres, ateapi и точные адреса Kubernetes API (ниже).
+  Отдельный ServiceAccount `django` с
   projected-томом: токен с audience `api.ate-system.svc` и ClusterTrustBundle
   signer'а `servicedns.podcert.ate.dev/identity` -- клиент проектов
   (`brood/server/ateapi`, `brood server test` не ходит в сеть: клиент
@@ -124,6 +125,65 @@ namespace `brood`:
   только edge;
 - `postgres` -- StatefulSet с тем же образом, что bundled Postgres Substrate,
   том 1Gi; NetworkPolicy пускает только Django.
+
+### Пулы воркеров
+
+Выкладка собирает `ateworker-gvisor` из checkout'а установки (`cluster.source`),
+не из дерева brood. Вызов соответствует закреплённому Substrate
+`4ebd668d62e3f55753765a46579fc6deb81b2f7f`,
+`cmd/ate-setup/internal/ko/ko.go`: `hack/run-tool.sh ko build
+ go.ate.dev/substrate/cmd/ateworker-gvisor --base-import-paths` с version stamp
+через `--ldflags`. Скрипт выбирает pinned Go tool ko, `.ko.yaml` задаёт базовый
+образ; как `hack/install-ate-kind.sh`, собираем только `linux/$(go env GOARCH)`.
+Образ пушится в реестр установки, результат --
+`localhost:5002/ateworker-gvisor@sha256:…`. Кэш Go и `KO_CACHE` в
+`<source>/bin/substrate/ko-cache` переживают релизы brood; заданный `KO_CACHE`
+сохраняется. Повторный вызов использует стандартные кэши, без собственного
+кэша по HEAD, который мог бы пропустить локальные правки исходников.
+
+После сверки владения и read-only discovery API, сборки образов и apply базы
+сервер создаёт начальный WorkerPool `brood/brood`: `replicas: 1`,
+`sandboxClasses: [{name: gvisor}]`, `workerImage` по digest,
+`template.resources.requests: {cpu: 250m, memory: 2Gi}`,
+`template.resources.limits: {cpu: "2", memory: 2Gi}`. Это стартовый размер,
+не гарантия достаточной памяти для любой нагрузки. Пул не входит в kustomize:
+только атомарный `create`, `AlreadyExists` сохраняет существующий объект
+(включая гонку с панелью); остальные ошибки останавливают выкладку. Повторная
+выкладка не меняет ресурсы, реплики, метаданные или версию образа ни этого,
+ни других пулов. Перевод существующего пула на новый digest -- отдельное
+осознанное изменение `spec.workerImage`, не побочный эффект выкладки brood.
+Контроллер называет Deployment именем пула: команда ждёт появления
+`deployment/brood`, затем его rollout, не удаляя пул или воркеры для починки.
+
+Django получает собранную ссылку через `WORKER_POOL_IMAGE` в `brood-env`;
+это не пользовательская настройка `.env`. Интеграционный контракт defaults
+API -- поле `workerImage` типа string из `WORKER_POOL_IMAGE`, то есть полная
+ссылка по digest, а не имя образа или объект. Уже существующие пулы могут
+продолжать работать на прежнем digest.
+
+Клиент Kubernetes использует `KUBE_API_URL=https://kubernetes.default.svc`,
+`KUBE_API_TOKEN=/var/run/secrets/kubernetes.io/serviceaccount/token` и
+`KUBE_API_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`:
+обычный ротируемый токен ServiceAccount, не пользовательский kubeconfig и
+не токен ateapi с другим audience. Role/RoleBinding `django-workerpools` в
+namespace `brood` дают `django` только `get,list,create,update,delete` для
+`ate.dev/workerpools`, без pods, secrets, cluster-wide доступа и `/status`.
+
+Даже namespaced `create WorkerPool` -- сильное право: контроллер создаёт
+привилегированные воркеры, а в `brood` также лежат серверные Secret'ы.
+Поэтому backend обязан ограничивать опасные поля spec и metadata (включая
+выбор ServiceAccount и аннотации), а не проксировать произвольный объект.
+Через GUI разрешены только `gvisor` и безопасный образ, ровно digest из
+`WORKER_POOL_IMAGE`; пользовательский образ и произвольный runtime запрещены.
+RBAC сам по себе этих ограничений не обеспечивает.
+
+До первой записи выкладка читает Service и Endpoints `default/kubernetes`.
+Отдельная NetworkPolicy `django-kube-api` разрешает только их адреса
+(`/32` или `/128`) и HTTPS-порты: Service на 443 до DNAT, endpoints на их
+порту (в kind 6443) после DNAT. Широкого egress на 443 или всю сеть узлов
+нет. Запрет чтения, повреждённый ответ или отсутствие готовых endpoints --
+объяснимый отказ до сборки и apply, а не расширение политики. При смене
+адресов API нужно повторить выкладку, чтобы обновить эту политику.
 
 Маршруты входа:
 

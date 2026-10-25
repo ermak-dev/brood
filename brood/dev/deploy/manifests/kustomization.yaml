@@ -6,6 +6,7 @@ kind: Kustomization
 namespace: brood
 resources:
   - namespace.yaml
+  - worker-access.json
   - postgres.yaml
   - django.yaml
   - cliproxy.yaml

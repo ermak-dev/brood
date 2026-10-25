@@ -93,6 +93,13 @@ AI Providers.
   каталоги снапшота, ресурсы, размещение и снапшоты, вкладка JSON -- всё
   остальное. Образ -- только по digest;
 - воркер -- зеркало пода, его пишет ate-controller: из панели -- только drain;
+- пул воркеров -- отдельный глобальный раздел, не зависит от проекта. Создание,
+  изменение числа реплик и ресурсов, удаление; ноль реплик останавливает пул.
+  Готовность -- `status.readyReplicas` относительно `spec.replicas`, причины
+  проблем с sandbox -- условия `status.sandboxClasses`. Уменьшение и удаление
+  могут прервать акторов; это не замена suspend. PUT и DELETE используют
+  прочитанные `metadata.uid` и `metadata.resourceVersion`, конфликт не
+  обходится перечитыванием версии за спиной пользователя;
 - политика -- одна на скоуп (`default`): заводится POST, меняется PUT с
   прочитанными `uid`/`version`, глобальная не удаляется. Её версию двигают
   только правки политики, поэтому конфликт (409) значит чужую правку: черновик
@@ -117,6 +124,28 @@ ate-system svc/api <порт>:443`, плюс `ATEAPI_TOKEN` (токен с audie
 `api.ate-system.svc`) и `ATEAPI_CA` (ClusterTrustBundle signer'а
 `servicedns.podcert.ate.dev/identity`); TLS по-прежнему сверяет имя
 `api.ate-system.svc`.
+
+### Kubernetes API пулов
+
+WorkerPool -- Kubernetes CRD, не protojson ateapi. Маршруты Django:
+`GET/POST /api/worker-pools`, `GET/PUT/DELETE /api/worker-pools/<name>`,
+`GET /api/worker-pool-defaults` (разрешённый образ воркера). Коллекция --
+`{"results": [...]}`, объекты -- Kubernetes JSON. На DELETE тело содержит
+`{"metadata": {"uid": "...", "resourceVersion": "..."}}`.
+
+`brood/server/projects/kubernetes.py` ходит по HTTPS с CA и ротируемым
+ServiceAccount-токеном, с таймаутом и без редиректов; `pools.py` ограничивает
+поля и переводит отказы в HTTP. Настройки: `KUBE_API_URL`, `KUBE_API_TOKEN`,
+`KUBE_API_CA`, `WORKER_POOL_IMAGE`. Выкладка задаёт их сама. Токен Kubernetes
+отдельный от токена ateapi, у них разные audience.
+
+RBAC разрешает только workerpools namespace `brood`, без доступа к Secret,
+Pod и настройкам кластера. Поскольку контроллер создаёт привилегированные
+поды, REST дополнительно разрешает только установленный digest образа,
+класс gvisor, реплики, CPU/память, метки и nodeSelector. Подмена ServiceAccount,
+pod-аннотации и произвольные поля запрещены. Полный доступ к Kubernetes
+пользователь панели не получает. Доступ к REST -- сессия суперпользователя
+Django, изменяющие запросы -- с CSRF.
 
 ## Сборка и проверки
 

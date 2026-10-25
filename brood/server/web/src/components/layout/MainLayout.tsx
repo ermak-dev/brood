@@ -627,6 +627,12 @@ export function MainLayout() {
           icon: sidebarIcons.workers,
         },
         {
+          path: '/worker-pools',
+          labelKey: 'nav.worker_pools',
+          metaKey: 'nav_meta.worker_pools',
+          icon: sidebarIcons.workers,
+        },
+        {
           path: '/policy',
           labelKey: 'nav.policy',
           metaKey: 'nav_meta.policy',

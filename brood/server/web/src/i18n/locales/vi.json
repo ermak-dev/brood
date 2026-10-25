@@ -120,7 +120,8 @@
     "actors": "Actor",
     "templates": "Mẫu",
     "workers": "Worker",
-    "policy": "Chính sách truy cập"
+    "policy": "Chính sách truy cập",
+    "worker_pools": "Nhóm worker"
   },
   "nav_groups": {
     "operate": "Vận hành",
@@ -145,7 +146,8 @@
     "actors": "Đơn vị công việc của dự án",
     "templates": "ActorTemplate: image của actor",
     "workers": "Pool chứa actor",
-    "policy": "Vai trò và chủ thể"
+    "policy": "Vai trò và chủ thể",
+    "worker_pools": "Tạo nhóm để cung cấp tài nguyên worker."
   },
   "dashboard": {
     "hero_verdict_good": "Mọi hệ thống ổn định",
@@ -2441,7 +2443,7 @@
     "drain_message": "Drain worker {{name}}? Không hoàn tác được: bộ lập lịch ngừng đặt actor lên nó.",
     "drained": "Worker {{name}} đang drain",
     "empty": "Chưa có worker",
-    "empty_hint": "Worker xuất hiện khi bản cài Substrate triển khai WorkerPool",
+    "empty_hint": "Để thêm worker, hãy tạo nhóm trong mục Nhóm worker.",
     "state": {
       "active": "hoạt động",
       "draining": "đang drain",
@@ -2564,6 +2566,44 @@
       "crashed": "đã sập",
       "deleting": "đang xóa",
       "reverting": "đang hoàn tác"
+    }
+  },
+  "worker_pools": {
+    "title": "Nhóm worker",
+    "create": "Tạo nhóm worker",
+    "scope_hint": "Nhóm worker cung cấp tài nguyên cho toàn bộ hệ thống, không phụ thuộc dự án đang chọn.",
+    "empty": "Chưa có nhóm worker",
+    "empty_hint": "Tạo nhóm để cung cấp tài nguyên worker.",
+    "replicas": "Số bản sao mong muốn",
+    "observed": "Số bản sao quan sát được",
+    "ready": "Số bản sao sẵn sàng",
+    "resolution": "Phân giải sandbox",
+    "unknown": "Không rõ",
+    "pending_config": "Cấu hình đang chờ: {{name}}",
+    "delete_title": "Xóa nhóm worker?",
+    "delete_message": "Xóa “{{name}}”? Thao tác sẽ xóa các pod worker và có thể gián đoạn actor đang chạy trong mọi dự án. Không thể hoàn tác.",
+    "deleted": "Đã xóa nhóm worker “{{name}}”",
+    "saved": "Đã lưu nhóm worker “{{name}}”",
+    "retry": "Thử lại",
+    "conflict": "Nhóm đã thay đổi hoặc bị thay thế từ khi mở. Bản nháp không đổi. Đóng rồi mở lại trình sửa để đọc phiên bản mới và áp dụng lại thay đổi.",
+    "missing_version": "Máy chủ không trả về uid và resourceVersion. Mở lại trình sửa trước khi thay đổi nhóm.",
+    "change_warning": "Giảm số bản sao, thay ảnh hoặc tài nguyên có thể khởi động lại worker và gián đoạn actor.",
+    "configuration": "Cấu hình nhóm",
+    "image": "Ảnh worker",
+    "image_hint": "Chỉ chấp nhận ảnh worker được ghim theo digest đã triển khai trong bản cài đặt.",
+    "sandbox": "Lớp sandbox (không thể đổi)",
+    "resources": "Tài nguyên cho mỗi worker",
+    "resources_hint": "Số lượng Kubernetes: CPU 500m hoặc 2; bộ nhớ 512Mi hoặc 2Gi. Để trống để bỏ giá trị tường minh. Chỉ hỗ trợ CPU và bộ nhớ.",
+    "request_cpu": "CPU yêu cầu",
+    "request_memory": "Bộ nhớ yêu cầu",
+    "limit_cpu": "Giới hạn CPU",
+    "limit_memory": "Giới hạn bộ nhớ",
+    "validation": {
+      "name": "Dùng tên DNS chữ thường, tối đa 253 ký tự, mỗi phần tối đa 63 ký tự.",
+      "replicas": "Nhập số nguyên từ 0 đến 2147483647.",
+      "image": "Nhập ảnh worker không có khoảng trắng.",
+      "quantity": "Nhập số lượng Kubernetes không âm.",
+      "limit": "Giới hạn phải lớn hơn hoặc bằng yêu cầu."
     }
   }
 }

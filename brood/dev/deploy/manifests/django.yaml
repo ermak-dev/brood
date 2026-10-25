@@ -71,6 +71,13 @@ spec:
               value: /var/run/ateapi/token
             - name: ATEAPI_CA
               value: /var/run/ateapi/trust-bundle.pem
+            # Kubernetes -- отдельный audience и обычный ротируемый токен SA.
+            - name: KUBE_API_URL
+              value: https://kubernetes.default.svc
+            - name: KUBE_API_TOKEN
+              value: /var/run/secrets/kubernetes.io/serviceaccount/token
+            - name: KUBE_API_CA
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
         # Учётка администратора видна только этому контейнеру.
         - name: ensureadmin
           image: brood-server
