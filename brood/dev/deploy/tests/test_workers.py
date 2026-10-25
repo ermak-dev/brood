@@ -107,6 +107,25 @@ class WorkerDeployTests(unittest.TestCase):
             "go.ate.dev/substrate/cmd/ateworker-gvisor", "--base-import-paths",
             "--ldflags=-X=go.ate.dev/substrate/internal/version.Version=v1-dirty"))
 
+    def test_worker_image_map_only_advertises_installed_runtimes(self):
+        deploy = self.deploy()
+        microvm_image = f"{server.REGISTRY}/ateworker-microvm@{DIGEST}"
+        deploy._worker_image = mock.Mock(side_effect=lambda runtime="gvisor":
+                                         IMAGE if runtime == "gvisor" else microvm_image)
+        for response, expected in [("", {"gvisor": IMAGE}),
+                                   (json.dumps({"spec": {"sandboxClass": "microvm"}}),
+                                    {"gvisor": IMAGE, "microvm": microvm_image})]:
+            with self.subTest(response=response):
+                deploy.shell.output.return_value = (0, response, "")
+                self.assertEqual(deploy._worker_images(), expected)
+                self.assertIn("--ignore-not-found", deploy.shell.output.call_args.args)
+        deploy.shell.output.return_value = (1, "", "Forbidden")
+        with self.assertRaisesRegex(RuntimeError, "microvm.*Forbidden"):
+            deploy._worker_images()
+        deploy.shell.output.return_value = (0, "bad json", "")
+        with self.assertRaisesRegex(RuntimeError, "microvm.*invalid JSON"):
+            deploy._worker_images()
+
     def test_existing_pool_is_never_applied_and_only_alreadyexists_is_ignored(self):
         deploy = self.deploy()
         for code, err, fails in [
@@ -196,6 +215,7 @@ class WorkerDeployTests(unittest.TestCase):
         deploy._tls = lambda: {"tls.crt": "cert", "tls.key": "key"}
         deploy._image = lambda *_: events.append("build") or DIGEST
         deploy._worker_image = lambda: events.append("worker-build") or IMAGE
+        deploy._worker_images = lambda: events.append("worker-build") or {"gvisor": IMAGE}
 
         def output(*args):
             self.assertEqual(args[2], "create")
@@ -207,7 +227,10 @@ class WorkerDeployTests(unittest.TestCase):
                 events.append("apply")
                 workdir = args[-1]
                 with open(os.path.join(workdir, "server.env")) as f:
-                    self.assertIn(f"WORKER_POOL_IMAGE={IMAGE}\n", f.read())
+                    env = f.read()
+                    self.assertIn(f"WORKER_POOL_IMAGE={IMAGE}\n", env)
+                    values = dict(line.split("=", 1) for line in env.splitlines())
+                    self.assertEqual(json.loads(values["WORKER_POOL_IMAGES"]), {"gvisor": IMAGE})
                 with open(os.path.join(workdir, "kustomization.yaml")) as f:
                     overlay = json.load(f)
                 all_docs = []

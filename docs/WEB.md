@@ -129,23 +129,31 @@ ate-system svc/api <порт>:443`, плюс `ATEAPI_TOKEN` (токен с audie
 
 WorkerPool -- Kubernetes CRD, не protojson ateapi. Маршруты Django:
 `GET/POST /api/worker-pools`, `GET/PUT/DELETE /api/worker-pools/<name>`,
-`GET /api/worker-pool-defaults` (разрешённый образ воркера). Коллекция --
+`GET /api/worker-pool-defaults` (разрешённые образы воркеров по классам). Коллекция --
 `{"results": [...]}`, объекты -- Kubernetes JSON. На DELETE тело содержит
 `{"metadata": {"uid": "...", "resourceVersion": "..."}}`.
 
 `brood/server/projects/kubernetes.py` ходит по HTTPS с CA и ротируемым
 ServiceAccount-токеном, с таймаутом и без редиректов; `pools.py` ограничивает
 поля и переводит отказы в HTTP. Настройки: `KUBE_API_URL`, `KUBE_API_TOKEN`,
-`KUBE_API_CA`, `WORKER_POOL_IMAGE`. Выкладка задаёт их сама. Токен Kubernetes
-отдельный от токена ateapi, у них разные audience.
+`KUBE_API_CA`, `WORKER_POOL_IMAGE`, `WORKER_POOL_IMAGES`. Выкладка задаёт их сама.
+`WORKER_POOL_IMAGES` -- JSON-карта классов `gvisor` и, после установки его
+SandboxConfig, `microvm` на разрешённые digest-образы. Defaults API возвращает
+её как `workerImages`, сохраняя `workerImage` для старых клиентов (gvisor).
+Без карты сервер использует прежний `WORKER_POOL_IMAGE` только для gvisor.
+Токен Kubernetes отдельный от токена ateapi, у них разные audience.
 
 RBAC разрешает только workerpools namespace `brood`, без доступа к Secret,
 Pod и настройкам кластера. Поскольку контроллер создаёт привилегированные
 поды, REST дополнительно разрешает только установленный digest образа,
-класс gvisor, реплики, CPU/память, метки и nodeSelector. Подмена ServiceAccount,
+соответствующий выбранному классу gvisor или microvm, реплики, CPU/память,
+метки и nodeSelector. Класс существующего пула неизменяем по CRD. Подмена ServiceAccount,
 pod-аннотации и произвольные поля запрещены. Полный доступ к Kubernetes
 пользователь панели не получает. Доступ к REST -- сессия суперпользователя
-Django, изменяющие запросы -- с CSRF.
+Django, изменяющие запросы -- с CSRF. При PUT сервер читает текущий пул,
+сверяет исходные uid/resourceVersion и неизменяемый класс. Старый digest
+разрешено сохранить у этого же пула после обновления установки, но нельзя
+использовать для создания другого пула; предусловие не обновляется молча.
 
 ## Сборка и проверки
 

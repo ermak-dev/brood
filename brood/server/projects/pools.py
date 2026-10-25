@@ -4,6 +4,7 @@ WorkerPool порождает привилегированные поды. Да�
 позволяет принимать произвольные workerImage, ServiceAccount и pod-аннотации.
 """
 import copy
+import json
 import re
 
 from django.conf import settings
@@ -28,11 +29,22 @@ def call(method, *args):
         raise ApiError(e.status, str(e)) from None
 
 
-def image():
-    value = settings.WORKER_POOL_IMAGE
-    if not value or not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", value):
-        raise ApiError(503, "WORKER_POOL_IMAGE must be the deployed digest-pinned worker image")
-    return value
+def digest_image(value):
+    return isinstance(value, str) and bool(re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", value))
+
+
+def images():
+    raw = settings.WORKER_POOL_IMAGES
+    setting = "WORKER_POOL_IMAGES" if raw else "WORKER_POOL_IMAGE"
+    try:
+        values = json.loads(raw) if raw else {"gvisor": settings.WORKER_POOL_IMAGE}
+    except (TypeError, ValueError):
+        raise ApiError(503, "WORKER_POOL_IMAGES must be a JSON object of deployed worker images") from None
+    if not isinstance(values, dict) or "gvisor" not in values \
+            or values.keys() - {"gvisor", "microvm"} or not all(
+                digest_image(value) for value in values.values()):
+        raise ApiError(503, f"{setting} must name deployed digest-pinned worker images by sandbox class")
+    return values
 
 
 def object_at(value, field):
@@ -65,19 +77,25 @@ def string_map(value, field):
         raise ApiError(400, f"{field} must contain string keys and values")
 
 
-def validate_spec(spec):
+def validate_spec(spec, existing=None):
     fields(spec, ("replicas", "workerImage", "sandboxClasses", "template"), "spec")
     replicas = spec.get("replicas")
     if type(replicas) is not int or not 0 <= replicas <= 2147483647:
         raise ApiError(400, "spec.replicas must be an integer between 0 and 2147483647")
-    if spec.get("workerImage") != image():
-        raise ApiError(400, "spec.workerImage must match the deployed worker image")
     classes = spec.get("sandboxClasses")
     if not isinstance(classes, list) or len(classes) != 1:
-        raise ApiError(400, "spec.sandboxClasses must contain exactly one gvisor class")
+        raise ApiError(400, "spec.sandboxClasses must contain exactly one installed sandbox class")
     fields(classes[0], ("name", "configRef"), "spec.sandboxClasses[0]")
-    if classes[0].get("name") != "gvisor":
-        raise ApiError(400, "only the gvisor sandbox class is supported")
+    runtime = classes[0].get("name")
+    allowed = images()
+    if not isinstance(runtime, str) or runtime not in allowed:
+        raise ApiError(400, "sandbox class must be one of: " + ", ".join(sorted(allowed)))
+    if existing is not None and [runtime] != [c.get("name") for c in existing["sandboxClasses"]]:
+        raise ApiError(400, "the sandbox class of an existing worker pool is immutable")
+    value = spec.get("workerImage")
+    unchanged = existing is not None and value == existing.get("workerImage") and digest_image(value)
+    if value != allowed[runtime] and not unchanged:
+        raise ApiError(400, "spec.workerImage must match the deployed image for its sandbox class")
     if "configRef" in classes[0]:
         ref = classes[0]["configRef"]
         fields(ref, ("name",), "configRef")
@@ -96,7 +114,7 @@ def validate_spec(spec):
             raise ApiError(400, f"resources.{key} quantities must be nonempty strings")
 
 
-def body(data, name=None):
+def body(data, name=None, existing=None):
     object_at(data, "body")
     metadata = object_at(data.get("metadata", {}), "metadata")
     for unsafe in ("ownerReferences", "finalizers"):
@@ -109,7 +127,7 @@ def body(data, name=None):
             string_map(metadata[key], f"metadata.{key}")
             identity[key] = copy.deepcopy(metadata[key])
     spec = object_at(data.get("spec"), "spec")
-    validate_spec(spec)
+    validate_spec(spec, existing)
     return {"apiVersion": "ate.dev/v1", "kind": "WorkerPool",
             "metadata": identity, "spec": copy.deepcopy(spec)}
 
@@ -118,7 +136,8 @@ class PoolDefaultsView(APIView):
     permission_classes = [SessionSuperuser]
 
     def get(self, _request):
-        return Response({"workerImage": image()})
+        allowed = images()
+        return Response({"workerImage": allowed["gvisor"], "workerImages": allowed})
 
 
 class PoolView(APIView):
@@ -139,9 +158,14 @@ class PoolView(APIView):
     def put(self, request, name=None):
         only(request, name is not None)
         conditions = preconditions(request.data)
-        data = body(request.data, name)
+        call(kubernetes.valid_name, name)
+        api = client_of()
+        current = call(api.get, name)
+        if any(current["metadata"].get(key) != value for key, value in conditions.items()):
+            raise ApiError(409, "the worker pool has been modified; reload before retrying")
+        data = body(request.data, name, existing=current["spec"])
         data["metadata"].update(conditions)
-        return Response(call(client_of().update, name, data))
+        return Response(call(api.update, name, data))
 
     def delete(self, request, name=None):
         only(request, name is not None)

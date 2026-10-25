@@ -135,6 +135,7 @@ KUBE_API_URL = config.get("KUBE_API_URL")
 KUBE_API_TOKEN = config.get("KUBE_API_TOKEN")
 KUBE_API_CA = config.get("KUBE_API_CA")
 WORKER_POOL_IMAGE = config.get("WORKER_POOL_IMAGE")
+WORKER_POOL_IMAGES = config.get("WORKER_POOL_IMAGES")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],

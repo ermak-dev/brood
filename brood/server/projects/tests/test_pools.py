@@ -14,6 +14,8 @@ from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 
 IMAGE = "localhost:5002/worker@sha256:" + "a" * 64
+MICROVM_IMAGE = "localhost:5002/ateworker-microvm@sha256:" + "b" * 64
+IMAGES = {"gvisor": IMAGE, "microvm": MICROVM_IMAGE}
 
 
 def pool():
@@ -29,7 +31,7 @@ def pool():
     }
 
 
-@override_settings(WORKER_POOL_IMAGE=IMAGE)
+@override_settings(WORKER_POOL_IMAGE=IMAGE, WORKER_POOL_IMAGES="")
 class PoolApiTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser("pool-admin", password="pass")
@@ -48,7 +50,86 @@ class PoolApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"results": [pool()]})
         self.assertEqual(self.client.get("/api/worker-pools/agents").json(), pool())
-        self.assertEqual(self.client.get("/api/worker-pool-defaults").json(), {"workerImage": IMAGE})
+        self.assertEqual(self.client.get("/api/worker-pool-defaults").json(), {
+            "workerImage": IMAGE, "workerImages": {"gvisor": IMAGE}})
+
+    # FEATURE: microVM-пулы используют свой разрешённый образ, а не gvisor-бинарник.
+    # SPEC: карта классов из установки, digest allowlist, прежние версии и ограничения.
+    # IMPLEMENTATION: map defaults; прежний digest только у того же пула и класса по uid/version.
+    # RESULT: IMPLEMENTED — создание, изменение, rotation, immutable class и отказы проверены.
+    # STATUS: DONE
+    @override_settings(WORKER_POOL_IMAGES=json.dumps(IMAGES))
+    def test_defaults_expose_installed_worker_images_with_legacy_gvisor_image(self):
+        response = self.client.get("/api/worker-pool-defaults")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"workerImage": IMAGE, "workerImages": IMAGES})
+
+    @override_settings(WORKER_POOL_IMAGES=json.dumps(IMAGES))
+    def test_create_and_update_microvm_preserve_class_config_and_preconditions(self):
+        value = pool()
+        value["spec"].update(workerImage=MICROVM_IMAGE, sandboxClasses=[{
+            "name": "microvm", "configRef": {"name": "microvm"}}])
+        created = self.client.post("/api/worker-pools", value, content_type="application/json")
+        self.assertEqual(created.status_code, 201, created.content)
+        value["spec"]["replicas"] = 0
+        self.api.get.return_value = value
+        updated = self.client.put("/api/worker-pools/agents", value, content_type="application/json")
+        self.assertEqual(updated.status_code, 200, updated.content)
+        sent = self.api.update.call_args.args[1]
+        self.assertEqual(sent["spec"], value["spec"])
+        self.assertEqual(sent["metadata"]["uid"], "u1")
+        self.assertEqual(sent["metadata"]["resourceVersion"], "17")
+
+    @override_settings(WORKER_POOL_IMAGES=json.dumps(IMAGES))
+    def test_runtime_and_worker_image_cannot_be_mixed(self):
+        for runtime, image in (("microvm", IMAGE), ("gvisor", MICROVM_IMAGE),
+                               ("lxc", MICROVM_IMAGE), ("microvm", "evil@sha256:" + "c" * 64)):
+            with self.subTest(runtime=runtime, image=image):
+                value = pool()
+                value["spec"].update(workerImage=image, sandboxClasses=[{"name": runtime}])
+                response = self.client.post("/api/worker-pools", value, content_type="application/json")
+                self.assertEqual(response.status_code, 400, response.content)
+        self.api.create.assert_not_called()
+
+    def test_bad_worker_image_maps_fail_closed(self):
+        for value in ("not json", "[]", "{}", '{"gvisor":"worker:latest"}',
+                      json.dumps({"gvisor": IMAGE, "lxc": MICROVM_IMAGE})):
+            with self.subTest(value=value), override_settings(WORKER_POOL_IMAGES=value):
+                response = self.client.get("/api/worker-pool-defaults")
+                self.assertEqual(response.status_code, 503, response.content)
+                self.assertIn("WORKER_POOL_IMAGES", response.json()["detail"])
+
+    @override_settings(WORKER_POOL_IMAGES=json.dumps({"gvisor": IMAGE, "microvm": MICROVM_IMAGE}))
+    def test_existing_pool_keeps_its_older_image_after_digest_rotation(self):
+        old_image = "localhost:5002/worker@sha256:" + "c" * 64
+        value = pool()
+        value["spec"].update(workerImage=old_image, replicas=0)
+        self.api.get.return_value = value
+        response = self.client.put("/api/worker-pools/agents", value, content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(self.api.update.call_args.args[1]["spec"]["workerImage"], old_image)
+        self.api.create.reset_mock()
+        response = self.client.post("/api/worker-pools", value, content_type="application/json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.api.create.assert_not_called()
+
+    @override_settings(WORKER_POOL_IMAGES=json.dumps(IMAGES))
+    def test_existing_pool_class_cannot_be_changed_to_another_installed_class(self):
+        value = pool()
+        value["spec"].update(workerImage=MICROVM_IMAGE, sandboxClasses=[{"name": "microvm"}])
+        response = self.client.put("/api/worker-pools/agents", value, content_type="application/json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("immutable", response.json()["detail"])
+        self.api.update.assert_not_called()
+
+    def test_update_does_not_refresh_a_concurrent_version(self):
+        current = pool()
+        current["metadata"]["resourceVersion"] = "18"
+        self.api.get.return_value = current
+        response = self.client.put("/api/worker-pools/agents", pool(), content_type="application/json")
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertIn("modified", response.json()["detail"])
+        self.api.update.assert_not_called()
 
     def test_create_forces_identity_and_removes_server_fields(self):
         body = pool()
@@ -71,7 +152,7 @@ class PoolApiTests(TestCase):
         self.assertEqual(sent["metadata"], {"name": "agents", "namespace": "brood",
                                            "uid": "u1", "resourceVersion": "17"})
         self.assertEqual(sent["spec"]["replicas"], 0)
-        self.api.get.assert_not_called()
+        self.api.get.assert_called_once_with("agents")
 
     def test_missing_update_preconditions_and_invalid_json_are_refused(self):
         for body in ({"spec": pool()["spec"]}, [], None):
