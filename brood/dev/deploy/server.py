@@ -216,8 +216,11 @@ class Deploy:
                 conn = http.client.HTTPSConnection("127.0.0.1", port, context=context, timeout=5)
                 try:
                     conn.request(method, path, headers={"Host": host, **headers})
-                    status = conn.getresponse().status
+                    # Сертификат -- до ответа: на «Connection: close» (старый
+                    # под edge, пока nginx плавно останавливается) http.client
+                    # отдаёт сокет ответу и обнуляет conn.sock.
                     served = conn.sock.getpeercert(binary_form=True)
+                    status = conn.getresponse().status
                 finally:
                     conn.close()
                 if served != expected:
