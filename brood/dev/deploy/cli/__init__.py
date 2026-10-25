@@ -1,6 +1,7 @@
 """the brood server in the local Substrate cluster: Django, CLIProxyAPI, Postgres and the TLS edge with the panel
 
   brood deploy server    build the brood images and deploy everything into namespace brood
+  brood deploy microvm   switch the empty installation to a microVM worker pool
 
 Deploys into the cluster of brood substrate install, with its ownership
 checks. Settings come from the working copy's .env: DJANGO_SECRET_KEY,

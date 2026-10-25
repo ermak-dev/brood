@@ -251,11 +251,14 @@ class Deploy:
                 raise RuntimeError(f"Kubernetes API discovery: invalid JSON for {resource}") from None
         return api_egress(*objects)
 
-    def _worker_image(self):
+    def _worker_image(self, sandbox_class="gvisor"):
         """Тот же pinned ko, .ko.yaml, version stamp и host platform, что ate-setup.
 
         Go сохраняет кэш компиляции, KO_CACHE -- слои между релизами brood.
         Своего кэша по git HEAD нет: он пропустил бы локальные правки source."""
+        if sandbox_class not in ("gvisor", "microvm"):
+            raise RuntimeError(f"unsupported worker sandbox class: {sandbox_class}")
+        worker = f"ateworker-{sandbox_class}"
         env = dict(self.shell.env, KO_DOCKER_REPO=REGISTRY)
         env.setdefault("KO_CACHE", os.path.join(local.state_dir(self.cluster.source), "ko-cache"))
         shell = local.Shell(env, self.cluster.source)
@@ -273,11 +276,11 @@ class Deploy:
             code, out, _ = shell.output("git", "describe", "--tags", "--always", "--dirty")
             version = out.strip() if code == 0 and out.strip() else "dev"
         out = output(os.path.join(self.cluster.source, "hack", "run-tool.sh"), "ko", "build",
-                     "go.ate.dev/substrate/cmd/ateworker-gvisor", "--base-import-paths",
+                     f"go.ate.dev/substrate/cmd/{worker}", "--base-import-paths",
                      f"--ldflags=-X=go.ate.dev/substrate/internal/version.Version={version}")
         image = out.split()[-1] if out else ""
-        if not re.fullmatch(re.escape(REGISTRY) + r"/ateworker-gvisor@sha256:[0-9a-f]{64}", image):
-            raise RuntimeError("worker image ko build returned no registry digest for ateworker-gvisor")
+        if not re.fullmatch(re.escape(REGISTRY) + f"/{worker}@sha256:[0-9a-f]{{64}}", image):
+            raise RuntimeError(f"worker image ko build returned no registry digest for {worker}")
         return image
 
     def _bootstrap_pool(self, workdir, image):
