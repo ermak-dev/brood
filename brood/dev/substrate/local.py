@@ -65,6 +65,36 @@ REPOSITORY = "https://github.com/agent-substrate/substrate.git"
 COMMIT = "4ebd668d62e3f55753765a46579fc6deb81b2f7f"
 
 
+def atelet_registry_patch(daemonset):
+    """Kind overlay знает свой реестр, а containerd и atelet должны знать наш."""
+    try:
+        metadata = daemonset["metadata"]
+        if not metadata.get("uid") or not metadata.get("resourceVersion"):
+            raise ValueError("missing identity")
+        containers = daemonset["spec"]["template"]["spec"]["containers"]
+        matches = [(i, container) for i, container in enumerate(containers)
+                   if container["name"] == "atelet"]
+        if len(matches) != 1:
+            raise ValueError("expected one atelet container")
+        index, container = matches[0]
+        args = container["args"]
+        flag = "--localhost-registry-replacement="
+        positions = [i for i, arg in enumerate(args) if arg.startswith(flag)]
+        if len(positions) != 1:
+            raise ValueError("expected one localhost registry replacement flag")
+        position = positions[0]
+        value = f"{flag}{REGISTRY}:5000"
+        if args[position] == value:
+            return []
+        path = f"/spec/template/spec/containers/{index}/args"
+        return [{"op": "test", "path": f"/metadata/{key}", "value": metadata[key]}
+                for key in ("uid", "resourceVersion")] + [
+                    {"op": "test", "path": path, "value": args},
+                    {"op": "replace", "path": f"{path}/{position}", "value": value}]
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        raise RuntimeError(f"cannot configure atelet actor registry: {e}") from None
+
+
 def managed_checkout(environ):
     """Каталог своего клона -> путь. Чистая функция.
 
@@ -306,6 +336,7 @@ class LocalCluster:
         self._kind("export", "kubeconfig", "--name", CLUSTER)
         self._wait_for_api()
         run(os.path.join(self.source, "hack", "install-ate-kind.sh"), *DEPLOY)
+        self._actor_registry()
         run("go", "build", "-o", self.kubectl_ate, "./cmd/kubectl-ate")
         self._start()
 
@@ -404,6 +435,21 @@ class LocalCluster:
                                "the command again")
         if code:
             raise RuntimeError(f"docker exec {NODE}: {reason(err, code)}")
+
+    def _actor_registry(self):
+        code, out, err = self.shell.output(
+            "kubectl", f"--context={CONTEXT}", "get", "daemonset/atelet", "-n", NAMESPACE,
+            "-o", "json", "--request-timeout=30s")
+        if code:
+            raise RuntimeError(f"cannot inspect atelet actor registry: {reason(err, code)}")
+        try:
+            daemonset = json.loads(out)
+        except ValueError:
+            raise RuntimeError("cannot inspect atelet actor registry: invalid JSON") from None
+        patch = atelet_registry_patch(daemonset)
+        if patch:
+            self._kubectl("patch", "daemonset/atelet", "-n", NAMESPACE, "--type=json",
+                          "-p", json.dumps(patch), "--request-timeout=30s")
 
     def _proxy_arp(self):
         self.shell.run("docker", "exec", NODE, "sysctl", "net.ipv4.conf.all.proxy_arp=1")

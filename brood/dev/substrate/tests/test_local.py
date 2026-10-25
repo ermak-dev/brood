@@ -5,7 +5,9 @@ Docker, kind и kubectl -- понарошку (World): контейнеры по
 имена контейнеров постоянные, и ошибка в проверке владения остановила бы
 или удалила чужой кластер.
 """
+import copy
 import hashlib
+import json
 import os
 import tempfile
 import unittest
@@ -25,6 +27,48 @@ def node(labels=None):
 def registry(labels=None, network=True):
     return {"id": REGISTRY_ID, "labels": {"created-by": "substrate-local", **(labels or {})},
             "network": network}
+
+
+def atelet():
+    return {"metadata": {"uid": "atelet-uid", "resourceVersion": "17"},
+            "spec": {"template": {"spec": {"containers": [
+                {"name": "sidecar", "args": ["--unrelated"]},
+                {"name": "atelet", "args": ["--log-level=debug",
+                    "--localhost-registry-replacement=kind-registry:5000", "--tls=on"]}]}}}}
+
+
+# BUG: containerd знает substrate-registry, но atelet обращается к kind-registry.
+# HYPOTHESIS: kind overlay Substrate зашивает своё имя вместо реестра установки.
+# SOLUTION: после upstream deploy заменить только флаг atelet с uid/version и args test.
+# RESULT: FIXED — containerd и atelet используют один реестр; 185 тестов проходят.
+# STATUS: FIXED
+class RegistryPatchTests(unittest.TestCase):
+    def test_patch_changes_only_the_atelet_registry_flag_with_preconditions(self):
+        original = atelet()
+        before = copy.deepcopy(original)
+        patch = local.atelet_registry_patch(original)
+        self.assertEqual(original, before)
+        self.assertEqual(patch, [
+            {"op": "test", "path": "/metadata/uid", "value": "atelet-uid"},
+            {"op": "test", "path": "/metadata/resourceVersion", "value": "17"},
+            {"op": "test", "path": "/spec/template/spec/containers/1/args", "value": [
+                "--log-level=debug", "--localhost-registry-replacement=kind-registry:5000",
+                "--tls=on"]},
+            {"op": "replace", "path": "/spec/template/spec/containers/1/args/1",
+             "value": "--localhost-registry-replacement=substrate-registry:5000"}])
+
+    def test_already_correct_endpoint_needs_no_rollout(self):
+        value = atelet()
+        value["spec"]["template"]["spec"]["containers"][1]["args"][1] = (
+            "--localhost-registry-replacement=substrate-registry:5000")
+        self.assertEqual(local.atelet_registry_patch(value), [])
+
+    def test_upstream_shape_drift_is_refused(self):
+        for value in ({}, {"spec": {"template": {"spec": {"containers": []}}}},
+                      {"metadata": {"uid": "u", "resourceVersion": "v"}, "spec": {
+                          "template": {"spec": {"containers": [{"name": "atelet", "args": []}]}}}}):
+            with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, "atelet"):
+                local.atelet_registry_patch(value)
 
 
 class World:
@@ -66,6 +110,8 @@ class World:
                     self.api_failures -= 1
                     return 1, "", "connection refused\n"
                 return 0, "ok", ""
+            case ("kubectl", _, "get", "daemonset/atelet", "-n", "ate-system", "-o", "json", _):
+                return 0, json.dumps(atelet()), ""
             case ("go", "env", name):
                 return 0, {"GOOS": "linux", "GOARCH": "amd64"}[name] + "\n", ""
         raise AssertionError(f"unexpected output() call: {' '.join(words)}")
@@ -221,6 +267,18 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(f.read(), KUBECTL)
         self.assertTrue(os.access(c.kubectl, os.X_OK))
         self.assertTrue(os.path.isfile(c.owned))
+
+    def test_install_reconciles_actor_registry_after_upstream_and_before_readiness(self):
+        world = World()
+        self.cluster(world).install()
+        patches = [call for call in world.calls if "patch daemonset/atelet" in call]
+        self.assertEqual(len(patches), 1)
+        self.assertIn("--type=json", patches[0])
+        self.assertIn("substrate-registry:5000", patches[0])
+        installer = next(call for call in world.calls if call.startswith("install-ate-kind.sh"))
+        readiness = next(call for call in world.calls if "rollout status daemonset/atelet" in call)
+        self.assertLess(world.calls.index(installer), world.calls.index(patches[0]))
+        self.assertLess(world.calls.index(patches[0]), world.calls.index(readiness))
 
     def test_install_again_redeploys_into_same_cluster(self):
         self.installed()
