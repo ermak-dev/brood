@@ -81,6 +81,16 @@ class ImageBuildTests(unittest.TestCase):
         self.assertIn("tmux", text)
         self.assertIn("claude --version", text)
 
+    def test_terminal_is_built_from_pinned_source_not_an_unavailable_package(self):
+        text = (build.HERE / "Dockerfile").read_text()
+        self.assertIn("ARG TTYD_VERSION=1.7.7", text)
+        self.assertIn("ARG TTYD_SHA256=039dd995229377caee919898b7bd54484accec3bba49c118e2d5cd6ec51e3650", text)
+        self.assertIn("https://codeload.github.com/tsl0922/ttyd/tar.gz/refs/tags/${TTYD_VERSION}", text)
+        self.assertIn('"${TTYD_SHA256}"', text)
+        self.assertIn("cmake --build", text)
+        self.assertIn("libwebsockets-evlib-uv", text)
+        self.assertNotIn("e2fsprogs tmux ttyd", text)
+
     def test_image_declares_tools_for_its_private_ext4_storage(self):
         self.assertIn("e2fsprogs", (build.HERE / "Dockerfile").read_text())
 

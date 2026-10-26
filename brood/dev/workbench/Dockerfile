@@ -22,8 +22,21 @@ COPY brood/pyproject.toml /opt/build/pyproject.toml
 RUN python3 -I -c 'import tomllib; p=tomllib.load(open("/opt/build/pyproject.toml", "rb")); print("\n".join(p["project"]["optional-dependencies"]["server"] + p["project"]["optional-dependencies"]["dev"]))' > /tmp/workbench-requirements \
     && python3 -m pip download --quiet --dest /opt/wheels -r /tmp/workbench-requirements \
     && rm /tmp/workbench-requirements
-RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs tmux ttyd \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        e2fsprogs tmux cmake gcc make libjson-c-dev libwebsockets-dev libwebsockets-evlib-uv libuv1-dev \
     && rm -rf /var/lib/apt/lists/*
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256=039dd995229377caee919898b7bd54484accec3bba49c118e2d5cd6ec51e3650
+RUN mkdir -p /tmp/workbench-ttyd/source \
+    && curl -fsSL -o /tmp/workbench-ttyd/source.tar.gz \
+        "https://codeload.github.com/tsl0922/ttyd/tar.gz/refs/tags/${TTYD_VERSION}" \
+    && printf '%s  %s\n' "${TTYD_SHA256}" /tmp/workbench-ttyd/source.tar.gz | sha256sum -c - \
+    && tar -xzf /tmp/workbench-ttyd/source.tar.gz -C /tmp/workbench-ttyd/source --strip-components=1 \
+    && cmake -S /tmp/workbench-ttyd/source -B /tmp/workbench-ttyd/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/workbench-ttyd/build --parallel 2 \
+    && install -m 0755 /tmp/workbench-ttyd/build/ttyd /usr/local/bin/ttyd \
+    && rm -rf /tmp/workbench-ttyd \
+    && ttyd --version
 ARG CLAUDE_VERSION=2.1.310
 ARG CLAUDE_SHA256=b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56
 RUN curl -fsSL -o /usr/local/bin/claude \
