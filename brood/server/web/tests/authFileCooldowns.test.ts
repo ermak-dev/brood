@@ -220,17 +220,33 @@ describe('cooldown section rendering', () => {
     expect(markup).toContain(i18n.t('auth_files.cooldown_note'));
   });
 
-  test('keeps the reset action contextual and exposes pending state', () => {
-    expect(render(snapshot)).not.toContain(i18n.t('auth_files.cooldown_reset_button'));
+  // BUG: апостроф английской подсказки экранируется при HTML-сериализации.
+  // HYPOTHESIS: поиск сырого перевода скрывал ошибку при другом языке i18n.
+  // SOLUTION: сравнить title кнопки с HTML-атрибутом, сериализованным тем же React.
+  // RESULT: FIXED — обе локали и полный набор из 1676 тестов проходят.
+  // STATUS: FIXED
+  test.each(['en', 'ru'])('keeps reset contextual and exposes pending state (%s)', async (lng) => {
+    const previousLanguage = i18n.language;
+    await i18n.changeLanguage(lng);
+    try {
+      expect(render(snapshot)).not.toContain(i18n.t('auth_files.cooldown_reset_button'));
 
-    const available = render(snapshot, { onReset: () => {} });
-    expect(available).toContain(i18n.t('auth_files.cooldown_reset_button'));
-    expect(available).toContain(i18n.t('auth_files.cooldown_reset_hint'));
-    expect(available).not.toContain('disabled=""');
+      const available = render(snapshot, { onReset: () => {} });
+      expect(available).toContain(i18n.t('auth_files.cooldown_reset_button'));
+      const hintMarkup = renderToStaticMarkup(
+        createElement('button', { title: i18n.t('auth_files.cooldown_reset_hint') })
+      );
+      const expectedTitle = hintMarkup.match(/title="([^"]*)"/)?.[1];
+      expect(expectedTitle).toBeDefined();
+      expect(available.match(/<button\b[^>]*\btitle="([^"]*)"/)?.[1]).toBe(expectedTitle);
+      expect(available).not.toContain('disabled=""');
 
-    const pending = render(snapshot, { onReset: () => {}, resetting: true });
-    expect(pending).toContain('disabled=""');
-    expect(pending).toContain('loading-spinner');
+      const pending = render(snapshot, { onReset: () => {}, resetting: true });
+      expect(pending).toContain('disabled=""');
+      expect(pending).toContain('loading-spinner');
+    } finally {
+      await i18n.changeLanguage(previousLanguage);
+    }
   });
 
   test('shows elapsed / refresh confirmation and safely escapes model keys', () => {
