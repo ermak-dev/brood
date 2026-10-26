@@ -158,6 +158,8 @@ cgroup v2 для вложенных контейнеров. Одного мон�
 ## Актор с Claude Code
 
 Тот же образ содержит native CLI Claude Code `2.1.310`, ttyd и tmux.
+В Debian 13 пакета ttyd нет: версия `1.7.7` собирается из исходного архива
+upstream, закреплённого SHA-256, со штатными библиотеками Debian и libuv backend.
 Linux x64 binary закреплён SHA-256 из официального `manifest.json`; при
 выборе pin подпись manifest проверена ключом с fingerprint
 `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`. Сборка проверяет checksum binary.
