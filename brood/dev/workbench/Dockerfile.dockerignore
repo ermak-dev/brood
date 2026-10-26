@@ -1,0 +1,14 @@
+**
+!Dockerfile
+!brood/
+!brood/**
+!substrate/
+!substrate/**
+!runtime/
+!runtime/**
+!workbench.sh
+brood/.env
+brood/secrets/
+substrate/.ate-dev-env.sh
+**/__pycache__/
+**/*.pyc

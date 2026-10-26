@@ -1,0 +1,90 @@
+"""Образ получает только Git-снимки и закреплённые инструменты проекта."""
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from brood.common import cli
+from brood.dev.workbench import build
+
+
+class ImageBuildTests(unittest.TestCase):
+    def test_pins_come_from_existing_ci_and_provision_sources(self):
+        image = "python:3.12@sha256:" + "a" * 64
+        pins = build.version_pins(f'IMAGE="{image}"\n',
+                                  'GO_VERSION="1.27.3"\nGO_SHA256="' + "b" * 64 + '"\n')
+        self.assertEqual(pins, {"PYTHON_IMAGE": image, "GO_VERSION": "1.27.3",
+                                "GO_SHA256": "b" * 64})
+        rendered = build.render_dockerfile("ARG PYTHON_IMAGE\nFROM ${PYTHON_IMAGE}\n"
+                                          "ARG GO_VERSION\nARG GO_SHA256\n", pins)
+        for key, value in pins.items():
+            self.assertIn(f"ARG {key}={value}\n", rendered)
+
+    def test_missing_or_mutable_pins_are_refused(self):
+        for ci, provision in [("", ""), ('IMAGE="python:latest"',
+                'GO_VERSION="1.27.3"\nGO_SHA256="' + "b" * 64 + '"')]:
+            with self.subTest(ci=ci), self.assertRaisesRegex(RuntimeError, "pin"):
+                build.version_pins(ci, provision)
+
+    def git(self, root, *args):
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_snapshot_excludes_ignored_settings_and_preserves_the_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, target = root / "source", root / "snapshot"
+            source.mkdir()
+            self.git(source, "init", "-q")
+            self.git(source, "config", "user.name", "Test")
+            self.git(source, "config", "user.email", "test@example.invalid")
+            (source / ".gitignore").write_text(".env\nsecrets/\n")
+            (source / "code.py").write_text("value = 1\n")
+            (source / ".env").write_text("GITLAB_TOKEN=private")
+            (source / "secrets").mkdir()
+            (source / "secrets/key").write_text("private")
+            self.git(source, "add", ".")
+            self.git(source, "commit", "-qm", "Test snapshot")
+            self.git(source, "remote", "add", "origin", "https://example.org/project.git")
+            sha = self.git(source, "rev-parse", "HEAD")
+            self.assertEqual(build.snapshot(source, "HEAD", target), sha)
+            self.assertEqual(self.git(target, "rev-parse", "HEAD"), sha)
+            self.assertEqual(self.git(target, "remote", "get-url", "origin"),
+                             "https://example.org/project.git")
+            self.assertEqual((target / "code.py").read_text(), "value = 1\n")
+            self.assertFalse((target / ".env").exists())
+            self.assertFalse((target / "secrets").exists())
+            self.assertNotIn(str(source), (target / ".git/config").read_text())
+            self.assertFalse((target / ".git/FETCH_HEAD").exists())
+            self.git(source, "remote", "set-url", "origin", "ssh://git:private@example.org/project.git")
+            with self.assertRaisesRegex(RuntimeError, "credentials"):
+                build.snapshot(source, "HEAD", root / "unsafe-snapshot")
+
+    def test_context_can_be_exported_without_publishing_an_image(self):
+        from brood.dev.workbench.cli import build as command
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(command, "cluster"), \
+                mock.patch.object(command, "Builder") as builder, mock.patch("builtins.print"):
+            path = str(Path(tmp) / "context")
+            self.assertEqual(command.main(["--export", path]), 0)
+            builder.return_value.context.assert_called_once_with(path, "HEAD")
+            builder.return_value.build.assert_not_called()
+
+    def test_image_declares_tools_for_its_private_ext4_storage(self):
+        self.assertIn("e2fsprogs", (build.HERE / "Dockerfile").read_text())
+
+    def test_context_inside_loader_is_refused_before_copying(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            here = Path(tmp) / "loader"
+            here.mkdir()
+            target = here / "context"
+            builder = build.Builder(mock.Mock())
+            with mock.patch.object(build, "HERE", here), mock.patch.object(
+                    build, "snapshot", side_effect=AssertionError("copy started before validation")):
+                with self.assertRaisesRegex(RuntimeError, "outside.*workbench"):
+                    builder.context(target)
+            self.assertFalse(target.exists())
+
+    def test_commands_are_discovered(self):
+        self.assertEqual(set(cli.groups().get("workbench", {})), {"build", "template", "start", "run"})
