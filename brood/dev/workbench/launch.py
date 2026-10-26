@@ -21,6 +21,8 @@ class Launcher:
         if source.get("workerSelector", {}).get("matchLabels") != {
                 "brood.dev/purpose": "development"}:
             raise RuntimeError("workbench requires a template with the development worker selector")
+        policy = manifest.egress_policy(atespace, name, manifest.PUBLIC_HOSTS + tuple(extra_hosts),
+                                         profile=manifest.profile_of(source))
         self._ate("create", "actor", name, "-a", atespace, "--template", template)
         with tempfile.TemporaryDirectory(prefix="brood-workbench-policy.") as directory:
             path = Path(directory) / "policy.json"

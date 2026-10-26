@@ -3,6 +3,7 @@
   --image DIGEST --atespace NAME                ActorTemplate
   --kind pool --image WORKER_DIGEST              dedicated microVM WorkerPool
   --kind policy --atespace NAME --actor NAME     per-actor egress policy
+  --profile claude-code                         interactive coding profile
 
 Creating a template does not create an egress policy for its actors. Apply the
 policy to each new actor before resuming it. Only explicit public build hosts
@@ -19,7 +20,8 @@ def main(argv):
     parser.add_argument("--kind", choices=("template", "pool", "policy"), default="template")
     parser.add_argument("--image")
     parser.add_argument("--atespace")
-    parser.add_argument("--name", default="brood-build-test-deploy")
+    parser.add_argument("--name")
+    parser.add_argument("--profile", choices=("build", "claude-code"), default="build")
     parser.add_argument("--actor")
     parser.add_argument("--allow-host", action="append", default=[])
     args = parser.parse_args(argv)
@@ -28,9 +30,11 @@ def main(argv):
             result = manifest.worker_pool(args.image)
         elif args.kind == "policy":
             result = manifest.egress_policy(args.atespace, args.actor,
-                                             manifest.PUBLIC_HOSTS + tuple(args.allow_host))
+                                             manifest.PUBLIC_HOSTS + tuple(args.allow_host),
+                                             profile=args.profile)
         else:
-            result = manifest.actor_template(args.image, args.atespace, args.name)
+            options = {"name": args.name} if args.name is not None else {}
+            result = manifest.actor_template(args.image, args.atespace, profile=args.profile, **options)
     except ValueError as error:
         raise RuntimeError(str(error)) from None
     print(json.dumps(result, indent=2))
