@@ -55,6 +55,53 @@ class ManifestTests(unittest.TestCase):
         for forbidden in ("hostPath", "privileged", "kubeconfig", "goldenEgressPolicy"):
             self.assertNotIn(forbidden, serialized)
 
+    def test_claude_profile_runs_a_persistent_terminal_without_host_credentials(self):
+        result = manifest.actor_template(IMAGE, "builds", profile="claude-code")
+        self.assertEqual(result["metadata"]["name"], "brood-claude-code")
+        container = result["containers"][0]
+        self.assertEqual(container["args"], ["--results-port", "8081", "--", "bash", "-c",
+            "claude --version && exec ttyd --writable --check-origin --port 80 tmux new-session -A -s claude claude"])
+        env = {item["name"]: item["value"] for item in container["env"]}
+        self.assertEqual(env["BROOD_WORKBENCH_PROFILE"], "claude-code")
+        for key in ("DISABLE_AUTOUPDATER", "DISABLE_UPDATES", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                    "CLAUDE_CODE_DISABLE_ARTIFACT"):
+            self.assertEqual(env[key], "1")
+        self.assertEqual(env["ENABLE_CLAUDEAI_MCP_SERVERS"], "false")
+        self.assertFalse(set(env) & {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                                   "CLAUDE_CODE_OAUTH_TOKEN", "GITLAB_TOKEN", "SSH_AUTH_SOCK"})
+        self.assertNotIn("dangerously", json.dumps(result))
+        self.assertEqual(manifest.profile_of(result), "claude-code")
+
+    def test_profile_policy_adds_only_explicit_claude_hosts(self):
+        default = manifest.egress_policy("builds", "job")
+        result = manifest.egress_policy("builds", "job", profile="claude-code")
+        hosts = result["rules"][0]["tlsPassthrough"]["hostnames"]
+        for host in ("api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com",
+                     "sso.claude.com", "downloads.claude.ai", "code.claude.com"):
+            self.assertIn(host, hosts)
+            self.assertNotIn(host, default["rules"][0]["tlsPassthrough"]["hostnames"])
+        self.assertFalse(any("*" in host for host in hosts))
+        self.assertEqual(manifest.profile_of({}), "build")
+        with self.assertRaisesRegex(ValueError, "profile"):
+            manifest.actor_template(IMAGE, "builds", profile="unknown")
+        with self.assertRaisesRegex(ValueError, "profile"):
+            manifest.profile_of({"containers": [{"env": [
+                {"name": "BROOD_WORKBENCH_PROFILE", "value": "unknown"}]}]})
+
+    def test_ambiguous_profile_markers_are_rejected(self):
+        marker = {"name": "BROOD_WORKBENCH_PROFILE", "value": "claude-code"}
+        with self.assertRaisesRegex(ValueError, "ambiguous.*profile"):
+            manifest.profile_of({"containers": [{"env": [marker, marker]}]})
+
+    def test_cli_selects_profile_and_its_default_name(self):
+        from unittest import mock
+        from brood.dev.workbench.cli import template
+        with mock.patch("builtins.print") as output:
+            template.main(["--profile", "claude-code", "--image", IMAGE, "--atespace", "builds"])
+            value = json.loads(output.call_args.args[0])
+            self.assertEqual(value["metadata"]["name"], "brood-claude-code")
+            self.assertEqual(manifest.profile_of(value), "claude-code")
+
     def test_pool_contract(self):
         self.assertEqual(manifest.worker_pool(IMAGE), {
             "apiVersion": "ate.dev/v1", "kind": "WorkerPool",

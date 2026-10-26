@@ -19,6 +19,13 @@ PUBLIC_HOSTS = (
     "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com",
 )
 
+CLAUDE_HOSTS = (
+    "api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com",
+    "sso.claude.com", "downloads.claude.ai", "code.claude.com",
+)
+_DEFAULT_NAME = object()
+
+
 # Полный набор гостя нужен вложенному Docker; границей изоляции остаётся ядро VM.
 # Доступ к устройствам хоста этим списком не расширяется.
 GUEST_CAPABILITIES = (
@@ -65,12 +72,29 @@ def _hostname(value):
         raise ValueError("egress hostname must be an exact public DNS hostname") from None
 
 
-def actor_template(image, atespace, name="brood-build-test-deploy"):
+def _profile(value):
+    if value not in ("build", "claude-code"):
+        raise ValueError("workbench profile must be build or claude-code")
+    return value
+
+
+def profile_of(template):
+    values = [env.get("value") for container in template.get("containers", [])
+              for env in container.get("env", []) if env.get("name") == "BROOD_WORKBENCH_PROFILE"]
+    if len(values) > 1:
+        raise ValueError("template has ambiguous workbench profile markers")
+    return _profile(values[0] if values else "build")
+
+
+def actor_template(image, atespace, name=_DEFAULT_NAME, profile="build"):
     """Шаблон API: запуск задания только явно, без автоматического golden actor."""
+    _profile(profile)
+    if name is _DEFAULT_NAME:
+        name = "brood-claude-code" if profile == "claude-code" else "brood-build-test-deploy"
     _image(image)
     _dns_label(atespace)
     _dns_label(name)
-    return {
+    result = {
         "metadata": {"atespace": atespace, "name": name},
         "workerSelector": {"matchLabels": {"brood.dev/purpose": "development"}},
         "resources": {"limits": {"cpuMillicores": "4000", "memoryBytes": "8589934592"}},
@@ -91,6 +115,15 @@ def actor_template(image, atespace, name="brood-build-test-deploy"):
         }],
         "volumes": [{"name": "workspace", "durableDir": {}}],
     }
+    if profile == "claude-code":
+        container = result["containers"][0]
+        container["args"] = ["--results-port", "8081", "--", "bash", "-c",
+            "claude --version && exec ttyd --writable --check-origin --port 80 tmux new-session -A -s claude claude"]
+        container["env"].extend({"name": key, "value": value} for key, value in {
+            "BROOD_WORKBENCH_PROFILE": profile, "DISABLE_AUTOUPDATER": "1", "DISABLE_UPDATES": "1",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_ARTIFACT": "1",
+            "ENABLE_CLAUDEAI_MCP_SERVERS": "false"}.items())
+    return result
 
 
 def worker_pool(worker_image):
@@ -112,12 +145,16 @@ def worker_pool(worker_image):
     }
 
 
-def egress_policy(atespace, actor, hosts=PUBLIC_HOSTS):
+def egress_policy(atespace, actor, hosts=PUBLIC_HOSTS, profile="build"):
     """Политика API; родительский actor передаётся отдельно при создании."""
+    _profile(profile)
     _dns_label(atespace)
     _dns_label(actor)
     if not isinstance(hosts, (tuple, list)) or not 1 <= len(hosts) <= 256:
         raise ValueError("egress hosts must contain 1 to 256 exact public hostnames")
+    hosts = tuple(hosts) + (CLAUDE_HOSTS if profile == "claude-code" else ())
+    if len(hosts) > 256:
+        raise ValueError("egress hosts must contain at most 256 exact public hostnames")
     for host in hosts:
         _hostname(host)
     return {

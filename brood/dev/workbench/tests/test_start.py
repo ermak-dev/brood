@@ -9,6 +9,15 @@ from brood.dev.workbench.cli import start
 
 
 class StartCommandTests(unittest.TestCase):
+    def test_invalid_results_port_is_refused_before_preparing_the_workspace(self):
+        with mock.patch.object(start.runtime, "prepare_workspace") as prepare, \
+                mock.patch("sys.stderr"):
+            for value in ("0", "65536", "-1", "invalid"):
+                with self.subTest(port=value), self.assertRaises(SystemExit) as error:
+                    start.main(["--results-port", value])
+                self.assertEqual(error.exception.code, 2)
+            prepare.assert_not_called()
+
     def test_docker_failure_is_reported_while_results_remain_available(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -50,7 +59,10 @@ class StartCommandTests(unittest.TestCase):
                     mock.patch.object(start.subprocess, "Popen"), \
                     mock.patch.object(start.os, "chdir"), \
                     mock.patch.object(start.os, "execvp") as execute, mock.patch("builtins.print"):
-                start.main(["--root", str(root)])
+                start.main(["--root", str(root), "--results-port", "8081"])
+                http = start.subprocess.Popen.call_args.args[0]
+                self.assertEqual(http[2:4], ["http.server", "8081"])
+                start.runtime.write_status.assert_any_call(root, "ready", "Workspace and Docker are ready")
                 self.assertEqual(os.environ["WORKBENCH_ROOT"], str(root))
                 self.assertEqual(os.environ["HOME"], str(root / "home"))
                 self.assertEqual(os.environ["TMPDIR"], str(root / "tmp"))

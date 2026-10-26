@@ -22,8 +22,15 @@ COPY brood/pyproject.toml /opt/build/pyproject.toml
 RUN python3 -I -c 'import tomllib; p=tomllib.load(open("/opt/build/pyproject.toml", "rb")); print("\n".join(p["project"]["optional-dependencies"]["server"] + p["project"]["optional-dependencies"]["dev"]))' > /tmp/workbench-requirements \
     && python3 -m pip download --quiet --dest /opt/wheels -r /tmp/workbench-requirements \
     && rm /tmp/workbench-requirements
-RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs \
+RUN apt-get update && apt-get install -y --no-install-recommends e2fsprogs tmux ttyd \
     && rm -rf /var/lib/apt/lists/*
+ARG CLAUDE_VERSION=2.1.310
+ARG CLAUDE_SHA256=b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56
+RUN curl -fsSL -o /usr/local/bin/claude \
+        "https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude" \
+    && printf '%s  %s\n' "${CLAUDE_SHA256}" /usr/local/bin/claude | sha256sum -c - \
+    && chmod 0755 /usr/local/bin/claude \
+    && DISABLE_AUTOUPDATER=1 claude --version
 COPY brood/ /opt/seeds/brood/
 COPY substrate/ /opt/seeds/substrate/
 COPY runtime/ /opt/seeds/brood/brood/dev/workbench/

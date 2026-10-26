@@ -155,11 +155,56 @@ cgroup v2 для вложенных контейнеров. Одного мон�
 другому Docker daemon внутри гостя. Управление рабочим кластером исключено
 отсутствием его socket, credentials и kubeconfig.
 
+## Актор с Claude Code
+
+Тот же образ содержит native CLI Claude Code `2.1.310`, ttyd и tmux.
+Linux x64 binary закреплён SHA-256 из официального `manifest.json`; при
+выборе pin подпись manifest проверена ключом с fingerprint
+`31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`. Сборка проверяет checksum binary.
+Установщик с незакреплённым `curl | bash` не используется.
+
+```sh
+brood workbench template --profile claude-code --image IMAGE_AT_DIGEST \
+  --atespace brood-development
+brood workbench run --atespace brood-development \
+  --template brood-claude-code --name claude-code
+```
+
+Профиль не запускает CI автоматически. Он готовит workspace и Docker,
+печатает версию CLI и обслуживает терминал ttyd на порту 80. При подключении
+открывается Claude Code в tmux-сессии `claude`, из каталога проекта.
+Отключение браузера не завершает tmux-сессию; это не гарантия cold restart
+или suspend/resume VM. Сервер результатов этого профиля слушает 8081.
+`ready` означает готовность workspace/Docker, а не авторизацию CLI.
+
+Терминал даёт управление доверенной development-VM. Он доступен только
+через аутентифицированный Substrate Router; не публикуйте его отдельным
+открытым портом. В ttyd включены ввод и проверка WebSocket Origin. Прокси
+должен сохранять исходные Host/Origin и подставлять фиксированный
+`ate-target-actor`, а не принимать цель от браузера.
+
+Launcher выбирает egress из маркера профиля в самом шаблоне. Только coding-
+профиль дополнительно разрешает точные хосты Anthropic API, входа и документации.
+Обновления CLI, необязательная телеметрия, автоматические claude.ai MCP
+connectors и Artifact отключены; wildcard-хостов нет. Build-профиль сохраняет
+прежний список хостов.
+
+API-ключи, OAuth-сессия и SSH-ключи оператора не копируются. Авторизация
+выполняется пользователем внутри CLI со своей учётной записью; состояние
+остаётся в HOME данного актора. Задача модели при создании актора не
+отправляется. Без отдельной авторизации CLI не сможет выполнять модельные
+запросы. См. официальные инструкции:
+https://code.claude.com/docs/en/setup и
+https://code.claude.com/docs/en/network-config.
+
+Сборка требует Git-рабочее дерево или дерево из `--export`; релиз, полученный
+только через `git archive`, не содержит Git metadata для снимка исходников.
+
 ## Результаты и доступ
 
 Основной HTTP-порт актора -- 80. Он обслуживает только `/workspace/results`:
 
-- `/status.json` -- состояние `starting`, `testing`, `deploying`, `passed` или `failed`;
+- `/status.json` -- состояние `starting`, `ready`, `testing`, `deploying`, `passed` или `failed`;
 - `/workbench.log` -- вывод задания.
 
 Из кластера эти пути доступны через HTTPS-сервис

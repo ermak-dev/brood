@@ -35,6 +35,27 @@ class LaunchTests(unittest.TestCase):
                                   ("create", "egress-policy"), ("resume", "actor")])
         runner.cluster.check.assert_called_once()
 
+    def test_claude_template_policy_is_selected_before_resume(self):
+        runner = self.launcher()
+        events = []
+        policy_hosts = []
+        def output(*args):
+            events.append(args[2:4])
+            if args[2:4] == ("get", "actor-template"):
+                return 0, json.dumps({"workerSelector": {"matchLabels": {
+                    "brood.dev/purpose": "development"}}, "containers": [{"env": [
+                        {"name": "BROOD_WORKBENCH_PROFILE", "value": "claude-code"}]}]}), ""
+            if args[2:4] == ("create", "egress-policy"):
+                with open(args[args.index("-f") + 1]) as file:
+                    policy = json.load(file)
+                policy_hosts.extend(policy["rules"][0]["tlsPassthrough"]["hostnames"])
+            return 0, "{}", ""
+        runner.cluster.shell.output.side_effect = output
+        runner.start("builds", "brood-claude-code", "coding")
+        self.assertIn("api.anthropic.com", policy_hosts)
+        self.assertEqual(events, [("get", "actor-template"), ("create", "actor"),
+                                  ("create", "egress-policy"), ("resume", "actor")])
+
     def test_non_development_template_is_refused(self):
         runner = self.launcher()
         with self.assertRaisesRegex(RuntimeError, "development.*selector"):

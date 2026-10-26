@@ -71,6 +71,16 @@ class ImageBuildTests(unittest.TestCase):
             builder.return_value.context.assert_called_once_with(path, "HEAD")
             builder.return_value.build.assert_not_called()
 
+    def test_image_pins_the_verified_native_cli_and_terminal_tools(self):
+        text = (build.HERE / "Dockerfile").read_text()
+        self.assertIn("ARG CLAUDE_VERSION=2.1.310", text)
+        self.assertIn("ARG CLAUDE_SHA256=b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56", text)
+        self.assertIn("https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude", text)
+        self.assertIn('"${CLAUDE_SHA256}"', text)
+        self.assertIn("ttyd", text)
+        self.assertIn("tmux", text)
+        self.assertIn("claude --version", text)
+
     def test_image_declares_tools_for_its_private_ext4_storage(self):
         self.assertIn("e2fsprogs", (build.HERE / "Dockerfile").read_text())
 
