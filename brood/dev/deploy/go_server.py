@@ -1,5 +1,6 @@
 """Параллельный Go-сервер без переключения ingress и миграции живых данных."""
 
+import base64
 import json
 from pathlib import Path
 import re
@@ -14,9 +15,22 @@ from brood.dev.substrate import local
 OWNER = {"app.kubernetes.io/managed-by": "brood-go"}
 
 
-def manifests(image):
+def approved_images(raw):
+    try:
+        images = json.loads(raw)
+    except (ValueError, TypeError):
+        raise RuntimeError("WORKER_POOL_IMAGES must contain deployed digest-pinned images") from None
+    if (not isinstance(images, dict) or "gvisor" not in images or set(images) - {"gvisor", "microvm"}
+            or any(not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}", value)
+                   for value in images.values())):
+        raise RuntimeError("WORKER_POOL_IMAGES must contain deployed digest-pinned images")
+    return images
+
+
+def manifests(image, worker_images=None):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
+    workers = approved_images(json.dumps(worker_images))
     labels = {"app": "brood-go", **OWNER}
 
     def obj(kind, name, spec, api="v1"):
@@ -30,7 +44,7 @@ def manifests(image):
                                "path": "trust-bundle.pem"}},
         {"podCertificate": {"signerName": "podidentity.podcert.ate.dev/identity", "keyType": "ECDSAP256",
                             "credentialBundlePath": "client.pem"}}]}
-    env = {"BROOD_DB_PATH": "/data/brood.db", "BROOD_ADDR": ":8443",
+    env = {"WORKER_POOL_IMAGES": json.dumps(workers, sort_keys=True), "BROOD_DB_PATH": "/data/brood.db", "BROOD_ADDR": ":8443",
            "BROOD_TLS_CERT": "/var/run/brood-tls/tls.crt", "BROOD_TLS_KEY": "/var/run/brood-tls/tls.key",
            "BROOD_SECURE_COOKIES": "true", "ATEAPI_TOKEN_FILE": "/var/run/ateapi/token",
            "ATEAPI_CA_FILE": "/var/run/ateapi/trust-bundle.pem",
@@ -86,6 +100,40 @@ class Deploy:
     def __init__(self, cluster, get=config.get, project=config.PROJECT):
         self.cluster, self.get, self.project = cluster, get, Path(project)
 
+    def _worker_images(self):
+        raw = self.get("WORKER_POOL_IMAGES")
+        if raw:
+            return approved_images(raw)
+        fallback = self.get("WORKER_POOL_IMAGE")
+        if fallback:
+            return approved_images(json.dumps({"gvisor": fallback}))
+
+        def get_object(kind, name):
+            code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
+                "-n", "brood", "get", kind, name, "-o", "json")
+            if code:
+                raise RuntimeError("cannot read configured WORKER_POOL_IMAGES from Django deployment")
+            try:
+                return json.loads(out)
+            except ValueError:
+                raise RuntimeError("invalid configuration response while reading WORKER_POOL_IMAGES") from None
+
+        deployment = get_object("deployment", "django")
+        try:
+            container = next(c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "django")
+            for source in container.get("envFrom", []):
+                name = source.get("secretRef", {}).get("name")
+                if not name:
+                    continue
+                values = get_object("secret", name).get("data", {})
+                for key in ("WORKER_POOL_IMAGES", "WORKER_POOL_IMAGE"):
+                    if values.get(key):
+                        value = base64.b64decode(values[key], validate=True).decode("utf-8")
+                        return approved_images(value if key.endswith("IMAGES") else json.dumps({"gvisor": value}))
+        except (KeyError, StopIteration, TypeError, ValueError):
+            raise RuntimeError("cannot decode configured WORKER_POOL_IMAGES") from None
+        raise RuntimeError("Go deployment needs configured WORKER_POOL_IMAGES")
+
     def run(self):
         secret = self.get("BROOD_SESSION_SECRET")
         if not secret or len(secret) < 32:
@@ -94,8 +142,10 @@ class Deploy:
         tls = legacy._tls()
         self.cluster.check()
         legacy._namespace_is_ours()
+        workers = self._worker_images()
         for kind, name in (("deployment", "brood-go"), ("service", "brood-go"),
-                           ("pvc", "brood-go-data"), ("secret", "brood-go-env"), ("secret", "brood-go-tls")):
+                           ("pvc", "brood-go-data"), ("secret", "brood-go-env"), ("secret", "brood-go-tls"),
+                           ("networkpolicy", "brood-go")):
             code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
                 "get", kind, name, "-n", "brood", "--ignore-not-found", "-o", "json")
             if code:
@@ -116,7 +166,7 @@ class Deploy:
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
                 raise RuntimeError("Go image build returned invalid digest metadata")
             image = "localhost:5002/brood-go@" + digest
-            objects = manifests(image)
+            objects = manifests(image, workers)
             api_rules = legacy._api_egress()
             objects[-1]["spec"]["egress"].extend(api_rules)
             for name, values, secret_type in (("brood-go-env", {"BROOD_SESSION_SECRET": secret}, "Opaque"),
