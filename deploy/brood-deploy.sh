@@ -36,6 +36,7 @@ echo "brood-deploy: ${SHA}"
 bin/brood substrate install
 bin/brood substrate start
 bin/brood deploy server
+bin/brood deploy go --if-enabled
 
 ln -sfn "$RELEASE" "$RELEASES/current"
 find "$RELEASES" -mindepth 1 -maxdepth 1 -type d ! -name "$SHA" -exec rm -rf {} +

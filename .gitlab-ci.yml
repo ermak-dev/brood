@@ -12,6 +12,17 @@ test:
   script:
     - .ci/test.sh
 
+go-test:
+  stage: test
+  tags: [docker]
+  timeout: 45 minutes
+  script:
+    - bash .ci/go-test.sh
+  artifacts:
+    paths:
+      - go/bin/*.tar.gz
+    expire_in: 7 days
+
 # builder идёт по ssh на машину деплоя (docs/DEPLOY.md). Переменные с ключом
 # защищённые: конвейер другой ветки их не видит, и rules его сюда не пускает.
 deploy:

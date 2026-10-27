@@ -49,7 +49,8 @@ API_DEADLINE = 300
 # docker проверяет `docker info` до всего остального; go собирает Substrate.
 TOOLS = ("go",)
 DEPLOY = ("deploy", NAMESPACE, '--credential-provider={"name":"k8s.io"}',
-          f"--ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/{NAMESPACE}/sa/ate-client",
+          f"--ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/{NAMESPACE}/sa/ate-client,"
+          "spiffe://cluster.local/ns/brood/sa/django",
           "--rollout-timeout=10m", f"--namespace={NAMESPACE}", "--atenet-dataplane=envoy",
           # Под django brood -- глобальный владелец ateapi: проекты панели
           # создают и удаляют atespace. Общий ate-client не расшариваем:

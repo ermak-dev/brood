@@ -1,0 +1,33 @@
+ARG PYTHON_IMAGE=python:3.12@sha256:0d0db5b17f11b1b7d1aafa74ceadaa64ba0944b267ff6fc22008a197acd6b9ad
+FROM ${PYTHON_IMAGE} AS build
+COPY brood/dev/pins.json /tmp/pins.json
+RUN python3 -I -c 'import json; p=json.load(open("/tmp/pins.json")); print(p["GO_VERSION"]); print(p["GO_SHA256"])' > /tmp/go-pins \
+    && version="$(sed -n '1p' /tmp/go-pins)" \
+    && checksum="$(sed -n '2p' /tmp/go-pins)" \
+    && mkdir /tmp/toolchain \
+    && curl -fsSL "https://go.dev/dl/go${version}.linux-amd64.tar.gz" -o /tmp/go.tar.gz \
+    && printf '%s  %s\n' "$checksum" /tmp/go.tar.gz | sha256sum -c - \
+    && tar -xzf /tmp/go.tar.gz -C /tmp/toolchain
+ENV PATH=/tmp/toolchain/go/bin:${PATH} CGO_ENABLED=0 GOTOOLCHAIN=local GOWORK=off
+WORKDIR /src/go
+COPY go/go.mod go/go.sum ./
+RUN go mod download
+COPY go/ ./
+ARG VERSION=dev
+RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/brood ./cmd/brood \
+    && go build -trimpath -ldflags="-s -w" -o /out/bro ./cmd/bro \
+    && go build -trimpath -ldflags="-s -w" -o /out/brood-migrate ./cmd/brood-migrate \
+    && mkdir /out/data && chmod 0700 /out/data && chown 65532:65532 /out/data
+
+FROM scratch
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /out/brood /brood
+COPY --from=build /out/bro /bro
+COPY --from=build /out/brood-migrate /brood-migrate
+COPY --from=build --chown=65532:65532 /out/data /data
+USER 65532:65532
+WORKDIR /data
+ENV BROOD_DB_PATH=/data/brood.db BROOD_ADDR=:8443
+EXPOSE 8443
+ENTRYPOINT ["/brood"]
+CMD ["serve"]

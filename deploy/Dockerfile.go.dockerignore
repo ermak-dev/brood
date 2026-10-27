@@ -1,0 +1,13 @@
+**
+!go/
+!go/**
+!brood/
+!brood/dev/
+!brood/dev/pins.json
+go/bin/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.exe
+**/*.pid
+**/*coverage*
