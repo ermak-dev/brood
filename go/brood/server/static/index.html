@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brood</title>
+<style>
+:root { color-scheme: light; --bg: #f3f6f9; --surface: #fff; --text: #243344; --muted: #526477; --line: #c8d2dd; --accent: #175a99; --error: #a51d29; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 64rem; margin: auto; padding: 1rem; }
+header, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+header { border-bottom: 2px solid var(--accent); padding-bottom: 1rem; }
+h1 { margin: 0; font-size: 1.5rem; } h2 { font-size: 1.25rem; } h3 { font-size: 1.05rem; }
+section { margin-top: 1.5rem; } article { border-top: 1px solid var(--line); padding: 1rem 0; overflow-wrap: anywhere; }
+form { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin: 1rem 0; }
+label { display: grid; gap: .25rem; max-width: 100%; }
+input, select, textarea, button { font: inherit; padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 4px; }
+input, select, textarea { color: var(--text); background: var(--surface); max-width: 100%; min-width: 0; }
+input[type=checkbox] { width: 1.15rem; height: 1.15rem; } .check { display: flex; align-items: center; min-height: 2.6rem; }
+button { background: var(--accent); color: white; border-color: var(--accent); cursor: pointer; min-height: 2.6rem; }
+button:disabled { opacity: .55; cursor: wait; } button.secondary { background: var(--surface); color: var(--accent); }
+button.danger { background: var(--surface); color: var(--error); border-color: var(--error); }
+a { color: var(--accent); } :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.meta { color: var(--muted); } .error { color: var(--error); } #message { white-space: pre-wrap; overflow-wrap: anywhere; }
+#login-section { max-width: 26rem; } #login { display: grid; } #login input { width: 100%; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; }
+[hidden] { display: none !important; }
+@media (max-width: 40rem) { form { align-items: stretch; } form label { width: 100%; } input, select { width: 100%; } .actions button { flex-grow: 1; } }
+@media (prefers-color-scheme: dark) {
+  :root { color-scheme: dark; --bg: #172430; --surface: #223442; --text: #e4edf4; --muted: #b0c1d0; --line: #617589; --accent: #9ecbfa; --error: #ffb2b8; }
+  button { color: #172430; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>brood</h1><span id="identity"></span><button id="logout" class="secondary" hidden>Log out</button></header>
+  <p id="message" role="status" aria-live="polite"></p>
+  <section id="login-section" aria-labelledby="login-title" hidden>
+    <h2 id="login-title">Log in</h2>
+    <form id="login">
+      <label>Username<input name="username" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button>Log in</button>
+    </form>
+  </section>
+  <div id="panel" hidden>
+    <section aria-labelledby="projects-title">
+      <div class="actions"><h2 id="projects-title">Projects</h2><button id="refresh-projects" class="secondary">Refresh projects</button></div>
+      <form id="create-project" hidden>
+        <label>Project name<input name="name" required></label><button>Create project</button>
+      </form>
+      <p id="projects-empty" hidden>No projects available. Ask an administrator to add you to a project.</p>
+      <label>Project<select id="project"><option value="">Choose a project</option></select></label>
+    </section>
+    <section id="project-detail" hidden aria-labelledby="project-title">
+      <h2 id="project-title"></h2>
+      <div id="project-admin" hidden>
+        <form id="membership">
+          <label>Member username<input name="username" autocomplete="off" required></label>
+          <button name="action" value="add">Add member</button><button name="action" value="remove" class="danger">Remove member</button>
+        </form>
+        <p class="meta">Membership changes use a username. The server does not provide a membership list.</p>
+        <button id="delete-project" class="danger">Delete project</button>
+      </div>
+      <div class="actions"><h3 id="swarms-title">Your swarms</h3><button id="refresh-swarms" class="secondary">Refresh swarms</button></div>
+      <form id="create-swarm"><label>Swarm name<input name="name" required></label><button>Create swarm</button></form>
+      <div id="swarms"></div>
+    </section>
+    <section id="actor-section" hidden aria-labelledby="actors-title">
+      <div class="actions"><h2 id="actors-title">Actors</h2><button id="refresh-actors" class="secondary">Refresh actors</button></div>
+      <p class="meta">Terminal links open the actor's web application through the authenticated proxy. The actor must serve a terminal for this to work.</p>
+      <div id="actors"></div>
+    </section>
+    <section id="admin-users" hidden aria-labelledby="users-title">
+      <div class="actions"><h2 id="users-title">Users</h2><button id="refresh-users" class="secondary">Refresh users</button></div>
+      <form id="create-user">
+        <label>Username<input name="username" autocomplete="off" required></label>
+        <label>Display name<input name="display_name" autocomplete="off"></label>
+        <label>Password<input name="password" type="password" autocomplete="new-password" required></label>
+        <label class="check"><input name="is_admin" type="checkbox">Administrator</label><button>Create user</button>
+      </form>
+      <div id="users"></div>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const segment = value => encodeURIComponent(value);
+let user = null;
+let projects = [];
+let selectedSwarm = null;
+let projectVersion = 0;
+let actorVersion = 0;
+let csrfReady = null;
+
+function message(text = "", error = false) {
+  $("message").textContent = text;
+  $("message").classList.toggle("error", error);
+  $("message").setAttribute("role", error ? "alert" : "status");
+}
+
+async function request(method, path, body) {
+  const init = { method, credentials: "same-origin", cache: "no-store", headers: {} };
+  if (method !== "GET") {
+    await bootstrap();
+    const match = document.cookie.match(/(?:^|;\s*)csrf=([^;]+)/);
+    if (!match) throw new Error("CSRF cookie unavailable. Enable cookies and reload the page.");
+    init.headers["X-CSRFToken"] = decodeURIComponent(match[1]);
+  }
+  if (body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  const response = await fetch(path, init);
+  const data = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) {
+    if (response.status === 401 && user) {
+      signedOut();
+      csrfReady = null;
+    }
+    throw new Error(data && typeof data.detail === "string" ? data.detail : "Request failed (HTTP " + response.status + ").");
+  }
+  return data;
+}
+
+function bootstrap() {
+  if (!csrfReady) {
+    csrfReady = request("GET", "/api/auth/session").catch(error => {
+      csrfReady = null;
+      throw error;
+    });
+  }
+  return csrfReady;
+}
+
+// Обработчик блокирует повторную отправку и очищает все поля паролей.
+async function run(control, action) {
+  const buttons = control.tagName === "FORM" ? [...control.querySelectorAll("button")] : [control];
+  buttons.forEach(button => { button.disabled = true; });
+  message();
+  try { await action(); }
+  catch (error) { message(error.message || "Request failed. Try again.", true); }
+  finally {
+    control.querySelectorAll('input[type="password"]').forEach(input => { input.value = ""; });
+    buttons.forEach(button => { button.disabled = false; });
+  }
+}
+
+function onForm(id, action) {
+  $(id).addEventListener("submit", event => {
+    event.preventDefault();
+    run(event.currentTarget, () => action(event.currentTarget, event.submitter));
+  });
+}
+function onClick(id, action) {
+  $(id).addEventListener("click", event => run(event.currentTarget, action));
+}
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+function button(text, action, className = "secondary") {
+  const node = element("button", text, className);
+  node.type = "button";
+  node.addEventListener("click", () => run(node, action));
+  return node;
+}
+function field(form, title, name, type = "text") {
+  const label = element("label", title);
+  const input = document.createElement("input");
+  input.name = name;
+  input.type = type;
+  input.required = true;
+  input.autocomplete = type === "password" ? "new-password" : "off";
+  label.append(input);
+  form.append(label);
+  return input;
+}
+function hideActors() {
+  selectedSwarm = null;
+  actorVersion++;
+  $("actor-section").hidden = true;
+  $("actors").replaceChildren();
+}
+function signedOut() {
+  user = null;
+  projects = [];
+  projectVersion++;
+  hideActors();
+  $("identity").textContent = "";
+  $("panel").hidden = true;
+  $("logout").hidden = true;
+  $("login-section").hidden = false;
+  $("project").replaceChildren(element("option", "Choose a project"));
+  $("project").firstChild.value = "";
+  $("project-detail").hidden = true;
+  $("users").replaceChildren();
+  $("swarms").replaceChildren();
+  document.querySelectorAll('input[type="password"]').forEach(input => { input.value = ""; });
+}
+async function signedIn(current) {
+  user = current;
+  $("identity").textContent = current.username + (current.is_admin ? " (administrator)" : "");
+  $("login-section").hidden = true;
+  $("logout").hidden = false;
+  $("panel").hidden = false;
+  $("admin-users").hidden = !current.is_admin;
+  $("create-project").hidden = !current.is_admin;
+  $("project-admin").hidden = !current.is_admin;
+  $("swarms-title").textContent = current.is_admin ? "Project swarms" : "Your swarms";
+  await Promise.all([loadProjects(), current.is_admin ? loadUsers() : Promise.resolve()]);
+}
+
+async function loadProjects() {
+  const current = user;
+  const rows = await request("GET", "/api/projects");
+  if (current !== user) return;
+  projects = rows;
+  const previous = $("project").value;
+  $("project").replaceChildren();
+  const blank = element("option", "Choose a project");
+  blank.value = "";
+  $("project").append(blank);
+  for (const project of projects) {
+    const option = element("option", project.name);
+    option.value = project.id;
+    $("project").append(option);
+  }
+  $("projects-empty").hidden = projects.length !== 0;
+  $("project").value = projects.some(p => p.id === previous) ? previous : "";
+  await loadSwarms();
+}
+function projectPath(id = $("project").value) { return "/api/projects/" + segment(id); }
+function swarmPath(id) { return "/api/swarms/" + segment(id); }
+
+async function loadSwarms() {
+  const version = ++projectVersion;
+  hideActors();
+  const id = $("project").value;
+  const project = projects.find(p => p.id === id);
+  $("project-detail").hidden = !project;
+  $("swarms").replaceChildren();
+  if (!project) return;
+  $("project-title").textContent = project.name;
+  $("swarms").textContent = "Loading swarms…";
+  let swarms;
+  try { swarms = await request("GET", projectPath(id) + "/swarms"); }
+  catch (error) { if (version === projectVersion) $("swarms").textContent = "Could not load swarms. Use Refresh swarms to retry."; throw error; }
+  if (version !== projectVersion) return;
+  $("swarms").replaceChildren();
+  if (!swarms.length) $("swarms").textContent = "No swarms in this project.";
+  for (const swarm of swarms) {
+    const row = element("article");
+    row.dataset.swarmId = swarm.id;
+    row.append(element("h3", swarm.name), element("p", "State: " + swarm.state, swarm.state === "error" ? "error" : "meta"));
+    row.append(element("p", "Swarm ID: " + swarm.id + " · Owner ID: " + swarm.owner_id, "meta"));
+    if (swarm.state === "error") row.append(element("p", "Provisioning failed. This swarm is not active.", "error"));
+    const actions = element("div", undefined, "actions");
+    if (swarm.state === "active") actions.append(button("View actors", async () => {
+      selectedSwarm = swarm;
+      $("actor-section").hidden = false;
+      $("actors-title").textContent = "Actors in " + swarm.name;
+      await loadActors();
+      if (selectedSwarm === swarm) $("actor-section").scrollIntoView({ block: "start" });
+    }));
+    actions.append(button("Delete swarm", async () => {
+      if (!confirm('Delete swarm "' + swarm.name + '"?')) return;
+      await request("DELETE", swarmPath(swarm.id));
+      await loadSwarms();
+      message("Swarm deleted.");
+    }, "danger"));
+    row.append(actions);
+    if (user.is_admin) {
+      const form = document.createElement("form");
+      const username = field(form, "New owner username", "username");
+      form.append(element("button", "Transfer ownership"));
+      form.addEventListener("submit", event => {
+        event.preventDefault();
+        run(form, async () => {
+          await request("POST", swarmPath(swarm.id) + "/transfer", { username: username.value });
+          await loadSwarms();
+          message("Swarm ownership transferred.");
+        });
+      });
+      row.append(form);
+    }
+    $("swarms").append(row);
+  }
+}
+
+async function loadActors() {
+  if (!selectedSwarm) return;
+  const swarm = selectedSwarm;
+  const version = ++actorVersion;
+  $("actors").textContent = "Loading actors…";
+  let data;
+  try { data = await request("GET", swarmPath(swarm.id) + "/actors"); }
+  catch (error) { if (version === actorVersion) $("actors").textContent = "Could not load actors. Use Refresh actors to retry."; throw error; }
+  if (version !== actorVersion || selectedSwarm !== swarm) return;
+  $("actors").replaceChildren();
+  if (!data.results.length) $("actors").textContent = "No actors in this swarm.";
+  for (const actor of data.results) {
+    const name = actor.metadata.name;
+    const path = swarmPath(swarm.id) + "/actors/" + segment(name);
+    const row = element("article");
+    row.dataset.actorName = name;
+    row.append(element("h3", name));
+    const details = element("details");
+    details.append(element("summary", "Actor details"), element("pre", JSON.stringify(actor, null, 2)));
+    row.append(details);
+    const actions = element("div", undefined, "actions");
+    for (const action of ["suspend", "resume"]) {
+      actions.append(button(action === "suspend" ? "Suspend" : "Resume", async () => {
+        await request("POST", path, { action });
+        await loadActors();
+        message("Actor " + action + " request accepted.");
+      }));
+    }
+    actions.append(button("Delete actor", async () => {
+      if (!confirm('Delete actor "' + name + '"?')) return;
+      await request("DELETE", path);
+      await loadActors();
+      message("Actor deleted.");
+    }, "danger"));
+    const link = element("a", "Open terminal");
+    link.href = swarmPath(swarm.id) + "/proxy/actors/" + segment(name) + "/";
+    link.target = "_blank";
+    link.rel = "noopener";
+    actions.append(link);
+    row.append(actions);
+    $("actors").append(row);
+  }
+}
+
+async function loadUsers() {
+  const current = user;
+  const users = await request("GET", "/api/admin/users");
+  if (current !== user) return;
+  $("users").replaceChildren();
+  for (const target of users) {
+    const row = element("article");
+    row.dataset.username = target.username;
+    row.append(element("h3", target.username), element("p", (target.display_name || target.username) + " · " + (target.is_admin ? "Administrator" : "User") + " · " + (target.disabled ? "Disabled" : "Enabled")));
+    const path = "/api/admin/users/" + segment(target.username);
+    const action = target.disabled ? "enable" : "disable";
+    row.append(button(target.disabled ? "Enable user" : "Disable user", async () => {
+      if (!target.disabled && !confirm('Disable user "' + target.username + '" and revoke their sessions?')) return;
+      await request("POST", path + "/" + action);
+      if (target.username === user.username && action === "disable") { signedOut(); csrfReady = null; await bootstrap(); }
+      else await loadUsers();
+      message(target.disabled ? "User enabled." : "User disabled.");
+    }, target.disabled ? "secondary" : "danger"));
+    const form = document.createElement("form");
+    const password = field(form, "New password for " + target.username, "new_password", "password");
+    form.append(element("button", "Reset password"));
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      run(form, async () => {
+        await request("POST", path + "/password-reset", { new_password: password.value });
+        if (target.username === user.username) { signedOut(); csrfReady = null; await bootstrap(); }
+        message("Password reset. Existing sessions revoked.");
+      });
+    });
+    row.append(form);
+    $("users").append(row);
+  }
+}
+
+onForm("login", async form => {
+  await request("POST", "/api/auth/login", { username: form.elements.username.value, password: form.elements.password.value });
+  csrfReady = null;
+  const session = await bootstrap();
+  if (!session.authenticated) throw new Error("Login did not establish a session. Try again.");
+  await signedIn(session.user);
+});
+onClick("logout", async () => {
+  await request("POST", "/api/auth/logout");
+  signedOut();
+  csrfReady = null;
+  await bootstrap();
+  message("Logged out.");
+});
+onForm("create-user", async form => {
+  await request("POST", "/api/admin/users", {
+    username: form.elements.username.value, display_name: form.elements.display_name.value,
+    password: form.elements.password.value, is_admin: form.elements.is_admin.checked,
+  });
+  form.reset();
+  await loadUsers();
+  message("User created.");
+});
+onForm("create-project", async form => {
+  const project = await request("POST", "/api/projects", { name: form.elements.name.value });
+  form.reset();
+  await loadProjects();
+  $("project").value = project.id;
+  await loadSwarms();
+  message("Project created.");
+});
+onForm("membership", async (form, submitter) => {
+  const username = form.elements.username.value;
+  const remove = submitter && submitter.value === "remove";
+  if (remove && !confirm('Remove "' + username + '" from this project?')) return;
+  await request(remove ? "DELETE" : "POST", projectPath() + "/members" + (remove ? "/" + segment(username) : ""), remove ? undefined : { username });
+  message(remove ? "Member removed." : "Member added.");
+});
+onClick("delete-project", async () => {
+  const project = projects.find(p => p.id === $("project").value);
+  if (!project || !confirm('Delete project "' + project.name + '"?')) return;
+  await request("DELETE", projectPath());
+  await loadProjects();
+  message("Project deleted.");
+});
+onForm("create-swarm", async form => {
+  const id = $("project").value;
+  const swarm = await request("POST", projectPath(id) + "/swarms", { name: form.elements.name.value });
+  form.reset();
+  if ($("project").value === id) await loadSwarms();
+  if (swarm.state === "error") message("Swarm provisioning failed. The swarm was saved in error state and is not active.", true);
+  else message("Swarm created. State: " + swarm.state + ".");
+});
+$("project").addEventListener("change", () => run($("refresh-swarms"), loadSwarms));
+onClick("refresh-projects", loadProjects);
+onClick("refresh-swarms", loadSwarms);
+onClick("refresh-actors", loadActors);
+onClick("refresh-users", loadUsers);
+
+signedOut();
+bootstrap().then(session => session.authenticated ? signedIn(session.user) : undefined).catch(error => message(error.message, true));
+</script>
+</body>
+</html>
