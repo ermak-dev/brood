@@ -45,7 +45,7 @@ func buildBinaries(t *testing.T) binaries {
 
 func compilerEnv() []string {
 	var env []string
-	for _, name := range []string{"PATH", "HOME", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOFLAGS", "GOPATH", "GOROOT"} {
+	for _, name := range []string{"PATH", "HOME", "TMPDIR", "GOCACHE", "GOMODCACHE", "GOFLAGS", "GOWORK", "GOPATH", "GOROOT"} {
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}

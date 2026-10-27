@@ -23,6 +23,7 @@ export PATH="$work/toolchain/go/bin:$PATH"
 export CGO_ENABLED=0 GOTOOLCHAIN=local GOWORK=off GOFLAGS=-modcacherw
 export GOCACHE="$work/build-cache" GOMODCACHE="$work/module-cache"
 cd go
+go mod download
 make fmt-check
 make vet
 make test
