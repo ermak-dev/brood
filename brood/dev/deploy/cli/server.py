@@ -1,18 +1,24 @@
-"""brood deploy server: check readiness for a public Go deployment
+"""brood deploy server: publish the Go server and bootstrap its administrator
 
-Public cutover is blocked until an operator has prepared imported users,
-recovery access and a Go-only TLS edge. No cluster resources are changed.
-Use brood deploy go to prepare the private Go endpoint independently.
+Requires fresh Go settings and TLS files in the release. Existing actor
+infrastructure and worker pools are preserved. --check performs preflight only.
 """
+from brood.common import config
+from brood.dev.deploy.public import Deployment, settings
+from brood.dev.substrate.cli._common import cluster
 
 
 def main(argv):
     if argv not in ([], ["--check"]):
         raise RuntimeError("brood deploy server accepts only --check")
-    # Нет автоматического доказательства миграции и переключения публичного
-    # входа. Флаг из .env не доказывает, что пустая SQLite готова к cutover.
-    raise RuntimeError(
-        "Go public cutover is not prepared: migrate and verify users, recovery access and a Go-only TLS edge; "
-        "automatic public deployment is blocked before cluster changes. "
-        "Use brood deploy go only to prepare the private endpoint; it does not import users or switch traffic."
-    )
+    settings(config.get)
+    deployment = Deployment(cluster())
+    if argv:
+        deployment.check()
+        print("Public Go deployment preflight passed")
+        return 0
+    result = deployment.run()
+    print(f"Go server deployed: {result['image']}")
+    print(f"Public endpoint: https://{result['host']}")
+    print(f"Administrator ready: {result['admin']}")
+    return 0

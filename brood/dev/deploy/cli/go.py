@@ -15,5 +15,5 @@ def main(argv):
         raise RuntimeError("brood deploy go takes no arguments")
     image = Deploy(cluster()).run()
     print(f"Go endpoint prepared: {image}")
-    print("Public ingress is unchanged. Import users and verify recovery access before public cutover.")
+    print("Public ingress is unchanged. Use brood deploy server to bootstrap admin and publish the endpoint.")
     return 0

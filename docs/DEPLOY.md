@@ -1,128 +1,119 @@
 # Deploy
 
-Серверный runtime — Go-образ `deploy/Dockerfile.go`: статические `brood`,
-`bro` и `brood-migrate`, CA bundle и приватный каталог `/data`. Финальный
-`scratch`-образ не содержит Python, shell, frontend toolchain или PostgreSQL.
-Исходная React/Bun-панель (`web`) собирается отдельной panel-стадией
-и встраивается в `brood`. Отдельный nginx edge не нужен для раздачи панели;
-явно настроенный CLIProxyAPI подключается через авторизованный Go BFF.
+Зелёный main выкладывает Go-сервер `brood` и исходную React-панель. Образ
+`deploy/Dockerfile.go` содержит только два статических бинарника `brood`/`bro`,
+CA bundle и приватный `/data`. Bun используется только при сборке панели;
+Python, shell и frontend toolchain в server image нет.
 
-## Состояние перехода
+## Состояние и данные
 
-Удаление исходников не удаляет живые Deployment/Service/PVC, старые
-пользовательские БД, токены провайдеров или акторы. Публичная старая установка
-продолжает работать до отдельного управляемого cutover. Старые LLM-proxy
-маршруты не являются частью API Go-сервера и не восстанавливаются автоматически.
+По решению оператора от 2026-10-27 старые Django users/sessions не переносятся.
+Создаётся новая SQLite-база с текущей схемой и новый администратор. Legacy
+import CLI и versioned upgrade paths удалены: несовместимую БД нужно явно
+пересоздать. Обычная повторная выкладка сохраняет текущую Go-БД и пароль
+существующего администратора, не сбрасывает их автоматически.
 
-`bin/brood deploy server` намеренно отказывает до обращения к кластеру:
-для публичного переключения ещё нужны проверенная миграция пользователей,
-восстановительный доступ и Go-only TLS-вход. Флага обхода этого отказа нет.
-Автоматическая production-выкладка не должна маскировать это как успех;
-до завершения cutover deploy job запускается вручную.
+Сброс серверного приложения не означает пересоздание общего Substrate.
+Namespace `brood`, WorkerPools, акторы, их volumes и registry сохраняются.
+Серверная выкладка не вызывает Substrate install/start/uninstall и не меняет
+runtime/kernel. Пользовательские coding-акторы не используются для проверки.
 
-## Подготовка приватного Go endpoint
+## Команды
 
 ```sh
-bin/brood deploy go
+bin/brood deploy server --check
+bin/brood deploy server
 ```
 
-Команда проверяет владение кластером, namespace и именованными объектами,
-читает точные адреса Kubernetes API до первой сборки/записи, собирает образ
-по digest и применяет только Go-ресурсы: Deployment/Service/NetworkPolicy
-`brood-go`, PVC `brood-go-data`, Secrets `brood-go-env` и `brood-go-tls`.
-Стратегия Recreate исключает две реплики с одной SQLite-базой. Root filesystem
-read-only, UID 65532, capabilities сняты. Миграции схемы применяет сам сервер.
+Preflight проверяет настройки, TLS, владение установкой/namespace, approved
+worker images, точные Kubernetes API endpoints и identities существующих
+server/edge ресурсов до сборки и записи. Namespace должен уже принадлежать
+установке; новый Substrate подготавливается отдельной операцией.
 
-Нужны:
+Полная выкладка:
 
-- существующий принадлежащий установке namespace `brood`;
-- доверенная ServiceAccount `django` и namespace-scoped worker-pool RBAC;
-- `BROOD_SESSION_SECRET` в `.env`, не менее 32 символов;
-- сертификат и ключ `secrets/tls.crt`, `secrets/tls.key`;
-- `WORKER_POOL_IMAGES`: JSON-карта digest-pinned образов с обязательным
-  `gvisor` и необязательным `microvm`; либо один `WORKER_POOL_IMAGE` для gvisor.
+1. Собирает pinned TLS edge и Go-образ, получает digest именно своего build.
+2. Применяет приватный Go Deployment/Service/PVC/Secrets/NetworkPolicy и
+   ждёт готовности; SQLite инициализируется самим сервером.
+3. Выполняет `/brood bootstrap-admin` внутри доверенного server pod, передавая
+   username/password через stdin, не argv и не CI stdout. Это не actor pod.
+4. Обновляет TLS edge с сохранением existing Service identity, clusterIP и
+   NodePorts `30080`/`30443`; трафик идёт к Go по HTTPS с проверкой сертификата.
+5. Проверяет public HTTPS, React, login администратора, его actual admin flag
+   и management backend (если настроен), затем logout. Проверка входа обязательна
+   также при retry — существующий admin не отменяет gate.
+6. Только после успешной проверки удаляет конкретные старые Django/Postgres
+   deployments/services/policies и `data-postgres-0`, сверяя UID с preflight.
+   Ни namespace целиком, ни worker/actor ресурсы не входят в cleanup allowlist.
 
-Без явной карты можно использовать конфигурацию существующего принадлежащего
-этой установке Go Deployment. Старые Django Secrets не читаются. При отсутствии
-валидных образов команда отказывает, а не пересоздаёт пулы за пользователя.
+`bin/brood deploy go` остаётся подготовкой только приватного Go endpoint,
+без public edge, bootstrap пользователя или очистки старых данных.
 
-Имя `django` осталось только как точная infrastructure identity:
-`system:serviceaccount:brood:django` и соответствующий SPIFFE principal уже
-разрешены установщиком Substrate. Это не зависимость от Python runtime.
-Переименование требует отдельной миграции доверия, его нельзя делать
-одновременно с удалением старого кода.
+## Настройки
 
-Projected том содержит ротируемый ateapi-токен, service CA и pod identity
-certificate. Kubernetes token имеет свою audience. RBAC разрешает только
-операции workerpools в namespace `brood`, не secrets/pods/cluster-wide доступ.
-Backend дополнительно ограничивает поля и разрешённые образы WorkerPool.
-NetworkPolicy разрешает DNS, ate-system:443 и точные адреса Kubernetes API,
-а не произвольный egress на 443.
+Секреты задаются только приватным `.env` релиза, который передаёт CI.
 
-Service слушает HTTPS на 8443. Для операторской проверки используйте только
-loopback port-forward и доверенный CA, не публикуйте его на `0.0.0.0` и не
-отключайте TLS-проверку. Проверяются `/healthz` и `/api/auth/session`, затем
-реальный login и полномочия. Это подготовка endpoint, не публичный cutover.
+| Настройка | Назначение |
+|---|---|
+| `BROOD_SESSION_SECRET` | случайный ключ, минимум 32 символа |
+| `BROOD_PUBLIC_HOST` | DNS-имя публичного входа, присутствующее в TLS certificate |
+| `BROOD_HTTPS_PORT`, `BROOD_HTTP_PORT` | опубликованные host ports, задаются при создании kind |
+| `BROOD_ADMIN_USERNAME`, `BROOD_ADMIN_PASSWORD` | initial admin и проверка доступа; пароль минимум 12 символов |
+| `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательный microvm |
+| `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only key |
 
-## Миграция и откат
+TLS: `secrets/tls.crt` и `secrets/tls.key`. Go и edge используют один
+сертификат; upstream SNI `brood` требует соответствующего SAN. Проверка
+public endpoint использует точный certificate и loopback resolve, не
+`curl -k` и не случайный DNS destination.
 
-Протокол и команды — `docs/GO.md`. Перед переключением:
+После смены admin-пароля через UI нужно синхронно обновить deployment check
+credential в protected `.env`, иначе следующая auth-проверка закономерно
+откажет. Bootstrap не меняет пароль уже существующей учётной записи.
+Пароли, session cookies и provider config не печатаются в CI-логи.
 
-1. Сохранить консистентную копию старой БД и список atespaces с UID.
-2. Импортировать пользователей в отдельную SQLite-базу с управляемым сбросом;
-   старые hashes/sessions не переносить.
-3. Явно связать atespaces с владельцами и проектами по проверенным UID.
-4. Создать отдельного recovery admin, проверить вход, сброс и включение
-   импортированных учётных записей и права двух обычных пользователей.
-5. Подготовить Go-only TLS-вход с WebSocket и исключением actor-view tickets
-   из access logs; только затем переключать public traffic.
-6. Остановку старых процессов выполнять отдельно после проверки. Старые БД,
-   PVC, provider credentials и пользовательские акторы автоматически не удалять.
+Историческое имя ServiceAccount `django` — точный доверенный принципал
+Substrate/atenet-router, не Python runtime. Его и worker-pool RBAC не
+удаляют с legacy сервером. Project membership и доступ к своим роям проверяет
+Go BFF до использования этой привилегированной service identity.
 
-До cutover откат — остановить отдельный Go Deployment: старый вход и БД
-не изменены. После будущего cutover сначала остановить Go-записи и сохранить
-SQLite вместе с WAL, затем вернуть прежний вход. Новые рои требуют отдельной
-инвентаризации; обратная миграция не обещается.
+CLIProxyAPI/provider credentials живут отдельно и не являются Django user
+migration. Для Go разрешается только scoped network access к этому backend;
+management key хранится в server Secret и не попадает в browser/edge.
 
 ## CI и restricted SSH
 
-Тесты выполняются существующим runner `builder` с тегом `docker`.
-`.ci/test.sh` проверяет Python dev-инструменты; `.ci/go-test.sh` — Go, включая
-кросс-сборку linux amd64/arm64 и архивы. Зелёные тесты не означают готовый
-публичный cutover.
+Используется прежний runner builder с тегом docker; runner на target не
+добавляется. `.ci/test.sh` проверяет Python dev tools, `.ci/go-test.sh` —
+React, Go и cross-release amd64/arm64. Только успешный default branch
+переходит в deploy stage.
 
-`.ci/deploy.sh` передаёт по SSH SHA и `git archive`, добавляя `.env` и TLS
-файлы с правами 0600 из защищённых CI file variables:
+`.ci/deploy.sh` посылает git archive и полный SHA по SSH. В архив добавлены
+приватные `.env` и TLS из protected CI file variables с правами 0600:
 
 | Переменная | Назначение |
 |---|---|
 | `BROOD_DEPLOY_HOST` | SSH destination установки |
 | `BROOD_DEPLOY_SSH_KEY` | ограниченный deploy key |
-| `BROOD_DEPLOY_KNOWN_HOSTS` | проверенный ключ хоста |
-| `BROOD_DEPLOY_ENV` | настройки релиза |
-| `BROOD_DEPLOY_TLS_CERT`, `BROOD_DEPLOY_TLS_KEY` | TLS установки |
+| `BROOD_DEPLOY_KNOWN_HOSTS` | проверенный host key |
+| `BROOD_DEPLOY_ENV` | `.env` релиза |
+| `BROOD_DEPLOY_TLS_CERT`, `BROOD_DEPLOY_TLS_KEY` | TLS |
 
-Обновление — `bin/brood dev ci set --file VAR=PATH`, просмотр имён и флагов
-без значений — `bin/brood dev ci vars`. Ни адреса, ни ключа в репозитории нет.
-Runner на целевой машине не добавляется.
+Ключ в authorized_keys имеет restrict/from/forced command `brood-deploy`.
+Команда принимает только SHA и архив, serializes через flock, проверяет
+release до мутаций и запускает только application rollout. `BROOD_RELEASE_SHA`
+передаётся Docker build для version stamp. Копия `/usr/local/bin/brood-deploy`
+обновляется штатным provision/install отдельно от release; обычный deploy
+не должен повторно раскатывать работающие atelet/worker components.
 
-В `authorized_keys` ключ имеет `restrict,from=<builder>,command=brood-deploy`.
-Принудительная команда принимает только SHA и архив, serializes релизы через
-flock и выполняет preflight до Substrate-мутаций. Её копию в `/usr/local/bin`
-обновляет `deploy/provision.sh`, а не обычный deploy. Старый установленный
-wrapper нужно обновить перед возобновлением автоматической выкладки.
+Настройки обновляет `bin/brood dev ci set --file VAR=PATH`, имена/флаги без
+значений показывает `bin/brood dev ci vars`. В репозитории нет target address,
+private keys или admin password. Private provisioning инструкции и
+`deploy/provision.sh` сохраняют прежний restricted SSH interface.
 
-## Пулы и microVM
+## microVM и workbench
 
-`bin/brood deploy microvm` остаётся отдельной операцией только для пустой
-установки: проверяет владение, отсутствие акторов, KVM и закреплённые assets.
-Не удаляет исходный WorkerPool; требует drain перед уменьшением его replicas.
-Восстановленная панель содержит управление воркерами, drain и worker pools.
-API и инструменты Substrate также доступны; UID/version-предусловия нельзя
-обходить ни из одного интерфейса.
-
-Подготовка Go endpoint не меняет ресурсы, реплики и образы существующих пулов.
-Отсутствие microVM-ёмкости — блокер полного workbench e2e, а не разрешение
-остановить действующий coding-актор, уменьшить его ресурсы или менять kernel
-и runtime policy хоста. Guest deployment выполняется только внутри собственной
-microVM с приватными Docker/kind и свежими секретами (`docs/WORKBENCH.md`).
+Изолированная developer-нагрузка использует отдельную microVM с собственными
+Docker/kind и свежими секретами (`docs/WORKBENCH.md`). Отсутствие ёмкости —
+блокер, а не разрешение остановить пользовательский актор или менять host
+runtime policy. Server deploy никогда не вызывает перевод пулов на microVM.

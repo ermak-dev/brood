@@ -1,5 +1,3 @@
--- Первая версия схемы: пользователи, проекты, членство, рои, сессии.
-
 CREATE TABLE users (
     id            TEXT PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE,
@@ -32,7 +30,8 @@ CREATE TABLE swarms (
     atespace_uid  TEXT,
     state         TEXT NOT NULL DEFAULT 'provisioning',
     created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
+    updated_at    TEXT NOT NULL,
+    retry         TEXT NOT NULL DEFAULT '' CHECK (retry IN ('', 'create', 'delete'))
 );
 
 CREATE TABLE sessions (

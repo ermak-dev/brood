@@ -40,5 +40,7 @@ Pinned Substrate: публичная версия go.ate.dev/substrate v0.6.1-0.
 - Ошибки: `fmt.Errorf`/ошибки-значения; отказы CLI — строкой, без паник.
 - Пароли: Argon2id (golang.org/x/crypto/argon2), параметры в кодировке хэша.
 - ID: строковые ULID/UUID; `atespace_name = "swarm-" + <id без дефисов, lower>`.
-- SQL: явные запросы, миграции embedded, SQLite WAL (modernc.org/sqlite, без cgo).
+- SQL: явные запросы, встроенная текущая схема для новой базы, без миграций
+  и импорта старых данных; SQLite WAL (modernc.org/sqlite, без cgo).
+  Повторное открытие текущей схемы идемпотентно, несовместимая схема — отказ.
 - Время: UTC; парсинг/печать RFC3339.

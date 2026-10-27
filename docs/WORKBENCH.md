@@ -163,7 +163,7 @@ cgroup v2 для вложенных контейнеров. Одного мон�
 
 1. `bin/brood dev setup`, `bin/brood dev test -v`, `venv/bin/ruff check .`;
 2. `bin/brood dev web test` — проверки исходной React-панели и пересборку bundle;
-3. настоящие `go test ./...` и сборку трёх Go-бинарников;
+3. настоящие `go test ./...` и сборку двух Go-бинарников;
 4. `bin/brood substrate install` и `bin/brood substrate start` в собственном Docker;
 5. `bin/brood workbench prepare`: только в госте с локальным socket и своим
    checkout/кластером, проверяет владение, создаёт namespace/SA/RBAC без

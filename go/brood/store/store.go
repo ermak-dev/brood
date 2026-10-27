@@ -1,36 +1,25 @@
 // Package store — локальное хранилище сервера brood: SQLite (WAL),
-// embedded-миграции и явные запросы без ORM. Пакет молчит: возвращает
+// встроенная текущая схема и явные запросы без ORM. Пакет молчит: возвращает
 // данные и ошибки, печатает только вызывающий командлет.
 package store
 
 import (
 	"context"
 	"database/sql"
-	"embed"
+	_ "embed"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/url"
 	"os"
-	"sort"
+	"strings"
 	"time"
 )
 
 // ErrNotFound возвращает вызывающему, когда записи с данным ключом нет.
 var ErrNotFound = fmt.Errorf("record not found")
 
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
-
-// migrations — имена встроенных миграций в порядке применения.
-var migrations = func() []string {
-	entries, err := fs.Glob(migrationsFS, "migrations/*.sql")
-	if err != nil {
-		panic(fmt.Sprintf("store: embedded migrations: %v", err))
-	}
-	sort.Strings(entries)
-	return entries
-}()
+//go:embed schema.sql
+var currentSchema string
 
 // Store — обёртка над database/sql с методами домена. Безопасна для
 // конкурентного использования: единственное соединение SQLite (WAL,
@@ -50,8 +39,8 @@ func dsn(path string) string {
 		"&_pragma=synchronous(NORMAL)"
 }
 
-// Open открывает (или создаёт) базу по пути и идемпотентно применяет
-// миграции.
+// Open открывает текущую базу или создаёт новую по пути.
+// Несовместимая схема отвергается без изменения таблиц.
 func Open(ctx context.Context, path string) (*Store, error) {
 	if path != ":memory:" {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
@@ -80,7 +69,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		if err := db.PingContext(ctx); err != nil {
 			return fmt.Errorf("open database %s: %w", path, err)
 		}
-		return s.applyMigrations(ctx)
+		return s.initializeSchema(ctx)
 	})
 	if err != nil {
 		db.Close()
@@ -92,69 +81,66 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // Close закрывает соединение с базой.
 func (s *Store) Close() error { return s.db.Close() }
 
-// applyMigrations применяет необработанные миграции; выполненные уже
-// записаны в schema_migrations и пропускаются, поэтому повторное
-// открытие базы безопасно. Вся работа — в транзакции на блокировке
-// записи (BEGIN IMMEDIATE): конкурентные Open одной базы сериализуются
-// через busy_timeout, а не падают от взаимоблокировки.
-func (s *Store) applyMigrations(ctx context.Context) error {
-	for _, name := range migrations {
-		if err := retryOnBusy(func() error {
-			return s.applyMigration(ctx, name)
-		}); err != nil {
-			return err
+// initializeSchema создаёт схему только в пустой базе. Проверка и создание
+// держат BEGIN IMMEDIATE: конкурентные Open не видят частичную схему.
+func (s *Store) initializeSchema(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema initialization: %w", err)
+	}
+	defer tx.Rollback()
+	var objects int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+		return fmt.Errorf("inspect database schema: %w", err)
+	}
+	if objects == 0 {
+		if _, err := tx.ExecContext(ctx, currentSchema); err != nil {
+			return fmt.Errorf("initialize database schema: %w", err)
+		}
+	} else if err := checkCurrentSchema(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema initialization: %w", err)
+	}
+	return nil
+}
+
+// checkCurrentSchema сверяет определения таблиц, включая ограничения.
+// schema.sql содержит только CREATE TABLE, без комментариев и разделителей
+// внутри литералов. Пробелы несущественны; retry, добавленный старым ALTER,
+// даёт то же определение. Посторонние служебные таблицы не меняются.
+func checkCurrentSchema(ctx context.Context, tx *sql.Tx) error {
+	for _, statement := range strings.Split(currentSchema, ";") {
+		fields := strings.Fields(statement)
+		if len(fields) == 0 {
+			continue
+		}
+		table := fields[2]
+		var actual string
+		err := tx.QueryRowContext(ctx,
+			`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&actual)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("incompatible database schema: missing table %s; recreate the database", table)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect table %s: %w", table, err)
+		}
+		if normalizeSchemaSQL(actual) != normalizeSchemaSQL(statement) {
+			return fmt.Errorf("incompatible database schema: table %s differs from current schema; recreate the database", table)
 		}
 	}
 	return nil
 }
 
-// applyMigration применяет одну миграцию в транзакции на блокировке
-// записи, если она ещё не применена.
-func (s *Store) applyMigration(ctx context.Context, name string) error {
-	body, err := migrationsFS.ReadFile(name)
-	if err != nil {
-		return fmt.Errorf("read migration %s: %w", name, err)
+// normalizeSchemaSQL игнорирует пробелы только вне строковых литералов.
+func normalizeSchemaSQL(statement string) string {
+	parts := strings.Split(statement, "'")
+	for i := 0; i < len(parts); i += 2 {
+		parts[i] = strings.Join(strings.Fields(parts[i]), "")
 	}
-	tx, err := s.db.BeginTx(ctx, nil) // _txlock=immediate
-	if err != nil {
-		return fmt.Errorf("begin migration %s: %w", name, err)
-	}
-	if err := func() error {
-		if _, err := tx.ExecContext(ctx, `
-			CREATE TABLE IF NOT EXISTS schema_migrations (
-				name TEXT PRIMARY KEY,
-				applied_at TEXT NOT NULL
-			)`); err != nil {
-			return fmt.Errorf("create schema_migrations: %w", err)
-		}
-		var exists int
-		err := tx.QueryRowContext(ctx,
-			`SELECT 1 FROM schema_migrations WHERE name = ?`, name).Scan(&exists)
-		if err == sql.ErrNoRows {
-			exists = 0
-		} else if err != nil {
-			return fmt.Errorf("check migration %s: %w", name, err)
-		}
-		if exists == 1 {
-			return nil
-		}
-		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
-			return fmt.Errorf("apply migration %s: %w", name, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)`,
-			name, nowRFC3339()); err != nil {
-			return fmt.Errorf("record migration %s: %w", name, err)
-		}
-		return nil
-	}(); err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit migration %s: %w", name, err)
-	}
-	return nil
+	return strings.Join(parts, "'")
 }
 
 // DB — то, на чём выполняются запросы: пул соединений или транзакция.
@@ -170,8 +156,8 @@ type txKey struct{}
 // retryOnBusy повторяет fn при SQLITE_BUSY: первый запрос нового
 // физического соединения (ping) проходит прагмы соединения до
 // установки busy_timeout и получает отказ без ожидания (например,
-// journal_mode при чужой блокировке записи), поэтому миграции ждут
-// и повторяют попытку сами.
+// journal_mode при чужой блокировке записи), поэтому инициализация ждёт
+// и повторяет попытку сама.
 func retryOnBusy(fn func() error) error {
 	var err error
 	for try := 0; try < 100; try++ {
