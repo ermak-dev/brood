@@ -113,6 +113,40 @@ class PublicSettingsTests(unittest.TestCase):
                 deploy.run()
         deploy.cleanup.assert_not_called()
 
+    # BUG: apply сохраняет старый nginx рядом с новым контейнером edge.
+    # HYPOTHESIS: replace удаляет поля, отсутствующие в прежнем apply ledger.
+    # RESULT: FIXED — replace с UID/resourceVersion; отсутствующие ресурсы создаются.
+    def test_existing_edge_is_replaced_without_merging_legacy_containers(self):
+        module = self.module()
+        cluster = Mock(shell=Mock())
+        deployment = module.Deployment(cluster, get=VALUES.get)
+        current = {"metadata": {"name": "edge", "namespace": "brood", "uid": "edge-uid",
+                                "resourceVersion": "42"},
+                   "spec": {"selector": {"matchLabels": {"app": "edge"}},
+                            "template": {"spec": {"containers": [{"name": "nginx"}]}}}}
+        deployment.get_object = Mock(side_effect=lambda kind, name: current if kind == "deployment" else None)
+        operations = []
+
+        def output(*args):
+            if "-f" in args:
+                document = json.loads(Path(args[args.index("-f") + 1]).read_text())
+                objects = document.get("items", [document])
+                for obj in objects:
+                    operations.append((obj["kind"], "replace" if "replace" in args else "create"))
+                    if obj["kind"] == "Deployment":
+                        self.assertIn("replace", args)
+                        self.assertNotIn("--force", args)
+                        self.assertEqual(obj["metadata"]["resourceVersion"], "42")
+                        self.assertEqual(obj["metadata"]["uid"], "edge-uid")
+                        self.assertEqual([c["name"] for c in obj["spec"]["template"]["spec"]["containers"]], ["edge"])
+            return 0, "", ""
+
+        cluster.shell.output.side_effect = output
+        deployment.apply_edge("localhost:5002/brood-go-edge@sha256:" + "a" * 64,
+                              {("deployment", "edge"): "edge-uid"})
+        self.assertIn(("Deployment", "replace"), operations)
+        self.assertIn(("Service", "create"), operations)
+
     def test_uid_change_refuses_cleanup(self):
         module = self.module()
         cluster = Mock(shell=Mock())

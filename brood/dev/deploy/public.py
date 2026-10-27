@@ -135,6 +135,7 @@ class Deployment:
                 uid = identity(current, kind, "edge")
                 if before.get((kind, "edge")) not in (None, uid):
                     raise RuntimeError(f"identity changed for {kind}/edge")
+                obj["metadata"]["uid"] = uid
                 obj["metadata"]["resourceVersion"] = current["metadata"]["resourceVersion"]
                 if kind == "service":
                     for key in ("clusterIP", "clusterIPs", "ipFamilies", "ipFamilyPolicy"):
@@ -142,10 +143,12 @@ class Deployment:
                             obj["spec"][key] = current["spec"][key]
         with tempfile.TemporaryDirectory(prefix="brood-public-edge-") as directory:
             path = Path(directory) / "edge.json"
-            path.write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
-            code, _, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "apply", "-f", str(path))
-            if code:
-                raise RuntimeError("Go TLS edge apply failed")
+            for obj in objects:
+                path.write_text(json.dumps(obj))
+                action = "replace" if "resourceVersion" in obj["metadata"] else "create"
+                code, _, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", action, "-f", str(path))
+                if code:
+                    raise RuntimeError(f"Go TLS edge {action} failed")
         code, _, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "-n", "brood",
                                              "rollout", "status", "deployment/edge", "--timeout=300s")
         if code:
