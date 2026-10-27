@@ -1,124 +1,182 @@
-// bro — пользовательский CLI Brood: вход, проекты и сборка.
+// bro is the standalone user CLI for Brood.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"brood.dev/go/brood/clientapi"
 )
 
-func main() {
-	os.Exit(run(os.Args[1:]))
-}
+func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
-	if len(args) == 0 {
-		usage(os.Stderr)
-		return 1
-	}
-	ctx := context.Background()
-	switch args[0] {
-	case "login":
-		return cmdLogin(ctx, args[1:])
-	case "logout":
-		return cmdLogout(ctx, args[1:])
-	case "whoami":
-		return cmdWhoami(ctx, args[1:])
-	case "projects":
-		return cmdProjects(ctx, args[1:])
-	case "help", "-h", "--help":
-		usage(os.Stdout)
-		return 0
-	default:
-		fmt.Fprintf(os.Stderr, "bro: unknown command %q\n", args[0])
-		usage(os.Stderr)
-		return 1
-	}
+	return runWithIO(context.Background(), args, os.Stdin, os.Stdout, os.Stderr)
 }
 
-func usage(w *os.File) {
-	fmt.Fprint(w, `usage: bro <command> [server] [options]
+type command struct {
+	in              io.Reader
+	out, diagnostic io.Writer
+}
+
+func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic io.Writer) int {
+	c := command{in: in, out: out, diagnostic: diagnostic}
+	if len(args) == 0 {
+		usage(diagnostic)
+		return 1
+	}
+	var err error
+	switch args[0] {
+	case "login", "logout", "whoami":
+		err = c.auth(ctx, args[0], args[1:])
+	case "projects":
+		rest := args[1:]
+		if len(rest) > 0 && rest[0] == "list" {
+			rest = rest[1:]
+		}
+		err = c.auth(ctx, "projects", rest)
+	case "build":
+		err = c.build(args[1:])
+	case "help", "-h", "--help":
+		if len(args) != 1 {
+			err = errors.New("help accepts no arguments")
+		} else {
+			usage(out)
+		}
+	default:
+		err = fmt.Errorf("unknown command %q", args[0])
+	}
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintf(diagnostic, "bro %s: %v\n", args[0], err)
+	if errors.Is(err, clientapi.ErrInvalidCredentials) || errors.Is(err, clientapi.ErrSessionExpired) {
+		return 2
+	}
+	return 1
+}
+
+func usage(w io.Writer) {
+	fmt.Fprint(w, `usage: bro <command> [options]
 
 commands:
-  login [server] [--ca FILE]    authenticate against the web API and store the session
-  logout [server]               revoke the server session and clear local storage
-  whoami [server]               print the current user
-  projects list [server]        list projects available to the current user
+  login [server] [--ca FILE]      authenticate and store the session
+  logout [server] [--ca FILE]     revoke the server session, then clear local storage
+  whoami [server] [--ca FILE]     print the current user
+  projects list [server] [--ca FILE]  list accessible projects
+  build [target] [options]       build and push an image, publish local artifacts
 
-The server is an origin like https://brood.example; without it the last
-logged-in server is used. Sessions are stored per server origin.
+Build options:
+  --project PATH   Git project directory (default: current directory)
+  --ref REF        committed revision (default: HEAD)
+  --registry HOST/PREFIX   publication destination (or BUILD_REGISTRY)
+  --atespace NAME          artifact namespace (or BUILD_ATESPACE)
+  --plan           print the plan without Docker or login
+  --export PATH    export a new portable context without Docker or login
+
+Registry and atespace must be explicitly configured. --registry or BUILD_REGISTRY
+is authorization to push to that destination; no cluster is inspected or changed.
+Git and Docker/buildx remain external tools; no Python or Substrate checkout is used.
+--plan and --export are mutually exclusive. Sources always come from the selected
+commit, never working-tree overlays. No actors are created.
+
+Servers use HTTPS (HTTP is allowed only for localhost/loopback development).
+Without a server, use the last logged-in origin. Sessions and additional CA trust
+are stored per origin under $XDG_STATE_HOME/brood/sessions or ~/.local/state/brood/sessions.
+--ca adds a trusted PEM CA and persists it on successful login; TLS verification
+cannot be disabled. Passwords are read without echo from a terminal, or as the
+second input line when stdin is a pipe. Passwords are never saved.
 `)
 }
 
-// parseServer выделяет аргумент server и известные флаги; неизвестный флаг — отказ.
-func parseServer(args []string) (server string, caPath string, rest []string, err error) {
+func parseServer(args []string) (server, caPath string, rest []string, err error) {
 	for len(args) > 0 {
 		arg := args[0]
 		switch {
 		case arg == "--ca":
-			if len(args) < 2 {
-				return "", "", nil, fmt.Errorf("--ca requires a file path")
+			if len(args) < 2 || args[1] == "" || strings.HasPrefix(args[1], "-") {
+				return "", "", nil, errors.New("--ca requires a file path")
 			}
 			caPath, args = args[1], args[2:]
 		case strings.HasPrefix(arg, "--ca="):
 			caPath, args = strings.TrimPrefix(arg, "--ca="), args[1:]
+			if caPath == "" {
+				return "", "", nil, errors.New("--ca requires a file path")
+			}
 		case strings.HasPrefix(arg, "-"):
 			return "", "", nil, fmt.Errorf("unknown option %s", arg)
 		default:
+			if server != "" {
+				return "", "", nil, errors.New("expected at most one server origin")
+			}
 			server, args = arg, args[1:]
 		}
 	}
-	return server, caPath, rest, nil
+	return server, caPath, nil, nil
 }
 
-// stateDir возвращает каталог сессий: XDG_STATE_HOME, затем
-// ~/.local/state, затем пользовательский конфигурационный каталог.
-func stateDir() string {
+func stateDir() (string, error) {
 	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
-		return dir + "/brood/sessions"
+		if !filepath.IsAbs(dir) {
+			return "", errors.New("XDG_STATE_HOME must be an absolute path")
+		}
+		return filepath.Join(dir, "brood", "sessions"), nil
 	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return home + "/.local/state/brood/sessions"
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "", errors.New("set an absolute XDG_STATE_HOME or HOME for session storage")
 	}
-	if dir, err := os.UserConfigDir(); err == nil {
-		return dir + "/brood/sessions"
-	}
-	return ".brood/sessions"
+	return filepath.Join(home, ".local", "state", "brood", "sessions"), nil
 }
 
-func newClient(server string, caPath string) (*clientapi.Client, *clientapi.SessionStore, error) {
-	store, err := clientapi.NewSessionStore(stateDir())
+func newClient(server, caPath string) (*clientapi.Client, *clientapi.SessionStore, error) {
+	dir, err := stateDir()
+	if err != nil {
+		return nil, nil, err
+	}
+	store, err := clientapi.NewSessionStore(dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("session store: %w", err)
 	}
 	if server == "" {
-		current, err := store.Current()
+		server, err = store.Current()
 		if err != nil {
-			return nil, nil, fmt.Errorf("no server given and no saved server; run: bro login <server>")
+			return nil, nil, err
 		}
-		server = current
+		if server == "" {
+			return nil, nil, errors.New("no saved server; run: bro login <server>")
+		}
 	}
 	origin, err := clientapi.NormalizeOrigin(server)
 	if err != nil {
 		return nil, nil, err
 	}
-	var opts []clientapi.Option
+	stored, _, err := store.Load(origin)
+	if err != nil {
+		return nil, nil, err
+	}
+	caPEM := stored.CAPEM
 	if caPath != "" {
-		pem, err := os.ReadFile(caPath)
+		data, err := os.ReadFile(caPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read CA file: %w", err)
+			return nil, nil, errors.New("could not read CA file")
 		}
-		opts = append(opts, clientapi.WithCACert(pem))
+		caPEM = string(data)
+	}
+	var opts []clientapi.Option
+	if caPEM != "" {
+		opts = append(opts, clientapi.WithCACert([]byte(caPEM)))
 	}
 	client, err := clientapi.New(origin, opts...)
 	if err != nil {
 		return nil, nil, err
 	}
-	if stored, ok, _ := store.Load(origin); ok {
-		client.Restore(stored)
-	}
+	stored.CAPEM = caPEM
+	client.Restore(stored)
 	return client, store, nil
 }

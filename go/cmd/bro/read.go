@@ -1,6 +1,5 @@
-// Построчное чтение без буферизации и пароль без эха: тот же подход,
-// что cmd/bro/term_*.go, скопированный, а не импортированный — командные
-// бинарники не зависят друг от друга.
+// Построчное чтение без упреждающей буферизации: username не забирает
+// пароль из того же потока. Терминальный пароль читает golang.org/x/term.
 package main
 
 import (
@@ -28,6 +27,9 @@ func readLine(in io.Reader, prompt string, out io.Writer) (string, error) {
 			sb.WriteByte(buf[0])
 		}
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return "", fmt.Errorf("read input: %w", err)
+			}
 			if sb.Len() > 0 {
 				return strings.TrimRight(sb.String(), "\r"), nil
 			}
