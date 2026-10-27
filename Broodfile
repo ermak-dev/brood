@@ -1,0 +1,138 @@
+apiVersion: brood.dev/v1alpha1
+name: brood
+defaultTarget: development
+pinsFile: brood/dev/pins.json
+sources:
+  project:
+    type: project
+    destination: brood
+    gitMetadata: true
+  substrate:
+    type: git
+    repository: https://github.com/agent-substrate/substrate.git
+    revisionPin: SUBSTRATE_COMMIT
+    destination: substrate
+    gitMetadata: true
+environments:
+  workbench:
+    sources: [project, substrate]
+    build:
+      dockerfile: brood/brood/dev/workbench/Dockerfile
+      platform: linux/amd64
+      argsFromPins: [PYTHON_IMAGE, GO_VERSION, GO_SHA256]
+templates:
+  development:
+    environment: workbench
+    network: development
+    actor:
+      workerSelector:
+        matchLabels:
+          brood.dev/purpose: development
+      resources:
+        limits: {cpuMillicores: '4000', memoryBytes: '8589934592'}
+      snapshotConfig:
+        preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+        goldenSnapshotConfig: {mode: GOLDEN_SNAPSHOT_MODE_DISABLED}
+      containers:
+        - name: main
+          command: [/usr/bin/tini, '--', /opt/seeds/brood/bin/brood, workbench, start]
+          args: ['--', bash, .ci/workbench.sh]
+          env:
+            - {name: HOME, value: /workspace/home}
+            - {name: XDG_DATA_HOME, value: /workspace/data}
+            - {name: SUBSTRATE_SOURCE, value: /workspace/substrate}
+            - {name: TMPDIR, value: /workspace/tmp}
+            - {name: DOCKER_HOST, value: 'unix:///var/run/docker.sock'}
+            - {name: PIP_FIND_LINKS, value: /opt/wheels}
+            - {name: PIP_NO_INDEX, value: '1'}
+          volumeMounts: [{name: workspace, mountPath: /workspace}]
+          securityContext:
+            capabilities:
+              add: [CHOWN, DAC_OVERRIDE, DAC_READ_SEARCH, FOWNER, FSETID, KILL,
+                    SETGID, SETUID, SETPCAP, LINUX_IMMUTABLE, NET_BIND_SERVICE,
+                    NET_BROADCAST, NET_ADMIN, NET_RAW, IPC_LOCK, IPC_OWNER, SYS_MODULE,
+                    SYS_RAWIO, SYS_CHROOT, SYS_PTRACE, SYS_PACCT, SYS_ADMIN, SYS_BOOT,
+                    SYS_NICE, SYS_RESOURCE, SYS_TIME, SYS_TTY_CONFIG, MKNOD, LEASE,
+                    AUDIT_WRITE, AUDIT_CONTROL, SETFCAP, MAC_OVERRIDE, MAC_ADMIN, SYSLOG,
+                    WAKE_ALARM, BLOCK_SUSPEND, AUDIT_READ, PERFMON, BPF, CHECKPOINT_RESTORE]
+      volumes: [{name: workspace, durableDir: {}}]
+  coding:
+    environment: workbench
+    network: coding
+    actor:
+      workerSelector:
+        matchLabels:
+          brood.dev/purpose: development
+      resources:
+        limits: {cpuMillicores: '4000', memoryBytes: '8589934592'}
+      snapshotConfig:
+        preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+        goldenSnapshotConfig: {mode: GOLDEN_SNAPSHOT_MODE_DISABLED}
+      containers:
+        - name: main
+          command: [/usr/bin/tini, '--', /opt/seeds/brood/bin/brood, workbench, start]
+          args: ['--results-port', '8081', '--', bash, '-c',
+                 'claude --version && exec ttyd --writable --check-origin --port 80 tmux new-session -A -s claude claude']
+          env:
+            - {name: HOME, value: /workspace/home}
+            - {name: XDG_DATA_HOME, value: /workspace/data}
+            - {name: SUBSTRATE_SOURCE, value: /workspace/substrate}
+            - {name: TMPDIR, value: /workspace/tmp}
+            - {name: DOCKER_HOST, value: 'unix:///var/run/docker.sock'}
+            - {name: PIP_FIND_LINKS, value: /opt/wheels}
+            - {name: PIP_NO_INDEX, value: '1'}
+            - {name: BROOD_WORKBENCH_PROFILE, value: claude-code}
+            - {name: DISABLE_AUTOUPDATER, value: '1'}
+            - {name: DISABLE_UPDATES, value: '1'}
+            - {name: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, value: '1'}
+            - {name: CLAUDE_CODE_DISABLE_ARTIFACT, value: '1'}
+            - {name: ENABLE_CLAUDEAI_MCP_SERVERS, value: 'false'}
+          volumeMounts: [{name: workspace, mountPath: /workspace}]
+          securityContext:
+            capabilities:
+              add: [CHOWN, DAC_OVERRIDE, DAC_READ_SEARCH, FOWNER, FSETID, KILL,
+                    SETGID, SETUID, SETPCAP, LINUX_IMMUTABLE, NET_BIND_SERVICE,
+                    NET_BROADCAST, NET_ADMIN, NET_RAW, IPC_LOCK, IPC_OWNER, SYS_MODULE,
+                    SYS_RAWIO, SYS_CHROOT, SYS_PTRACE, SYS_PACCT, SYS_ADMIN, SYS_BOOT,
+                    SYS_NICE, SYS_RESOURCE, SYS_TIME, SYS_TTY_CONFIG, MKNOD, LEASE,
+                    AUDIT_WRITE, AUDIT_CONTROL, SETFCAP, MAC_OVERRIDE, MAC_ADMIN, SYSLOG,
+                    WAKE_ALARM, BLOCK_SUSPEND, AUDIT_READ, PERFMON, BPF, CHECKPOINT_RESTORE]
+      volumes: [{name: workspace, durableDir: {}}]
+networks:
+  development:
+    tls:
+      hosts: [pypi.org, files.pythonhosted.org, registry.npmjs.org, index.crates.io, static.crates.io,
+              gcr.io, github.com, api.github.com, raw.githubusercontent.com, codeload.github.com,
+              release-assets.githubusercontent.com, objects.githubusercontent.com,
+              pkg-containers.githubusercontent.com, ghcr.io, proxy.golang.org, sum.golang.org,
+              go.dev, dl.google.com, storage.googleapis.com, dl.k8s.io, cdn.dl.k8s.io,
+              registry.k8s.io, auth.docker.io, us-docker.pkg.dev, us-central1-docker.pkg.dev,
+              us-west1-docker.pkg.dev, us-west2-docker.pkg.dev, europe-west1-docker.pkg.dev,
+              europe-west2-docker.pkg.dev, asia-east1-docker.pkg.dev, registry-1.docker.io,
+              production.cloudflare.docker.com, production.cloudfront.docker.com, cgr.dev,
+              docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com]
+      ports: [443]
+    http:
+      hosts: [deb.debian.org, security.debian.org]
+      ports: [80]
+  coding:
+    tls:
+      hosts: [pypi.org, files.pythonhosted.org, registry.npmjs.org, index.crates.io, static.crates.io,
+              gcr.io, github.com, api.github.com, raw.githubusercontent.com, codeload.github.com,
+              release-assets.githubusercontent.com, objects.githubusercontent.com,
+              pkg-containers.githubusercontent.com, ghcr.io, proxy.golang.org, sum.golang.org,
+              go.dev, dl.google.com, storage.googleapis.com, dl.k8s.io, cdn.dl.k8s.io,
+              registry.k8s.io, auth.docker.io, us-docker.pkg.dev, us-central1-docker.pkg.dev,
+              us-west1-docker.pkg.dev, us-west2-docker.pkg.dev, europe-west1-docker.pkg.dev,
+              europe-west2-docker.pkg.dev, asia-east1-docker.pkg.dev, registry-1.docker.io,
+              production.cloudflare.docker.com, production.cloudfront.docker.com, cgr.dev,
+              docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com,
+              api.anthropic.com, claude.ai, claude.com, platform.claude.com,
+              sso.claude.com, downloads.claude.ai, code.claude.com]
+      ports: [443]
+    http:
+      hosts: [deb.debian.org, security.debian.org]
+      ports: [80]
+targets:
+  development: {template: development}
+  coding: {template: coding}

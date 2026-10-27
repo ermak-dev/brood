@@ -10,22 +10,15 @@ from brood.dev.workbench import build
 
 
 class ImageBuildTests(unittest.TestCase):
-    def test_pins_come_from_existing_ci_and_provision_sources(self):
-        image = "python:3.12@sha256:" + "a" * 64
-        pins = build.version_pins(f'IMAGE="{image}"\n',
-                                  'GO_VERSION="1.27.3"\nGO_SHA256="' + "b" * 64 + '"\n')
-        self.assertEqual(pins, {"PYTHON_IMAGE": image, "GO_VERSION": "1.27.3",
-                                "GO_SHA256": "b" * 64})
-        rendered = build.render_dockerfile("ARG PYTHON_IMAGE\nFROM ${PYTHON_IMAGE}\n"
-                                          "ARG GO_VERSION\nARG GO_SHA256\n", pins)
-        for key, value in pins.items():
-            self.assertIn(f"ARG {key}={value}\n", rendered)
-
-    def test_missing_or_mutable_pins_are_refused(self):
-        for ci, provision in [("", ""), ('IMAGE="python:latest"',
-                'GO_VERSION="1.27.3"\nGO_SHA256="' + "b" * 64 + '"')]:
-            with self.subTest(ci=ci), self.assertRaisesRegex(RuntimeError, "pin"):
-                build.version_pins(ci, provision)
+    def test_context_delegates_to_the_generic_committed_source_exporter(self):
+        builder = build.Builder(mock.Mock())
+        selected = mock.Mock(revision="abc")
+        with mock.patch.object(builder, "_load", return_value=selected, create=True), \
+                mock.patch("brood.dev.build.context.export") as export:
+            with tempfile.TemporaryDirectory() as tmp:
+                builder.context(Path(tmp) / "context")
+        export.assert_called_once()
+        self.assertIs(export.call_args.args[0], selected)
 
     def git(self, root, *args):
         result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)

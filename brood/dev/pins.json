@@ -1,0 +1,6 @@
+{
+  "PYTHON_IMAGE": "python:3.12@sha256:0d0db5b17f11b1b7d1aafa74ceadaa64ba0944b267ff6fc22008a197acd6b9ad",
+  "GO_VERSION": "1.27.3",
+  "GO_SHA256": "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40",
+  "SUBSTRATE_COMMIT": "4ebd668d62e3f55753765a46579fc6deb81b2f7f"
+}

@@ -37,35 +37,44 @@ major/minor и возможность открытия. Симлинк, обыч
 ## Состав
 
 - Python той же версии и по тому же digest, что `.ci/test.sh`;
-- Go по версии и SHA-256 из `deploy/provision.sh`;
+- Go по версии и SHA-256 из общего `brood/dev/pins.json`;
 - закреплённые Docker Engine, CLI и buildx;
 - исходный commit Brood и закреплённый в установщике commit Substrate;
 - локальные wheels зависимостей extras `server` и `dev` из `pyproject.toml`.
 
 Образ сейчас собирается для amd64. Снимки Git shallow: в них нет локального
 `.env`, `secrets/`, credential helper или истории до выбранного commit.
-Загрузчик workbench и сценарий задания берутся из текущего дерева сборщика.
-Незакоммиченные изменения приложения в исходный снимок не включаются.
+Загрузчик workbench, Dockerfile и сценарий задания берутся из того же commit,
+что корневой `Broodfile`. Незакоммиченные изменения в снимок не накладываются;
+команда сообщает об их исключении.
 
 ## Сборка и шаблон
 
 На машине установки с принадлежащим ей Substrate:
 
+Настройте `BUILD_REGISTRY` и `BUILD_ATESPACE` в `.env` установки либо передайте
+`--registry` и `--atespace`. Команды читают только выбранный Git commit:
+
 ```sh
-brood workbench build                  # печатает image@sha256:...
-brood workbench build --ref COMMIT     # другой commit проекта
-brood workbench build --export PATH    # только чистый переносимый контекст сборки
-brood workbench template --image IMAGE_AT_DIGEST --atespace brood-development
+brood build --plan                    # проверенный план development без Docker
+brood build                           # образ и комплект development
+brood build coding                    # тот же environment, интерактивный шаблон
+brood build --ref COMMIT --export PATH # чистый переносимый контекст без Docker
 ```
 
-`--export` требует новый каталог. Экспортированное дерево `brood/` содержит
-загрузчик и может вызвать тот же `brood workbench build` на другой машине;
-кластер и registry выбираются настройками именно машины сборки.
+`--export` требует новый каталог. Кэш клона Substrate можно передать через
+`BUILD_SOURCE_CACHE`; его рабочие правки не копируются. Контракт — `docs/BUILD.md`.
 
-JSON шаблона создаётся в проекте `brood-development`. Его можно вставить в
-JSON-вкладку редактора шаблонов. Шаблон неизменяем: новый образ -- новый шаблон
-или копия с другим именем (`--name`). Golden snapshot выключен: создание
-шаблона само по себе не запускает сборку и тестовый стенд.
+Результаты лежат в `.brood/build/development/` и `.brood/build/coding/`:
+`actor-template.json`, `egress-policy.json`, `build.json`. JSON шаблона можно
+вставить в JSON-вкладку редактора; atespace берётся из контекста сборки. Новый
+образ или runtime spec получает новое имя шаблона по hash. Golden snapshot
+выключен. Сама сборка ничего в Substrate не регистрирует и не запускает.
+
+Старые `brood workbench build` и `brood workbench template` сохранены как
+совместимые интерфейсы: используют общий сборщик и определения из Broodfile,
+а не отдельный набор исходников/параметров. Для нового workflow используйте
+`brood build`; он сохраняет весь согласованный комплект артефактов.
 
 ## Пул и ресурсы
 

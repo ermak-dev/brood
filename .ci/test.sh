@@ -12,7 +12,7 @@
 # настоящий git, а ставить пакеты непривилегированный контейнер не может.
 set -o errexit -o nounset -o pipefail
 
-IMAGE="python:3.12@sha256:0d0db5b17f11b1b7d1aafa74ceadaa64ba0944b267ff6fc22008a197acd6b9ad"
+IMAGE="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["PYTHON_IMAGE"])' brood/dev/pins.json)"
 
 exec docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp \
     --volume "$PWD:/src" --workdir /src "$IMAGE" \

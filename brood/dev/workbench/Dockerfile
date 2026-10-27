@@ -46,8 +46,6 @@ RUN curl -fsSL -o /usr/local/bin/claude \
     && DISABLE_AUTOUPDATER=1 claude --version
 COPY brood/ /opt/seeds/brood/
 COPY substrate/ /opt/seeds/substrate/
-COPY runtime/ /opt/seeds/brood/brood/dev/workbench/
-COPY workbench.sh /opt/seeds/brood/.ci/workbench.sh
 
 ENV BROOD_WORKBENCH=1 WORKBENCH_ROOT=/workspace WORKBENCH_SEEDS=/opt/seeds \
     HOME=/workspace/home TMPDIR=/workspace/tmp XDG_DATA_HOME=/workspace/data \

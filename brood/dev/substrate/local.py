@@ -17,6 +17,7 @@ kubectl не меняется. Checkout -- SUBSTRATE_SOURCE разработчи
 import hashlib
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import tempfile
@@ -59,10 +60,10 @@ DEPLOY = ("deploy", NAMESPACE, '--credential-provider={"name":"k8s.io"}',
 MARKERS = ("hack/kind.sh", "hack/install-ate-kind.sh", "cmd/kubectl-ate")
 # Что ставит install без SUBSTRATE_SOURCE. Коммит закреплён, как образ реестра
 # по digest: раскатка одного коммита brood всегда ставит один и тот же
-# Substrate. Новый Substrate -- правка этой строки, после того как DEPLOY
-# сверен с его hack/install-ate-kind.sh.
+# Substrate. Новый Substrate -- правка pins.json после сверки DEPLOY с его
+# hack/install-ate-kind.sh; тот же pin использует Broodfile.
 REPOSITORY = "https://github.com/agent-substrate/substrate.git"
-COMMIT = "4ebd668d62e3f55753765a46579fc6deb81b2f7f"
+COMMIT = json.loads(Path(__file__).parents[1].joinpath("pins.json").read_text())["SUBSTRATE_COMMIT"]
 
 
 def atelet_registry_patch(daemonset):

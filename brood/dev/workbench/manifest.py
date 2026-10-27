@@ -1,42 +1,22 @@
 """Чистые манифесты изолированного окружения разработки Brood."""
 
+import copy
 import ipaddress
+from pathlib import Path
 import re
 
+from brood.common import config
+from brood.dev.build.plan import parse_document
 
-PUBLIC_HOSTS = (
-    "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "index.crates.io", "static.crates.io",
-    "gcr.io", "github.com", "api.github.com",
-    "raw.githubusercontent.com", "codeload.github.com",
-    "release-assets.githubusercontent.com", "objects.githubusercontent.com",
-    "pkg-containers.githubusercontent.com", "ghcr.io", "proxy.golang.org",
-    "sum.golang.org", "go.dev", "dl.google.com", "storage.googleapis.com",
-    "dl.k8s.io", "cdn.dl.k8s.io", "registry.k8s.io", "auth.docker.io",
-    "us-docker.pkg.dev", "us-central1-docker.pkg.dev", "us-west1-docker.pkg.dev",
-    "us-west2-docker.pkg.dev", "europe-west1-docker.pkg.dev", "europe-west2-docker.pkg.dev",
-    "asia-east1-docker.pkg.dev",
-    "registry-1.docker.io", "production.cloudflare.docker.com", "production.cloudfront.docker.com", "cgr.dev",
-    "docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com",
-)
 
-CLAUDE_HOSTS = (
-    "api.anthropic.com", "claude.ai", "claude.com", "platform.claude.com",
-    "sso.claude.com", "downloads.claude.ai", "code.claude.com",
-)
+def _declarations():
+    return parse_document(Path(config.PROJECT).joinpath("Broodfile").read_text())
+
+
+PUBLIC_HOSTS = tuple(_declarations()["networks"]["development"]["tls"]["hosts"])
+CLAUDE_HOSTS = tuple(host for host in _declarations()["networks"]["coding"]["tls"]["hosts"]
+                     if host not in PUBLIC_HOSTS)
 _DEFAULT_NAME = object()
-
-
-# Полный набор гостя нужен вложенному Docker; границей изоляции остаётся ядро VM.
-# Доступ к устройствам хоста этим списком не расширяется.
-GUEST_CAPABILITIES = (
-    "CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER", "FSETID", "KILL",
-    "SETGID", "SETUID", "SETPCAP", "LINUX_IMMUTABLE", "NET_BIND_SERVICE",
-    "NET_BROADCAST", "NET_ADMIN", "NET_RAW", "IPC_LOCK", "IPC_OWNER", "SYS_MODULE",
-    "SYS_RAWIO", "SYS_CHROOT", "SYS_PTRACE", "SYS_PACCT", "SYS_ADMIN", "SYS_BOOT",
-    "SYS_NICE", "SYS_RESOURCE", "SYS_TIME", "SYS_TTY_CONFIG", "MKNOD", "LEASE",
-    "AUDIT_WRITE", "AUDIT_CONTROL", "SETFCAP", "MAC_OVERRIDE", "MAC_ADMIN", "SYSLOG",
-    "WAKE_ALARM", "BLOCK_SUSPEND", "AUDIT_READ", "PERFMON", "BPF", "CHECKPOINT_RESTORE",
-)
 
 
 def _dns_label(value):
@@ -94,35 +74,10 @@ def actor_template(image, atespace, name=_DEFAULT_NAME, profile="build"):
     _image(image)
     _dns_label(atespace)
     _dns_label(name)
-    result = {
-        "metadata": {"atespace": atespace, "name": name},
-        "workerSelector": {"matchLabels": {"brood.dev/purpose": "development"}},
-        "resources": {"limits": {"cpuMillicores": "4000", "memoryBytes": "8589934592"}},
-        "snapshotConfig": {
-            "preferredFidelity": "SNAPSHOT_FIDELITY_MEMORY",
-            "goldenSnapshotConfig": {"mode": "GOLDEN_SNAPSHOT_MODE_DISABLED"}},
-        "containers": [{
-            "name": "main", "image": image,
-            "command": ["/usr/bin/tini", "--", "/opt/seeds/brood/bin/brood", "workbench", "start"],
-            "args": ["--", "bash", ".ci/workbench.sh"],
-            "env": [{"name": key, "value": value} for key, value in {
-                "HOME": "/workspace/home", "XDG_DATA_HOME": "/workspace/data",
-                "SUBSTRATE_SOURCE": "/workspace/substrate", "TMPDIR": "/workspace/tmp",
-                "DOCKER_HOST": "unix:///var/run/docker.sock", "PIP_FIND_LINKS": "/opt/wheels",
-                "PIP_NO_INDEX": "1"}.items()],
-            "volumeMounts": [{"name": "workspace", "mountPath": "/workspace"}],
-            "securityContext": {"capabilities": {"add": list(GUEST_CAPABILITIES)}},
-        }],
-        "volumes": [{"name": "workspace", "durableDir": {}}],
-    }
-    if profile == "claude-code":
-        container = result["containers"][0]
-        container["args"] = ["--results-port", "8081", "--", "bash", "-c",
-            "claude --version && exec ttyd --writable --check-origin --port 80 tmux new-session -A -s claude claude"]
-        container["env"].extend({"name": key, "value": value} for key, value in {
-            "BROOD_WORKBENCH_PROFILE": profile, "DISABLE_AUTOUPDATER": "1", "DISABLE_UPDATES": "1",
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "CLAUDE_CODE_DISABLE_ARTIFACT": "1",
-            "ENABLE_CLAUDEAI_MCP_SERVERS": "false"}.items())
+    target = "coding" if profile == "claude-code" else "development"
+    result = copy.deepcopy(_declarations()["templates"][target]["actor"])
+    result["metadata"] = {"atespace": atespace, "name": name}
+    result["containers"][0]["image"] = image
     return result
 
 
@@ -157,12 +112,14 @@ def egress_policy(atespace, actor, hosts=PUBLIC_HOSTS, profile="build"):
         raise ValueError("egress hosts must contain at most 256 exact public hostnames")
     for host in hosts:
         _hostname(host)
+    target = "coding" if profile == "claude-code" else "development"
+    network = _declarations()["networks"][target]
     return {
         "metadata": {"atespace": atespace, "name": "default"},
         "rules": [
             {"tlsPassthrough": {"hostnames": list(dict.fromkeys(hosts)),
-                                "ports": {"numbers": [443]}}},
-            {"http": {"hostnames": ["deb.debian.org", "security.debian.org"],
-                      "ports": {"numbers": [80]}}},
+                                "ports": {"numbers": list(network["tls"]["ports"])}}},
+            {"http": {"hostnames": list(network["http"]["hosts"]),
+                      "ports": {"numbers": list(network["http"]["ports"])}}},
         ],
     }

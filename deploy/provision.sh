@@ -15,8 +15,6 @@
 # GOTOOLCHAIN=local, и другой он не скачает).
 set -o errexit -o nounset -o pipefail
 
-GO_VERSION="1.27.3"
-GO_SHA256="65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
 DEPLOY_USER="brood"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -46,6 +44,9 @@ apt-get update -qq
 # `docker build --platform`, которым Substrate собирает образ envoy.
 apt-get install -y -qq --no-install-recommends ca-certificates curl git python3 \
     docker.io docker-cli docker-buildx >/dev/null
+read -r GO_VERSION GO_SHA256 < <(python3 -I -c \
+    'import json, sys; p=json.load(open(sys.argv[1])); print(p["GO_VERSION"], p["GO_SHA256"])' \
+    "$HERE/../brood/dev/pins.json")
 
 if [[ "$(/usr/local/go/bin/go version 2>/dev/null)" != "go version go${GO_VERSION} "* ]]; then
     tmp="$(mktemp)"
