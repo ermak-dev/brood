@@ -1,0 +1,26 @@
+/**
+ * 认证相关类型定义
+ * 基于原项目 src/modules/login.js 和 src/core/connection.js
+ */
+
+// 登录凭据: brood signs people in with the brood server's own accounts.
+export interface LoginCredentials {
+  username: string;
+  password: string;
+}
+
+// 认证状态
+export interface AuthState {
+  isAuthenticated: boolean;
+  username: string;
+  isSuperuser: boolean;
+  apiBase: string;
+  managementKey: string;
+  rememberPassword: boolean;
+  serverVersion: string | null;
+  serverBuildDate: string | null;
+  supportsPlugin: boolean;
+}
+
+// 连接状态
+export type ConnectionStatus = 'connected' | 'disconnected' | 'connecting' | 'error';

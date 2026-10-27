@@ -64,9 +64,11 @@ API входа описан в `go/CONTRACT.md`. Наличие пакета и 
 
 `deploy/Dockerfile.go` собирает три статических бинарника. Финальный образ
 `scratch`: без Python, venv, gunicorn, Go toolchain и shell. Только бинарники,
-CA bundle и приватный каталог данных. Legacy Python server/client, старый
-frontend и Python-реализация build удалены. Это не удаляет работающую старую
-установку и не переключает её public traffic.
+CA bundle и приватный каталог данных. Legacy Python server/client и вторая
+Python-реализация build удалены. Исходная React/Bun-панель сохранена в
+`web`, расширена новыми сущностями и встроена в бинарник. Перед release
+`bin/brood dev web test` пересобирает bundle; Dockerfile делает это сам.
+Это не удаляет работающую старую установку и не переключает её public traffic.
 
 ```sh
 bin/brood deploy go

@@ -8,6 +8,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -71,6 +72,10 @@ type Config struct {
 	// песочницы, как у Python-сервера.
 	WorkerPoolImages string
 	WorkerPoolImage  string
+	// CLIProxyURL and CLIProxyManagementKey configure the explicit LLM backend.
+	// The management credential is server-only and never returned to the panel.
+	CLIProxyURL           string
+	CLIProxyManagementKey string
 }
 
 // getenv — источник окружения: интерфейс для тестов.
@@ -95,24 +100,26 @@ func envGet(get getenv, key string) string {
 // настроек ошибкой не является.
 func LoadConfig(get getenv) (Config, error) {
 	cfg := Config{
-		DBPath:           envGet(get, "BROOD_DB_PATH"),
-		Addr:             envGet(get, "BROOD_ADDR"),
-		TLSCert:          envGet(get, "BROOD_TLS_CERT"),
-		TLSKey:           envGet(get, "BROOD_TLS_KEY"),
-		SessionSecret:    []byte(envGet(get, "BROOD_SESSION_SECRET")),
-		AteapiToken:      envGet(get, "ATEAPI_TOKEN_FILE"),
-		AteapiCA:         envGet(get, "ATEAPI_CA_FILE"),
-		AteapiEndpoint:   envGet(get, "ATEAPI_ENDPOINT"),
-		AtenetRouter:     envGet(get, "ATENET_ROUTER"),
-		AtenetCert:       envGet(get, "ATENET_CLIENT_CERT_FILE"),
-		AtenetKey:        envGet(get, "ATENET_CLIENT_KEY_FILE"),
-		AtenetCA:         envGet(get, "ATENET_CA_FILE"),
-		AtenetServerName: envGet(get, "ATENET_SERVER_NAME"),
-		KubeURL:          envGet(get, "KUBE_API_URL"),
-		KubeToken:        envGet(get, "KUBE_API_TOKEN"),
-		KubeCA:           envGet(get, "KUBE_API_CA"),
-		WorkerPoolImages: envGet(get, "WORKER_POOL_IMAGES"),
-		WorkerPoolImage:  envGet(get, "WORKER_POOL_IMAGE"),
+		DBPath:                envGet(get, "BROOD_DB_PATH"),
+		Addr:                  envGet(get, "BROOD_ADDR"),
+		TLSCert:               envGet(get, "BROOD_TLS_CERT"),
+		TLSKey:                envGet(get, "BROOD_TLS_KEY"),
+		SessionSecret:         []byte(envGet(get, "BROOD_SESSION_SECRET")),
+		AteapiToken:           envGet(get, "ATEAPI_TOKEN_FILE"),
+		AteapiCA:              envGet(get, "ATEAPI_CA_FILE"),
+		AteapiEndpoint:        envGet(get, "ATEAPI_ENDPOINT"),
+		AtenetRouter:          envGet(get, "ATENET_ROUTER"),
+		AtenetCert:            envGet(get, "ATENET_CLIENT_CERT_FILE"),
+		AtenetKey:             envGet(get, "ATENET_CLIENT_KEY_FILE"),
+		AtenetCA:              envGet(get, "ATENET_CA_FILE"),
+		AtenetServerName:      envGet(get, "ATENET_SERVER_NAME"),
+		KubeURL:               envGet(get, "KUBE_API_URL"),
+		KubeToken:             envGet(get, "KUBE_API_TOKEN"),
+		KubeCA:                envGet(get, "KUBE_API_CA"),
+		WorkerPoolImages:      envGet(get, "WORKER_POOL_IMAGES"),
+		WorkerPoolImage:       envGet(get, "WORKER_POOL_IMAGE"),
+		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
+		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = defaultDBPath
@@ -130,10 +137,19 @@ func LoadConfig(get getenv) (Config, error) {
 		return cfg, &ConfigError{Setting: "BROOD_SESSION_SECRET",
 			Detail: fmt.Sprintf("must be at least %d bytes when HTTP is used", secretMinBytes)}
 	}
-	return cfg, cfg.validateRouter()
+	return cfg, cfg.validateAdapters()
 }
 
-func (cfg Config) validateRouter() error {
+func (cfg Config) validateAdapters() error {
+	if cfg.CLIProxyURL != "" {
+		u, err := url.Parse(cfg.CLIProxyURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+			return &ConfigError{Setting: "CLIPROXY_URL", Detail: "must be an http(s) origin without credentials, path, query or fragment"}
+		}
+	}
+	if strings.ContainsAny(cfg.CLIProxyManagementKey, "\r\n") {
+		return &ConfigError{Setting: "CLIPROXY_MANAGEMENT_KEY", Detail: "must not contain newlines"}
+	}
 	settings := []struct{ name, value string }{
 		{"ATENET_ROUTER", cfg.AtenetRouter},
 		{"ATENET_CLIENT_CERT_FILE", cfg.AtenetCert},

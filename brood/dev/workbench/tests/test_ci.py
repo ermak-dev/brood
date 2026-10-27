@@ -18,13 +18,13 @@ class GoAcceptanceTests(unittest.TestCase):
 
     def test_guest_runs_real_go_checks_before_isolated_deployment(self):
         script = (ROOT / ".ci/workbench.sh").read_text()
-        for command in ("bin/brood dev test -v", "go test ./...", "go build",
+        for command in ("bin/brood dev test -v", "bin/brood dev web test", "go test ./...", "go build",
                         "bin/brood substrate start", "bin/brood deploy go"):
             self.assertIn(command, script)
         self.assertLess(script.index("go test ./..."), script.index("bin/brood deploy go"))
         self.assertNotIn("bin/brood deploy server", script)
         self.assertLess(script.index("bin/brood workbench prepare"), script.index("bin/brood deploy go"))
-        for obsolete in ("server test", "dev web", "npm", "django", "brood build"):
+        for obsolete in ("server test", "npm", "django", "brood build"):
             self.assertNotIn(obsolete, script)
 
     def test_guest_image_installs_only_dev_python_dependencies(self):

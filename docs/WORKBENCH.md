@@ -73,8 +73,8 @@ bro build --ref COMMIT --export PATH # чистый переносимый ко�
 
 Результаты лежат в `.brood/build/development/` и `.brood/build/coding/`:
 `actor-template.json`, `egress-policy.json`, `build.json`. Шаблон регистрируется
-через авторизованный API или инструменты Substrate; редактора JSON в минимальной
-Go-панели нет. Atespace берётся из контекста сборки. Новый
+через авторизованный API, инструменты Substrate или редактор восстановленной
+React-панели в выбранном рое. Atespace берётся из контекста сборки. Новый
 образ или runtime spec получает новое имя шаблона по hash. Golden snapshot
 выключен. Сама сборка ничего в Substrate не регистрирует и не запускает.
 
@@ -162,13 +162,14 @@ cgroup v2 для вложенных контейнеров. Одного мон�
 `.ci/workbench.sh` последовательно выполняет:
 
 1. `bin/brood dev setup`, `bin/brood dev test -v`, `venv/bin/ruff check .`;
-2. настоящие `go test ./...` и сборку трёх Go-бинарников;
-3. `bin/brood substrate install` и `bin/brood substrate start` в собственном Docker;
-4. `bin/brood workbench prepare`: только в госте с локальным socket и своим
+2. `bin/brood dev web test` — проверки исходной React-панели и пересборку bundle;
+3. настоящие `go test ./...` и сборку трёх Go-бинарников;
+4. `bin/brood substrate install` и `bin/brood substrate start` в собственном Docker;
+5. `bin/brood workbench prepare`: только в госте с локальным socket и своим
    checkout/кластером, проверяет владение, создаёт namespace/SA/RBAC без
    перезаписи существующих объектов, собирает pinned gvisor worker image и
    дописывает разрешённый digest в приватный `.env`;
-5. `bin/brood deploy go`: отдельный Go Deployment/PVC и приватный HTTPS
+6. `bin/brood deploy go`: отдельный Go Deployment/PVC и приватный HTTPS
    Service, без public cutover и без переноса production-пользователей.
 
 `passed` этого сценария означает успешные проверки, сборку и rollout приватного

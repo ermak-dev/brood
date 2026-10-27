@@ -1,4 +1,11 @@
 ARG PYTHON_IMAGE=python:3.12@sha256:0d0db5b17f11b1b7d1aafa74ceadaa64ba0944b267ff6fc22008a197acd6b9ad
+FROM oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04 AS panel
+WORKDIR /app
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web/ ./
+RUN VERSION=v1.26.7+brood bun run build
+
 FROM ${PYTHON_IMAGE} AS build
 COPY brood/dev/pins.json /tmp/pins.json
 RUN python3 -I -c 'import json; p=json.load(open("/tmp/pins.json")); print(p["GO_VERSION"]); print(p["GO_SHA256"])' > /tmp/go-pins \
@@ -13,6 +20,7 @@ WORKDIR /src/go
 COPY go/go.mod go/go.sum ./
 RUN go mod download
 COPY go/ ./
+COPY --from=panel /app/dist/index.html ./brood/server/static/index.html
 ARG VERSION=dev
 RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/brood ./cmd/brood \
     && go build -trimpath -ldflags="-s -w" -o /out/bro ./cmd/bro \

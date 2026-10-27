@@ -76,7 +76,7 @@ func NewFromStore(cfg Config, opts Options, st *store.Store) (*Server, error) {
 }
 
 func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store) (*Server, error) {
-	if err := cfg.validateRouter(); err != nil {
+	if err := cfg.validateAdapters(); err != nil {
 		return nil, err
 	}
 	catalog, err := OpenCatalog(cfg.DBPath)
@@ -138,6 +138,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	})
 	srv.mux = http.NewServeMux()
 	srv.mount()
+	srv.mountLLM(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)
@@ -179,7 +180,16 @@ func (s *Server) Close() error {
 // Handler возвращает собранный обработчик: middleware сессий и CSRF
 // поверх всех маршрутов, /healthz и статика — без аутентификации.
 func (s *Server) Handler() http.Handler {
-	return s.actorViewHandler(s.browserProtection())
+	browser := s.actorViewHandler(s.browserProtection())
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicLLMPath(r.URL.Path) {
+			// Native clients authenticate with their own backend bearer key,
+			// not browser sessions or CSRF. Never parse their session cookies.
+			s.mux.ServeHTTP(w, r)
+			return
+		}
+		browser.ServeHTTP(w, r)
+	})
 }
 
 // mount регистрирует маршруты сервера.
@@ -192,6 +202,7 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /api/projects", s.handleProjects)
 	s.mux.HandleFunc("POST /api/projects", s.handleProjects)
 	s.mux.HandleFunc("DELETE /api/projects/{id}", s.handleProjectDelete)
+	s.mux.HandleFunc("GET /api/projects/{id}/members", s.handleMemberList)
 	s.mux.HandleFunc("POST /api/projects/{id}/members", s.handleMembers)
 	s.mux.HandleFunc("DELETE /api/projects/{id}/members/{user}", s.handleMemberDelete)
 	s.mux.HandleFunc("GET /api/projects/{id}/swarms", s.handleProjectSwarms)
