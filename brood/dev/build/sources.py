@@ -85,6 +85,10 @@ def snapshot(source, ref, target, git_metadata=False):
             git(staging, "read-tree", "--reset", sha)
             git(staging, "remote", "add", "origin", remote)
             (staging / ".git/FETCH_HEAD").unlink(missing_ok=True)
+            if any((staging / ".git/objects/pack").glob("*.pack")):
+                # Представление сетевого pack не является частью версии исходников.
+                git(staging, "-c", "pack.compression=6", "repack", "-a", "-d", "-F",
+                    "--window=0", "--threads=1")
         else:
             shutil.rmtree(staging / ".git")
         staging.rename(target)

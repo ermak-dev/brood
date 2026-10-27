@@ -246,6 +246,16 @@ func Snapshot(source, ref, target string, gitMetadata bool) (map[string]any, err
 		if err := os.Remove(filepath.Join(staging, ".git", "FETCH_HEAD")); err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
+		packs, err := filepath.Glob(filepath.Join(staging, ".git", "objects", "pack", "*.pack"))
+		if err != nil {
+			return nil, err
+		}
+		if len(packs) > 0 {
+			// Сетевой pack может отличаться для одного дерева из-за delta/threads.
+			if _, _, err := gitRun(staging, false, "-c", "pack.compression=6", "repack", "-a", "-d", "-F", "--window=0", "--threads=1"); err != nil {
+				return nil, err
+			}
+		}
 	} else {
 		if err := os.RemoveAll(filepath.Join(staging, ".git")); err != nil {
 			return nil, err
