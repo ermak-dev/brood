@@ -1,36 +1,36 @@
 # Build
 
 Broodfile описывает сборочные входы и шаблоны проекта. Версия первой схемы —
-`brood.dev/v1alpha1`; схема лежит в `brood/dev/build/schema.json`. Backend первой
+`brood.dev/v1alpha1`; строгий parser/validator — `go/brood/build/plan.go`. Backend первой
 версии — Dockerfile/BuildKit. Bootstrap внутри актора не конфигурирует runtime
 Substrate и не выполняется при сборке.
 
 ## Использование
 
-В `.env` установки задайте `BUILD_REGISTRY` и `BUILD_ATESPACE`; они также
-принимаются флагами `--registry` и `--atespace`. Для принадлежащего установке
+В окружении задайте `BUILD_REGISTRY` и `BUILD_ATESPACE`; они также
+принимаются флагами `--registry` и `--atespace`. Go-клиент не читает `.env`
+автоматически: настройки из доверенного файла нужно экспортировать. Для принадлежащего установке
 локального реестра адрес — `localhost:5002`. Broodfile должен находиться в
 выбранном commit, а не только в рабочем дереве.
 
 ```sh
-brood build --plan
-brood build
-brood build coding
-brood build coding --project /path/to/project --ref HEAD --export /new/context
+bro build --plan
+bro build
+bro build coding
+bro build coding --project /path/to/project --ref HEAD --export /new/context
 ```
 
 В этом проекте `development` прогоняет тесты и вложенный deploy, `coding`
 запускает интерактивный терминал. Обе цели разделяют environment `workbench`.
-Для собственной рабочей копии Substrate задаётся `BUILD_SOURCE_CACHE`: JSON
-map URL репозитория в абсолютный путь локального клона. Без этой настройки
-сборщик получает закреплённый commit по сети.
+Внешние Git-источники получаются по закреплённому commit. Клон Substrate
+оператора, локальный кластер и login для plan/export не требуются.
 
 ## Документ
 
 Корневые поля: `apiVersion`, `name`, `defaultTarget`, `sources`, `environments`,
 `templates`, `networks`, `targets`; необязательное `pinsFile`.
 Неизвестные поля, YAML aliases/anchors/merge и нестандартные теги запрещены.
-Размер документа не более 1 MiB. Вложенные структуры проверяются схемой.
+Размер документа не более 1 MiB. Вложенные структуры проверяются строгим Go-validator.
 Имена — DNS labels. Roles/topologies пока не поддерживаются и не игнорируются.
 
 ```yaml
@@ -108,19 +108,16 @@ Dockerfile, pins и исходники из `--ref` (по умолчанию HEA
 
 Registry передаётся `--registry` либо настройкой установки `BUILD_REGISTRY`;
 atespace — `--atespace` либо `BUILD_ATESPACE`. Отсутствие — отказ до сборки.
-Адреса/credentials установки не зашиваются в декларацию. Первая реализация
-публикует только в registry проверенной LocalCluster; проверка владения предшествует
-публикации. Read-only Git/файловые операции при загрузке не являются выполнением
-сборки: чистый parser/validator не вызывает процессы или сеть.
-
-Опциональный `BUILD_SOURCE_CACHE` — JSON map безопасного repository URL в путь
-локального checkout установки. Кэш только ускоряет получение проверенного commit;
-его рабочие изменения не копируются и origin должен соответствовать repository.
-Без кэша внешний commit запрашивается у указанного repository.
+Адреса/credentials установки не зашиваются в декларацию. Публикация идёт
+только в явно разрешённый registry; Go-команда не создаёт и не меняет
+контейнеры кластера для публикации. Read-only Git/файловые операции при
+загрузке не являются выполнением сборки: чистый parser/validator не вызывает
+процессы или сеть. Переменная старой Python-реализации `BUILD_SOURCE_CACHE`
+не является настройкой публичного Go CLI.
 
 ## Результат
 
-`brood build [TARGET]` выбирает defaultTarget либо явную цель. `--plan` выводит
+`bro build [TARGET]` выбирает defaultTarget либо явную цель. `--plan` выводит
 проверенный план без публикации, `--export PATH` готовит новый чистый контекст
 без Docker. Экспорт содержит `build-plan.json` для диагностики и настоящий
 Dockerfile в выбранном source; его нельзя путать с регистрацией в Substrate.

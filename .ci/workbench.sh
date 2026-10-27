@@ -1,9 +1,10 @@
 #!/bin/bash
-# Полный цикл внутри development-актора. Порты и Docker относятся к его VM,
-# а не к машине установки; после ошибки среда остаётся доступна для разбора.
+# Полный цикл внутри development-актора. Docker и kind принадлежат его VM.
 set -o errexit -o nounset -o pipefail
 
 : "${WORKBENCH_ROOT:?WORKBENCH_ROOT is required}"
+: "${BROOD_WORKBENCH:?run inside the isolated workbench guest}"
+[[ "$BROOD_WORKBENCH" == 1 && "$DOCKER_HOST" == unix:///var/run/docker.sock ]]
 cd "${WORKBENCH_ROOT}/brood"
 exec > >(tee -a "${WORKBENCH_ROOT}/results/workbench.log") 2>&1
 
@@ -20,21 +21,28 @@ failed() {
 }
 trap failed ERR
 
-status testing "Installing declared dependencies and running Python checks"
+status testing "Installing declared dependencies and running Python dev checks"
 bin/brood dev setup
-bin/brood server test -v 2
+bin/brood dev test -v
 venv/bin/ruff check .
 
-status testing "Checking and building the web panel"
-bin/brood dev web test
+status testing "Testing Go server, client and embedded UI; building Go binaries"
+export GOTOOLCHAIN=local CGO_ENABLED=0
+(
+    cd go
+    go test ./...
+    go build -trimpath -o bin/ ./cmd/brood ./cmd/bro ./cmd/brood-migrate
+)
+export PATH="$PWD/go/bin:$PATH"
 
 status deploying "Installing an isolated Substrate cluster inside this actor"
 bin/brood substrate install
 bin/brood substrate start
 
-status deploying "Building and deploying Brood into the isolated cluster"
-bin/brood deploy server
+status deploying "Preparing guest infrastructure and deploying the private Go endpoint"
+bin/brood workbench prepare
+bin/brood deploy go
 
-status passed "Python checks, panel verification, image builds and test deployment passed"
+status passed "Python dev checks, Go tests, binary builds and isolated Go endpoint deployment passed"
 printf 'Workbench build, tests and isolated deployment passed\n'
 exec sleep infinity

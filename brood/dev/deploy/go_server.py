@@ -1,6 +1,5 @@
-"""Параллельный Go-сервер без переключения ingress и миграции живых данных."""
+"""Go-сервер на отдельном PVC, без автоматического публичного cutover."""
 
-import base64
 import json
 from pathlib import Path
 import re
@@ -8,7 +7,7 @@ import tempfile
 import uuid
 
 from brood.common import config
-from brood.dev.deploy import server
+from brood.dev.deploy.infrastructure import Infrastructure
 from brood.dev.substrate import local
 
 
@@ -74,6 +73,8 @@ def manifests(image, worker_images=None):
     deployment = obj("Deployment", "brood-go", {
         "replicas": 1, "strategy": {"type": "Recreate"}, "selector": {"matchLabels": {"app": "brood-go"}},
         "template": {"metadata": {"labels": labels}, "spec": {
+            # Историческое имя — точный доверенный принципал в Substrate,
+            # не Django runtime. Переименование требует миграции доверия.
             "serviceAccountName": "django", "enableServiceLinks": False,
             "securityContext": {"fsGroup": 65532}, "containers": [container],
             "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": "brood-go-data"}},
@@ -108,40 +109,28 @@ class Deploy:
         if fallback:
             return approved_images(json.dumps({"gvisor": fallback}))
 
-        def get_object(kind, name):
-            code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
-                "-n", "brood", "get", kind, name, "-o", "json")
-            if code:
-                raise RuntimeError("cannot read configured WORKER_POOL_IMAGES from Django deployment")
-            try:
-                return json.loads(out)
-            except ValueError:
-                raise RuntimeError("invalid configuration response while reading WORKER_POOL_IMAGES") from None
-
-        deployment = get_object("deployment", "django")
+        code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
+            "-n", "brood", "get", "deployment", "brood-go", "-o", "json", "--request-timeout=15s")
+        if code:
+            raise RuntimeError("Go deployment needs WORKER_POOL_IMAGES in .env or an existing owned Go deployment")
         try:
-            container = next(c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "django")
-            for source in container.get("envFrom", []):
-                name = source.get("secretRef", {}).get("name")
-                if not name:
-                    continue
-                values = get_object("secret", name).get("data", {})
-                for key in ("WORKER_POOL_IMAGES", "WORKER_POOL_IMAGE"):
-                    if values.get(key):
-                        value = base64.b64decode(values[key], validate=True).decode("utf-8")
-                        return approved_images(value if key.endswith("IMAGES") else json.dumps({"gvisor": value}))
-        except (KeyError, StopIteration, TypeError, ValueError):
-            raise RuntimeError("cannot decode configured WORKER_POOL_IMAGES") from None
-        raise RuntimeError("Go deployment needs configured WORKER_POOL_IMAGES")
+            deployment = json.loads(out)
+            if not all(deployment["metadata"].get("labels", {}).get(k) == v for k, v in OWNER.items()):
+                raise RuntimeError("refusing foreign deployment/brood-go")
+            container = next(c for c in deployment["spec"]["template"]["spec"]["containers"] if c["name"] == "brood")
+            raw = next(e["value"] for e in container["env"] if e["name"] == "WORKER_POOL_IMAGES")
+        except (AttributeError, KeyError, StopIteration, TypeError, ValueError):
+            raise RuntimeError("cannot read configured WORKER_POOL_IMAGES from Go deployment") from None
+        return approved_images(raw)
 
     def run(self):
         secret = self.get("BROOD_SESSION_SECRET")
         if not secret or len(secret) < 32:
             raise RuntimeError("Go deployment needs BROOD_SESSION_SECRET of at least 32 characters in .env")
-        legacy = server.Deploy(self.cluster, project=str(self.project))
-        tls = legacy._tls()
+        infrastructure = Infrastructure(self.cluster, project=str(self.project))
+        tls = infrastructure._tls()
         self.cluster.check()
-        legacy._namespace_is_ours()
+        infrastructure._namespace_is_ours()
         workers = self._worker_images()
         for kind, name in (("deployment", "brood-go"), ("service", "brood-go"),
                            ("pvc", "brood-go-data"), ("secret", "brood-go-env"), ("secret", "brood-go-tls"),
@@ -150,9 +139,15 @@ class Deploy:
                 "get", kind, name, "-n", "brood", "--ignore-not-found", "-o", "json")
             if code:
                 raise RuntimeError(f"cannot check ownership of {kind}/{name}")
-            if out.strip() and not all(json.loads(out)["metadata"].get("labels", {}).get(k) == v
-                                       for k, v in OWNER.items()):
-                raise RuntimeError(f"refusing foreign {kind}/{name}")
+            if out.strip():
+                try:
+                    labels = json.loads(out)["metadata"].get("labels", {})
+                    owned = all(labels.get(k) == v for k, v in OWNER.items())
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    raise RuntimeError(f"cannot check ownership of {kind}/{name}: invalid JSON") from None
+                if not owned:
+                    raise RuntimeError(f"refusing foreign {kind}/{name}")
+        api_rules = infrastructure._api_egress()
         with tempfile.TemporaryDirectory(prefix="brood-go-deploy-") as directory:
             root = Path(directory)
             metadata = root / "metadata.json"
@@ -167,7 +162,6 @@ class Deploy:
                 raise RuntimeError("Go image build returned invalid digest metadata")
             image = "localhost:5002/brood-go@" + digest
             objects = manifests(image, workers)
-            api_rules = legacy._api_egress()
             objects[-1]["spec"]["egress"].extend(api_rules)
             for name, values, secret_type in (("brood-go-env", {"BROOD_SESSION_SECRET": secret}, "Opaque"),
                                              ("brood-go-tls", tls, "kubernetes.io/tls")):
@@ -179,7 +173,7 @@ class Deploy:
             path.write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
             code, _, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "apply", "-f", str(path))
             if code:
-                raise RuntimeError("Go deployment apply failed; Django ingress is unchanged")
+                raise RuntimeError("Go deployment apply failed; public ingress was not changed")
             code, _, err = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "-n", "brood",
                                                    "rollout", "status", "deployment/brood-go", "--timeout=300s")
             if code:

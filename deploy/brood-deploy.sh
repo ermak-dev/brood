@@ -33,10 +33,12 @@ mkdir "$RELEASE"
 tar -x -C "$RELEASE" --no-same-owner
 cd "$RELEASE"
 echo "brood-deploy: ${SHA}"
+# Проверка публичного cutover должна отказать до первой мутации кластера.
+# Подготовка приватного Go endpoint не означает готовности пользователей.
+bin/brood deploy server --check
 bin/brood substrate install
 bin/brood substrate start
 bin/brood deploy server
-bin/brood deploy go --if-enabled
 
 ln -sfn "$RELEASE" "$RELEASES/current"
 find "$RELEASES" -mindepth 1 -maxdepth 1 -type d ! -name "$SHA" -exec rm -rf {} +

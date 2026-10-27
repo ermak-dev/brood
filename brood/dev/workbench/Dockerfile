@@ -16,10 +16,10 @@ RUN mkdir -p /tmp/workbench-go \
     && printf '%s  %s\n' "${GO_SHA256}" /tmp/workbench-go/go.tar.gz | sha256sum -c - \
     && tar -xzf /tmp/workbench-go/go.tar.gz -C /usr/local \
     && rm -rf /tmp/workbench-go
-ENV PATH=/usr/local/go/bin:${PATH}
+ENV PATH=/usr/local/go/bin:${PATH} GOTOOLCHAIN=local CGO_ENABLED=0
 
 COPY brood/pyproject.toml /opt/build/pyproject.toml
-RUN python3 -I -c 'import tomllib; p=tomllib.load(open("/opt/build/pyproject.toml", "rb")); print("\n".join(p["project"]["optional-dependencies"]["server"] + p["project"]["optional-dependencies"]["dev"]))' > /tmp/workbench-requirements \
+RUN python3 -I -c 'import tomllib; p=tomllib.load(open("/opt/build/pyproject.toml", "rb")); print("\n".join(p["project"]["optional-dependencies"]["dev"]))' > /tmp/workbench-requirements \
     && python3 -m pip download --quiet --dest /opt/wheels -r /tmp/workbench-requirements \
     && rm /tmp/workbench-requirements
 RUN apt-get update && apt-get install -y --no-install-recommends \

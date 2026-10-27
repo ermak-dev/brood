@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from brood.dev.deploy.server import env_file
+from brood.dev.deploy.infrastructure import env_file
 
 
 SOCKET = "unix:///var/run/docker.sock"
@@ -24,10 +24,7 @@ def check_environment(env):
 def development_settings(root, token):
     """Новый тестовый стенд не получает ни одного секрета рабочей установки."""
     return {
-        "DJANGO_SECRET_KEY": token(), "POSTGRES_PASSWORD": token(),
-        "DJANGO_SUPERUSER_PASSWORD": token(), "CLIPROXY_MANAGEMENT_KEY": token(),
-        "CLIPROXY_CLIENT_KEY": token(), "DJANGO_SUPERUSER_USERNAME": "developer",
-        "DJANGO_ALLOWED_HOSTS": "brood,localhost,127.0.0.1", "DJANGO_DEBUG": "0",
+        "BROOD_SESSION_SECRET": token(),
         "BROOD_HTTP_PORT": "8080", "BROOD_HTTPS_PORT": "8443",
         "SUBSTRATE_SOURCE": str(Path(root) / "substrate"),
     }

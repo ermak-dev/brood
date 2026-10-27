@@ -1,7 +1,7 @@
 """Раскладка кода по модулям дистрибутивов (CLAUDE.md).
 
-Код живёт в одном из четырёх модулей, и модуль импортирует только то, что
-поедет вместе с ним: дистрибутив собирается каталогами, без вырезания.
+Python живёт в common/dev и импортирует только то, что поедет вместе
+с ним. Сервер и пользовательский клиент находятся в отдельном Go-модуле.
 """
 import ast
 import os
@@ -11,8 +11,6 @@ import unittest
 PACKAGE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 ALLOWED = {
     "common": {"common"},
-    "client": {"common", "client"},
-    "server": {"common", "server"},
     "dev": {"common", "dev"},
 }
 
@@ -39,7 +37,7 @@ def python_files(root):
 
 
 class LayoutTests(unittest.TestCase):
-    def test_only_four_modules(self):
+    def test_only_development_modules(self):
         entries = {e for e in os.listdir(PACKAGE) if e != "__pycache__"}
         self.assertEqual(entries, {"__init__.py", *ALLOWED})
 

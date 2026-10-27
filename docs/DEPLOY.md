@@ -1,275 +1,126 @@
-# DEPLOY
+# Deploy
 
-Зелёный `main` раскатывается сам: джоба `deploy` пайплайна ставит на машину
-деплоя Substrate тем же `brood substrate install`, что у разработчика
-(`docs/SUBSTRATE.md`), затем `brood substrate start` и сервер brood --
-`brood deploy server`. Админка стенда -- `https://brood.corp.ermak.dev/admin/`
-и `https://brood/admin/`.
+Серверный runtime — Go-образ `deploy/Dockerfile.go`: статические `brood`,
+`bro` и `brood-migrate`, CA bundle и приватный каталог `/data`. Финальный
+`scratch`-образ не содержит Python, shell, frontend toolchain или PostgreSQL.
+Панель встроена в `brood`; отдельные nginx edge и CLIProxyAPI больше не
+собираются и не выкладываются из этого дерева.
 
-## Как идёт выкладка
+## Состояние перехода
 
-Джоба идёт на раннере `builder` (shell, тег `docker`), как выкладка mop:
+Удаление исходников не удаляет живые Deployment/Service/PVC, старые
+пользовательские БД, токены провайдеров или акторы. Публичная старая установка
+продолжает работать до отдельного управляемого cutover. Старые LLM-proxy
+маршруты не являются частью API Go-сервера и не восстанавливаются автоматически.
 
-1. `.ci/deploy.sh` шлёт по ssh `git archive` коммита и его sha пользователю
-   `brood` машины деплоя; к дереву дописаны секреты стенда: `.env` и
-   `secrets/tls.crt`, `secrets/tls.key`, с правами 0600;
-2. в `authorized_keys` у этого ключа
-   `restrict,from="<builder>",command="/usr/local/bin/brood-deploy"`: клиент
-   никакой команды не выбирает, ключ принимается только с builder и умеет
-   только выкладку;
-3. `brood-deploy` (`deploy/brood-deploy.sh`) распаковывает дерево в
-   `~brood/releases/<sha>` и зовёт из него `bin/brood substrate install`,
-   `bin/brood substrate start` и `bin/brood deploy server`. Вывод идёт в лог
-   джобы, код выхода -- её код.
+`bin/brood deploy server` намеренно отказывает до обращения к кластеру:
+для публичного переключения ещё нужны проверенная миграция пользователей,
+восстановительный доступ и Go-only TLS-вход. Флага обхода этого отказа нет.
+Автоматическая production-выкладка не должна маскировать это как успех;
+до завершения cutover deploy job запускается вручную.
 
-`brood-deploy` лежит на машине копией (`/usr/local/bin`), её ставит
-`provision.sh`. Правка `deploy/brood-deploy.sh` доезжает до машины не
-выкладкой, а повторным `provision.sh` либо, от root,
-`install -m 0755 deploy/brood-deploy.sh /usr/local/bin/brood-deploy`.
-
-Установка Substrate живёт в каталоге данных пользователя `brood`
-(`~brood/.local/share/brood/substrate`), а не в релизе: релиз прошлого
-коммита удаляется после удачной выкладки. Два деплоя сразу не идут:
-`resource_group` в CI и `flock` на машине.
-
-Защищённые переменные CI проекта (их видят только конвейеры защищённых
-веток; `main` защищён):
-
-| переменная | тип | что |
-|---|---|---|
-| `BROOD_DEPLOY_HOST` | variable | `brood@<адрес машины>` |
-| `BROOD_DEPLOY_SSH_KEY` | file | закрытый ключ деплоя (ed25519) |
-| `BROOD_DEPLOY_KNOWN_HOSTS` | file | ключ хоста машины деплоя |
-| `BROOD_DEPLOY_ENV` | file | `.env` стенда (ниже) |
-| `BROOD_DEPLOY_TLS_CERT` | file | сертификат стенда на `brood.corp.ermak.dev` и `brood` |
-| `BROOD_DEPLOY_TLS_KEY` | file | его ключ |
-
-Заводит и обновляет их `brood dev ci set` (protected и raw: без raw GitLab
-раскрыл бы `$...` внутри значения), смотрит -- `brood dev ci vars`, значений
-он не печатает:
+## Подготовка приватного Go endpoint
 
 ```sh
-brood dev ci set --file BROOD_DEPLOY_ENV=<stand.env> \
-    --file BROOD_DEPLOY_TLS_CERT=<brood.corp.ermak.dev.crt> \
-    --file BROOD_DEPLOY_TLS_KEY=<brood.corp.ermak.dev.key>
+bin/brood deploy go
 ```
 
-В репозитории нет ни адреса, ни ключа.
+Команда проверяет владение кластером, namespace и именованными объектами,
+читает точные адреса Kubernetes API до первой сборки/записи, собирает образ
+по digest и применяет только Go-ресурсы: Deployment/Service/NetworkPolicy
+`brood-go`, PVC `brood-go-data`, Secrets `brood-go-env` и `brood-go-tls`.
+Стратегия Recreate исключает две реплики с одной SQLite-базой. Root filesystem
+read-only, UID 65532, capabilities сняты. Миграции схемы применяет сам сервер.
 
-## Машина
+Нужны:
 
-VM `brood` (VMID 103) на Proxmox `hyper`, по образцу `builder`: Debian 13
-genericcloud, cloud-init (пользователь `ermak`, ключ `ermak@laptop`),
-`cpu: host` -- внутри есть `/dev/kvm` для micro-VM runtime Substrate. 8 vCPU,
-16 ГБ без balloon, диск 100 ГБ на `local-lvm`, сеть `vmbr0` по DHCP.
-Vendor-data cloud-init (`nas-iso:snippets/brood-vendor.yaml`) ставит
-`qemu-guest-agent`: по нему Proxmox знает адрес машины.
+- существующий принадлежащий установке namespace `brood`;
+- доверенная ServiceAccount `django` и namespace-scoped worker-pool RBAC;
+- `BROOD_SESSION_SECRET` в `.env`, не менее 32 символов;
+- сертификат и ключ `secrets/tls.crt`, `secrets/tls.key`;
+- `WORKER_POOL_IMAGES`: JSON-карта digest-pinned образов с обязательным
+  `gvisor` и необязательным `microvm`; либо один `WORKER_POOL_IMAGE` для gvisor.
 
-Создана так (на hyper, от root):
+Без явной карты можно использовать конфигурацию существующего принадлежащего
+этой установке Go Deployment. Старые Django Secrets не читаются. При отсутствии
+валидных образов команда отказывает, а не пересоздаёт пулы за пользователя.
 
-```sh
-qm create 103 --name brood --memory 16384 --balloon 0 --cores 8 --cpu host \
-  --ostype l26 --scsihw virtio-scsi-single --net0 virtio,bridge=vmbr0,firewall=1 \
-  --agent enabled=1 --serial0 socket --vga serial0 --onboot 1
-qm set 103 --scsi0 local-lvm:0,import-from=<debian-13-genericcloud-amd64.qcow2>,iothread=1
-qm resize 103 scsi0 100G
-qm set 103 --ide2 local-lvm:cloudinit --boot order=scsi0 --ciuser ermak \
-  --sshkeys <keys.pub> --ipconfig0 ip=dhcp --cicustom vendor=nas-iso:snippets/brood-vendor.yaml
-qm start 103
-qm guest cmd 103 network-get-interfaces    # адрес
-```
+Имя `django` осталось только как точная infrastructure identity:
+`system:serviceaccount:brood:django` и соответствующий SPIFFE principal уже
+разрешены установщиком Substrate. Это не зависимость от Python runtime.
+Переименование требует отдельной миграции доверия, его нельзя делать
+одновременно с удалением старого кода.
 
-Образ -- `cloud.debian.org/images/cloud/trixie/latest`, сверенный по
-`SHA512SUMS`.
+Projected том содержит ротируемый ateapi-токен, service CA и pod identity
+certificate. Kubernetes token имеет свою audience. RBAC разрешает только
+операции workerpools в namespace `brood`, не secrets/pods/cluster-wide доступ.
+Backend дополнительно ограничивает поля и разрешённые образы WorkerPool.
+NetworkPolicy разрешает DNS, ate-system:443 и точные адреса Kubernetes API,
+а не произвольный egress на 443.
 
-Остальное делает `deploy/provision.sh` (на машине, от root, повтор безопасен):
-Docker с buildx, git, python3, Go того toolchain, что требует закреплённый
-Substrate, пользователь `brood` в группах `docker` и `kvm`, принудительная
-команда и `authorized_keys`, лимиты inotify для kind.
+Service слушает HTTPS на 8443. Для операторской проверки используйте только
+loopback port-forward и доверенный CA, не публикуйте его на `0.0.0.0` и не
+отключайте TLS-проверку. Проверяются `/healthz` и `/api/auth/session`, затем
+реальный login и полномочия. Это подготовка endpoint, не публичный cutover.
 
-```sh
-sudo deploy/provision.sh ci.pub <адрес builder>
-```
+## Миграция и откат
 
-## Если адрес машины сменился
+Протокол и команды — `docs/GO.md`. Перед переключением:
 
-Адрес выдан DHCP. Сменится -- выкладка падает громко: ключ хоста в
-`BROOD_DEPLOY_KNOWN_HOSTS` не сойдётся или машина не ответит; на чужую машину
-она не пойдёт. Новый адрес -- `qm guest cmd 103 network-get-interfaces`,
-затем `BROOD_DEPLOY_HOST` и `BROOD_DEPLOY_KNOWN_HOSTS` (ключ хоста сверять с
-`qm guest exec 103 -- cat /etc/ssh/ssh_host_ed25519_key.pub`, а не брать с
-первого соединения).
+1. Сохранить консистентную копию старой БД и список atespaces с UID.
+2. Импортировать пользователей в отдельную SQLite-базу с управляемым сбросом;
+   старые hashes/sessions не переносить.
+3. Явно связать atespaces с владельцами и проектами по проверенным UID.
+4. Создать отдельного recovery admin, проверить вход, сброс и включение
+   импортированных учётных записей и права двух обычных пользователей.
+5. Подготовить Go-only TLS-вход с WebSocket и исключением actor-view tickets
+   из access logs; только затем переключать public traffic.
+6. Остановку старых процессов выполнять отдельно после проверки. Старые БД,
+   PVC, provider credentials и пользовательские акторы автоматически не удалять.
 
-## Сервер
+До cutover откат — остановить отдельный Go Deployment: старый вход и БД
+не изменены. После будущего cutover сначала остановить Go-записи и сохранить
+SQLite вместе с WAL, затем вернуть прежний вход. Новые рои требуют отдельной
+инвентаризации; обратная миграция не обещается.
 
-`brood deploy server` (`brood/dev/deploy`) раскатывает в кластер установки
-namespace `brood`:
+## CI и restricted SSH
 
-- `edge` -- вход: nginx с TLS, http -> https, панель на корне
-  (`docs/WEB.md`); Service NodePort `30080`/`30443`, kind публикует их на
-  порты хоста `BROOD_HTTP_PORT`/`BROOD_HTTPS_PORT`. Отдельным Deployment'ом:
-  перекатка Django и прокси не рвёт стримы LLM на входе;
-- `django` -- init `migrate` и `ensureadmin`, Django под gunicorn на `:8000`;
-  NetworkPolicy пускает только edge (Django верит его `X-Forwarded-Proto`),
-  egress -- DNS, postgres, ateapi и точные адреса Kubernetes API (ниже).
-  Отдельный ServiceAccount `django` с
-  projected-томом: токен с audience `api.ate-system.svc` и ClusterTrustBundle
-  signer'а `servicedns.podcert.ate.dev/identity` -- клиент проектов
-  (`brood/server/ateapi`, `brood server test` не ходит в сеть: клиент
-  подменяется). Метка `ate.dev/api-access=true` на namespace открывает
-  NetworkPolicy ate-system к ateapi; принципал -- bootstrap-owner ateapi
-  (флаг установки в `brood/dev/substrate/local.py`), поэтому проекты панели
-  создают и удаляют atespace;
-- `cliproxy` -- CLIProxyAPI из официального образа, состояние (`config.yaml`,
-  `auths/`, журналы, плагины) на томе `cliproxy-data`; NetworkPolicy пускает
-  только edge;
-- `postgres` -- StatefulSet с тем же образом, что bundled Postgres Substrate,
-  том 1Gi; NetworkPolicy пускает только Django.
+Тесты выполняются существующим runner `builder` с тегом `docker`.
+`.ci/test.sh` проверяет Python dev-инструменты; `.ci/go-test.sh` — Go, включая
+кросс-сборку linux amd64/arm64 и архивы. Зелёные тесты не означают готовый
+публичный cutover.
 
-### Пулы воркеров
+`.ci/deploy.sh` передаёт по SSH SHA и `git archive`, добавляя `.env` и TLS
+файлы с правами 0600 из защищённых CI file variables:
 
-Выкладка собирает `ateworker-gvisor` из checkout'а установки (`cluster.source`),
-не из дерева brood. Вызов соответствует закреплённому Substrate
-`4ebd668d62e3f55753765a46579fc6deb81b2f7f`,
-`cmd/ate-setup/internal/ko/ko.go`: `hack/run-tool.sh ko build
- go.ate.dev/substrate/cmd/ateworker-gvisor --base-import-paths` с version stamp
-через `--ldflags`. Скрипт выбирает pinned Go tool ko, `.ko.yaml` задаёт базовый
-образ; как `hack/install-ate-kind.sh`, собираем только `linux/$(go env GOARCH)`.
-Образ пушится в реестр установки, результат --
-`localhost:5002/ateworker-gvisor@sha256:…`. Кэш Go и `KO_CACHE` в
-`<source>/bin/substrate/ko-cache` переживают релизы brood; заданный `KO_CACHE`
-сохраняется. Повторный вызов использует стандартные кэши, без собственного
-кэша по HEAD, который мог бы пропустить локальные правки исходников.
-
-После сверки владения и read-only discovery API, сборки образов и apply базы
-сервер создаёт начальный WorkerPool `brood/brood`: `replicas: 1`,
-`sandboxClasses: [{name: gvisor}]`, `workerImage` по digest,
-`template.resources.requests: {cpu: 250m, memory: 2Gi}`,
-`template.resources.limits: {cpu: "2", memory: 2Gi}`. Это стартовый размер,
-не гарантия достаточной памяти для любой нагрузки. Пул не входит в kustomize:
-только атомарный `create`, `AlreadyExists` сохраняет существующий объект
-(включая гонку с панелью); остальные ошибки останавливают выкладку. Повторная
-выкладка не меняет ресурсы, реплики, метаданные или версию образа ни этого,
-ни других пулов. Перевод существующего пула на новый digest -- отдельное
-осознанное изменение `spec.workerImage`, не побочный эффект выкладки brood.
-Контроллер называет Deployment именем пула: команда ждёт появления
-`deployment/brood`, затем его rollout, не удаляя пул или воркеры для починки.
-
-### Переключение пустой установки на microVM
-
-```sh
-brood deploy microvm
-```
-
-Команда выполняется на машине установки. До записи сверяет владение kind и
-реестром, метку namespace, отсутствие акторов во всех проектах и доступность
-KVM на подходящей ноде. Скачивает и устанавливает microVM assets закреплённого
-Substrate (Kata и Cloud Hypervisor), сверяет их SHA-256 с SandboxConfig и
-собирает `ateworker-microvm` тем же pinned ko, что gvisor-воркер.
-
-Класс существующего WorkerPool неизменяем в CRD. Поэтому команда не удаляет
-`brood`, а создаёт `brood-microvm`, наследуя его spec с новым образом и классом.
-Новый пул помечается UID исходного; чужой объект с таким именем — отказ.
-Сначала ждёт готовности новых подов и регистрации microVM runtime в ateapi.
-Перед остановкой исходного пула требует drain всех его воркеров в ateapi:
-выполните drain в панели и повторите команду. Drain закрывает новое размещение;
-после него команда повторно проверяет отсутствие акторов и заменяет только
-replicas исходного пула на ноль с прочитанной версией Kubernetes. Конфликт не обходится.
-Оба объекта сохраняются; неудача подготовки не останавливает старый пул.
-Повтор использует принадлежащий этой операции microVM-пул, не перезаписывая
-его настройки. Ресурсы автоматически не увеличиваются.
-
-Переключение проводят в окно обслуживания, без параллельного создания акторов.
-Это не перенос акторов и не установка Docker в их образы. Старые шаблоны с
-требованием gvisor или выбранным старым воркером требуют новых версий для
-microVM. Это переключение runtime отдельно от выбора класса нового пула в панели.
-
-Выкладка собирает gvisor-образ всегда, а microVM-образ -- если в установке
-присутствует SandboxConfig `microvm`. Django получает JSON-карту разрешённых
-образов по классам через `WORKER_POOL_IMAGES` в `brood-env`; прежний
-`WORKER_POOL_IMAGE` сохраняется для gvisor. Это не пользовательские настройки
-`.env`. Defaults API возвращает карту в `workerImages` и строку gvisor-образа
-в `workerImage`; все ссылки закреплены по digest. Создание требует образа,
-разрешённого для соответствующего класса; у существующего пула можно сохранить
-его прежний digest при изменении реплик и ресурсов. Сама выкладка существующие
-пулы на новый digest не переводит.
-
-Клиент Kubernetes использует `KUBE_API_URL=https://kubernetes.default.svc`,
-`KUBE_API_TOKEN=/var/run/secrets/kubernetes.io/serviceaccount/token` и
-`KUBE_API_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`:
-обычный ротируемый токен ServiceAccount, не пользовательский kubeconfig и
-не токен ateapi с другим audience. Role/RoleBinding `django-workerpools` в
-namespace `brood` дают `django` только `get,list,create,update,delete` для
-`ate.dev/workerpools`, без pods, secrets, cluster-wide доступа и `/status`.
-
-Даже namespaced `create WorkerPool` -- сильное право: контроллер создаёт
-привилегированные воркеры, а в `brood` также лежат серверные Secret'ы.
-Поэтому backend обязан ограничивать опасные поля spec и metadata (включая
-выбор ServiceAccount и аннотации), а не проксировать произвольный объект.
-Через GUI разрешены только `gvisor` и безопасный образ, ровно digest из
-`WORKER_POOL_IMAGE`; пользовательский образ и произвольный runtime запрещены.
-RBAC сам по себе этих ограничений не обеспечивает.
-
-До первой записи выкладка читает Service и Endpoints `default/kubernetes`.
-Отдельная NetworkPolicy `django-kube-api` разрешает только их адреса
-(`/32` или `/128`) и HTTPS-порты: Service на 443 до DNAT, endpoints на их
-порту (в kind 6443) после DNAT. Широкого egress на 443 или всю сеть узлов
-нет. Запрет чтения, повреждённый ответ или отсутствие готовых endpoints --
-объяснимый отказ до сборки и apply, а не расширение политики. При смене
-адресов API нужно повторить выкладку, чтобы обновить эту политику.
-
-Маршруты входа:
-
-| путь | куда |
+| Переменная | Назначение |
 |---|---|
-| `/` | панель (один файл) |
-| `/admin/`, `/static/`, `/auth/`, `/api/`, `/healthz` | Django |
-| `/v1/`, `/v1beta/`, `/openai/v1/`, `/backend-api/codex/` | CLIProxyAPI, клиентский ключ проверяет он сам |
-| `/v8/management/` | CLIProxyAPI, только с сессией суперпользователя brood; ключ ставит вход |
-| `/{anthropic,codex,antigravity,devin}/callback`, `/callback` | CLIProxyAPI: возвраты OAuth провайдеров |
-| прочее | 404, в том числе `/v0/management` и встроенная панель прокси |
+| `BROOD_DEPLOY_HOST` | SSH destination установки |
+| `BROOD_DEPLOY_SSH_KEY` | ограниченный deploy key |
+| `BROOD_DEPLOY_KNOWN_HOSTS` | проверенный ключ хоста |
+| `BROOD_DEPLOY_ENV` | настройки релиза |
+| `BROOD_DEPLOY_TLS_CERT`, `BROOD_DEPLOY_TLS_KEY` | TLS установки |
 
-Образы brood -- сервер (`brood/dev/deploy/Dockerfile`) и вход с панелью
-(`brood/dev/deploy/edge/Dockerfile`) -- собираются и кладутся в реестр
-установки (`localhost:5002`) по digest. В конце команда проверяет по https на
-`BROOD_HTTPS_PORT` ровно выложенным сертификатом, что отвечают панель,
-страница входа админки, ворота management (401 без сессии) и `/v1/models` с
-клиентским ключом.
+Обновление — `bin/brood dev ci set --file VAR=PATH`, просмотр имён и флагов
+без значений — `bin/brood dev ci vars`. Ни адреса, ни ключа в репозитории нет.
+Runner на целевой машине не добавляется.
 
-Ключ management прокси -- `MANAGEMENT_PASSWORD` из Secret, а не
-`secret-key` в `config.yaml`: конфиг правит панель, и её сохранение ключ не
-теряет. Первый `config.yaml` заводит init-контейнер из
-`manifests/cliproxy-config.yaml` с клиентским ключом и дальше его не трогает:
-`CLIPROXY_CLIENT_KEY` в `.env` после первой выкладки меняет только
-проверку выкладки, ключи прокси правятся панелью. Без единого ключа в
-`access.api-keys` прокси открыт всем -- последний ключ из панели не удалять.
+В `authorized_keys` ключ имеет `restrict,from=<builder>,command=brood-deploy`.
+Принудительная команда принимает только SHA и архив, serializes релизы через
+flock и выполняет preflight до Substrate-мутаций. Её копию в `/usr/local/bin`
+обновляет `deploy/provision.sh`, а не обычный deploy. Старый установленный
+wrapper нужно обновить перед возобновлением автоматической выкладки.
 
-`.env` стенда -- не `.env` разработчика (в том отладка и личный
-`GITLAB_TOKEN`); держите его вне репозитория и загружайте `brood dev ci set`:
+## Пулы и microVM
 
-| настройка | что |
-|---|---|
-| `DJANGO_SECRET_KEY` | свой ключ стенда |
-| `DJANGO_ALLOWED_HOSTS` | `brood,brood.corp.ermak.dev`; первое имя -- им проверяется вход |
-| `POSTGRES_PASSWORD` | пароль базы; читается только при первом initdb, потом -- `ALTER USER` |
-| `DJANGO_SUPERUSER_USERNAME`, `DJANGO_SUPERUSER_PASSWORD` | админ: заводится, если его нет, пароль не сбрасывается |
-| `DJANGO_SUPERUSER_EMAIL` | необязательно |
-| `CLIPROXY_MANAGEMENT_KEY` | ключ management прокси; знают только прокси и вход |
-| `CLIPROXY_CLIENT_KEY` | первый клиентский ключ `/v1` |
-| `BROOD_HTTPS_PORT`, `BROOD_HTTP_PORT` | `443` и `80`: порты хоста стенда |
+`bin/brood deploy microvm` остаётся отдельной операцией только для пустой
+установки: проверяет владение, отсутствие акторов, KVM и закреплённые assets.
+Не удаляет исходный WorkerPool; требует drain перед уменьшением его replicas.
+В текущей минимальной панели нет UI drain — используйте авторизованный API
+или инструменты Substrate, не обходя UID/version-предусловия.
 
-В кластер едут только эти ключи: серверу -- свои, учётка админа -- только
-init-контейнеру `ensureadmin`, ключи прокси -- прокси и входу. Сменился `.env` или сертификат -- новый
-`brood dev ci set` и перезапуск джобы `deploy` (`brood dev ci retry <job>`):
-хэш в имени Secret'а перекатит под.
-
-Порты хоста kind задаёт только при создании кластера. Если узел публикует
-не то, что в `.env`, `brood substrate install` откажет; пересоздание
-кластера стирает его данные, поэтому делается руками, от пользователя
-`brood` (ключ выкладки этого не умеет):
-
-```sh
-sudo -u brood -i sh -c 'cd releases/current && bin/brood substrate uninstall'
-```
-
-и перезапуск джобы `deploy`.
+Подготовка Go endpoint не меняет ресурсы, реплики и образы существующих пулов.
+Отсутствие microVM-ёмкости — блокер полного workbench e2e, а не разрешение
+остановить действующий coding-актор, уменьшить его ресурсы или менять kernel
+и runtime policy хоста. Guest deployment выполняется только внутри собственной
+microVM с приватными Docker/kind и свежими секретами (`docs/WORKBENCH.md`).

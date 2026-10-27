@@ -41,9 +41,8 @@ HOSTS_TOML = f'[host."http://{REGISTRY}:5000"]\n'
 NAMESPACE = "ate-system"
 KUBECTL_VERSION = "v1.37.1"
 KIND_CONFIG = os.path.join(os.path.dirname(os.path.realpath(__file__)), "kind.yaml")
-# Входы стенда: настройка с портом хоста -> NodePort Service brood-server
-# (brood/dev/deploy/manifests/server.yaml). kind публикует порты узла только
-# при создании кластера, поэтому они -- часть установки, а не выкладки.
+# Зарезервированные порты public-входа. kind публикует их только при создании
+# кластера; удаление старого edge не разрешает пересоздать кластер с данными.
 EDGE = (("BROOD_HTTP_PORT", 30080), ("BROOD_HTTPS_PORT", 30443))
 API_DEADLINE = 300
 # docker проверяет `docker info` до всего остального; go собирает Substrate.
@@ -52,8 +51,8 @@ DEPLOY = ("deploy", NAMESPACE, '--credential-provider={"name":"k8s.io"}',
           f"--ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/{NAMESPACE}/sa/ate-client,"
           "spiffe://cluster.local/ns/brood/sa/django",
           "--rollout-timeout=10m", f"--namespace={NAMESPACE}", "--atenet-dataplane=envoy",
-          # Под django brood -- глобальный владелец ateapi: проекты панели
-          # создают и удаляют atespace. Общий ate-client не расшариваем:
+          # Go-сервер сохраняет доверенный принципал brood/django: его BFF
+          # авторизует создание/удаление atespace. Общий ate-client не расшариваем:
           # его токен заминтовал бы любой с RBAC на его ServiceAccount.
           "--ateapi-authz-bootstrap-owners="
           f"system:serviceaccount:brood:django,system:serviceaccount:{NAMESPACE}:ate-client")

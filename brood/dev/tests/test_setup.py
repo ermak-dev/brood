@@ -5,15 +5,13 @@ import unittest
 from brood.dev.cli import setup
 
 PROJECT = {"project": {"optional-dependencies": {
-    "server": ["Django==5.2.18"], "dev": ["ruff==0.15.16"], "other": ["x"]}}}
+    "dev": ["ruff==0.15.16"], "other": ["x"]}}}
 
 MISSING = [
-    ({}, [("DJANGO_SECRET_KEY", "k"), ("DJANGO_DEBUG", "1")]),
-    ({"DJANGO_SECRET_KEY": "old", "DJANGO_DEBUG": "0"}, []),
-    # Пустой ключ -- то же, что нет его.
-    ({"DJANGO_SECRET_KEY": "", "DJANGO_DEBUG": "1"}, [("DJANGO_SECRET_KEY", "k")]),
-    # Названный, хоть и пустой, DJANGO_DEBUG -- решение человека.
-    ({"DJANGO_SECRET_KEY": "old", "DJANGO_DEBUG": ""}, []),
+    ({}, [("BROOD_SESSION_SECRET", "k")]),
+    ({"BROOD_SESSION_SECRET": "old"}, []),
+    ({"BROOD_SESSION_SECRET": ""}, [("BROOD_SESSION_SECRET", "k")]),
+    ({"DJANGO_SECRET_KEY": "old"}, [("BROOD_SESSION_SECRET", "k")]),
 ]
 
 APPEND = [
@@ -26,9 +24,9 @@ APPEND = [
 
 class SetupTests(unittest.TestCase):
     def test_requirements(self):
-        self.assertEqual(setup.requirements(PROJECT), ["Django==5.2.18", "ruff==0.15.16"])
-        with self.assertRaisesRegex(RuntimeError, "no extra server"):
-            setup.requirements({"project": {"optional-dependencies": {"dev": []}}})
+        self.assertEqual(setup.requirements(PROJECT), ["ruff==0.15.16"])
+        with self.assertRaisesRegex(RuntimeError, "no extra dev"):
+            setup.requirements({"project": {"optional-dependencies": {}}})
 
     def test_declared_extras(self):
         """Extras рабочей копии объявлены в настоящем pyproject.toml."""

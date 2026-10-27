@@ -10,7 +10,8 @@ Substrate. Команды -- `brood workbench`, код -- `brood/dev/workbench`.
 
 ## Состояние проверки
 
-На 2026-10-26 внутри microVM прошли 239 Python-тестов, ruff, 1676 тестов панели,
+Исторический прогон до Go-переезда: на 2026-10-26 внутри microVM прошли
+239 Python-тестов, ruff, 1676 тестов старой панели,
 lint, проверка типов и production-сборка панели. В том же акторе поднят
 вложенный kind, из исходников установлен отдельный Substrate, собраны образы
 Brood и завершена выкладка. Штатная HTTPS-проверка тестового сервера прошла;
@@ -30,9 +31,13 @@ major/minor и возможность открытия. Симлинк, обыч
 Холодная сборка всего Substrate на 4 CPU занимает десятки минут; тихий
 интервал компиляции сам по себе не означает зависание.
 
-Публикации одного репозитория пока запускайте последовательно: общий helper
-`Deploy._image` использует тег с точностью до секунды; гонка параллельных
-публикаций вынесена в #18.
+Этот результат не доказывает новый Go-only guest pipeline. После удаления
+legacy его полный прогон требует отдельной свободной microVM; действующий
+пользовательский coding-актор не используется для проверки. На локальном
+стенде 2026-10-27 отсутствовали `/dev/kvm`, WorkerPool и зарегистрированные
+воркеры. Native Go API/CLI e2e и suspended-actor проверки прошли отдельно
+(`docs/GO.md`). Новая публикация использует уникальный tag и digest metadata
+конкретного buildx-вызова, не общий изменяемый tag.
 
 ## Состав
 
@@ -40,7 +45,8 @@ major/minor и возможность открытия. Симлинк, обыч
 - Go по версии и SHA-256 из общего `brood/dev/pins.json`;
 - закреплённые Docker Engine, CLI и buildx;
 - исходный commit Brood и закреплённый в установщике commit Substrate;
-- локальные wheels зависимостей extras `server` и `dev` из `pyproject.toml`.
+- локальные wheels зависимостей extra `dev` из `pyproject.toml`;
+- Go-клиент `bro` для единой сборки из Broodfile; отдельного Python compiler нет.
 
 Образ сейчас собирается для amd64. Снимки Git shallow: в них нет локального
 `.env`, `secrets/`, credential helper или истории до выбранного commit.
@@ -52,29 +58,31 @@ major/minor и возможность открытия. Симлинк, обыч
 
 На машине установки с принадлежащим ей Substrate:
 
-Настройте `BUILD_REGISTRY` и `BUILD_ATESPACE` в `.env` установки либо передайте
+Экспортируйте `BUILD_REGISTRY` и `BUILD_ATESPACE` из доверенного `.env` либо передайте
 `--registry` и `--atespace`. Команды читают только выбранный Git commit:
 
 ```sh
-brood build --plan                    # проверенный план development без Docker
-brood build                           # образ и комплект development
-brood build coding                    # тот же environment, интерактивный шаблон
-brood build --ref COMMIT --export PATH # чистый переносимый контекст без Docker
+bro build --plan                    # проверенный план development без Docker
+bro build                           # образ и комплект development
+bro build coding                    # тот же environment, интерактивный шаблон
+bro build --ref COMMIT --export PATH # чистый переносимый контекст без Docker
 ```
 
-`--export` требует новый каталог. Кэш клона Substrate можно передать через
-`BUILD_SOURCE_CACHE`; его рабочие правки не копируются. Контракт — `docs/BUILD.md`.
+`--export` требует новый каталог и не публикует образ. Внешние источники
+читаются по закреплённому commit. Контракт — `docs/BUILD.md`.
 
 Результаты лежат в `.brood/build/development/` и `.brood/build/coding/`:
-`actor-template.json`, `egress-policy.json`, `build.json`. JSON шаблона можно
-вставить в JSON-вкладку редактора; atespace берётся из контекста сборки. Новый
+`actor-template.json`, `egress-policy.json`, `build.json`. Шаблон регистрируется
+через авторизованный API или инструменты Substrate; редактора JSON в минимальной
+Go-панели нет. Atespace берётся из контекста сборки. Новый
 образ или runtime spec получает новое имя шаблона по hash. Golden snapshot
 выключен. Сама сборка ничего в Substrate не регистрирует и не запускает.
 
-Старые `brood workbench build` и `brood workbench template` сохранены как
-совместимые интерфейсы: используют общий сборщик и определения из Broodfile,
-а не отдельный набор исходников/параметров. Для нового workflow используйте
-`brood build`; он сохраняет весь согласованный комплект артефактов.
+`bin/brood workbench build` — тонкая dev-обёртка над внешним Go `bro build`;
+`bro` должен быть в PATH. Она не содержит второго compiler/schema и использует
+`BUILD_REGISTRY`/`BUILD_ATESPACE`. `workbench template` остаётся инструментом
+явного формирования runtime/pool/policy. Для обычной сборки используйте
+`bro build`: он сохраняет весь согласованный комплект артефактов.
 
 ## Пул и ресурсы
 
@@ -153,10 +161,19 @@ cgroup v2 для вложенных контейнеров. Одного мон�
 
 `.ci/workbench.sh` последовательно выполняет:
 
-1. `brood dev setup`, `brood server test`, `venv/bin/ruff check .`;
-2. `brood dev web test` -- тесты, типы, lint и сборку панели;
-3. `brood substrate install` и `brood substrate start` в собственном Docker;
-4. `brood deploy server` в этом вложенном кластере, со штатной HTTPS-проверкой.
+1. `bin/brood dev setup`, `bin/brood dev test -v`, `venv/bin/ruff check .`;
+2. настоящие `go test ./...` и сборку трёх Go-бинарников;
+3. `bin/brood substrate install` и `bin/brood substrate start` в собственном Docker;
+4. `bin/brood workbench prepare`: только в госте с локальным socket и своим
+   checkout/кластером, проверяет владение, создаёт namespace/SA/RBAC без
+   перезаписи существующих объектов, собирает pinned gvisor worker image и
+   дописывает разрешённый digest в приватный `.env`;
+5. `bin/brood deploy go`: отдельный Go Deployment/PVC и приватный HTTPS
+   Service, без public cutover и без переноса production-пользователей.
+
+`passed` этого сценария означает успешные проверки, сборку и rollout приватного
+endpoint. Это не проверка публичного ingress или доступа к реальному актору
+через новый Go Deployment; такие e2e-доказательства фиксируются отдельно.
 
 Вложенный тестовый Substrate использует gvisor: `/dev/kvm` внутрь актора не
 передан, второй уровень аппаратной виртуализации не нужен и не заявляется.
@@ -231,9 +248,11 @@ https://code.claude.com/docs/en/network-config.
 завершились. Итог задания -- `status.json`. После успеха или ошибки актор
 остаётся доступен для разбора; автоматического удаления рабочего тома нет.
 
-Тестовый Brood слушает 8080/8443 внутри гостя. Проверка его HTTPS использует
-созданный сертификат. Учётка `developer` и её случайный пароль -- в `.env`
-только этого workspace; файлы настроек не отдаются сервером результатов.
+Go endpoint слушает HTTPS Service:8443 во вложенном кластере; публичный
+NodePort не создаётся. Проверка через loopback port-forward использует
+сгенерированный guest-сертификат. Подготовка сама не создаёт пользователей:
+для login-проверки нужен отдельный `brood bootstrap-admin`. Файлы настроек
+и TLS не отдаются сервером результатов.
 
 Suspend/resume всей среды с Docker и kind отдельно не подтверждён. Для нового
 прогона используйте новый актор; предпочтение MEMORY в шаблоне не является

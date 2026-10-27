@@ -1,43 +1,27 @@
-"""Выкладка начального пула без перезаписи состояния панели."""
+"""Общие проверки инфраструктуры без старого серверного runtime."""
 import json
-import os
-import re
-import tempfile
 import unittest
 from unittest import mock
 
-from brood.dev.deploy import server
+from brood.dev.deploy import infrastructure
 from brood.dev.substrate import local
 
-# FEATURE: Начальный WorkerPool и узкий доступ Django к Kubernetes.
-# SPEC: create-only, gvisor по digest, 2Gi; RBAC только WorkerPool;
-# discovery до записи, точные IP/порты до и после DNAT, готовность Deployment.
-# IMPLEMENTATION: pinned ko с кэшами; отдельные create и egress; узкая Role.
-# RESULT: IMPLEMENTED — create-only не меняет пулы, discovery закрывается при ошибке.
-# STATUS: DONE
 DIGEST = "sha256:" + "a" * 64
-IMAGE = f"{server.REGISTRY}/ateworker-gvisor@{DIGEST}"
+IMAGE = f"{infrastructure.REGISTRY}/ateworker-gvisor@{DIGEST}"
 SERVICE = {"spec": {"clusterIPs": ["10.96.0.1", "fd00::1"],
                     "ports": [{"name": "https", "port": 443, "protocol": "TCP"}]}}
 ENDPOINTS = {"subsets": [{"addresses": [{"ip": "172.18.0.2"}],
                           "ports": [{"name": "https", "port": 6443, "protocol": "TCP"}]}]}
 
 
-class WorkerManifestTests(unittest.TestCase):
-    def test_initial_pool_shape(self):
-        pool = server.initial_pool(IMAGE)
-        self.assertEqual(pool, {
-            "apiVersion": "ate.dev/v1", "kind": "WorkerPool",
-            "metadata": {"name": "brood", "namespace": "brood"},
-            "spec": {"replicas": 1, "workerImage": IMAGE,
-                     "sandboxClasses": [{"name": "gvisor"}],
-                     "template": {"resources": {
-                         "requests": {"cpu": "250m", "memory": "2Gi"},
-                         "limits": {"cpu": "2", "memory": "2Gi"}}}}})
+class InfrastructureTests(unittest.TestCase):
+    def deploy(self):
+        cluster = mock.Mock(source="/substrate")
+        cluster.shell.env = {"PATH": "/bin"}
+        return infrastructure.Infrastructure(cluster)
 
     def test_exact_api_egress_before_and_after_dnat(self):
-        rules = server.api_egress(SERVICE, ENDPOINTS)
-        self.assertEqual(rules, [
+        self.assertEqual(infrastructure.api_egress(SERVICE, ENDPOINTS), [
             {"to": [{"ipBlock": {"cidr": "10.96.0.1/32"}},
                     {"ipBlock": {"cidr": "fd00::1/128"}}],
              "ports": [{"protocol": "TCP", "port": 443}]},
@@ -53,101 +37,24 @@ class WorkerManifestTests(unittest.TestCase):
                                                            "ports": [{"port": 6443}]}]})]:
             with self.subTest(service=service, endpoints=endpoints):
                 with self.assertRaisesRegex(RuntimeError, "Kubernetes API discovery"):
-                    server.api_egress(service, endpoints)
-
-    def test_django_env_and_namespace_only_rbac(self):
-        with open(os.path.join(server.MANIFESTS, "django.yaml")) as f:
-            django = f.read()
-        for key, value in {
-            "KUBE_API_URL": "https://kubernetes.default.svc",
-            "KUBE_API_TOKEN": "/var/run/secrets/kubernetes.io/serviceaccount/token",
-            "KUBE_API_CA": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
-        }.items():
-            self.assertIn(f"- name: {key}\n              value: {value}", django)
-        with open(os.path.join(server.MANIFESTS, "kustomization.yaml")) as f:
-            self.assertIn("  - worker-access.json", f.read())
-        with open(os.path.join(server.MANIFESTS, "worker-access.json")) as f:
-            objects = json.load(f)["items"]
-        roles = [d for d in objects if d["kind"] in ("Role", "ClusterRole")]
-        self.assertEqual(len(roles), 1)
-        self.assertEqual(roles[0]["kind"], "Role")
-        self.assertEqual(roles[0]["metadata"]["namespace"], "brood")
-        self.assertEqual(roles[0]["rules"], [{"apiGroups": ["ate.dev"],
-                          "resources": ["workerpools"],
-                          "verbs": ["get", "list", "create", "update", "delete"]}])
-        binding = next(d for d in objects if d["kind"] == "RoleBinding")
-        self.assertEqual(binding["subjects"], [{"kind": "ServiceAccount", "name": "django",
-                                                "namespace": "brood"}])
-        self.assertEqual(binding["roleRef"]["name"], roles[0]["metadata"]["name"])
-        self.assertFalse(any(d["kind"] == "WorkerPool" for d in objects))
-
-
-class WorkerDeployTests(unittest.TestCase):
-    def deploy(self):
-        cluster = mock.Mock(source="/substrate")
-        cluster.shell.env = {"PATH": "/bin"}
-        return server.Deploy(cluster, get=lambda key: "value" if key in
-                             server.SERVER_KEYS + server.ADMIN_KEYS + server.CLIPROXY_KEYS else "")
+                    infrastructure.api_egress(service, endpoints)
 
     def test_worker_uses_pinned_ko_from_source_with_standard_caches(self):
         deploy = self.deploy()
         shell = mock.Mock()
-        shell.env = {"PATH": "/bin"}
         shell.output.side_effect = [(0, "amd64\n", ""), (0, "v1-dirty\n", ""),
                                     (0, IMAGE + "\n", "")]
         with mock.patch.object(local, "Shell", return_value=shell) as factory:
             self.assertEqual(deploy._worker_image(), IMAGE)
         env, cwd = factory.call_args.args
         self.assertEqual(cwd, "/substrate")
-        self.assertEqual(env["KO_DOCKER_REPO"], server.REGISTRY)
+        self.assertEqual(env["KO_DOCKER_REPO"], infrastructure.REGISTRY)
         self.assertEqual(env["KO_DEFAULTPLATFORMS"], "linux/amd64")
         self.assertTrue(env["KO_CACHE"].startswith("/substrate/bin/substrate/"))
         self.assertEqual(shell.output.call_args.args, (
             "/substrate/hack/run-tool.sh", "ko", "build",
             "go.ate.dev/substrate/cmd/ateworker-gvisor", "--base-import-paths",
             "--ldflags=-X=go.ate.dev/substrate/internal/version.Version=v1-dirty"))
-
-    def test_worker_image_map_only_advertises_installed_runtimes(self):
-        deploy = self.deploy()
-        microvm_image = f"{server.REGISTRY}/ateworker-microvm@{DIGEST}"
-        deploy._worker_image = mock.Mock(side_effect=lambda runtime="gvisor":
-                                         IMAGE if runtime == "gvisor" else microvm_image)
-        for response, expected in [("", {"gvisor": IMAGE}),
-                                   (json.dumps({"spec": {"sandboxClass": "microvm"}}),
-                                    {"gvisor": IMAGE, "microvm": microvm_image})]:
-            with self.subTest(response=response):
-                deploy.shell.output.return_value = (0, response, "")
-                self.assertEqual(deploy._worker_images(), expected)
-                self.assertIn("--ignore-not-found", deploy.shell.output.call_args.args)
-        deploy.shell.output.return_value = (1, "", "Forbidden")
-        with self.assertRaisesRegex(RuntimeError, "microvm.*Forbidden"):
-            deploy._worker_images()
-        deploy.shell.output.return_value = (0, "bad json", "")
-        with self.assertRaisesRegex(RuntimeError, "microvm.*invalid JSON"):
-            deploy._worker_images()
-
-    def test_existing_pool_is_never_applied_and_only_alreadyexists_is_ignored(self):
-        deploy = self.deploy()
-        for code, err, fails in [
-            (0, "", False),
-            (1, 'Error from server (AlreadyExists): workerpools.ate.dev "brood" already exists',
-             False),
-            (1, 'Error from server (AlreadyExists): error when creating "/tmp/pool.json": '
-             'workerpools.ate.dev "brood" already exists', False),
-            (1, 'Error from server (AlreadyExists): workerpools.ate.dev "other" already exists',
-             True),
-            (1, "Forbidden", True), (1, "connection refused", True)]:
-            with self.subTest(err=err), tempfile.TemporaryDirectory() as workdir:
-                deploy.shell.output.return_value = (code, "", err)
-                if fails:
-                    with self.assertRaisesRegex(RuntimeError, re.escape(err)):
-                        deploy._bootstrap_pool(workdir, IMAGE)
-                else:
-                    deploy._bootstrap_pool(workdir, IMAGE)
-                args = deploy.shell.output.call_args.args
-                self.assertEqual(args[:3], ("kubectl", f"--context={local.CONTEXT}", "create"))
-                with open(args[args.index("-f") + 1]) as f:
-                    self.assertEqual(json.load(f), server.initial_pool(IMAGE))
 
     def test_discovery_failures_abort_with_reason(self):
         deploy = self.deploy()
@@ -171,20 +78,19 @@ class WorkerDeployTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "namespace brood.*invalid JSON"):
                     deploy._namespace_is_ours()
 
-    def test_ownership_failure_stops_before_discovery_build_or_writes(self):
+    def test_namespace_must_exist_and_be_owned(self):
         deploy = self.deploy()
-        deploy._tls = mock.Mock(return_value={})
-        deploy.cluster.check.side_effect = RuntimeError("foreign container")
-        with self.assertRaisesRegex(RuntimeError, "foreign container"):
-            deploy.server()
+        for data in ("", '{"metadata":{"labels":{}}}'):
+            with self.subTest(data=data), self.assertRaises(RuntimeError):
+                deploy.shell.output.return_value = (0, data, "")
+                deploy._namespace_is_ours()
         deploy.shell.run.assert_not_called()
-        deploy.shell.output.assert_not_called()
 
     def test_discovery_reads_both_objects_and_rejects_bad_json(self):
         deploy = self.deploy()
         deploy.shell.output.side_effect = [(0, json.dumps(SERVICE), ""),
                                            (0, json.dumps(ENDPOINTS), "")]
-        self.assertEqual(deploy._api_egress(), server.api_egress(SERVICE, ENDPOINTS))
+        self.assertEqual(deploy._api_egress(), infrastructure.api_egress(SERVICE, ENDPOINTS))
         for call, resource in zip(deploy.shell.output.call_args_list, ["service", "endpoints"]):
             self.assertIn(resource, call.args)
             self.assertIn("default", call.args)
@@ -206,56 +112,7 @@ class WorkerDeployTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "worker image"):
                         deploy._worker_image()
 
-    def test_server_integration_order_and_rendered_overlay(self):
-        deploy = self.deploy()
-        events = []
-        deploy.cluster.check.side_effect = lambda: events.append("ownership")
-        deploy._namespace_is_ours = lambda: events.append("namespace")
-        deploy._api_egress = lambda: events.append("discovery") or server.api_egress(SERVICE, ENDPOINTS)
-        deploy._tls = lambda: {"tls.crt": "cert", "tls.key": "key"}
-        deploy._image = lambda *_: events.append("build") or DIGEST
-        deploy._worker_image = lambda: events.append("worker-build") or IMAGE
-        deploy._worker_images = lambda: events.append("worker-build") or {"gvisor": IMAGE}
-
-        def output(*args):
-            self.assertEqual(args[2], "create")
-            events.append("pool-create")
-            return 0, "created", ""
-
-        def run(*args, **kwargs):
-            if "apply" in args:
-                events.append("apply")
-                workdir = args[-1]
-                with open(os.path.join(workdir, "server.env")) as f:
-                    env = f.read()
-                    self.assertIn(f"WORKER_POOL_IMAGE={IMAGE}\n", env)
-                    values = dict(line.split("=", 1) for line in env.splitlines())
-                    self.assertEqual(json.loads(values["WORKER_POOL_IMAGES"]), {"gvisor": IMAGE})
-                with open(os.path.join(workdir, "kustomization.yaml")) as f:
-                    overlay = json.load(f)
-                all_docs = []
-                for resource in overlay["resources"]:
-                    if resource == "base":
-                        continue
-                    with open(os.path.join(workdir, resource)) as f:
-                        all_docs.append(json.load(f))
-                policy = next(d for d in all_docs if d["kind"] == "NetworkPolicy")
-                self.assertEqual(policy["spec"]["egress"], server.api_egress(SERVICE, ENDPOINTS))
-                self.assertEqual(policy["metadata"]["namespace"], "brood")
-                self.assertEqual(policy["spec"]["podSelector"], {"matchLabels": {"app": "django"}})
-                self.assertFalse(any(d["kind"] == "WorkerPool" for d in all_docs))
-            if "wait" in args:
-                events.append("pool-generated")
-                self.assertIn("--for=create", args)
-                self.assertIn("deployment/brood", args)
-            if "rollout" in args and "deployment/brood" in args:
-                events.append("pool-ready")
-
-        deploy.shell.run.side_effect = run
-        deploy.shell.output.side_effect = output
-        deploy.server()
-        self.assertEqual(events[:6], ["ownership", "namespace", "discovery", "build", "build",
-                                     "worker-build"])
-        self.assertLess(events.index("apply"), events.index("pool-create"))
-        self.assertLess(events.index("pool-create"), events.index("pool-generated"))
-        self.assertLess(events.index("pool-generated"), events.index("pool-ready"))
+    def test_env_file_preserves_values_and_refuses_newlines(self):
+        self.assertEqual(infrastructure.env_file({"VALUE": "a=b'c"}), "VALUE=a=b'c\n")
+        with self.assertRaisesRegex(RuntimeError, "VALUE.*spans lines"):
+            infrastructure.env_file({"VALUE": "a\nb"})

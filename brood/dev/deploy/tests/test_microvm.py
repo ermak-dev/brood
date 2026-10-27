@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from brood.common import cli
-from brood.dev.deploy import microvm, server
+from brood.dev.deploy import microvm, infrastructure
 
 # FEATURE: Отдельный microVM-пул с остановкой пустого gvisor-пула после готовности.
 # SPEC: Владение и KVM до записи; отказ при акторах; новый пул без чужой identity;
@@ -20,7 +20,7 @@ IMAGE = "localhost:5002/ateworker-microvm@sha256:" + "b" * 64
 
 
 def pool():
-    result = server.initial_pool("localhost:5002/ateworker-gvisor@sha256:" + "a" * 64)
+    result = infrastructure.initial_pool("localhost:5002/ateworker-gvisor@sha256:" + "a" * 64)
     result["metadata"].update(uid="pool-uid", resourceVersion="42", labels={"owner": "operator"})
     result["spec"]["template"]["nodeSelector"] = {"kubernetes.io/arch": "amd64"}
     result["status"] = {"readyReplicas": 1}
@@ -140,12 +140,12 @@ class MicroVMDeployTests(unittest.TestCase):
         deploy._prepare.assert_not_called()
 
     def test_microvm_worker_image_uses_the_same_pinned_ko_and_cache(self):
-        deploy = server.Deploy(mock.Mock(source="/substrate"))
+        deploy = infrastructure.Infrastructure(mock.Mock(source="/substrate"))
         deploy.shell.env = {"PATH": "/bin"}
         shell = mock.Mock()
         shell.output.side_effect = [(0, "amd64\n", ""), (0, "v1\n", ""),
                                     (0, IMAGE + "\n", "")]
-        with mock.patch.object(server.local, "Shell", return_value=shell) as factory:
+        with mock.patch.object(infrastructure.local, "Shell", return_value=shell) as factory:
             self.assertEqual(deploy._worker_image("microvm"), IMAGE)
         env, cwd = factory.call_args.args
         self.assertEqual(cwd, "/substrate")

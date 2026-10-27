@@ -1,8 +1,0 @@
-# Что видно сборке образа входа: исходники панели без того, что собрал
-# разработчик, и шаблон nginx. Всего прочего -- нет, в том числе .env и secrets/.
-*
-!brood/server/web
-!brood/dev/deploy/edge/nginx.conf.template
-!brood/dev/deploy/edge/*.inc
-brood/server/web/node_modules
-brood/server/web/dist
