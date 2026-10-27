@@ -1,25 +1,19 @@
-"""brood deploy go: deploy the Go server alongside Django, without switching traffic
+"""brood deploy go: build and prepare the private Go server endpoint
 
-Requires BROOD_SESSION_SECRET in .env and secrets/tls.crt + secrets/tls.key.
+Requires BROOD_SESSION_SECRET, approved WORKER_POOL_IMAGES and TLS files.
 Uses the existing owned installation and a separate PVC. Does not import users,
-create an administrator, remove Django, or change the public ingress.
+create an administrator, remove existing resources, or change public ingress.
+This preparation step is not a completed public deployment.
 """
 
-from brood.common import config
 from brood.dev.deploy.go_server import Deploy
 from brood.dev.substrate.cli._common import cluster
 
 
 def main(argv):
-    if argv == ["--if-enabled"]:
-        enabled = config.get("BROOD_GO_DEPLOY")
-        if enabled not in ("", "0", "1"):
-            raise RuntimeError("BROOD_GO_DEPLOY must be 0 or 1")
-        if enabled != "1":
-            return 0
-    elif argv:
-        raise RuntimeError("brood deploy go accepts only --if-enabled")
+    if argv:
+        raise RuntimeError("brood deploy go takes no arguments")
     image = Deploy(cluster()).run()
-    print(f"Go server deployed: {image}")
-    print("Django ingress is unchanged. Bootstrap or migrate users before switching traffic.")
+    print(f"Go endpoint prepared: {image}")
+    print("Public ingress is unchanged. Import users and verify recovery access before public cutover.")
     return 0

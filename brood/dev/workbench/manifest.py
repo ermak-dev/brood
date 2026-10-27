@@ -6,11 +6,12 @@ from pathlib import Path
 import re
 
 from brood.common import config
-from brood.dev.build.plan import parse_document
+import yaml
 
 
 def _declarations():
-    return parse_document(Path(config.PROJECT).joinpath("Broodfile").read_text())
+    # Это только чтение шаблонов; проверка схемы и компиляция принадлежат Go.
+    return yaml.safe_load(Path(config.PROJECT).joinpath("Broodfile").read_text())
 
 
 PUBLIC_HOSTS = tuple(_declarations()["networks"]["development"]["tls"]["hosts"])

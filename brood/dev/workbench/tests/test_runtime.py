@@ -35,10 +35,15 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_settings_are_fresh_local_and_do_not_copy_production_credentials(self):
         values = runtime.development_settings(self.root, self.token)
-        for key in ("DJANGO_SECRET_KEY", "POSTGRES_PASSWORD", "DJANGO_SUPERUSER_PASSWORD",
-                    "CLIPROXY_MANAGEMENT_KEY", "CLIPROXY_CLIENT_KEY"):
-            self.assertIn(values[key], self.generated)
-        self.assertEqual(len(set(self.generated)), 5)
+        # FEATURE: Изолированный workbench принимает только Go runtime.
+        # SPEC: Свежий session secret; без Django, Postgres и proxy credentials.
+        # IMPLEMENTATION: Go session secret и гостевой TLS создаются один раз.
+        # RESULT: IMPLEMENTED — private settings и TLS сохраняются при повторном старте.
+        # STATUS: DONE
+        self.assertIn(values["BROOD_SESSION_SECRET"], self.generated)
+        self.assertEqual(len(set(self.generated)), 1)
+        self.assertFalse(any(key.startswith(("DJANGO_", "POSTGRES_", "CLIPROXY_"))
+                             for key in values))
         self.assertEqual(values["SUBSTRATE_SOURCE"], str(self.root / "substrate"))
         self.assertEqual(values["BROOD_HTTP_PORT"], "8080")
         self.assertEqual(values["BROOD_HTTPS_PORT"], "8443")
@@ -51,7 +56,7 @@ class WorkspaceTests(unittest.TestCase):
         env = project / ".env"
         before = env.read_text()
         self.assertEqual(env.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(config.parse_env(before)["DJANGO_SECRET_KEY"], "new-secret-0")
+        self.assertEqual(config.parse_env(before)["BROOD_SESSION_SECRET"], "new-secret-0")
         self.assertEqual((project / "bin/brood").read_text(), "seed")
         for directory in ("docker", "tmp", "home", "data", "logs", "results"):
             self.assertTrue((self.root / directory).is_dir())
@@ -61,7 +66,7 @@ class WorkspaceTests(unittest.TestCase):
         runtime.prepare_workspace(self.root, self.seeds, self.token, self.openssl)
         self.assertEqual(env.read_text(), before)
         self.assertEqual((project / "bin/brood").read_text(), "operator changes")
-        self.assertEqual(len(self.generated), 5)
+        self.assertEqual(len(self.generated), 1)
 
     def test_seed_with_env_is_rejected_before_copying_credentials(self):
         (self.seeds / "brood" / ".env").write_text("GITLAB_TOKEN=private")

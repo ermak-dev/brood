@@ -9,8 +9,9 @@ metadata:
     app.kubernetes.io/managed-by: brood
     ate.dev/api-access: "true"
 ---
-# Под django ходит в ateapi как самостоятельный принципал, а не как общий
-# ate-client: у того токен заминтовал бы кто угодно с RBAC на его ServiceAccount.
+# Go-сервер использует историческое имя django: этот точный принципал
+# brood/django уже разрешён в ateapi и atenet-router. Переименование требует
+# отдельной миграции доверия; Python runtime за этим именем больше нет.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

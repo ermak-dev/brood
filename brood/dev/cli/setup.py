@@ -1,14 +1,12 @@
 """brood dev setup: create the working copy's venv and development settings
 
 Creates venv/ in the brood working copy with the python that runs brood, or
-reuses the one already there, and installs the server and dev dependencies
-that pyproject.toml declares. bin/brood activates this venv on every call.
+reuses the one already there, and installs the dev dependencies declared
+in pyproject.toml. bin/brood activates this venv on every call.
 
-Adds to .env what a development server needs and .env lacks: a generated
-DJANGO_SECRET_KEY and DJANGO_DEBUG='1'. Values already in .env are kept,
-and the key is never printed.
-
-Then: brood server migrate, brood server createsuperuser, brood server runserver.
+Adds a generated BROOD_SESSION_SECRET when .env lacks it. Existing values
+are preserved and the secret is never printed. Build the Go binaries with
+make -C go build; the server and client do not use this Python environment.
 """
 import os
 import secrets
@@ -21,9 +19,7 @@ from brood.dev.cli._common import usage
 
 VENV = os.path.join(config.PROJECT, "venv")
 PYPROJECT = os.path.join(config.PROJECT, "pyproject.toml")
-# Рабочей копии разработчика нужны сервер -- его гоняют и проверяют -- и
-# инструменты dev. Клиенту зависимостей пока не нужно.
-EXTRAS = ("server", "dev")
+EXTRAS = ("dev",)
 
 
 def requirements(project, extras=EXTRAS):
@@ -38,15 +34,8 @@ def requirements(project, extras=EXTRAS):
 
 
 def missing_settings(env, new_key):
-    """Что дописать в .env -> [(имя, значение)]. Чистая функция. Пустой
-    DJANGO_SECRET_KEY -- то же, что нет его; DJANGO_DEBUG, названный хоть
-    пустым, -- решение человека, и его не трогаем."""
-    out = []
-    if not env.get("DJANGO_SECRET_KEY"):
-        out.append(("DJANGO_SECRET_KEY", new_key))
-    if "DJANGO_DEBUG" not in env:
-        out.append(("DJANGO_DEBUG", "1"))
-    return out
+    """Что дописать в .env; существующий непустой секрет сохраняется."""
+    return [] if env.get("BROOD_SESSION_SECRET") else [("BROOD_SESSION_SECRET", new_key)]
 
 
 def append_lines(text, pairs):
@@ -92,4 +81,4 @@ def main(argv):
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(append_lines(text, pairs))
         print(f".env {config.ENV_FILE}: added {', '.join(name for name, _ in pairs)}")
-    print("next: brood server migrate; brood server createsuperuser; brood server runserver")
+    print("next: make -C go build; go/bin/brood bootstrap-admin; go/bin/brood serve")

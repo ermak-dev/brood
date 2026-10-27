@@ -26,10 +26,11 @@ github.com/agent-substrate/substrate на коммите `COMMIT` из
 Новый Substrate — правка `COMMIT`, после того как флаги `DEPLOY` сверены с
 `hack/install-ate-kind.sh` этого коммита. `DEPLOY` также держит
 `--ateapi-authz-bootstrap-owners`: глобальные владельцы ateapi, устанавливает
-их `ate-setup` флагом на Deployment ate-api-server. Под `django` сервера brood
-(`system:serviceaccount:brood:django`) нужен панельной странице «Проекты»:
-CRUD atespace требует global owner. Общий `ate-client` оставлен: без него
-`kubectl ate` и демо не работают.
+их `ate-setup` флагом на Deployment ate-api-server. Go-сервер использует
+историческую ServiceAccount `django` (`system:serviceaccount:brood:django`):
+CRUD atespace требует global owner. Это infrastructure identity, не Django
+runtime. Brood проверяет пользовательские права перед вызовом привилегированного
+ateapi. Общий `ate-client` оставлен: без него `kubectl ate` и демо не работают.
 
 `SUBSTRATE_SOURCE` в `.env` — свой клон разработчика вместо этого: он берётся
 как есть, без fetch и checkout.
@@ -66,11 +67,11 @@ CRUD atespace требует global owner. Общий `ate-client` оставл�
 - `<checkout>/bin/kubectl-ate`.
 
 `brood substrate install` ставит инфраструктуру без демо и без пулов.
-Начальный WorkerPool `brood` создаёт `brood deploy server` вместе с сервером
-(см. `docs/DEPLOY.md`). Остальные пулы namespace `brood` создаются в панели:
-раздел «Пулы воркеров» не зависит от активного проекта. WorkerPool задаёт
-число подов и их ресурсы; Worker в ateapi -- отражение конкретного пода,
-а ActorTemplate задаёт нагрузку внутри sandbox, не заменяет пул.
+Подготовка Go endpoint не создаёт и не меняет существующие WorkerPool
+(см. `docs/DEPLOY.md`). Пулы создаются осознанно через авторизованный API
+или инструменты Substrate; в минимальной Go-панели редактора пулов нет.
+WorkerPool задаёт число подов и их ресурсы; Worker в ateapi — отражение
+конкретного пода, а ActorTemplate задаёт нагрузку внутри sandbox, не заменяет пул.
 
 Состояние — в `<checkout>/bin/substrate`: kubectl нужной версии, kubeconfig и
 записи владения (`owned`, Id контейнеров). Там же его держал

@@ -10,15 +10,55 @@ from brood.dev.workbench import build
 
 
 class ImageBuildTests(unittest.TestCase):
-    def test_context_delegates_to_the_generic_committed_source_exporter(self):
-        builder = build.Builder(mock.Mock())
-        selected = mock.Mock(revision="abc")
-        with mock.patch.object(builder, "_load", return_value=selected, create=True), \
-                mock.patch("brood.dev.build.context.export") as export:
-            with tempfile.TemporaryDirectory() as tmp:
-                builder.context(Path(tmp) / "context")
-        export.assert_called_once()
-        self.assertIs(export.call_args.args[0], selected)
+    # FEATURE: Сборка workbench делегирует Go, не Python compiler/schema.
+    # SPEC: Committed Git export сохраняет identity, исключает secrets и credentials.
+    # IMPLEMENTATION: Реальный Go export проверяется на локальном Git repository.
+    # RESULT: IMPLEMENTED — identity и secret isolation сохранены без Python compiler.
+    # STATUS: DONE
+    @classmethod
+    def setUpClass(cls):
+        cls.tools = tempfile.TemporaryDirectory()
+        cls.client = str(Path(cls.tools.name) / "bro")
+        result = subprocess.run(["go", "build", "-o", cls.client, "./cmd/bro"],
+                                cwd=build.HERE.parents[2] / "go", capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tools.cleanup()
+
+    def test_context_delegates_to_the_go_committed_source_exporter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            builder = build.Builder(project=tmp)
+            with mock.patch.object(build.subprocess, "run", return_value=mock.Mock(
+                    returncode=0, stdout="context\n", stderr="")) as run:
+                builder.context(Path(tmp) / "context", "main")
+            args = run.call_args.args[0]
+            self.assertEqual(args[:3], ["bro", "build", "development"])
+            self.assertIn("--export", args)
+            self.assertEqual(args[args.index("--ref") + 1], "main")
+            self.assertEqual(args[args.index("--project") + 1], tmp)
+            self.assertTrue(run.call_args.kwargs["capture_output"])
+
+    def test_build_keeps_go_published_artifacts_and_returns_only_the_image(self):
+        builder = build.Builder()
+        with mock.patch.object(build.subprocess, "run", return_value=mock.Mock(
+                returncode=0, stdout="registry.example/image@sha256:abc\n/project/.brood/build/development\n",
+                stderr="")) as run:
+            self.assertEqual(builder.build(), "registry.example/image@sha256:abc")
+        self.assertNotIn("--export", run.call_args.args[0])
+
+    def test_empty_go_build_output_has_a_reason_without_a_traceback(self):
+        with mock.patch.object(build.subprocess, "run", return_value=mock.Mock(
+                returncode=0, stdout="", stderr="")):
+            with self.assertRaisesRegex(RuntimeError, "Go.*no image"):
+                build.Builder().build()
+
+    def test_missing_client_is_an_actionable_refusal(self):
+        with mock.patch.object(build.subprocess, "run", side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(RuntimeError, "bro.*not installed"):
+                build.Builder().build()
 
     def git(self, root, *args):
         result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
@@ -35,6 +75,11 @@ class ImageBuildTests(unittest.TestCase):
             self.git(source, "config", "user.email", "test@example.invalid")
             (source / ".gitignore").write_text(".env\nsecrets/\n")
             (source / "code.py").write_text("value = 1\n")
+            declaration = (build.HERE.parents[2] / "go/brood/build/testdata/minimal.yaml").read_text()
+            declaration = declaration.replace("destination: project", "destination: project\n    gitMetadata: true")
+            (source / "Broodfile").write_text(declaration)
+            (source / "environment").mkdir()
+            (source / "environment/Dockerfile").write_text("FROM scratch\n")
             (source / ".env").write_text("GITLAB_TOKEN=private")
             (source / "secrets").mkdir()
             (source / "secrets/key").write_text("private")
@@ -42,7 +87,12 @@ class ImageBuildTests(unittest.TestCase):
             self.git(source, "commit", "-qm", "Test snapshot")
             self.git(source, "remote", "add", "origin", "https://example.org/project.git")
             sha = self.git(source, "rev-parse", "HEAD")
-            self.assertEqual(build.snapshot(source, "HEAD", target), sha)
+            builder = build.Builder(project=source, client=self.client)
+            with mock.patch.object(build.config, "get", side_effect=lambda key:
+                                   {"BUILD_REGISTRY": "registry.example/team",
+                                    "BUILD_ATESPACE": "dev"}.get(key)):
+                builder.context(target)
+            target = target / "project"
             self.assertEqual(self.git(target, "rev-parse", "HEAD"), sha)
             self.assertEqual(self.git(target, "remote", "get-url", "origin"),
                              "https://example.org/project.git")
@@ -52,12 +102,17 @@ class ImageBuildTests(unittest.TestCase):
             self.assertNotIn(str(source), (target / ".git/config").read_text())
             self.assertFalse((target / ".git/FETCH_HEAD").exists())
             self.git(source, "remote", "set-url", "origin", "ssh://git:private@example.org/project.git")
-            with self.assertRaisesRegex(RuntimeError, "credentials"):
-                build.snapshot(source, "HEAD", root / "unsafe-snapshot")
+            with self.assertRaisesRegex(RuntimeError, "credentials|repository"), \
+                    mock.patch.object(build.config, "get", side_effect=lambda key:
+                                      {"BUILD_REGISTRY": "registry.example/team",
+                                       "BUILD_ATESPACE": "dev"}.get(key)):
+                builder.context(root / "unsafe-snapshot")
+            self.assertFalse((root / "unsafe-snapshot").exists())
 
     def test_context_can_be_exported_without_publishing_an_image(self):
         from brood.dev.workbench.cli import build as command
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(command, "cluster"), \
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(command, "cluster",
+                side_effect=AssertionError("export must not inspect a host cluster"), create=True), \
                 mock.patch.object(command, "Builder") as builder, mock.patch("builtins.print"):
             path = str(Path(tmp) / "context")
             self.assertEqual(command.main(["--export", path]), 0)
@@ -92,12 +147,12 @@ class ImageBuildTests(unittest.TestCase):
             here = Path(tmp) / "loader"
             here.mkdir()
             target = here / "context"
-            builder = build.Builder(mock.Mock())
+            builder = build.Builder()
             with mock.patch.object(build, "HERE", here), mock.patch.object(
-                    build, "snapshot", side_effect=AssertionError("copy started before validation")):
+                    build.subprocess, "run", side_effect=AssertionError("copy started before validation")):
                 with self.assertRaisesRegex(RuntimeError, "outside.*workbench"):
                     builder.context(target)
             self.assertFalse(target.exists())
 
     def test_commands_are_discovered(self):
-        self.assertEqual(set(cli.groups().get("workbench", {})), {"build", "template", "start", "run"})
+        self.assertEqual(set(cli.groups().get("workbench", {})), {"build", "template", "start", "run", "prepare"})

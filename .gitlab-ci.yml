@@ -1,4 +1,4 @@
-# Пайплайн brood: проверки на каждый push, выкладка зелёного main. Шаги --
+# Проверки на каждый push; public cutover требует подготовки и ручного запуска. Шаги --
 # скриптами в .ci/, чтобы их видел shellcheck.
 workflow:
   rules:
@@ -33,5 +33,7 @@ deploy:
   timeout: 90 minutes
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
   script:
     - .ci/deploy.sh

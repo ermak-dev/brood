@@ -7,7 +7,7 @@ import re
 import tempfile
 import time
 
-from brood.dev.deploy import server
+from brood.dev.deploy import infrastructure
 from brood.dev.substrate import local
 
 
@@ -22,7 +22,7 @@ def source_pool(pool):
     """Исходный пул и предусловие Kubernetes нужны даже при нуле реплик."""
     metadata = pool.get("metadata", {}) if isinstance(pool, dict) else {}
     if not all(metadata.get(key) for key in ("uid", "resourceVersion", "name", "namespace")) \
-            or metadata["name"] != "brood" or metadata["namespace"] != server.NAMESPACE \
+            or metadata["name"] != "brood" or metadata["namespace"] != infrastructure.NAMESPACE \
             or not isinstance(pool.get("spec"), dict):
         raise RuntimeError("WorkerPool brood/brood needs its uid, resourceVersion and spec")
     if [c.get("name") for c in pool["spec"].get("sandboxClasses", [])] != ["gvisor"]:
@@ -33,7 +33,7 @@ def source_pool(pool):
 def worker_image(image):
     """Только microVM-воркер из реестра этой установки, закреплённый по digest."""
     if not isinstance(image, str) or not re.fullmatch(
-            re.escape(server.REGISTRY) + r"/ateworker-microvm@sha256:[0-9a-f]{64}", image):
+            re.escape(infrastructure.REGISTRY) + r"/ateworker-microvm@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("microVM worker image must be a digest in the installation registry")
     return image
 
@@ -46,8 +46,8 @@ def microvm_pool(pool, image):
     spec.update(workerImage=image, sandboxClasses=[{
         "name": "microvm", "configRef": {"name": CONFIG}}])
     return {"apiVersion": "ate.dev/v1", "kind": "WorkerPool",
-            "metadata": {"name": TARGET, "namespace": server.NAMESPACE,
-                         "labels": {server.OWNER[0]: server.OWNER[1]},
+            "metadata": {"name": TARGET, "namespace": infrastructure.NAMESPACE,
+                         "labels": {infrastructure.OWNER[0]: infrastructure.OWNER[1]},
                          "annotations": {SOURCE_UID: pool["metadata"]["uid"]}},
             "spec": spec}
 
@@ -79,7 +79,7 @@ def require_empty(response):
 def require_drained(response, replicas):
     """Drain в ateapi закрывает размещение до последней проверки акторов."""
     workers = [worker for worker in response.get("workers", [])
-               if worker.get("workerNamespace") == server.NAMESPACE
+               if worker.get("workerNamespace") == infrastructure.NAMESPACE
                and worker.get("workerPool") == "brood"]
     if len(workers) < replicas or any(worker.get("status", {}).get("state") !=
                                      "WORKER_STATE_DRAINING" for worker in workers):
@@ -92,7 +92,7 @@ def workers_ready(response, replicas):
     ready = 0
     for worker in response.get("workers", []):
         status = worker.get("status", {})
-        if worker.get("workerNamespace") != server.NAMESPACE \
+        if worker.get("workerNamespace") != infrastructure.NAMESPACE \
                 or worker.get("workerPool") != TARGET \
                 or status.get("state") != "WORKER_STATE_ACTIVE":
             continue
@@ -108,7 +108,7 @@ class Deploy:
     def __init__(self, cluster, clock=time.monotonic, sleep=time.sleep):
         self.cluster, self.shell = cluster, cluster.shell
         self.clock, self.sleep = clock, sleep
-        self.deployment = server.Deploy(cluster)
+        self.deployment = infrastructure.Infrastructure(cluster)
 
     def migrate(self):
         self.cluster.check()
@@ -128,16 +128,16 @@ class Deploy:
         return image
 
     def _preflight(self):
-        namespace = self._json("get", "namespace", server.NAMESPACE)
-        if namespace.get("metadata", {}).get("labels", {}).get(server.OWNER[0]) != server.OWNER[1]:
+        namespace = self._json("get", "namespace", infrastructure.NAMESPACE)
+        if namespace.get("metadata", {}).get("labels", {}).get(infrastructure.OWNER[0]) != infrastructure.OWNER[1]:
             raise RuntimeError("namespace brood does not belong to brood")
-        pool = source_pool(self._json("get", "workerpool", "brood", "-n", server.NAMESPACE))
-        target = self._json("get", "workerpool", TARGET, "-n", server.NAMESPACE,
+        pool = source_pool(self._json("get", "workerpool", "brood", "-n", infrastructure.NAMESPACE))
+        target = self._json("get", "workerpool", TARGET, "-n", infrastructure.NAMESPACE,
                             "--ignore-not-found")
         if target is not None:
             meta = target.get("metadata", {})
             if meta.get("annotations", {}).get(SOURCE_UID) != pool["metadata"]["uid"] \
-                    or meta.get("labels", {}).get(server.OWNER[0]) != server.OWNER[1]:
+                    or meta.get("labels", {}).get(infrastructure.OWNER[0]) != infrastructure.OWNER[1]:
                 raise RuntimeError(f"WorkerPool {TARGET} does not belong to this migration")
             if target["spec"].get("sandboxClasses") != [
                     {"name": "microvm", "configRef": {"name": CONFIG}}]:
@@ -225,12 +225,12 @@ class Deploy:
 
     def _wait(self, replicas):
         self._output("kubectl", f"--context={local.CONTEXT}", "wait", "--for=create",
-                     f"deployment/{TARGET}", "-n", server.NAMESPACE, "--timeout=600s")
+                     f"deployment/{TARGET}", "-n", infrastructure.NAMESPACE, "--timeout=600s")
         self._output("kubectl", f"--context={local.CONTEXT}", "rollout", "status",
-                     f"deployment/{TARGET}", "-n", server.NAMESPACE, "--timeout=600s")
+                     f"deployment/{TARGET}", "-n", infrastructure.NAMESPACE, "--timeout=600s")
         deadline = self.clock() + 600
         while True:
-            pool = self._json("get", "workerpool", TARGET, "-n", server.NAMESPACE)
+            pool = self._json("get", "workerpool", TARGET, "-n", infrastructure.NAMESPACE)
             if pool.get("status", {}).get("readyReplicas", 0) >= replicas \
                     and workers_ready(self._ate("workers"), replicas):
                 return
@@ -242,8 +242,8 @@ class Deploy:
     def _wait_stopped(self):
         deadline = self.clock() + 300
         while True:
-            pool = self._json("get", "workerpool", "brood", "-n", server.NAMESPACE)
-            pods = self._json("get", "pods", "-n", server.NAMESPACE,
+            pool = self._json("get", "workerpool", "brood", "-n", infrastructure.NAMESPACE)
+            pods = self._json("get", "pods", "-n", infrastructure.NAMESPACE,
                               "-l", "ate.dev/worker-pool=brood")
             if pool.get("status", {}).get("replicas", 0) == 0 and not pods.get("items"):
                 return

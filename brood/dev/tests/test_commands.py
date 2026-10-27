@@ -34,7 +34,7 @@ MERGES = [
 class DevCommandsTests(unittest.TestCase):
     def test_dev_verbs(self):
         tree = cli.groups()["dev"]
-        self.assertEqual(set(tree), {"bug", "ci", "proto", "setup", "web"})
+        self.assertEqual(set(tree), {"bug", "ci", "setup", "test"})
         self.assertEqual(set(tree["bug"]), {"close", "comment", "edit", "epic", "evidence",
                                             "labels", "list", "new", "relabel", "show", "start"})
         self.assertEqual(set(tree["ci"]), {"cancel", "lint", "list", "log", "retry",

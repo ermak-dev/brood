@@ -12,16 +12,7 @@ fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-read -r version checksum < <(python3 -I -c \
-    'import json; p=json.load(open("brood/dev/pins.json")); print(p["GO_VERSION"],p["GO_SHA256"])')
-mkdir "$work/toolchain"
-curl --fail --silent --show-error --location \
-    "https://go.dev/dl/go${version}.linux-amd64.tar.gz" --output "$work/go.tar.gz"
-printf '%s  %s\n' "$checksum" "$work/go.tar.gz" | sha256sum --check --status
-tar -xzf "$work/go.tar.gz" -C "$work/toolchain"
-export PATH="$work/toolchain/go/bin:$PATH"
-export CGO_ENABLED=0 GOTOOLCHAIN=local GOWORK=off GOFLAGS=-modcacherw
-export GOCACHE="$work/build-cache" GOMODCACHE="$work/module-cache"
+source .ci/go-toolchain.sh
 cd go
 go mod download
 make fmt-check

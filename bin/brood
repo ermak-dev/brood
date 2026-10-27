@@ -23,7 +23,7 @@ if top="$(git rev-parse --show-toplevel 2>/dev/null)" &&
 else
     PROJECT="$OWN"
 fi
-# venv рабочей копии (brood dev setup): python, pip и django-admin -- его.
+# Python dev-инструментов берётся из venv этой рабочей копии.
 # Без venv -- системный python3, которым brood dev setup venv и заводит.
 if [[ -f "$PROJECT/venv/bin/activate" ]]; then
     # shellcheck disable=SC1091
