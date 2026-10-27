@@ -2,7 +2,7 @@
 
 Общий модуль `brood.dev/go` (go 1.27, go.work в корне репозитория).
 Единственный источник правил — эпик #27 (`bin/brood dev bug show 27`).
-Pinned Substrate: replace в go.mod на локальный worktree 4ebd668d, до публикации модуля.
+Pinned Substrate: публичная версия go.ate.dev/substrate v0.6.1-0.20261023032142-4ebd668d62e3, без машинных replace.
 
 ## Владение файлами (параллельная работа)
 

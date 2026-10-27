@@ -35,9 +35,9 @@ Python-код разделён на четыре модуля по дистри�
    В дистрибутивы не едет
  - `go/` — Go-модуль `brood.dev/go` (go 1.27): сервер `brood` и клиент
    `bro` (`cmd/brood`, `cmd/bro`), устройство и зависимости — `docs/GO.md`.
-   `go.work` в корне подключает модуль; `go.mod` держит replace
-   `go.ate.dev/substrate` на локальный pinned worktree (4ebd668d) до
-   публикации модуля Substrate. Сборка и тесты — из `go/`:
+   `go.work` в корне подключает модуль; `go.mod` закрепляет публичный
+   модуль Substrate на commit 4ebd668d, без машинных replace.
+   Сборка и тесты — из `go/`:
    `go build ./...`, `go test ./...`. Собранные бинарники не заменяют
    `bin/brood`: на время перехода dev-launcher остаётся входом
    Python-инструментов

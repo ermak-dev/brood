@@ -7,11 +7,12 @@ static/
 .brood/
 
 # Go
-go/brood
-go/bro
+go/bin/
 go/coverage.out
 go/coverage.html
 *.test
 go/bro.exe
 go/brood.db
 go/serve.pid
+!go/brood/server/static/
+!go/brood/server/static/**
