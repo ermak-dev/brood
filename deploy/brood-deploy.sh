@@ -6,8 +6,8 @@
 # Клиент -- джоба deploy на builder (.ci/deploy.sh) -- шлёт полный sha коммита
 # командой ssh (SSH_ORIGINAL_COMMAND), а на stdin -- tar его дерева (git
 # archive) с дописанными .env и secrets/ стенда. Дерево распаковывается в
-# чистый releases/<sha>, и из него ставится Substrate -- brood substrate
-# install, затем start, -- и сервер: brood deploy server. Состояние установки
+# чистый releases/<sha>. Обновляется только приложение: работающий Substrate
+# и его акторы не перекатываются вместе с сервером. Состояние установки
 # живёт в каталоге данных пользователя, не в релизе: старый релиз вместе с его
 # секретами удаляется после удачного деплоя.
 set -o errexit -o nounset -o pipefail
@@ -33,11 +33,8 @@ mkdir "$RELEASE"
 tar -x -C "$RELEASE" --no-same-owner
 cd "$RELEASE"
 echo "brood-deploy: ${SHA}"
-# Проверка публичного cutover должна отказать до первой мутации кластера.
-# Подготовка приватного Go endpoint не означает готовности пользователей.
+export BROOD_RELEASE_SHA="$SHA"
 bin/brood deploy server --check
-bin/brood substrate install
-bin/brood substrate start
 bin/brood deploy server
 
 ln -sfn "$RELEASE" "$RELEASES/current"

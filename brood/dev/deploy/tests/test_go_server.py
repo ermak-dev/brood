@@ -54,7 +54,8 @@ class GoDeploymentTests(unittest.TestCase):
     def deploy(self):
         cluster = Mock()
         workers = {"gvisor": "localhost:5002/ateworker-gvisor@sha256:" + "b" * 64}
-        values = {"BROOD_SESSION_SECRET": "x" * 32, "WORKER_POOL_IMAGES": json.dumps(workers)}
+        values = {"BROOD_SESSION_SECRET": "x" * 32, "WORKER_POOL_IMAGES": json.dumps(workers),
+                  "BROOD_RELEASE_SHA": "c" * 40}
         return go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout")
 
     def test_build_and_apply_only_go_without_deleting_data(self):
@@ -71,6 +72,8 @@ class GoDeploymentTests(unittest.TestCase):
             if "build" in args:
                 events.append("build")
                 self.assertEqual(args[args.index("-f") + 1], "/checkout/deploy/Dockerfile.go")
+                self.assertIn("--build-arg", args)
+                self.assertIn("VERSION=" + "c" * 40, args)
                 Path(args[args.index("--metadata-file") + 1]).write_text(
                     json.dumps({"containerimage.digest": digest}))
                 return 0, "", ""

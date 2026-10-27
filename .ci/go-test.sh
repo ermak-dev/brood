@@ -22,5 +22,5 @@ make test
 make build
 make cross
 for arch in amd64 arm64; do
-    tar -czf "bin/brood-linux-${arch}.tar.gz" -C "bin/linux_${arch}" brood bro brood-migrate
+    tar -czf "bin/brood-linux-${arch}.tar.gz" -C "bin/linux_${arch}" brood bro
 done

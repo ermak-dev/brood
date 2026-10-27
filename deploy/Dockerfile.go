@@ -24,14 +24,12 @@ COPY --from=panel /app/dist/index.html ./brood/server/static/index.html
 ARG VERSION=dev
 RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/brood ./cmd/brood \
     && go build -trimpath -ldflags="-s -w" -o /out/bro ./cmd/bro \
-    && go build -trimpath -ldflags="-s -w" -o /out/brood-migrate ./cmd/brood-migrate \
     && mkdir /out/data && chmod 0700 /out/data && chown 65532:65532 /out/data
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/brood /brood
 COPY --from=build /out/bro /bro
-COPY --from=build /out/brood-migrate /brood-migrate
 COPY --from=build --chown=65532:65532 /out/data /data
 USER 65532:65532
 WORKDIR /data

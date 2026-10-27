@@ -26,7 +26,7 @@ def approved_images(raw):
     return images
 
 
-def manifests(image, worker_images=None):
+def manifests(image, worker_images=None, proxy=False):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -70,6 +70,9 @@ def manifests(image, worker_images=None):
                  "readinessProbe": {"httpGet": {"path": "/healthz", "port": "https", "scheme": "HTTPS"}},
                  "resources": {"requests": {"cpu": "100m", "memory": "128Mi"},
                                "limits": {"cpu": "2", "memory": "512Mi"}}}
+    if proxy:
+        container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
+            "name": "brood-go-env", "key": key}}} for key in ("CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY"))
     deployment = obj("Deployment", "brood-go", {
         "replicas": 1, "strategy": {"type": "Recreate"}, "selector": {"matchLabels": {"app": "brood-go"}},
         "template": {"metadata": {"labels": labels}, "spec": {
@@ -81,7 +84,7 @@ def manifests(image, worker_images=None):
                         {"name": "ateapi", "projected": projected},
                         {"name": "tls", "secret": {"secretName": "brood-go-tls"}},
                         {"name": "tmp", "emptyDir": {}}]}}}, "apps/v1")
-    return [obj("PersistentVolumeClaim", "brood-go-data", {
+    objects = [obj("PersistentVolumeClaim", "brood-go-data", {
                 "accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}),
             obj("Service", "brood-go", {"selector": {"app": "brood-go"},
                 "ports": [{"name": "https", "port": 8443, "targetPort": "https"}]}), deployment,
@@ -95,6 +98,10 @@ def manifests(image, worker_images=None):
                      "ports": [{"port": 53, "protocol": "UDP"}, {"port": 53, "protocol": "TCP"}]},
                     {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ate-system"}}}],
                      "ports": [{"port": 443}]}]}, "networking.k8s.io/v1")]
+    if proxy:
+        objects[-1]["spec"]["egress"].append({"to": [{"podSelector": {"matchLabels": {"app": "cliproxy"}}}],
+                                              "ports": [{"port": 8317}]})
+    return objects
 
 
 class Deploy:
@@ -127,6 +134,13 @@ class Deploy:
         secret = self.get("BROOD_SESSION_SECRET")
         if not secret or len(secret) < 32:
             raise RuntimeError("Go deployment needs BROOD_SESSION_SECRET of at least 32 characters in .env")
+        environment = {"BROOD_SESSION_SECRET": secret}
+        proxy_url = self.get("CLIPROXY_URL")
+        if proxy_url:
+            proxy_key = self.get("CLIPROXY_MANAGEMENT_KEY")
+            if not proxy_key:
+                raise RuntimeError("CLIPROXY_MANAGEMENT_KEY is required with CLIPROXY_URL")
+            environment.update(CLIPROXY_URL=proxy_url, CLIPROXY_MANAGEMENT_KEY=proxy_key)
         infrastructure = Infrastructure(self.cluster, project=str(self.project))
         tls = infrastructure._tls()
         self.cluster.check()
@@ -134,7 +148,7 @@ class Deploy:
         workers = self._worker_images()
         for kind, name in (("deployment", "brood-go"), ("service", "brood-go"),
                            ("pvc", "brood-go-data"), ("secret", "brood-go-env"), ("secret", "brood-go-tls"),
-                           ("networkpolicy", "brood-go")):
+                           ("networkpolicy", "brood-go"), ("networkpolicy", "brood-go-cliproxy")):
             code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
                 "get", kind, name, "-n", "brood", "--ignore-not-found", "-o", "json")
             if code:
@@ -152,8 +166,12 @@ class Deploy:
             root = Path(directory)
             metadata = root / "metadata.json"
             tag = "localhost:5002/brood-go:build-" + uuid.uuid4().hex
+            release = self.get("BROOD_RELEASE_SHA")
+            if release and not re.fullmatch(r"[0-9a-f]{40}", release):
+                raise RuntimeError("BROOD_RELEASE_SHA must be a full commit sha")
+            version_args = ("--build-arg", f"VERSION={release}") if release else ()
             code, out, err = self.cluster.shell.output("docker", "buildx", "build", "--push", "--platform",
-                "linux/amd64", "--metadata-file", str(metadata), "-t", tag,
+                "linux/amd64", *version_args, "--metadata-file", str(metadata), "-t", tag,
                 "-f", str(self.project / "deploy/Dockerfile.go"), str(self.project))
             if code:
                 raise RuntimeError("Go image build failed: " + (err or out)[-4000:])
@@ -161,9 +179,15 @@ class Deploy:
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
                 raise RuntimeError("Go image build returned invalid digest metadata")
             image = "localhost:5002/brood-go@" + digest
-            objects = manifests(image, workers)
+            objects = manifests(image, workers, proxy=bool(proxy_url))
             objects[-1]["spec"]["egress"].extend(api_rules)
-            for name, values, secret_type in (("brood-go-env", {"BROOD_SESSION_SECRET": secret}, "Opaque"),
+            if proxy_url:
+                objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                    "metadata": {"name": "brood-go-cliproxy", "namespace": "brood", "labels": OWNER.copy()},
+                    "spec": {"podSelector": {"matchLabels": {"app": "cliproxy"}}, "policyTypes": ["Ingress"],
+                             "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "brood-go"}}}],
+                                          "ports": [{"port": 8317}]}]}})
+            for name, values, secret_type in (("brood-go-env", environment, "Opaque"),
                                              ("brood-go-tls", tls, "kubernetes.io/tls")):
                 objects.append({"apiVersion": "v1", "kind": "Secret", "type": secret_type,
                                 "metadata": {"name": name, "namespace": "brood", "labels": OWNER.copy()},

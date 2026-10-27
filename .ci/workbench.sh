@@ -34,7 +34,7 @@ export GOTOOLCHAIN=local CGO_ENABLED=0
 (
     cd go
     go test ./...
-    go build -trimpath -o bin/ ./cmd/brood ./cmd/bro ./cmd/brood-migrate
+    go build -trimpath -o bin/ ./cmd/brood ./cmd/bro
 )
 export PATH="$PWD/go/bin:$PATH"
 

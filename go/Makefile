@@ -10,7 +10,7 @@ export CGO_ENABLED := 0
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X=main.version=$(VERSION)
 
-CMDS    := ./cmd/brood ./cmd/bro ./cmd/brood-migrate
+CMDS    := ./cmd/brood ./cmd/bro
 TARGETS := linux/amd64 linux/arm64
 
 .PHONY: all build release web web-test test vet fmt-check cross clean
@@ -27,7 +27,7 @@ web-test:
 release: web
 	$(MAKE) build cross
 
-# Бинарники сервера, клиента и миграции -- в go/bin/, он в .gitignore.
+# Бинарники сервера и клиента -- в go/bin/, он в .gitignore.
 build:
 	$(GO) build -trimpath -ldflags="$(LDFLAGS)" -o bin/ $(CMDS)
 
@@ -48,7 +48,7 @@ cross:
 		os="$${target%/*}"; arch="$${target#*/}"; \
 		echo "== $$target"; \
 		mkdir -p "bin/$${os}_$${arch}"; \
-		for cmd in brood bro brood-migrate; do \
+		for cmd in brood bro; do \
 			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath -ldflags="$(LDFLAGS)" \
 				-o "bin/$${os}_$${arch}/$$cmd" "./cmd/$$cmd" || exit 1; \
 		done; \

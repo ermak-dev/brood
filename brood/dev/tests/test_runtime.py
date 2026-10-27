@@ -24,13 +24,13 @@ class RuntimeBoundaryTests(unittest.TestCase):
         for dependency in dependencies:
             self.assertNotRegex(dependency.lower(), r"^(django|gunicorn|psycopg)(\W|$)")
 
-    def test_public_rollout_requires_manual_action_until_cutover_is_prepared(self):
+    def test_public_rollout_is_gated_by_successful_default_branch_checks(self):
         pipeline = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
-        rules = pipeline["deploy"]["rules"]
-        self.assertTrue(rules)
-        for rule in rules:
-            self.assertEqual(rule.get("when"), "manual")
-            self.assertIs(rule.get("allow_failure"), True)
+        deploy = pipeline["deploy"]
+        self.assertEqual(deploy["stage"], "deploy")
+        self.assertLess(pipeline["stages"].index("test"), pipeline["stages"].index("deploy"))
+        self.assertEqual(deploy["rules"], [{"if": "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}])
+        self.assertFalse(deploy.get("allow_failure", False))
 
     def test_dev_test_is_the_python_test_entrypoint(self):
         result = subprocess.run([str(ROOT / "bin/brood"), "dev", "test", "--help"],

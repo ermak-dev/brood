@@ -106,8 +106,8 @@ func TestConcurrentWrite(t *testing.T) {
 	}
 }
 
-// TestConcurrentOpen: повторное открытие базы применяет миграции без
-// гонки на schema_migrations.
+// TestConcurrentOpen: конкурентное открытие пустой базы создаёт текущую
+// схему без гонки между проверкой и созданием таблиц.
 func TestConcurrentOpen(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/db.sqlite3"
