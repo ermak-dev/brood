@@ -404,7 +404,7 @@ func (p *SubstrateProvisioner) DeleteAtespace(name, uid string) error {
 	if err != nil {
 		return err
 	}
-	if uid != "" && current.GetMetadata().GetUid() != uid {
+	if uid == "" || current.GetMetadata().GetUid() != uid {
 		return fmt.Errorf("%w: atespace %s belongs to uid %s",
 			app.ErrConflict, name, current.GetMetadata().GetUid())
 	}
