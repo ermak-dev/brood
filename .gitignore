@@ -5,3 +5,13 @@ db.sqlite3
 secrets/
 static/
 .brood/
+
+# Go
+go/brood
+go/bro
+go/coverage.out
+go/coverage.html
+*.test
+go/bro.exe
+go/brood.db
+go/serve.pid
