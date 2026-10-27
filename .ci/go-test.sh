@@ -4,6 +4,7 @@
 set -o errexit -o nounset -o pipefail
 
 if [[ "${1:-}" != "--inside" ]]; then
+    bash .ci/web.sh verify
     image="$(python3 -I -c 'import json; print(json.load(open("brood/dev/pins.json"))["PYTHON_IMAGE"])')"
     exec docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" \
         --env HOME=/tmp --volume "$PWD:/src" --workdir /src \

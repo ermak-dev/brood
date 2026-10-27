@@ -114,6 +114,7 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/users/{username}/disable", s.handleAdminSetDisabled(true))
 	mux.HandleFunc("POST /api/admin/users/{username}/enable", s.handleAdminSetDisabled(false))
 	mux.HandleFunc("POST /api/admin/users/{username}/password-reset", s.handleAdminPasswordReset)
+	mux.HandleFunc("POST /api/admin/users/{username}/role", s.handleAdminRole)
 }
 
 // Middleware — LoadAndSave сессий и CSRF: читает session cookie,

@@ -2,7 +2,8 @@
 
 Пул агентов на [Agent Substrate](https://github.com/agent-substrate/substrate).
 Сервер `brood` и пользовательский клиент `bro` — самостоятельные Go-бинарники.
-Панель встроена в сервер. Python остаётся для инструментов разработки,
+Исходная React/Bun-панель в `web` встроена в сервер и расширена страницами
+пользователей, прав, проектов и роёв. Python остаётся для инструментов разработки,
 управления локальным Substrate и bootstrap изолированного workbench.
 
 ## Разработка
@@ -11,6 +12,7 @@
 
 ```sh
 bin/brood dev setup
+bin/brood dev web test
 make -C go build
 bin/brood dev test
 make -C go fmt-check vet test

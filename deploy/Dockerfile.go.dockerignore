@@ -1,10 +1,16 @@
 **
 !go/
 !go/**
+!web/
+!web/**
 !brood/
 !brood/dev/
 !brood/dev/pins.json
 go/bin/
+**/node_modules/
+**/dist/
+**/.env
+**/.env.*
 **/*.db
 **/*.db-wal
 **/*.db-shm

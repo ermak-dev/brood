@@ -13,9 +13,19 @@ LDFLAGS := -s -w -X=main.version=$(VERSION)
 CMDS    := ./cmd/brood ./cmd/bro ./cmd/brood-migrate
 TARGETS := linux/amd64 linux/arm64
 
-.PHONY: all build test vet fmt-check cross clean
+.PHONY: all build release web web-test test vet fmt-check cross clean
 
 all: build
+
+# Release rebuilds source; ordinary build/test deliberately need no Bun.
+web:
+	bash ../.ci/web.sh build
+
+web-test:
+	bash ../.ci/web.sh verify
+
+release: web
+	$(MAKE) build cross
 
 # Бинарники сервера, клиента и миграции -- в go/bin/, он в .gitignore.
 build:

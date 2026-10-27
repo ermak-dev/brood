@@ -26,7 +26,10 @@ bin/brood dev setup
 bin/brood dev test -v
 venv/bin/ruff check .
 
-status testing "Testing Go server, client and embedded UI; building Go binaries"
+status testing "Testing the restored React panel and rebuilding the embedded bundle"
+bin/brood dev web test
+
+status testing "Testing Go server and client; building Go binaries"
 export GOTOOLCHAIN=local CGO_ENABLED=0
 (
     cd go
