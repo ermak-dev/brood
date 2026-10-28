@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -19,12 +20,16 @@ const shutdownTimeout = 10 * time.Second
 // Serve собирает сервер по cfg и слушает до отмены ctx или отказа
 // слушателя.
 func Serve(ctx context.Context, cfg Config) error {
-	return ServeLog(ctx, cfg, nil)
+	return serve(ctx, cfg, nil)
 }
 
-// ServeLog — Serve с приёмником стартовых сообщений (тесты); nil —
-// без сообщений.
-func ServeLog(ctx context.Context, cfg Config, log io.Writer) error {
+// ServeLog preserves the earlier entry point. Server libraries remain silent;
+// readiness uses a context-aware channel rather than an arbitrary writer.
+func ServeLog(ctx context.Context, cfg Config, _ io.Writer) error {
+	return Serve(ctx, cfg)
+}
+
+func serve(ctx context.Context, cfg Config, ready chan<- net.Addr) error {
 	srv, err := New(ctx, cfg, Options{})
 	if err != nil {
 		return err
@@ -38,13 +43,18 @@ func ServeLog(ctx context.Context, cfg Config, log io.Writer) error {
 		ErrorLog:          slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
 	}
 
+	listener, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", cfg.Addr, err)
+	}
+	defer listener.Close()
 	errCh := make(chan error, 1)
 	go func() {
 		var err error
 		if cfg.TLSCert != "" {
-			err = httpSrv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+			err = httpSrv.ServeTLS(listener, cfg.TLSCert, cfg.TLSKey)
 		} else {
-			err = httpSrv.ListenAndServe()
+			err = httpSrv.Serve(listener)
 		}
 		if !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
@@ -52,6 +62,12 @@ func ServeLog(ctx context.Context, cfg Config, log io.Writer) error {
 		}
 		errCh <- nil
 	}()
+	if ready != nil {
+		select {
+		case ready <- listener.Addr():
+		case <-ctx.Done():
+		}
+	}
 
 	// Остановка: отмена контекста или отказ слушателя — раньше того,
 	// кто случится первым.
