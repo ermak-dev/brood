@@ -42,6 +42,8 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 		err = c.auth(ctx, "projects", rest)
 	case "build":
 		err = c.build(args[1:])
+	case "push":
+		err = c.push(ctx, args[1:])
 	case "help", "-h", "--help":
 		if len(args) != 1 {
 			err = errors.New("help accepts no arguments")
@@ -69,21 +71,10 @@ commands:
   logout [server] [--ca FILE]     revoke the server session, then clear local storage
   whoami [server] [--ca FILE]     print the current user
   projects list [server] [--ca FILE]  list accessible projects
-  build [target] [options]       build and push an image, publish local artifacts
+  build [target] [options]       build current files into local OCI artifacts
+  push [target] [options]        upload built images and template to the current server
 
-Build options:
-  --project PATH   Git project directory (default: current directory)
-  --ref REF        committed revision (default: HEAD)
-  --registry HOST/PREFIX   publication destination (or BUILD_REGISTRY)
-  --atespace NAME          artifact namespace (or BUILD_ATESPACE)
-  --plan           print the plan without Docker or login
-  --export PATH    export a new portable context without Docker or login
-
-Registry and atespace must be explicitly configured. --registry or BUILD_REGISTRY
-is authorization to push to that destination; no cluster is inspected or changed.
-Git and Docker/buildx remain external tools; no Python or Substrate checkout is used.
---plan and --export are mutually exclusive. Sources always come from the selected
-commit, never working-tree overlays. No actors are created.
+Run bro <command> --help for command-specific options.
 
 Servers use HTTPS (HTTP is allowed only for localhost/loopback development).
 Without a server, use the last logged-in origin. Sessions and additional CA trust

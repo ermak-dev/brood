@@ -7,8 +7,10 @@ package main
 // STATUS: DONE
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -266,10 +268,11 @@ func TestCLIBuildPlanAndExportWithoutLogin(t *testing.T) {
 	log := fakeDocker(t, "exit 99\n")
 	// An invalid state root must not affect build-only commands.
 	t.Setenv("XDG_STATE_HOME", "relative-state")
-	args := []string{"build", "development", "--project", root, "--ref", "HEAD", "--registry", "registry.example/team", "--atespace", "dev"}
+	t.Chdir(root)
+	args := []string{"build", "development", "--project", "dev"}
 	code, out, diagnostic := invoke(t, "", append(args, "--plan")...)
 	var plan map[string]any
-	if code != 0 || json.Unmarshal([]byte(out), &plan) != nil || plan["registry"] != "registry.example/team" {
+	if code != 0 || json.Unmarshal([]byte(out), &plan) != nil || plan["atespace"] != "dev" {
 		t.Fatalf("%d %q %q", code, out, diagnostic)
 	}
 	exported := filepath.Join(t.TempDir(), "context")
@@ -283,10 +286,8 @@ func TestCLIBuildPlanAndExportWithoutLogin(t *testing.T) {
 	if _, err := os.Stat(log); !os.IsNotExist(err) {
 		t.Fatalf("offline modes invoked docker: %v", err)
 	}
-	// Documented environment settings are also explicit installation configuration.
-	t.Setenv("BUILD_REGISTRY", "registry.example/team")
-	t.Setenv("BUILD_ATESPACE", "dev")
-	code, out, diagnostic = invoke(t, "", "build", "--project", root, "--plan")
+	t.Setenv("BUILD_PROJECT", "dev")
+	code, out, diagnostic = invoke(t, "", "build", "--plan")
 	if code != 0 {
 		t.Fatalf("environment: %d %q %q", code, out, diagnostic)
 	}
@@ -295,15 +296,20 @@ func TestCLIBuildPlanAndExportWithoutLogin(t *testing.T) {
 func TestCLIBuildPublishesSameBuildDigest(t *testing.T) {
 	isolateState(t)
 	root := gitProject(t)
-	digest := strings.Repeat("a", 64)
+	archive, digest := cliOCIArchive(t)
+	t.Setenv("FAKE_OCI_ARCHIVE", archive)
+	t.Setenv("FAKE_OCI_DIGEST", digest)
+	t.Chdir(root)
 	log := fakeDocker(t, `[ "$1 $2" = "buildx build" ] || exit 90
 while [ "$#" -gt 0 ]; do
  if [ "$1" = "--metadata-file" ]; then shift; metadata="$1"; fi
+ if [ "$1" = "--output" ]; then shift; output="${1#type=oci,dest=}"; output="${output%%,*}"; fi
  shift
 done
-printf '{"containerimage.digest":"sha256:`+digest+`"}' > "$metadata"
+cp "$FAKE_OCI_ARCHIVE" "$output"
+printf '{"containerimage.digest":"%s"}' "$FAKE_OCI_DIGEST" > "$metadata"
 `)
-	code, out, diagnostic := invoke(t, "", "build", "--project", root, "--registry", "registry.example/team", "--atespace", "dev")
+	code, out, diagnostic := invoke(t, "", "build", "--project", "dev")
 	if code != 0 {
 		t.Fatalf("%d %q %q", code, out, diagnostic)
 	}
@@ -311,15 +317,18 @@ printf '{"containerimage.digest":"sha256:`+digest+`"}' > "$metadata"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "registry.example/team/example/python@sha256:"+digest) {
+	if !strings.Contains(string(data), "brood.local/example/python@"+digest) {
 		t.Fatalf("wrong digest: %s", data)
 	}
 	calls, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(calls), "\n") != 1 || !strings.HasPrefix(string(calls), "buildx build --push ") {
+	if strings.Count(string(calls), "\n") != 1 || strings.Contains(string(calls), "--push") || !strings.Contains(string(calls), "type=oci,dest=") {
 		t.Fatalf("unexpected docker mutations: %s", calls)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".brood", "build", "development", "image.oci.tar")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -327,7 +336,8 @@ func TestCLIBuildFailureHasDiagnosticsAndNoArtifacts(t *testing.T) {
 	isolateState(t)
 	root := gitProject(t)
 	fakeDocker(t, "printf 'Dockerfile: invalid instruction\\n' >&2\nexit 42\n")
-	code, out, diagnostic := invoke(t, "", "build", "--project", root, "--registry", "registry.example/team", "--atespace", "dev")
+	t.Chdir(root)
+	code, out, diagnostic := invoke(t, "", "build", "--project", "dev")
 	if code == 0 || out != "" || !strings.Contains(diagnostic, "Dockerfile: invalid instruction") || !strings.Contains(diagnostic, "42") {
 		t.Fatalf("%d %q %q", code, out, diagnostic)
 	}
@@ -336,17 +346,49 @@ func TestCLIBuildFailureHasDiagnosticsAndNoArtifacts(t *testing.T) {
 	}
 }
 
-func TestCLIBuildRequiresExplicitRegistryAndAtespace(t *testing.T) {
+func TestCLIBuildDefaultsProjectWithoutRegistryOrLogin(t *testing.T) {
 	isolateState(t)
 	root := gitProject(t)
+	t.Chdir(root)
 	log := fakeDocker(t, "exit 90\n")
-	for _, args := range [][]string{{"build", "--project", root}, {"build", "--project", root, "--registry", "registry.example/team"}} {
-		code, _, diagnostic := invoke(t, "", args...)
-		if code == 0 || (!strings.Contains(diagnostic, "BUILD_REGISTRY") && !strings.Contains(diagnostic, "BUILD_ATESPACE")) {
-			t.Fatalf("%d %q", code, diagnostic)
-		}
+	code, out, diagnostic := invoke(t, "", "build", "--plan")
+	var plan map[string]any
+	if code != 0 || json.Unmarshal([]byte(out), &plan) != nil || plan["atespace"] != "example" {
+		t.Fatalf("%d %q %q", code, out, diagnostic)
 	}
 	if _, err := os.Stat(log); !os.IsNotExist(err) {
-		t.Fatalf("invalid options invoked docker: %v", err)
+		t.Fatalf("plan invoked docker: %v", err)
 	}
+}
+
+func cliOCIArchive(t *testing.T) (string, string) {
+	t.Helper()
+	config := []byte(`{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":[]}}`)
+	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(config))
+	manifest := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":%d},"layers":[]}`, configDigest, len(config)))
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifest))
+	index := []byte(fmt.Sprintf(`{"schemaVersion":2,"manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":%d}]}`, digest, len(manifest)))
+	path := filepath.Join(t.TempDir(), "image.oci.tar")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := tar.NewWriter(file)
+	for name, data := range map[string][]byte{"oci-layout": []byte(`{"imageLayoutVersion":"1.0.0"}`), "index.json": index,
+		"blobs/sha256/" + strings.TrimPrefix(configDigest, "sha256:"): config,
+		"blobs/sha256/" + strings.TrimPrefix(digest, "sha256:"):       manifest} {
+		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(data))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path, digest
 }

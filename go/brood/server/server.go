@@ -44,6 +44,7 @@ type Server struct {
 	ateapi    *substrate.Client
 	provision app.Provisioner
 	proxy     *proxy.Proxy
+	push      *pushRegistry
 	views     actorViews
 	mux       *http.ServeMux
 	cancel    context.CancelFunc
@@ -139,6 +140,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mux = http.NewServeMux()
 	srv.mount()
 	srv.mountLLM(cfg)
+	srv.mountPush(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)

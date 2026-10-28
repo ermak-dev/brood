@@ -251,7 +251,9 @@ func Export(project *Project, destination string, cache map[string]string) (map[
 		spec, _ := planSources[name].(map[string]any)
 		path := filepath.Join(staging, spec["destination"].(string))
 		var report map[string]any
-		if spec["type"] == "project" {
+		if spec["type"] == "project" && project.WorkingTree {
+			report, err = WorkingSnapshot(project.Root, path, spec["gitMetadata"].(bool))
+		} else if spec["type"] == "project" {
 			report, err = Snapshot(project.Root, spec["revision"].(string), path, spec["gitMetadata"].(bool))
 		} else {
 			report, err = externalSource(spec, path, cache)

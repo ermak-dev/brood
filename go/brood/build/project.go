@@ -6,16 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // Project — загруженный проект: корень, commit, грязнота и план.
 type Project struct {
-	Root     string
-	Revision string
-	Dirty    bool
-	Plan     map[string]any
+	Root        string
+	Revision    string
+	WorkingTree bool
+	Dirty       bool
+	Plan        map[string]any
 }
 
 // parsePinsJSON читает JSON-объект пинов, отвергая дубликаты ключей и глубину.
@@ -108,6 +111,78 @@ func parseJSONValue(decoder *json.Decoder, depth int) (any, error) {
 	default:
 		return token, nil
 	}
+}
+
+// readWorkingDocument bounds reads and confines symlinks to the selected root.
+func readWorkingDocument(root *os.Root, name string) (string, error) {
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", fmt.Errorf("could not read %s; path is missing, inaccessible, or escapes project root", name)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s must be a regular file", name)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxDocumentBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("could not read %s", name)
+	}
+	if len(data) > maxDocumentBytes {
+		return "", fmt.Errorf("%s exceeds 1 MiB", name)
+	}
+	return string(data), nil
+}
+
+// LoadWorkingProject reads path/Broodfile and pins without requiring Git.
+// projectName is an optional logical destination label, never a filesystem path.
+// brood.local is an unpublished image identity, not a registry destination.
+func LoadWorkingProject(path, target, projectName string) (*Project, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	absolute, err = filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(absolute)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	text, err := readWorkingDocument(root, "Broodfile")
+	if err != nil {
+		return nil, err
+	}
+	document, err := ParseDocument(text, "Broodfile")
+	if err != nil {
+		return nil, err
+	}
+	var pins map[string]string
+	if raw, ok := document["pinsFile"]; ok && raw != nil {
+		nameValue, _ := raw.(string)
+		name, err := SafePath(nameValue, "pinsFile")
+		if err != nil {
+			return nil, err
+		}
+		text, err := readWorkingDocument(root, name)
+		if err != nil {
+			return nil, err
+		}
+		pins, err = parsePinsJSON(text)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if projectName == "" {
+		projectName, _ = document["name"].(string)
+	}
+	plan, err := MakePlan(document, pins, target, "brood.local", projectName, "Broodfile")
+	if err != nil {
+		return nil, err
+	}
+	return &Project{Root: absolute, WorkingTree: true, Plan: plan}, nil
 }
 
 // LoadProject не читает рабочие Broodfile и pins, даже если они изменены.

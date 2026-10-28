@@ -7,18 +7,28 @@ Substrate и не выполняется при сборке.
 
 ## Использование
 
-В окружении задайте `BUILD_REGISTRY` и `BUILD_ATESPACE`; они также
-принимаются флагами `--registry` и `--atespace`. Go-клиент не читает `.env`
-автоматически: настройки из доверенного файла нужно экспортировать. Для принадлежащего установке
-локального реестра адрес — `localhost:5002`. Broodfile должен находиться в
-выбранном commit, а не только в рабочем дереве.
+Как `make`, команда читает `./Broodfile` и текущие файлы из каталога запуска.
+Изменённые и новые исходники входят в сборку без commit. `--project NAME`
+(или `BUILD_PROJECT`) — имя назначения, не путь к Git checkout. По умолчанию
+используется `name` из Broodfile. Флагов `--ref`, `--registry` и `--atespace` нет.
+Login, кластер и registry для локальной сборки не нужны.
 
 ```sh
+bro --help
+bro build --help
 bro build --plan
 bro build
 bro build coding
-bro build coding --project /path/to/project --ref HEAD --export /new/context
+bro build coding --export /new/context
+bro login https://brood.example.org
+bro push coding --project my-workspace
 ```
+
+Сборочные опции показаны в `bro build --help`, опции публикации — в
+`bro push --help`. Корневая справка перечисляет команды.
+Docker/buildx должен поддерживать OCI exporter; для Docker без containerd image
+store нужен docker-container builder, выбранный через `BUILDX_BUILDER`.
+Клиент не меняет настройки Docker daemon или текущий builder автоматически.
 
 В этом проекте `development` прогоняет тесты и вложенный deploy, `coding`
 запускает интерактивный терминал. Обе цели разделяют environment `workbench`.
@@ -70,9 +80,10 @@ targets:
 
 `sources` — именованные входы; `destination` относительно нового пустого контекста.
 Абсолютные пути, `..`, пересекающиеся destinations запрещены. `project` — снимок
-выбранного commit проекта; допускается один такой источник. `gitMetadata: true`
-сохраняет настоящий shallow commit и безопасный origin, но не локальный config,
-credential helpers и hooks. Без Git metadata в образ идут только файлы снимка.
+текущих файлов проекта; допускается один такой источник. `gitMetadata: true`
+добавляет заново созданную shallow metadata HEAD и безопасный origin, но не локальный
+config, credential helpers и hooks. Сами рабочие файлы не откатываются к HEAD.
+Без Git metadata Git-репозиторий для локального источника не требуется.
 
 Внешний источник имеет `type: git`, `repository` (HTTPS/SSH Git URL без пароля
 или HTTP userinfo), `destination` и ровно одно из `revision`/`revisionPin`.
@@ -86,7 +97,7 @@ Dockerfile.dockerignore читаются из этого контекста: п�
 ключи с TOKEN/PASSWORD/SECRET/PRIVATE_KEY/AUTH отвергаются.
 
 `pinsFile` — JSON-объект строковых pins относительно корня проекта. Он читается
-из того же commit, что Broodfile. В Brood общие Python/Go/Substrate pins хранятся
+из текущих файлов рядом с Broodfile. В Brood общие Python/Go/Substrate pins хранятся
 в `brood/dev/pins.json`, откуда их читают CI, provision и сборщик. Объявления
 pins не извлекаются из shell-скриптов регулярными выражениями.
 
@@ -101,19 +112,14 @@ policy задаются явно. Нет privileged/hostPath. Поле image п�
 
 ## Исходники и контекст установки
 
-Команда ищет Git-корень от текущего каталога или `--project PATH` и читает Broodfile,
-Dockerfile, pins и исходники из `--ref` (по умолчанию HEAD). Незакоммиченные tracked
-и untracked изменения не накладываются на снимок; команда сообщает их исключение.
-Сам установленный Brood и целевой проект могут быть разными деревьями.
+Broodfile, Dockerfile, pins и локальные исходники берутся из текущего каталога,
+без поиска родительского Git-корня. Внешние `type: git` источники по-прежнему
+закреплены полным commit. Чистый parser/validator не вызывает процессы или сеть.
+Установленные бинарники и собираемый проект могут находиться в разных деревьях.
 
-Registry передаётся `--registry` либо настройкой установки `BUILD_REGISTRY`;
-atespace — `--atespace` либо `BUILD_ATESPACE`. Отсутствие — отказ до сборки.
-Адреса/credentials установки не зашиваются в декларацию. Публикация идёт
-только в явно разрешённый registry; Go-команда не создаёт и не меняет
-контейнеры кластера для публикации. Read-only Git/файловые операции при
-загрузке не являются выполнением сборки: чистый parser/validator не вызывает
-процессы или сеть. Переменная старой Python-реализации `BUILD_SOURCE_CACHE`
-не является настройкой публичного Go CLI.
+Локальный образ получает неопубликованное имя `brood.local/<name>/<environment>`.
+Это идентификатор артефакта, а не адрес сетевого registry. Настоящее имя образа
+назначает сервер во время `push`; адреса и credentials не входят в Broodfile.
 
 ## Результат
 
@@ -122,14 +128,14 @@ atespace — `--atespace` либо `BUILD_ATESPACE`. Отсутствие — о
 без Docker. Экспорт содержит `build-plan.json` для диагностики и настоящий
 Dockerfile в выбранном source; его нельзя путать с регистрацией в Substrate.
 
-Имя repository: `<registry>/<project>/<environment>`. Временный tag уникален для
-вызова; digest читается из metadata именно этого buildx build, не из изменяемого
-тега. Имена шаблонов содержат сокращённый SHA-256 канонического actor spec с image
+Docker BuildKit экспортирует OCI-архив, не выполняя push. Временный tag уникален;
+digest читается из metadata именно этого buildx build, не из изменяемого тега.
+Имена шаблонов содержат сокращённый SHA-256 канонического actor spec с image
 и target identity. Изменение образа, argv, env, ресурсов или политики даёт новое
-имя и не перезаписывает существующий ActorTemplate. Atespace берётся из контекста.
+имя и не перезаписывает существующий ActorTemplate.
 
 Выходы `.brood/build/<target>/`: `actor-template.json`, `egress-policy.json`,
-`build.json`. Комплект сначала полностью записывается в `.brood/build/.runs`,
+`build.json`, `image.oci.tar`. Комплект сначала полностью записывается в `.brood/build/.runs`,
 затем стабильная ссылка target заменяется атомарно. Старые успешные комплекты
 сохраняются. Чужой файл/каталог/ссылка не заменяется; директории выше output не
 могут быть symlinks. Параллельные публикации output одной цели сериализуются.
@@ -138,7 +144,10 @@ Output исключён из git и не может попасть в следу
 
 `build.json` содержит версию схемы/сборщика, целевую платформу, входные revisions,
 использованные pins/build args, digest результата и digest шаблона, без секретов
-и локальных путей к кэшам. Loader и библиотека сборки молчат; вывод делает CLI.
+и локальных путей к кэшам. Локальные источники помечены `workingTree: true`;
+при запрошенной Git metadata записывается также `dirty`, а `revision` означает
+базовый HEAD, не утверждение, что рабочие файлы совпадают с commit.
+Loader и библиотека сборки молчат; вывод делает CLI.
 
 Runtime-поля не входят в аргументы/идентичность сборки окружения. При одинаковых
 исходниках два шаблона одного environment используют один образный контекст и
@@ -150,15 +159,48 @@ Runtime-поля не входят в аргументы/идентичност�
 Сборка не создаёт atespace, шаблоны, политики, пулы и акторы. Регистрация и запуск —
 отдельные операции. При запуске политика должна быть создана до resume.
 
+## Публикация
+
+`bro push [target]` читает уже собранный комплект, не запускает Docker и не
+пересобирает исходники. Явная цель позволяет публиковать после изменения или
+удаления Broodfile. Без цели `defaultTarget` читается из текущего Broodfile.
+Сервер выбирается из последнего `bro login`; сохраняется его CA trust.
+
+`--project NAME` выбирает доступный личный рой по ID/имени. Также можно указать
+серверный проект, если в нём ровно один доступный рой. При неоднозначности
+нужен ID роя; членство не даёт доступ к чужим роям. Push не создаёт проект/рой
+автоматически и не запускает акторов.
+
+OCI-архив читается без распаковки. SHA-256, размеры и ссылки проверяются;
+blobs передаются chunks до 32 MiB, существующие blobs пропускаются. Manifest
+публикуется только по digest. Шаблон получает серверные atespace и image URI;
+чужое namespace/image назначить нельзя. Повторная публикация идентичного шаблона
+идемпотентна, другое содержимое под тем же именем даёт конфликт.
+
+Registry не получает внешний listener или Docker credentials. Все операции
+идут через `/api/swarms/<id>/builds/<environment>` с session/CSRF и проверкой прав
+на каждом запросе. Upload ID связан с конкретной сессией и истекает через
+30 минут; registry Location остаётся только на сервере. После перезапуска сервера
+незавершённый blob нужно отправить заново; уже завершённые blobs переиспользуются.
+
+Серверу задаются парой `BROOD_REGISTRY_URL` (внутренний origin) и
+`BROOD_REGISTRY_IMAGE_HOST` (канонический host для воркеров, у kind `localhost:5002`).
+Штатный deploy обнаруживает адрес проверенного registry container в kind network
+и разрешает Go BFF egress только на его IP:5000. Без настроек push отвечает 503.
+В pinned Substrate `EgressPolicy` вложена в actor: push переносит правила в
+`ActorTemplate.golden_egress_policy`, не создаёт actor и не заявляет, что runtime
+политика будущего actor уже применена.
+
 ## Границы
 
-Корневые пути настроек установки `.env`, `secrets/`, `.ate-dev-env.sh`, `.brood/`
-в commit — отказ, не молчаливый пропуск. Игнорируемые Git настройки не копируются;
-credential-bearing origins и локальный Git config тоже не переносятся. Вложенные
-файлы библиотек, например публичная `vendor/.../.env` с тестовыми данными, не
-считаются настройками установки по одному имени. Это не сканер содержимого на
-секреты: исходники и Dockerfile должны быть доверенными и не содержать credentials.
-Ссылки в снимке не могут указывать за его границы.
+Локальное копирование исключает `.env`, `.env.*`, `secrets`, `.ate-dev-env.sh`,
+`.brood`, `.git`, `venv`, `node_modules`, `inventory.yaml`, `db.sqlite3` и
+`brood.db` с WAL/SHM на любой глубине. При `gitMetadata: true`
+наличие секретных/генерируемых путей в HEAD вызывает отказ, чтобы не вернуть их
+через Git objects. Локальный config и credential-bearing origin не переносятся.
+Ссылки не могут выходить за корень или указывать на исключённые пути; специальные
+файлы отвергаются. Это не сканер содержимого: исходники и Dockerfile должны быть
+доверенными и не содержать credentials.
 
 Окружение Brood описано корневым Broodfile: development выполняет существующий
 `.ci/workbench.sh`, coding запускает CLI/ttyd/tmux. Подготовка cgroup, kmsg и

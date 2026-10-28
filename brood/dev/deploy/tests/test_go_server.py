@@ -69,6 +69,9 @@ class GoDeploymentTests(unittest.TestCase):
             if "get" in args:
                 events.append("ownership")
                 return 0, "", ""
+            if "inspect" in args:
+                events.append("registry")
+                return 0, '{"IPAddress":"172.18.0.3"}', ""
             if "build" in args:
                 events.append("build")
                 self.assertEqual(args[args.index("-f") + 1], "/checkout/deploy/Dockerfile.go")
@@ -99,7 +102,8 @@ class GoDeploymentTests(unittest.TestCase):
             infrastructure.return_value._api_egress.side_effect = lambda: events.append("discovery") or []
             self.assertEqual(deploy.run(), "localhost:5002/brood-go@" + digest)
         self.assertLess(events.index("ownership"), events.index("discovery"))
-        self.assertLess(events.index("discovery"), events.index("build"))
+        self.assertLess(events.index("discovery"), events.index("registry"))
+        self.assertLess(events.index("registry"), events.index("build"))
         self.assertLess(events.index("build"), events.index("apply"))
         self.assertLess(events.index("apply"), events.index("rollout"))
         deploy.cluster.shell.run.assert_not_called()

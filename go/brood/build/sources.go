@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -181,6 +182,175 @@ func checkLinks(root string) error {
 		}
 		return nil
 	})
+}
+
+// workingExcluded исключает настройки, секреты и генерируемые деревья на любой глубине.
+func workingExcluded(name string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
+		switch part {
+		case ".git", ".brood", ".env", "secrets", "venv", "node_modules", ".ate-dev-env.sh",
+			"inventory.yaml", "db.sqlite3", "brood.db", "brood.db-wal", "brood.db-shm":
+			return true
+		}
+		if strings.HasPrefix(part, ".env.") {
+			return true
+		}
+	}
+	return false
+}
+
+// WorkingSnapshot copies current regular files and safe relative symlinks.
+// Optional Git metadata is reconstructed from HEAD, never copied from local .git.
+func WorkingSnapshot(source, target string, gitMetadata bool) (map[string]any, error) {
+	base, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return nil, err
+	}
+	base, err = filepath.Abs(base)
+	if err != nil {
+		return nil, err
+	}
+	destination, err := filepath.Abs(target)
+	if err != nil {
+		return nil, err
+	}
+	if destination == base || inside(base, destination) {
+		return nil, fmt.Errorf("Source snapshot destination must be outside its source")
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		return nil, fmt.Errorf("Source snapshot destination already exists or is inaccessible")
+	}
+	parent := filepath.Dir(target)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return nil, err
+	}
+	staging, err := os.MkdirTemp(parent, ".working-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(staging)
+	report := map[string]any{"gitMetadata": gitMetadata}
+	if gitMetadata {
+		toplevel, err := Git(base, "rev-parse", "--show-toplevel")
+		if err != nil || strings.TrimSpace(toplevel) != base {
+			return nil, fmt.Errorf("Git metadata requires the selected project root to be a repository root")
+		}
+		sha, err := Revision(base, "HEAD")
+		if err != nil {
+			return nil, err
+		}
+		paths, err := Git(base, "ls-tree", "-rz", "--name-only", sha)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range strings.Split(paths, "\x00") {
+			if workingExcluded(name) {
+				return nil, fmt.Errorf("Git metadata HEAD contains excluded settings or generated files")
+			}
+		}
+		metadata := filepath.Join(staging, "metadata")
+		report, err = Snapshot(base, sha, metadata, true)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Rename(filepath.Join(metadata, ".git"), filepath.Join(staging, ".git")); err != nil {
+			return nil, err
+		}
+		if err := os.RemoveAll(metadata); err != nil {
+			return nil, err
+		}
+	}
+	report["workingTree"] = true
+	if gitMetadata {
+		status, err := Git(base, "status", "--porcelain", "-z")
+		if err != nil {
+			return nil, err
+		}
+		report["dirty"] = status != ""
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	err = filepath.WalkDir(base, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(base, path)
+		if err != nil {
+			return err
+		}
+		if relative == "." {
+			return nil
+		}
+		if workingExcluded(relative) {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		for _, char := range relative {
+			if char < 32 || char == 127 {
+				return fmt.Errorf("Source contains control characters in paths")
+			}
+		}
+		output := filepath.Join(staging, relative)
+		if entry.IsDir() {
+			return os.Mkdir(output, 0755)
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			link, err := root.Readlink(relative)
+			if err != nil {
+				return err
+			}
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("Source symlink is unsafe or dangling")
+			}
+			if filepath.IsAbs(link) || !inside(base, resolved) {
+				return fmt.Errorf("Source symlink escapes its snapshot")
+			}
+			resolvedRelative, err := filepath.Rel(base, resolved)
+			if err != nil {
+				return err
+			}
+			lexical := filepath.Clean(filepath.Join(filepath.Dir(relative), link))
+			if workingExcluded(resolvedRelative) || workingExcluded(lexical) {
+				return fmt.Errorf("Source symlink refers to excluded settings")
+			}
+			return os.Symlink(link, output)
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("Source must contain only regular files, directories, and safe symlinks")
+		}
+		input, err := root.OpenFile(relative, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return fmt.Errorf("Source file is inaccessible or escapes its snapshot")
+		}
+		defer input.Close()
+		info, err := input.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("Source file must be regular")
+		}
+		outputFile, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm()&0755)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(outputFile, input)
+		closeErr := outputFile.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(staging, target); err != nil {
+		return nil, err
+	}
+	return report, nil
 }
 
 // Snapshot создаёт новый снимок точного commit, не копируя Git-конфигурацию клона.
