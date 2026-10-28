@@ -1,32 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { IconSidebarProjects } from '@/components/ui/icons';
 import { useProjectStore } from '@/stores';
-import { scopesApi, type SwarmScope } from '@/services/brood/substrate';
+import { accessApi, type AccessProject } from '@/services/brood/access';
+import { errorMessage } from '@/services/brood/http';
 
-/** brood: the active swarm switcher in the header, beside the language menu
- * and in its popover style -- the one global scope of the panel. Actors,
- * templates and the project-scoped policy are scoped to it; a swarm is listed
- * as "project / swarm" because its name is unique only inside its project. The
- * list is fetched each time the menu opens, so a swarm created a moment ago is
- * there. */
+/** Глобальный контекст панели — проект, не рой. В меню только доступные
+ * проекты; управление ими находится в левой панели, не дублируется здесь. */
 export function ProjectSwitcher() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const project = useProjectStore((state) => state.project);
   const setProject = useProjectStore((state) => state.setProject);
   const [open, setOpen] = useState(false);
-  const [scopes, setScopes] = useState<SwarmScope[] | null>(null);
+  const [projects, setProjects] = useState<AccessProject[] | null>(null);
+  const [error, setError] = useState('');
   const menuRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     let current = true;
-    scopesApi
-      .list()
-      .then((items) => current && setScopes(items))
-      .catch(() => current && setScopes([]));
+    setError('');
+    accessApi
+      .projects()
+      .then((items) => {
+        if (current) setProjects(items);
+      })
+      .catch((reason) => {
+        if (current) setError(errorMessage(reason));
+      });
     const onPointerDown = (event: MouseEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -40,58 +40,55 @@ export function ProjectSwitcher() {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open]);
-
-  const choose = (name: string) => {
-    setProject(name);
-    setOpen(false);
-  };
-
+  }, [open, project]);
   return (
     <div className={`language-menu project-switcher ${open ? 'open' : ''}`} ref={menuRef}>
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => setOpen((prev) => !prev)}
-        title={t('access.select_swarm')}
-        aria-label={t('access.select_swarm')}
+        onClick={() => setOpen((previous) => !previous)}
+        title={t('access.select_project')}
+        aria-label={t('access.select_project')}
         aria-haspopup="menu"
         aria-expanded={open}
       >
         <IconSidebarProjects size={16} />
         <span className="project-switcher-label">
-          {scopes?.find((scope) => scope.metadata.name === project)?.label ||
-            t('access.select_swarm')}
+          {projects?.find((item) => item.id === project)?.name || t('access.select_project')}
         </span>
       </Button>
       {open && (
         <div className="notification entering language-menu-popover" role="menu">
-          {scopes === null && <div className="language-menu-option">{t('common.loading')}</div>}
-          {scopes?.length === 0 && <div className="language-menu-option">{t('access.empty')}</div>}
-          {scopes?.map(({ metadata: { name }, label }) => (
-            <button
-              key={name}
-              type="button"
-              className={`language-menu-option ${project === name ? 'active' : ''}`}
-              role="menuitemradio"
-              aria-checked={project === name}
-              onClick={() => choose(name)}
-            >
-              <span>{label}</span>
-              {project === name ? <span className="language-menu-check">✓</span> : null}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="language-menu-option"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              navigate('/projects');
-            }}
-          >
-            <span>{t('access.projects')}</span>
-          </button>
+          {error ? (
+            <div className="language-menu-option" role="alert">
+              {error}
+            </div>
+          ) : (
+            <>
+              {projects === null && (
+                <div className="language-menu-option">{t('common.loading')}</div>
+              )}
+              {projects?.length === 0 && (
+                <div className="language-menu-option">{t('access.no_projects')}</div>
+              )}
+              {projects?.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`language-menu-option ${project === item.id ? 'active' : ''}`}
+                  role="menuitemradio"
+                  aria-checked={project === item.id}
+                  onClick={() => {
+                    setProject(item.id);
+                    setOpen(false);
+                  }}
+                >
+                  <span>{item.name}</span>
+                  {project === item.id && <span className="language-menu-check">✓</span>}
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

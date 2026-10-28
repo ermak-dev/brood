@@ -1,11 +1,9 @@
-// Рои и участники — вложенные маршруты проекта, поэтому сравнение по
-// префиксу: точное множество путей не пустило бы участника в '/projects/<id>'.
-// '/swarms' и '/permissions' остались переадресацией старых ссылок внутрь
-// проекта: закрыть их админу значит увести участника по старой ссылке не туда.
-const memberPaths = ['/projects', '/actors', '/templates', '/swarms', '/permissions'];
+// Обычному пользователю видны только четыре ресурсных раздела. Сервер
+// повторно проверяет членство и владение при каждом запросе.
+const memberPaths = ['/projects', '/swarms', '/actors', '/templates'];
 
 export function visibleAccessPath(path: string, isSuperuser: boolean): boolean {
-  return (
-    isSuperuser || memberPaths.some((allowed) => path === allowed || path.startsWith(`${allowed}/`))
-  );
+  if (isSuperuser) return true;
+  if (path.startsWith('/projects/') && path.endsWith('/members')) return false;
+  return memberPaths.some((allowed) => path === allowed || path.startsWith(`${allowed}/`));
 }

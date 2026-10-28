@@ -1,9 +1,7 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useProjectStore } from '@/stores';
 import { accessApi, type AccessProject, type AccessSwarm } from '@/services/brood/access';
 import { EntityTable, type Column } from '@/features/substrate/components/EntityTable';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
@@ -14,28 +12,24 @@ import {
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { ownerCandidates, projectSectionPath } from './state';
-import { ProjectRoute } from './useRouteProject';
+import { ownerCandidates } from './state';
+import { ProjectScope } from '@/features/substrate/components/ProjectScope';
 import styles from '@/features/substrate/substrate.module.scss';
 
-/** brood: рои проекта из маршрута. Рой выбирается глобально в хедере; здесь
- * он создаётся, удаляется и открывается в акторах или шаблонах. */
+/** Рои глобально выбранного проекта; каталог уже отфильтрован сервером. */
 export function SwarmsPage() {
   const { t } = useTranslation();
   return (
-    <ProjectRoute title={t('access.swarms')}>
+    <ProjectScope title={t('access.swarms')}>
       {(project) => <Swarms project={project} />}
-    </ProjectRoute>
+    </ProjectScope>
   );
 }
 
 function Swarms({ project }: { project: AccessProject }) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const admin = useAdministrator();
   const projectId = project.id;
-  const setSwarm = useProjectStore((state) => state.setProject);
-  const activeSwarm = useProjectStore((state) => state.project);
   const load = useCallback(() => accessApi.swarms(projectId), [projectId]);
   const resource = useAccessResource(load, { headerRefresh: false });
   const { run, confirm, busy } = useAccessActions(resource.refresh);
@@ -53,15 +47,7 @@ function Swarms({ project }: { project: AccessProject }) {
     await Promise.all([resource.refresh(), members.refresh()]);
   });
   const owners = ownerCandidates(members.data, transfer?.owner_username ?? '');
-  const open = (swarm: AccessSwarm, route: string) => {
-    setSwarm(swarm.id);
-    navigate(route);
-  };
-  const remove = (swarm: AccessSwarm) =>
-    confirm(swarm.name, async () => {
-      await accessApi.deleteSwarm(swarm.id);
-      if (activeSwarm === swarm.id) setSwarm('');
-    });
+  const remove = (swarm: AccessSwarm) => confirm(swarm.name, () => accessApi.deleteSwarm(swarm.id));
   const columns: Column<AccessSwarm>[] = [
     { key: 'name', label: t('substrate.name'), primary: true, render: (swarm) => swarm.name },
     {
@@ -89,19 +75,9 @@ function Swarms({ project }: { project: AccessProject }) {
         title={t('access.swarms')}
         meta={[project.name]}
         actions={
-          <>
-            {admin && (
-              <Button
-                variant="secondary"
-                onClick={() => navigate(projectSectionPath('members', projectId))}
-              >
-                {t('access.membership')}
-              </Button>
-            )}
-            <Button disabled={busy} onClick={() => setCreating(true)}>
-              {t('access.create_swarm')}
-            </Button>
-          </>
+          <Button disabled={busy} onClick={() => setCreating(true)}>
+            {t('access.create_swarm')}
+          </Button>
         }
       />
       <p className={styles.sectionHint}>
@@ -113,26 +89,9 @@ function Swarms({ project }: { project: AccessProject }) {
           columns={columns}
           rows={resource.data ?? []}
           rowKey={(swarm) => swarm.id}
-          isActive={(swarm) => swarm.id === activeSwarm}
           actionsLabel={t('substrate.actions')}
           actions={(swarm) => (
             <>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={swarm.state !== 'active'}
-                onClick={() => open(swarm, '/actors')}
-              >
-                {t('nav.actors')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={swarm.state !== 'active'}
-                onClick={() => open(swarm, '/templates')}
-              >
-                {t('nav.templates')}
-              </Button>
               {['error', 'provisioning'].includes(swarm.state) && (
                 <Button
                   variant="ghost"

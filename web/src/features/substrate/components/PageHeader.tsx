@@ -6,17 +6,19 @@ interface PageHeaderProps {
   /** Items of the mono meta line, joined by dots; falsy ones are skipped. */
   meta?: ReactNode[];
   actions?: ReactNode;
+  headingLevel?: 1 | 2;
 }
 
 /** brood: page header in the upstream pages' language -- large title, mono
  * meta line with the ▍ cursor, actions aligned to the bottom of the title so
  * they never sit under the floating header bar. */
-export function PageHeader({ title, meta = [], actions }: PageHeaderProps) {
+export function PageHeader({ title, meta = [], actions, headingLevel = 1 }: PageHeaderProps) {
+  const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const items = meta.filter(Boolean);
   return (
     <header className={styles.header}>
       <div className={styles.copy}>
-        <h1 className={styles.title}>{title}</h1>
+        <Heading className={styles.title}>{title}</Heading>
         {items.length > 0 && (
           <p className={styles.meta}>
             {items.map((item, index) => (

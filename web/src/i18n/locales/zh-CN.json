@@ -1,5 +1,10 @@
 {
   "access": {
+    "choose_project": "选择",
+    "select_project": "选择项目",
+    "select_project_hint": "请在顶部菜单或项目列表中选择项目。",
+    "no_active_swarms": "该项目没有可访问的活跃群组。",
+    "swarm": "群组",
     "role": "角色",
     "user": "用户",
     "edit_user": "编辑用户 {{name}}",

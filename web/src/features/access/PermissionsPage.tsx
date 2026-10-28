@@ -14,8 +14,8 @@ import {
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { memberCandidates, projectSectionPath } from './state';
-import { ProjectRoute } from './useRouteProject';
+import { memberCandidates } from './state';
+import { ProjectScope } from '@/features/substrate/components/ProjectScope';
 import styles from '@/features/substrate/substrate.module.scss';
 
 /** brood: участники проекта из маршрута. Состав читает и меняет только
@@ -23,9 +23,9 @@ import styles from '@/features/substrate/substrate.module.scss';
 export function PermissionsPage() {
   const { t } = useTranslation();
   return (
-    <ProjectRoute title={t('access.membership')}>
+    <ProjectScope title={t('access.membership')}>
       {(project) => <Members project={project} />}
-    </ProjectRoute>
+    </ProjectScope>
   );
 }
 
@@ -60,10 +60,7 @@ function Members({ project }: { project: AccessProject }) {
         title={t('access.membership')}
         meta={[project.name]}
         actions={
-          <Button
-            variant="secondary"
-            onClick={() => navigate(projectSectionPath('swarms', projectId))}
-          >
+          <Button variant="secondary" onClick={() => navigate('/swarms')}>
             {t('access.swarms')}
           </Button>
         }

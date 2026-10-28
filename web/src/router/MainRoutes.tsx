@@ -1,12 +1,12 @@
-import type { ReactNode } from 'react';
-import { Navigate, useRoutes, useSearchParams, type Location } from 'react-router-dom';
+import { useEffect, type ReactNode } from 'react';
+import { Navigate, useParams, useRoutes, useSearchParams, type Location } from 'react-router-dom';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { AccessProjectsPage } from '@/features/access/ProjectsPage';
 import { SwarmsPage } from '@/features/access/SwarmsPage';
 import { UsersPage } from '@/features/access/UsersPage';
 import { PermissionsPage } from '@/features/access/PermissionsPage';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
-import { projectSectionPath } from '@/features/access/state';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { ActorsPage } from '@/features/substrate/ActorsPage';
 import { PolicyPage } from '@/features/substrate/PolicyPage';
@@ -25,26 +25,32 @@ import { PluginStorePage } from '@/features/plugins/PluginStorePage';
 import { ConfigPage } from '@/features/config/ConfigPage';
 import { LogsPage } from '@/features/logs/LogsPage';
 import { SystemPage } from '@/pages/SystemPage';
-import { useAuthStore } from '@/stores';
+import { useAuthStore, useProjectStore } from '@/stores';
 
-/** Старые адреса рои-и-участники выбирали проект параметром запроса; теперь
- * проект — часть маршрута, и прежняя ссылка ведёт в его раздел. */
+/** Старые ссылки выбирают тот же проект в глобальном контексте и переходят
+ * в канонический раздел без второго независимого выбора. */
 function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' }) {
   const [params] = useSearchParams();
-  return <Navigate to={projectSectionPath(section, params.get('project'))} replace />;
+  const route = useParams();
+  const requested = route.project || params.get('project');
+  const selected = useProjectStore((state) => state.project);
+  const setProject = useProjectStore((state) => state.setProject);
+  useEffect(() => {
+    if (requested) setProject(requested);
+  }, [requested, setProject]);
+  if (requested && selected !== requested) return <LoadingSpinner />;
+  if (requested) return <Navigate to={section === 'swarms' ? '/swarms' : '/permissions'} replace />;
+  return section === 'swarms' ? <SwarmsPage /> : <PermissionsPage />;
 }
 
 const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/', element: <DashboardPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
-  // Проекты brood и их рои — отдельные сущности. Рой и его atespace —
-  // одна сущность интерфейса, поэтому отдельной страницы областей нет:
-  // старый адрес ведёт к роям (docs/MODEL.md). Проект выбирается маршрутом,
-  // а не вторым выпадающим списком рядом с глобальным выбором роя.
+  // Проект — глобальный контекст; прежние адреса сохраняют выбор проекта.
   { path: '/projects', element: <AccessProjectsPage /> },
-  { path: '/projects/:project', element: <Navigate to="swarms" replace /> },
-  { path: '/projects/:project/swarms', element: <SwarmsPage /> },
-  { path: '/projects/:project/members', element: <PermissionsPage /> },
+  { path: '/projects/:project', element: <LegacyProjectRoute section="swarms" /> },
+  { path: '/projects/:project/swarms', element: <LegacyProjectRoute section="swarms" /> },
+  { path: '/projects/:project/members', element: <LegacyProjectRoute section="members" /> },
   { path: '/users', element: <UsersPage /> },
   { path: '/swarms', element: <LegacyProjectRoute section="swarms" /> },
   { path: '/permissions', element: <LegacyProjectRoute section="members" /> },

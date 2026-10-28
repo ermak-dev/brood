@@ -7,6 +7,8 @@ import { Select } from '@/components/ui/Select';
 import { useProjectStore } from '@/stores';
 import { BroodApiError } from '@/services/brood/http';
 import { policyApi, type AccessPolicy, type Binding } from '@/services/brood/substrate';
+import { accessApi } from '@/services/brood/access';
+import { useAccessResource } from '@/features/access/shared';
 import { ChipsInput } from './components/ChipsInput';
 import { Field, Section } from './components/form';
 import { PageHeader } from './components/PageHeader';
@@ -36,7 +38,9 @@ async function loadPolicy(project: string): Promise<{ policy: AccessPolicy | nul
 
 /** Bindings as sent: empty member lists and roles dropped. */
 const cleaned = (bindings: Binding[]) =>
-  bindings.filter((b) => b.role && b.members?.length).map((b) => ({ role: b.role, members: b.members }));
+  bindings
+    .filter((b) => b.role && b.members?.length)
+    .map((b) => ({ role: b.role, members: b.members }));
 
 /** brood: the access policy of the whole install or of the active project --
  * one per scope, replaced wholesale. Saving an existing policy sends back the
@@ -44,15 +48,27 @@ const cleaned = (bindings: Binding[]) =>
  * one gets it created. */
 export function PolicyPage() {
   const { t } = useTranslation();
-  const project = useProjectStore((state) => state.project);
-  const [scope, setScope] = useState<Scope>(project ? 'project' : 'global');
+  const currentProject = useProjectStore((state) => state.project);
+  const loadSwarms = useCallback(
+    () => (currentProject ? accessApi.swarms(currentProject) : Promise.resolve([])),
+    [currentProject]
+  );
+  const swarms = useAccessResource(loadSwarms, { headerRefresh: false });
+  const [requestedSwarm, setRequestedSwarm] = useState('');
+  const project =
+    swarms.data?.find((swarm) => swarm.id === requestedSwarm && swarm.state === 'active')?.id ?? '';
+  const [scope, setScope] = useState<Scope>('global');
   const target = scope === 'project' ? project : '';
 
   useEffect(() => {
     if (!project) setScope('global');
   }, [project]);
 
-  const load = useCallback(() => loadPolicy(target), [target]);
+  const load = useCallback(
+    () =>
+      scope === 'project' && !project ? Promise.resolve({ policy: null }) : loadPolicy(target),
+    [scope, project, target]
+  );
   const { data, error, loading, refresh } = useResource(load);
   const { run, confirm } = useActions(refresh);
   const [draft, setDraft] = useState<Binding[] | null>(null);
@@ -76,7 +92,8 @@ export function PolicyPage() {
 
   const roles = ROLES[scope];
   const bindings = draft ?? [];
-  const dirty = draft !== null && JSON.stringify(cleaned(draft)) !== JSON.stringify(cleaned(loaded));
+  const dirty =
+    draft !== null && JSON.stringify(cleaned(draft)) !== JSON.stringify(cleaned(loaded));
   const members = loaded.reduce((sum, b) => sum + (b.members?.length ?? 0), 0);
 
   const setBinding = (index: number, patch: Partial<Binding>) =>
@@ -119,7 +136,8 @@ export function PolicyPage() {
       run: () => policyApi.remove(project),
     });
 
-  const scopeLabel = scope === 'project' ? t('policy.scope_project', { project }) : t('policy.scope_global');
+  const scopeLabel =
+    scope === 'project' ? t('policy.scope_project', { project }) : t('policy.scope_global');
 
   return (
     <div className={styles.page}>
@@ -142,6 +160,21 @@ export function PolicyPage() {
       />
 
       <div className={styles.toolbar}>
+        {currentProject && (
+          <Field label={t('access.swarm')}>
+            {(id) => (
+              <Select
+                id={id}
+                value={project}
+                placeholder={t('access.select_swarm')}
+                options={(swarms.data ?? [])
+                  .filter((swarm) => swarm.state === 'active')
+                  .map((swarm) => ({ value: swarm.id, label: swarm.name }))}
+                onChange={setRequestedSwarm}
+              />
+            )}
+          </Field>
+        )}
         <Segmented
           value={scope}
           ariaLabel={t('policy.scope')}
@@ -150,7 +183,9 @@ export function PolicyPage() {
             { value: 'global', label: t('policy.scope_global') },
             {
               value: 'project',
-              label: project ? t('policy.scope_project', { project }) : t('policy.scope_project_none'),
+              label: project
+                ? t('policy.scope_project', { project })
+                : t('policy.scope_project_none'),
               disabled: !project,
             },
           ]}
@@ -187,7 +222,10 @@ export function PolicyPage() {
                 variant="secondary"
                 size="sm"
                 onClick={() =>
-                  setDraft((prev) => [...(prev ?? []), { role: roles[roles.length - 1], members: [] }])
+                  setDraft((prev) => [
+                    ...(prev ?? []),
+                    { role: roles[roles.length - 1], members: [] },
+                  ])
                 }
               >
                 {t('policy.add_binding')}
@@ -215,7 +253,10 @@ export function PolicyPage() {
                         id={id}
                         value={binding.role}
                         fullWidth
-                        options={roles.map((role) => ({ value: role, label: t(`policy.role_${role}`) }))}
+                        options={roles.map((role) => ({
+                          value: role,
+                          label: t(`policy.role_${role}`),
+                        }))}
                         onChange={(role) => setBinding(index, { role })}
                       />
                     )}
@@ -244,7 +285,11 @@ export function PolicyPage() {
             </span>
             {policy && (
               // Перечитать, а не вернуть прочитанное: после конфликта на сервере уже другая политика.
-              <Button variant="secondary" disabled={!dirty || saving} onClick={() => void refresh()}>
+              <Button
+                variant="secondary"
+                disabled={!dirty || saving}
+                onClick={() => void refresh()}
+              >
                 {t('policy.revert')}
               </Button>
             )}

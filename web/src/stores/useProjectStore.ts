@@ -1,4 +1,4 @@
-/** Active swarm selection is a per-user preference, never an access grant. */
+/** Выбор проекта — предпочтение пользователя, не выдача прав доступа. */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
@@ -21,6 +21,6 @@ export const useProjectStore = create<ProjectState>()(
           project: username && state.selectedFor === username ? state.project : '',
         })),
     }),
-    { name: 'brood-swarm' }
+    { name: 'brood-project' }
   )
 );

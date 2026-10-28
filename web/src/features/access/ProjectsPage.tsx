@@ -12,13 +12,19 @@ import {
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { projectSectionPath } from './state';
+import { useProjectStore } from '@/stores';
 import styles from '@/features/substrate/substrate.module.scss';
 
 export function AccessProjectsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const admin = useAdministrator();
+  const selected = useProjectStore((state) => state.project);
+  const setProject = useProjectStore((state) => state.setProject);
+  const choose = (project: AccessProject) => {
+    setProject(project.id);
+    navigate('/swarms');
+  };
   const resource = useAccessResource(accessApi.projects);
   const { run, confirm, busy } = useAccessActions(resource.refresh);
   const [creating, setCreating] = useState(false);
@@ -42,34 +48,37 @@ export function AccessProjectsPage() {
           columns={columns}
           rows={resource.data ?? []}
           rowKey={(project) => project.id}
-          // Строка ведёт в проект; его разделы -- рои и участники -- живут
-          // внутри него, а не отдельными пунктами меню.
-          onRowClick={(project) => navigate(projectSectionPath('swarms', project.id))}
+          onRowClick={choose}
+          isActive={(project) => project.id === selected}
           actionsLabel={t('substrate.actions')}
-          // Участнику действий над проектом не положено: без админа столбец
-          // действий не рисуется вовсе, а не стоит пустым.
-          actions={
-            admin
-              ? (project) => (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    className={styles.dangerText}
-                    onClick={() =>
-                      confirm(
-                        project.name,
-                        () => accessApi.deleteProject(project.id),
-                        t('substrate.delete'),
-                        t('access.confirm_project', { name: project.name })
-                      )
-                    }
-                  >
-                    {t('substrate.delete')}
-                  </Button>
-                )
-              : undefined
-          }
+          actions={(project) => (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => choose(project)}>
+                {t('access.choose_project')}
+              </Button>
+              {admin && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  className={styles.dangerText}
+                  onClick={() =>
+                    confirm(
+                      project.name,
+                      async () => {
+                        await accessApi.deleteProject(project.id);
+                        if (selected === project.id) setProject('');
+                      },
+                      t('substrate.delete'),
+                      t('access.confirm_project', { name: project.name })
+                    )
+                  }
+                >
+                  {t('substrate.delete')}
+                </Button>
+              )}
+            </>
+          )}
         />
         {resource.data?.length === 0 && <p>{t('access.no_projects')}</p>}
       </LoadState>

@@ -4,36 +4,35 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useProjectStore } from '@/stores';
+import { accessApi, type AccessProject } from '@/services/brood/access';
+import { LoadState, useAccessResource } from '@/features/access/shared';
+import { PageHeader } from './PageHeader';
 import styles from '../substrate.module.scss';
 
 interface ProjectScopeProps {
   title: string;
-  /** The page itself, mounted only once a project is active -- so its hooks
-   * always run with one. */
-  children: (project: string) => ReactNode;
+  children: (project: AccessProject) => ReactNode;
 }
 
-/** brood: project-scoped pages (actors, templates) need the active project
- * from the header switcher; without one, say where to pick it. */
+/** Проект проверяется по доступному каталогу. Сохранённый ID не даёт прав
+ * и не подменяется первым проектом, если членство было отозвано. */
 export function ProjectScope({ title, children }: ProjectScopeProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const project = useProjectStore((state) => state.project);
-  if (project) return <Fragment key={project}>{children(project)}</Fragment>;
+  const selected = useProjectStore((state) => state.project);
+  const resource = useAccessResource(accessApi.projects, { headerRefresh: false });
+  const project = resource.data?.find((item) => item.id === selected);
+  if (project) return <Fragment key={project.id}>{children(project)}</Fragment>;
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <div className={styles.copy}>
-          <h1 className={styles.title}>{title}</h1>
-        </div>
-      </header>
-      <div className={styles.empty}>
+      <PageHeader title={title} />
+      <LoadState {...resource} retry={resource.refresh}>
         <EmptyState
-          title={t('access.select_swarm')}
-          description={t('access.select_swarm_hint')}
+          title={t('access.select_project')}
+          description={t('access.select_project_hint')}
           action={<Button onClick={() => navigate('/projects')}>{t('access.projects')}</Button>}
         />
-      </div>
+      </LoadState>
     </div>
   );
 }

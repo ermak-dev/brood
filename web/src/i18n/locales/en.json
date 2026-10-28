@@ -1,5 +1,10 @@
 {
   "access": {
+    "choose_project": "Select",
+    "select_project": "Select a project",
+    "select_project_hint": "Choose a project in the header or from the Projects list.",
+    "no_active_swarms": "This project has no accessible active swarms.",
+    "swarm": "Swarm",
     "role": "Role",
     "user": "User",
     "edit_user": "Edit user {{name}}",
