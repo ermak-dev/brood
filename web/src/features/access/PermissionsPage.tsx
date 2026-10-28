@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { accessApi, type AccessProject } from '@/services/brood/access';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { Section } from '@/features/substrate/components/form';
@@ -13,7 +14,7 @@ import {
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { projectSectionPath } from './state';
+import { memberCandidates, projectSectionPath } from './state';
 import { ProjectRoute } from './useRouteProject';
 import styles from '@/features/substrate/substrate.module.scss';
 
@@ -39,9 +40,20 @@ function Members({ project }: { project: AccessProject }) {
     () => (admin ? accessApi.members(projectId) : Promise.resolve([])),
     [admin, projectId]
   );
-  const members = useAccessResource(loadMembers);
+  const members = useAccessResource(loadMembers, { headerRefresh: false });
   const { run, confirm, busy } = useAccessActions(members.refresh);
-  const [editor, setEditor] = useState<'add' | 'remove' | null>(null);
+  const [adding, setAdding] = useState(false);
+  // Кандидаты в участники: пользователи установки, кроме уже добавленных и
+  // заблокированных. Список открыт только администратору -- он же и добавляет.
+  const loadUsers = useCallback(
+    () => (admin && adding ? accessApi.users() : Promise.resolve([])),
+    [admin, adding]
+  );
+  const users = useAccessResource(loadUsers, { headerRefresh: false });
+  useHeaderRefresh(async () => {
+    await Promise.all([members.refresh(), users.refresh()]);
+  });
+  const candidates = memberCandidates(users.data, members.data);
   return (
     <div className={styles.page}>
       <PageHeader
@@ -62,13 +74,12 @@ function Members({ project }: { project: AccessProject }) {
       </Section>
       <Section title={t('access.membership')}>
         {!admin && <p>{t('access.membership_hint')}</p>}
+        {/* Исключение живёт в строке участника: вводить имя руками, чтобы
+            удалить видимую строку, незачем. */}
         {admin && (
           <div className={styles.rowActions}>
-            <Button disabled={busy} onClick={() => setEditor('add')}>
+            <Button disabled={busy} onClick={() => setAdding(true)}>
               {t('access.add_member')}
-            </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => setEditor('remove')}>
-              {t('access.remove_member')}
             </Button>
           </div>
         )}
@@ -100,7 +111,8 @@ function Members({ project }: { project: AccessProject }) {
                     confirm(
                       member.username,
                       () => accessApi.removeMember(projectId, member.username),
-                      t('access.remove_member')
+                      t('access.remove_member'),
+                      t('access.confirm_member', { name: member.username })
                     )
                   }
                 >
@@ -112,23 +124,30 @@ function Members({ project }: { project: AccessProject }) {
           </LoadState>
         )}
       </Section>
-      {editor && admin && (
+      {adding && admin && (
         <AccessEditor
-          key={`${projectId}-${editor}`}
-          title={t(editor === 'add' ? 'access.add_member' : 'access.remove_member')}
+          key={projectId}
+          title={t('access.add_member')}
           description={project.name}
-          close={() => setEditor(null)}
-          fields={[{ name: 'username', label: t('access.username'), required: true }]}
-          submit={async (values) => {
-            const username = values.username.trim();
-            if (editor === 'add') return run(() => accessApi.addMember(projectId, username));
-            confirm(
-              username,
-              () => accessApi.removeMember(projectId, username),
-              t('access.remove_member')
-            );
-            return true;
-          }}
+          close={() => setAdding(false)}
+          fields={[
+            {
+              name: 'username',
+              label: t('access.username'),
+              type: 'select',
+              required: true,
+              options: candidates,
+              // Пока список грузится или не пришёл, поле говорит именно это,
+              // а не «кандидатов нет».
+              empty:
+                users.error ||
+                members.error ||
+                (users.loading || members.loading
+                  ? t('common.loading')
+                  : t('access.no_candidates')),
+            },
+          ]}
+          submit={(values) => run(() => accessApi.addMember(projectId, values.username))}
         />
       )}
     </div>

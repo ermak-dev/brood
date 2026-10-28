@@ -48,7 +48,7 @@ test('a project is chosen by the route, and swarms and members are its sections'
   expect(routes).toContain(`path: '/projects/:project/members'`);
   expect(routes).toContain('LegacyProjectRoute section="swarms"');
   expect(routes).toContain('LegacyProjectRoute section="members"');
-  expect(routes).toContain('projectSectionPath(section, params.get(\'project\'))');
+  expect(routes).toContain("projectSectionPath(section, params.get('project'))");
   expect(routes).not.toContain('ProjectSelect');
   for (const page of ['features/access/SwarmsPage.tsx', 'features/access/PermissionsPage.tsx']) {
     expect(source(page)).toContain('ProjectRoute');
@@ -120,5 +120,53 @@ test('all locales explain actual permissions without dead claims', () => {
     expect(typeof meta).toBe('string');
     expect(meta.length).toBeLessThan(40);
     expect(meta.toLowerCase()).not.toContain('atespace');
+  }
+});
+
+// Управление доступом не вводит имена руками: username приходит из списка, а
+// исключение участника живёт в его строке.
+test('access editors pick a user from a list instead of typing a username', () => {
+  const members = source('features/access/PermissionsPage.tsx');
+  expect(members).toContain("type: 'select'");
+  expect(members).toContain('memberCandidates(users.data, members.data)');
+  // Второго, текстового способа исключить участника больше нет.
+  expect(members).not.toContain("setEditor('remove')");
+  const swarms = source('features/access/SwarmsPage.tsx');
+  expect(swarms).toContain("type: 'select'");
+  expect(swarms).toContain('options: owners');
+  for (const page of [members, swarms]) {
+    expect(page).not.toContain('values.username.trim()');
+  }
+  // Поле выбора умеет пустой список: он объясняется, а не выглядит поломкой.
+  const editor = source('features/access/shared.tsx');
+  expect(editor).toContain('field.options?.length');
+  expect(editor).toContain('field.empty');
+});
+
+test('project sections register one refresh for tables and picker resources', () => {
+  for (const page of ['PermissionsPage', 'SwarmsPage']) {
+    const text = source(`features/access/${page}.tsx`);
+    expect(text).toContain('useHeaderRefresh(');
+    expect(text.match(/headerRefresh: false/g)?.length).toBe(2);
+    expect(text).toContain('Promise.all(');
+  }
+  expect(source('features/access/useRouteProject.tsx')).toContain('headerRefresh: false');
+});
+
+// Подтверждение называет последствие своего действия, а не чужого.
+test('each confirmed action carries its own consequence', () => {
+  expect(source('features/access/ProjectsPage.tsx')).toContain('access.confirm_project');
+  expect(source('features/access/PermissionsPage.tsx')).toContain('access.confirm_member');
+  for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW', 'ko', 'vi']) {
+    const access = JSON.parse(source(`i18n/locales/${locale}.json`)).access;
+    for (const key of ['confirm', 'confirm_project', 'confirm_member']) {
+      expect(typeof access[key]).toBe('string');
+      expect(access[key]).toContain('{{name}}');
+    }
+    for (const key of ['no_candidates', 'no_members']) {
+      expect(access[key].length).toBeGreaterThan(3);
+    }
+    // Нейтральный текст больше не обещает удаления проекта при любом действии.
+    expect(access.confirm.length).toBeLessThan(access.confirm_project.length);
   }
 });

@@ -12,9 +12,9 @@ import styles from '@/features/substrate/substrate.module.scss';
 /** brood: проект раздела берётся из маршрута, а не из второго выпадающего
  * списка рядом с глобальным выбором роя. Доступные проекты всё равно нужно
  * прочитать: по ним проверяется адрес и берётся имя для заголовка. */
-export function useRouteProject() {
+function useRouteProject() {
   const { project: requested = '' } = useParams();
-  const resource = useAccessResource(accessApi.projects);
+  const resource = useAccessResource(accessApi.projects, { headerRefresh: false });
   return { ...resource, requested, project: selectAccessProject(resource.data, requested) };
 }
 

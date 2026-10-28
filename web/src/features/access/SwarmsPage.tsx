@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useProjectStore } from '@/stores';
 import { accessApi, type AccessProject, type AccessSwarm } from '@/services/brood/access';
 import { EntityTable, type Column } from '@/features/substrate/components/EntityTable';
@@ -13,7 +14,7 @@ import {
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { projectSectionPath } from './state';
+import { ownerCandidates, projectSectionPath } from './state';
 import { ProjectRoute } from './useRouteProject';
 import styles from '@/features/substrate/substrate.module.scss';
 
@@ -36,10 +37,22 @@ function Swarms({ project }: { project: AccessProject }) {
   const setSwarm = useProjectStore((state) => state.setProject);
   const activeSwarm = useProjectStore((state) => state.project);
   const load = useCallback(() => accessApi.swarms(projectId), [projectId]);
-  const resource = useAccessResource(load);
+  const resource = useAccessResource(load, { headerRefresh: false });
   const { run, confirm, busy } = useAccessActions(resource.refresh);
   const [creating, setCreating] = useState(false);
   const [transfer, setTransfer] = useState<AccessSwarm | null>(null);
+  // Новый владелец выбирается из участников проекта: сервер всё равно
+  // откажет остальным, и угадывать username незачем. Список открыт
+  // администратору -- только он и передаёт владение.
+  const loadMembers = useCallback(
+    () => (admin && transfer ? accessApi.members(projectId) : Promise.resolve([])),
+    [admin, projectId, transfer]
+  );
+  const members = useAccessResource(loadMembers, { headerRefresh: false });
+  useHeaderRefresh(async () => {
+    await Promise.all([resource.refresh(), members.refresh()]);
+  });
+  const owners = ownerCandidates(members.data, transfer?.owner_username ?? '');
   const open = (swarm: AccessSwarm, route: string) => {
     setSwarm(swarm.id);
     navigate(route);
@@ -58,13 +71,8 @@ function Swarms({ project }: { project: AccessProject }) {
     },
     {
       key: 'owner',
-      label: t('access.owner_id'),
-      mono: true,
-      render: (swarm) => (
-        <span title={swarm.owner_id}>
-          {swarm.owner_id.length > 12 ? `…${swarm.owner_id.slice(-12)}` : swarm.owner_id}
-        </span>
-      ),
+      label: t('access.owner'),
+      render: (swarm) => <span title={swarm.owner_id}>{swarm.owner_username}</span>,
     },
     {
       key: 'id',
@@ -141,7 +149,7 @@ function Swarms({ project }: { project: AccessProject }) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={busy}
+                  disabled={busy || swarm.state !== 'active'}
                   onClick={() => setTransfer(swarm)}
                 >
                   {t('access.transfer')}
@@ -180,10 +188,18 @@ function Swarms({ project }: { project: AccessProject }) {
           title={t('access.transfer_for', { name: transfer.name })}
           description={t('access.transfer_hint')}
           close={() => setTransfer(null)}
-          fields={[{ name: 'username', label: t('access.username'), required: true }]}
-          submit={(values) =>
-            run(() => accessApi.transferSwarm(transfer.id, values.username.trim()))
-          }
+          fields={[
+            {
+              name: 'username',
+              label: t('access.username'),
+              type: 'select',
+              required: true,
+              options: owners,
+              empty:
+                members.error || (members.loading ? t('common.loading') : t('access.no_members')),
+            },
+          ]}
+          submit={(values) => run(() => accessApi.transferSwarm(transfer.id, values.username))}
         />
       )}
     </div>

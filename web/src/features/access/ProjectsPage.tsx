@@ -56,7 +56,14 @@ export function AccessProjectsPage() {
                     size="sm"
                     disabled={busy}
                     className={styles.dangerText}
-                    onClick={() => confirm(project.name, () => accessApi.deleteProject(project.id))}
+                    onClick={() =>
+                      confirm(
+                        project.name,
+                        () => accessApi.deleteProject(project.id),
+                        t('substrate.delete'),
+                        t('access.confirm_project', { name: project.name })
+                      )
+                    }
                   >
                     {t('substrate.delete')}
                   </Button>
