@@ -39,8 +39,8 @@ function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' }) {
     if (requested) setProject(requested);
   }, [requested, setProject]);
   if (requested && selected !== requested) return <LoadingSpinner />;
-  if (requested) return <Navigate to={section === 'swarms' ? '/swarms' : '/permissions'} replace />;
-  return section === 'swarms' ? <SwarmsPage /> : <PermissionsPage />;
+  if (requested) return <Navigate to={section === 'swarms' ? '/swarms' : '/policy'} replace />;
+  return section === 'swarms' ? <SwarmsPage /> : <Navigate to="/policy" replace />;
 }
 
 const createMainRoutes = (supportsPlugin: boolean) => [
@@ -59,7 +59,8 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
   { path: '/worker-pools', element: <WorkerPoolsPage /> },
-  { path: '/policy', element: <PolicyPage /> },
+  { path: '/policy', element: <PermissionsPage /> },
+  { path: '/substrate-policy', element: <PolicyPage /> },
   { path: '/settings', element: <Navigate to="/config" replace /> },
   { path: '/api-keys', element: <Navigate to="/config" replace /> },
   // brood: no sponsor quick start page; its old address goes to the providers.
