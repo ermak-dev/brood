@@ -2653,6 +2653,7 @@
     }
   },
   "worker_pools": {
+    "lxc_warning": "Experimental LXC shares the node kernel: trusted workloads only. Each worker supports one actor. No memory checkpoint or automatic process recovery after node failure.",
     "title": "Worker pools",
     "create": "Create worker pool",
     "scope_hint": "Pools provide capacity for the whole installation, independent of the active project.",
