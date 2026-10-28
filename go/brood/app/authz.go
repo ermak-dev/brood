@@ -1,7 +1,7 @@
 package app
 
-// Action — действие над ресурсом. manage-swarm покрывает операции
-// акторов, терминала и политик роя (#32/#33 проверяют его же).
+// Action — действие над ресурсом. manage-swarm покрывает операции акторов
+// и терминала. Native policy дополнительно требует администратора в Go API.
 type Action string
 
 const (
@@ -11,7 +11,7 @@ const (
 	ActionCreateSwarm Action = "create-swarm"
 	// ActionViewSwarm — видеть рой и его данные.
 	ActionViewSwarm Action = "view-swarm"
-	// ActionManageSwarm — управлять роем: акторы, терминал, политики.
+	// ActionManageSwarm — управлять роем: акторы и терминал.
 	ActionManageSwarm Action = "manage-swarm"
 	// ActionDeleteSwarm — удалить рой.
 	ActionDeleteSwarm Action = "delete-swarm"
