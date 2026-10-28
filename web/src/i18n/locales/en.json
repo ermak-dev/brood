@@ -1,5 +1,10 @@
 {
   "access": {
+    "role": "Role",
+    "user": "User",
+    "edit_user": "Edit user {{name}}",
+    "confirm_user": "Delete user {{name}}? Sessions and memberships will be revoked. Transfer or delete their swarms first.",
+    "user_properties_hint": "Changing role or blocked status revokes existing sessions. The last active administrator is protected.",
     "grant_admin": "Grant administrator access",
     "revoke_admin": "Revoke administrator access",
     "select_swarm": "Select a swarm",

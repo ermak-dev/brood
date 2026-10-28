@@ -8,13 +8,23 @@ import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { AccessEditor, LoadState, useAccessActions, useAccessResource } from './shared';
 import styles from '@/features/substrate/substrate.module.scss';
 
+type Editor =
+  { kind: 'create' } | { kind: 'edit'; user: AccessUser } | { kind: 'password'; username: string };
+
 export function UsersPage() {
   const { t } = useTranslation();
   const resource = useAccessResource(accessApi.users);
   const { run, confirm, busy } = useAccessActions(resource.refresh);
-  const [editor, setEditor] = useState<
-    { kind: 'create' } | { kind: 'password'; username: string } | null
-  >(null);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const editing = editor?.kind === 'edit' ? editor.user : null;
+  const initialValues = editing
+    ? {
+        username: editing.username,
+        display_name: editing.display_name,
+        is_admin: String(editing.is_admin),
+        disabled: String(editing.disabled),
+      }
+    : { username: '', display_name: '', is_admin: 'false', disabled: 'false' };
   const columns: Column<AccessUser>[] = [
     {
       key: 'username',
@@ -24,9 +34,9 @@ export function UsersPage() {
     },
     { key: 'display_name', label: t('access.display_name'), render: (user) => user.display_name },
     {
-      key: 'admin',
-      label: t('access.permissions'),
-      render: (user) => t(user.is_admin ? 'access.administrator' : 'access.member'),
+      key: 'role',
+      label: t('access.role'),
+      render: (user) => t(user.is_admin ? 'access.administrator' : 'access.user'),
     },
     {
       key: 'state',
@@ -42,12 +52,12 @@ export function UsersPage() {
           <Button onClick={() => setEditor({ kind: 'create' })}>{t('access.create_user')}</Button>
         }
       />
-      <p className={styles.sectionHint}>{t('access.admin_policy')}</p>
       <LoadState {...resource} retry={resource.refresh}>
         <EntityTable
           columns={columns}
           rows={resource.data ?? []}
           rowKey={(user) => user.username}
+          onRowClick={(user) => setEditor({ kind: 'edit', user })}
           actionsLabel={t('substrate.actions')}
           actions={(user) => (
             <>
@@ -55,32 +65,9 @@ export function UsersPage() {
                 variant="ghost"
                 size="sm"
                 disabled={busy}
-                onClick={() =>
-                  confirm(
-                    user.username,
-                    () => accessApi.setDisabled(user.username, !user.disabled),
-                    t(user.disabled ? 'access.enable' : 'access.disable')
-                  )
-                }
+                onClick={() => setEditor({ kind: 'edit', user })}
               >
-                {t(user.disabled ? 'access.enable' : 'access.disable')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() =>
-                  confirm(
-                    user.username,
-                    async () => {
-                      await accessApi.setRole(user.username, !user.is_admin);
-                      await useAuthStore.getState().checkAuth();
-                    },
-                    t(user.is_admin ? 'access.revoke_admin' : 'access.grant_admin')
-                  )
-                }
-              >
-                {t(user.is_admin ? 'access.revoke_admin' : 'access.grant_admin')}
+                {t('common.edit')}
               </Button>
               <Button
                 variant="ghost"
@@ -90,6 +77,25 @@ export function UsersPage() {
               >
                 {t('access.reset_password')}
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                className={styles.dangerText}
+                onClick={() =>
+                  confirm(
+                    user.username,
+                    async () => {
+                      await accessApi.deleteUser(user.username);
+                      await useAuthStore.getState().checkAuth();
+                    },
+                    t('substrate.delete'),
+                    t('access.confirm_user', { name: user.username })
+                  )
+                }
+              >
+                {t('substrate.delete')}
+              </Button>
             </>
           )}
         />
@@ -97,48 +103,81 @@ export function UsersPage() {
       </LoadState>
       {editor && (
         <AccessEditor
-          key={editor.kind}
+          key={`${editor.kind}-${editing?.username ?? (editor.kind === 'password' ? editor.username : '')}`}
           title={
-            editor.kind === 'create'
-              ? t('access.create_user')
-              : t('access.reset_password_for', { name: editor.username })
+            editor.kind === 'password'
+              ? t('access.reset_password_for', { name: editor.username })
+              : editing
+                ? t('access.edit_user', { name: editing.username })
+                : t('access.create_user')
           }
-          description={editor.kind === 'password' ? t('access.password_reset_hint') : undefined}
+          description={
+            editor.kind === 'password'
+              ? t('access.password_reset_hint')
+              : t('access.user_properties_hint')
+          }
           close={() => setEditor(null)}
+          initialValues={editor.kind === 'password' ? {} : initialValues}
           fields={
-            editor.kind === 'create'
+            editor.kind === 'password'
               ? [
-                  { name: 'username', label: t('access.username'), required: true },
-                  { name: 'display_name', label: t('access.display_name') },
                   {
                     name: 'password',
                     label: t('access.password'),
                     type: 'password',
                     required: true,
                   },
-                  { name: 'is_admin', label: t('access.administrator'), type: 'checkbox' },
                 ]
               : [
                   {
-                    name: 'password',
-                    label: t('access.password'),
-                    type: 'password',
+                    name: 'username',
+                    label: t('access.username'),
                     required: true,
+                    disabled: Boolean(editing),
                   },
+                  { name: 'display_name', label: t('access.display_name') },
+                  ...(editor.kind === 'create'
+                    ? [
+                        {
+                          name: 'password',
+                          label: t('access.password'),
+                          type: 'password' as const,
+                          required: true,
+                        },
+                      ]
+                    : []),
+                  {
+                    name: 'is_admin',
+                    label: t('access.role'),
+                    type: 'select',
+                    required: true,
+                    options: [
+                      { value: 'false', label: t('access.user') },
+                      { value: 'true', label: t('access.administrator') },
+                    ],
+                  },
+                  { name: 'disabled', label: t('access.disabled'), type: 'checkbox' },
                 ]
           }
-          submit={(values) =>
-            run(() =>
-              editor.kind === 'create'
-                ? accessApi.createUser({
-                    username: values.username.trim(),
-                    display_name: values.display_name ?? '',
-                    password: values.password,
-                    is_admin: values.is_admin === 'true',
-                  })
-                : accessApi.resetPassword(editor.username, values.password)
-            )
-          }
+          submit={async (values) => {
+            const ok = await run(() => {
+              if (editor.kind === 'password')
+                return accessApi.resetPassword(editor.username, values.password);
+              const properties = {
+                display_name: values.display_name ?? '',
+                is_admin: values.is_admin === 'true',
+                disabled: values.disabled === 'true',
+              };
+              if (editing) return accessApi.updateUser(editing.username, properties);
+              return accessApi.createUser({
+                username: values.username.trim(),
+                password: values.password,
+                ...properties,
+              });
+            });
+            if (ok && editing) await useAuthStore.getState().checkAuth();
+            return ok;
+          }}
         />
       )}
     </div>

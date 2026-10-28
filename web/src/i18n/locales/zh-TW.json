@@ -1,5 +1,10 @@
 {
   "access": {
+    "role": "角色",
+    "user": "使用者",
+    "edit_user": "編輯使用者 {{name}}",
+    "confirm_user": "刪除使用者 {{name}}？工作階段和成員關係將被撤銷。請先轉移或刪除其群組。",
+    "user_properties_hint": "變更角色或封鎖狀態會撤銷現有工作階段。最後一位有效管理員受到保護。",
     "grant_admin": "授予管理員權限",
     "revoke_admin": "撤銷管理員權限",
     "select_swarm": "選擇群組",
