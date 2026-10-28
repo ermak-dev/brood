@@ -99,7 +99,7 @@ func (s *Server) issueActorView(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sw, ok := s.swarmFor(w, r, user)
+	sw, ok := s.swarmForAction(w, r, user, app.ActionManageSwarm)
 	if !ok {
 		return
 	}

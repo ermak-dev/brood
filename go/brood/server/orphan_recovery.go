@@ -198,5 +198,7 @@ func (s *Server) handleOrphanRecovery(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toSwarmJSON(toAppSwarm(saved), ownerUsername))
+	row := toSwarmJSON(toAppSwarm(saved), ownerUsername)
+	row.Role = app.RoleOwner
+	writeJSON(w, http.StatusCreated, row)
 }

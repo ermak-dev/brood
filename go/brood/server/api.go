@@ -32,6 +32,7 @@ type swarmJSON struct {
 	ProjectID     string `json:"project_id"`
 	OwnerID       string `json:"owner_id"`
 	OwnerUsername string `json:"owner_username"`
+	Role          string `json:"role"`
 	Name          string `json:"name"`
 	AtespaceName  string `json:"atespace_name"`
 	State         string `json:"state"`
@@ -68,7 +69,18 @@ func writeDetail(w http.ResponseWriter, status int, detail string) {
 func apiError(w http.ResponseWriter, r *http.Request, err error) {
 	detail := err.Error()
 	var status int
+	var capacityError *app.CapacityExceededError
+	var inventoryError *shardInventoryError
 	switch {
+	case errors.As(err, &inventoryError):
+		status, detail = http.StatusServiceUnavailable, inventoryError.Error()
+		if logger := auth.LoggerFromContext(r.Context()); logger != nil {
+			logger.Error("shard inventory unavailable", "cause", inventoryError.cause)
+		}
+	case errors.Is(err, app.ErrInvalidRole), errors.Is(err, app.ErrInvalidWorkload), errors.Is(err, app.ErrInvalidCapacity):
+		status = http.StatusBadRequest
+	case errors.As(err, &capacityError):
+		status = http.StatusConflict
 	case errors.Is(err, app.ErrNotAllowed), errors.Is(err, app.ErrDisabled):
 		status = http.StatusForbidden
 	case errors.Is(err, app.ErrNotFound), errors.Is(err, store.ErrNotFound):
@@ -325,7 +337,14 @@ func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []ap
 			username = owner.Username
 			owners[sw.OwnerID] = username
 		}
-		out = append(out, toSwarmJSON(sw, username))
+		role, err := s.effectiveSwarmRole(r, sw.ID)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		row := toSwarmJSON(sw, username)
+		row.Role = role
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -336,7 +355,14 @@ func (s *Server) writeSwarm(w http.ResponseWriter, r *http.Request, status int, 
 		apiError(w, r, err)
 		return
 	}
-	writeJSON(w, status, toSwarmJSON(sw, owner.Username))
+	role, err := s.effectiveSwarmRole(r, sw.ID)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	row := toSwarmJSON(sw, owner.Username)
+	row.Role = role
+	writeJSON(w, status, row)
 }
 
 // handleSwarm — GET/DELETE /api/swarms/{id}: рой с проверкой доступа.
@@ -367,21 +393,17 @@ func (s *Server) handleSwarm(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleSwarmTransfer — POST /api/swarms/{id}/transfer {"username"}:
-// только админ, новый владелец — активный участник проекта роя.
+// handleSwarmTransfer allows owners and administrators to transfer an active swarm.
+// The domain layer validates the target and rechecks the grant inside the write.
 func (s *Server) handleSwarmTransfer(w http.ResponseWriter, r *http.Request) {
-	user, ok := currentUser(w, r)
+	user, swarm, ok := s.accessSwarm(w, r, app.ActionTransferOwnership)
 	if !ok {
-		return
-	}
-	if !user.IsAdmin {
-		writeDetail(w, http.StatusForbidden, "administrator access required")
 		return
 	}
 	var body struct {
 		Username string `json:"username"`
 	}
-	if !decodeBody(w, r, &body) {
+	if !decodeAccessBody(w, r, &body) {
 		return
 	}
 	if body.Username == "" {
@@ -389,29 +411,11 @@ func (s *Server) handleSwarmTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target, err := s.store.GetUserByUsername(r.Context(), body.Username)
-	if errors.Is(err, store.ErrNotFound) {
-		writeDetail(w, http.StatusNotFound, "user not found")
-		return
-	}
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	sw, err := s.app.GetSwarm(user.ID, r.PathValue("id"))
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	member, err := s.store.IsMember(r.Context(), sw.ProjectID, target.ID)
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	if !member {
-		writeDetail(w, http.StatusForbidden, "new owner must be a project member")
-		return
-	}
-	if err := s.app.TransferSwarm(user.ID, r.PathValue("id"), target.ID); err != nil {
+	if err := s.app.TransferSwarm(user.ID, swarm.ID, target.ID); err != nil {
 		apiError(w, r, err)
 		return
 	}

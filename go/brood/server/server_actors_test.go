@@ -150,6 +150,8 @@ func (f *fakeAteapi) CreateActor(_ context.Context, req *ateapi.CreateActorReque
 	if _, ok := f.actors[key]; ok {
 		return nil, grpcErr(codes.AlreadyExists, "actor already exists")
 	}
+	item.Metadata.Uid = "uid-" + item.Metadata.Name
+	item.Metadata.Version = 7
 	f.actors[key] = item
 	return item, nil
 }
@@ -234,6 +236,8 @@ func (f *fakeAteapi) CreateActorTemplate(_ context.Context, req *ateapi.CreateAc
 	if _, ok := f.templates[key]; ok {
 		return nil, grpcErr(codes.AlreadyExists, "actor template already exists")
 	}
+	item.Metadata.Uid = "uid-" + item.Metadata.Name
+	item.Metadata.Version = 7
 	f.templates[key] = item
 	return item, nil
 }
@@ -517,6 +521,16 @@ func TestSwarmActorsLifecycle(t *testing.T) {
 		t.Fatalf("empty list: %v", data)
 	}
 
+	swarm, err := ts.srv.store.GetSwarm(nil2ctx(), swarmID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	for _, name := range []string{"tpl", "tpl2"} {
+		fake.templates[swarm.AtespaceName+"/"+name] = inventoryTemplate(swarm.AtespaceName, name, "uid-"+name, ateapi.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_DISABLED)
+	}
+	fake.mu.Unlock()
+
 	// Atespace в теле игнорируется: сервер ставит имя области роя.
 	resp, data, _ = ts.do(alice, "POST", "/api/swarms/"+swarmID+"/actors", ts.csrf(alice),
 		map[string]any{"metadata": map[string]any{"name": "claude", "atespace": "evil"},
@@ -524,7 +538,7 @@ func TestSwarmActorsLifecycle(t *testing.T) {
 			"sourceTag":     map[string]any{"name": "seed", "atespace": "evil"}})
 	expectStatus(t, "create actor", resp, data, http.StatusCreated)
 	meta, _ := data["metadata"].(map[string]any)
-	swarm, err := ts.srv.store.GetSwarm(nil2ctx(), swarmID)
+	swarm, err = ts.srv.store.GetSwarm(nil2ctx(), swarmID)
 	if err != nil {
 		t.Fatalf("get swarm: %v", err)
 	}
@@ -601,7 +615,10 @@ func TestSwarmTemplates(t *testing.T) {
 	swarm, _ := ts.srv.store.GetSwarm(nil2ctx(), swarmID)
 
 	resp, data, _ := ts.do(alice, "POST", "/api/swarms/"+swarmID+"/templates", ts.csrf(alice),
-		map[string]any{"metadata": map[string]any{"name": "tpl", "atespace": "evil"}})
+		map[string]any{"metadata": map[string]any{"name": "tpl", "atespace": "evil"},
+			"containers":     []any{map[string]string{"name": "main", "image": "busybox"}},
+			"resources":      map[string]any{"limits": map[string]string{"cpuMillicores": "1000", "memoryBytes": "1048576"}},
+			"snapshotConfig": map[string]any{"goldenSnapshotConfig": map[string]string{"mode": "GOLDEN_SNAPSHOT_MODE_DISABLED"}}})
 	expectStatus(t, "create template", resp, data, http.StatusCreated)
 	meta, _ := data["metadata"].(map[string]any)
 	if meta["atespace"] != swarm.AtespaceName {

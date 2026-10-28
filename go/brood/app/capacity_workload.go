@@ -11,7 +11,7 @@ type WorkloadAdmission struct {
 	Reservations []ActorReservation
 	Name         string
 	Replace      bool
-	// TemplateOnly is a golden-disabled publication that cannot allocate an actor.
+	// TemplateOnly cannot allocate actors: deletion or golden-disabled publication.
 	TemplateOnly   bool
 	CPUMillicores  int64
 	MemoryBytes    int64

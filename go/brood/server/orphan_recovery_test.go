@@ -92,7 +92,7 @@ func TestOrphanRecoveryIsExplicitAndPreservesNativeResources(t *testing.T) {
 	request := map[string]string{"project_id": known.ProjectID, "swarm_id": recoveryTestID, "atespace_uid": "expected-uid"}
 	r, body, _ = ts.do(admin, "POST", "/api/admin/orphan-swarms/recover", ts.csrf(admin), request)
 	expectStatus(t, "recovery", r, body, 201)
-	if body["id"] != recoveryTestID || body["owner_username"] != "root" || body["atespace_name"] != name || body["state"] != "active" {
+	if body["id"] != recoveryTestID || body["owner_username"] != "root" || body["role"] != "owner" || body["atespace_name"] != name || body["state"] != "active" {
 		t.Fatalf("wrong recovered record: %v", body)
 	}
 	saved, err := ts.srv.store.GetSwarm(context.Background(), recoveryTestID)

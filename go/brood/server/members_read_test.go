@@ -33,7 +33,7 @@ func TestProjectMembershipListing(t *testing.T) {
 	alice := newClient(t)
 	ts.login(alice, "alice", "password")
 	response, _, _ = ts.do(alice, "GET", path, "", nil)
-	expectStatus(t, "ordinary members access", response, nil, 403)
+	expectStatus(t, "project member choices", response, nil, 200)
 	response, _, _ = ts.do(newClient(t), "GET", path, "", nil)
 	expectStatus(t, "anonymous members access", response, nil, 401)
 	response, _, _ = ts.do(admin, "GET", "/api/projects/missing/members", "", nil)

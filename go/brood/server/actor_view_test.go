@@ -190,75 +190,99 @@ func TestActorViewScopeAndRevocation(t *testing.T) {
 }
 
 func TestActorViewRealWebSocket(t *testing.T) {
-	ts := newTestServer(t)
-	_, alice, _, swarm := actorsSetup(t, ts)
-	viewTestProxy(t, ts, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ws" || r.Header.Get("Origin") != ts.http.URL || r.Header.Get("X-Actor") != "terminal" || r.Header.Get("Ate-Target-Actor") != swarmAtespace(t, ts.srv, swarm)+"/terminal" {
-			t.Error("ticket websocket lost target, path, or check-origin")
-		}
-		conn, rw, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer conn.Close()
-		accept := sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-		fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: %s\r\nSet-Cookie: session=evil; Path=/\r\n\r\n", base64.StdEncoding.EncodeToString(accept[:]))
-		rw.Flush()
-		frame := make([]byte, 10)
-		if _, err := io.ReadFull(rw, frame); err != nil {
-			return
-		}
-		if frame[0] != 0x82 || frame[1] != 0x84 {
-			t.Error("invalid masked websocket frame")
-			return
-		}
-		for i := 0; i < 4; i++ {
-			frame[6+i] ^= frame[2+i]
-		}
-		rw.Write(append([]byte{0x82, 4}, frame[6:]...))
-		rw.Flush()
-		io.Copy(io.Discard, rw)
-	}))
-	path := issueView(t, ts, alice, swarm)
-	req, _ := http.NewRequest("GET", ts.http.URL+path+"ws", nil)
-	req.Header.Set("Origin", "null")
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "websocket")
-	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-	conn, err := net.Dial("tcp", req.URL.Host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(3 * time.Second))
-	if err := req.Write(conn); err != nil {
-		t.Fatal(err)
-	}
-	reader := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(reader, req)
-	if err != nil || resp.StatusCode != 101 {
-		t.Fatalf("ticket WS handshake failed: %v %v", resp, err)
-	}
-	if len(resp.Header.Values("Set-Cookie")) != 0 {
-		t.Fatal("WS set portal cookie")
-	}
-	if resp.Header.Get("Sec-WebSocket-Accept") != "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" {
-		t.Fatal("invalid websocket accept")
-	}
-	conn.Write([]byte{0x82, 0x84, 1, 2, 3, 4, 'p' ^ 1, 'i' ^ 2, 'n' ^ 3, 'g' ^ 4})
-	echo := make([]byte, 6)
-	if _, err := io.ReadFull(reader, echo); err != nil || string(echo) != "\x82\x04ping" {
-		t.Fatalf("echo=%q err=%v", echo, err)
-	}
-	response, data, _ := ts.do(alice, "POST", "/api/auth/logout", ts.csrf(alice), nil)
-	expectStatus(t, "logout", response, data, 204)
-	ts.srv.proxy.RecheckNow()
-	if _, err := reader.ReadByte(); err == nil {
-		t.Fatal("ticket WS survived logout")
-	} else if e, ok := err.(net.Error); ok && e.Timeout() {
-		t.Fatal("ticket WS not revoked")
+	for _, revoke := range []string{"logout", "viewer role"} {
+		t.Run(revoke, func(t *testing.T) {
+			ts := newTestServer(t)
+			_, alice, bob, swarm := actorsSetup(t, ts)
+			issuer := alice
+			if revoke == "viewer role" {
+				response, data, _ := ts.do(alice, "POST", "/api/swarms/"+swarm+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "editor"})
+				expectStatus(t, "grant terminal editor", response, data, 204)
+				issuer = bob
+			}
+			viewTestProxy(t, ts, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/ws" || r.Header.Get("Origin") != ts.http.URL || r.Header.Get("X-Actor") != "terminal" || r.Header.Get("Ate-Target-Actor") != swarmAtespace(t, ts.srv, swarm)+"/terminal" {
+					t.Error("ticket websocket lost target, path, or check-origin")
+				}
+				conn, rw, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer conn.Close()
+				accept := sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+				fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: %s\r\nSet-Cookie: session=evil; Path=/\r\n\r\n", base64.StdEncoding.EncodeToString(accept[:]))
+				rw.Flush()
+				frame := make([]byte, 10)
+				if _, err := io.ReadFull(rw, frame); err != nil {
+					return
+				}
+				if frame[0] != 0x82 || frame[1] != 0x84 {
+					t.Error("invalid masked websocket frame")
+					return
+				}
+				for i := 0; i < 4; i++ {
+					frame[6+i] ^= frame[2+i]
+				}
+				rw.Write(append([]byte{0x82, 4}, frame[6:]...))
+				rw.Flush()
+				io.Copy(io.Discard, rw)
+			}))
+			path := issueView(t, ts, issuer, swarm)
+			req, _ := http.NewRequest("GET", ts.http.URL+path+"ws", nil)
+			req.Header.Set("Origin", "null")
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-WebSocket-Version", "13")
+			req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			conn, err := net.Dial("tcp", req.URL.Host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(3 * time.Second))
+			if err := req.Write(conn); err != nil {
+				t.Fatal(err)
+			}
+			reader := bufio.NewReader(conn)
+			resp, err := http.ReadResponse(reader, req)
+			if err != nil || resp.StatusCode != 101 {
+				t.Fatalf("ticket WS handshake failed: %v %v", resp, err)
+			}
+			if len(resp.Header.Values("Set-Cookie")) != 0 {
+				t.Fatal("WS set portal cookie")
+			}
+			if resp.Header.Get("Sec-WebSocket-Accept") != "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" {
+				t.Fatal("invalid websocket accept")
+			}
+			conn.Write([]byte{0x82, 0x84, 1, 2, 3, 4, 'p' ^ 1, 'i' ^ 2, 'n' ^ 3, 'g' ^ 4})
+			echo := make([]byte, 6)
+			if _, err := io.ReadFull(reader, echo); err != nil || string(echo) != "\x82\x04ping" {
+				t.Fatalf("echo=%q err=%v", echo, err)
+			}
+			if revoke == "logout" {
+				response, data, _ := ts.do(issuer, "POST", "/api/auth/logout", ts.csrf(issuer), nil)
+				expectStatus(t, "logout", response, data, 204)
+			} else {
+				response, data, _ := ts.do(alice, "POST", "/api/swarms/"+swarm+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "viewer"})
+				expectStatus(t, "revoke terminal write permission", response, data, 204)
+				response, data, _ = ts.do(bob, "GET", "/api/auth/session", "", nil)
+				expectStatus(t, "viewer session remains valid", response, data, 200)
+				if data["authenticated"] != true {
+					t.Fatal("role test was confounded by session revocation")
+				}
+				noRedirect := *bob
+				noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+				response, data, _ = ts.do(&noRedirect, "GET", "/api/swarms/"+swarm+"/proxy/actors/terminal/", "", nil)
+				expectStatus(t, "viewer cannot mint a writable terminal ticket", response, data, 404)
+			}
+			ts.srv.proxy.RecheckNow()
+			if _, err := reader.ReadByte(); err == nil {
+				t.Fatal("ticket WS survived access revocation")
+			} else if e, ok := err.(net.Error); ok && e.Timeout() {
+				t.Fatal("ticket WS not revoked")
+			}
+		})
 	}
 }
 
