@@ -467,7 +467,11 @@ func TestAdminScenario(t *testing.T) {
 		t.Fatalf("disabled bob session: %v", data)
 	}
 
-	// Удаление проекта — только админ.
+	// Удаление проекта не обходит native-удаление оставшегося роя.
+	resp, data, _ = ts.do(admin, "DELETE", "/api/projects/"+projectID, ts.csrf(admin), nil)
+	expectStatus(t, "live project refused", resp, data, http.StatusConflict)
+	resp, data, _ = ts.do(admin, "DELETE", "/api/swarms/"+bobSwarm, ts.csrf(admin), nil)
+	expectStatus(t, "delete remaining swarm", resp, data, http.StatusNoContent)
 	resp, data, _ = ts.do(admin, "DELETE", "/api/projects/"+projectID, ts.csrf(admin), nil)
 	expectStatus(t, "delete project", resp, data, http.StatusNoContent)
 	resp, data, _ = ts.do(admin, "DELETE", "/api/projects/"+projectID, ts.csrf(admin), nil)

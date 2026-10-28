@@ -5,6 +5,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,7 +74,7 @@ func apiError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, app.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, app.ErrExists), errors.Is(err, app.ErrConflict),
-		errors.Is(err, app.ErrState), isMemberExists(err):
+		errors.Is(err, app.ErrState), errors.Is(err, store.ErrProjectHasSwarms), isMemberExists(err):
 		status = http.StatusConflict
 	default:
 		var apiErr *substrate.APIError
@@ -187,16 +188,20 @@ func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// Точечного метода в прикладном слое нет: удаление идёт хранилищем
-	// после проверки существования проекта.
-	if _, err := s.store.GetProject(r.Context(), id); errors.Is(err, store.ErrNotFound) {
-		writeDetail(w, http.StatusNotFound, "project not found")
-		return
-	} else if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	if err := s.store.DeleteProject(r.Context(), id); err != nil {
+	err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
+		current, err := s.store.GetUser(ctx, user.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			return app.ErrNotAllowed
+		}
+		if err != nil {
+			return err
+		}
+		if current.Disabled || !current.IsAdmin {
+			return app.ErrNotAllowed
+		}
+		return s.store.DeleteProjectWithoutSwarms(ctx, id)
+	})
+	if err != nil {
 		apiError(w, r, err)
 		return
 	}
