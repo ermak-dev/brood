@@ -116,7 +116,21 @@ func (f *fakeAteapi) DeleteAtespace(_ context.Context, req *ateapi.DeleteAtespac
 	if !ok {
 		return nil, grpcErr(codes.NotFound, "atespace not found")
 	}
-	delete(f.atespaces, req.GetAtespace().GetName())
+	if uid := req.GetOptions().GetUid(); uid != "" && uid != item.GetMetadata().GetUid() {
+		return nil, grpcErr(codes.Aborted, "atespace UID changed")
+	}
+	name := req.GetAtespace().GetName()
+	for _, actor := range f.actors {
+		if actor.GetMetadata().GetAtespace() == name {
+			return nil, grpcErr(codes.FailedPrecondition, "Atespace is not empty")
+		}
+	}
+	for _, template := range f.templates {
+		if template.GetMetadata().GetAtespace() == name {
+			return nil, grpcErr(codes.FailedPrecondition, "Atespace is not empty")
+		}
+	}
+	delete(f.atespaces, name)
 	return item, nil
 }
 
