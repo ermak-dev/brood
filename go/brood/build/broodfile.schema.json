@@ -1,0 +1,648 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Broodfile structural schema. Reference resolution, safe paths, Git URLs, uint64 resources and YAML syntax restrictions are additionally checked by bro build.",
+  "properties": {
+    "apiVersion": {
+      "const": "brood.dev/v1alpha1",
+      "type": "string"
+    },
+    "defaultTarget": {
+      "maxLength": 63,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+      "type": "string"
+    },
+    "environments": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "build": {
+            "additionalProperties": false,
+            "properties": {
+              "argsFromPins": {
+                "items": {
+                  "pattern": "^[A-Z][A-Z0-9_]*$",
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "arguments": {
+                "additionalProperties": {
+                  "maxLength": 16384,
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "pattern": "^[A-Z][A-Z0-9_]*$",
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "dockerfile": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "platform": {
+                "enum": [
+                  "linux/amd64",
+                  "linux/arm64"
+                ]
+              }
+            },
+            "required": [
+              "dockerfile",
+              "platform"
+            ],
+            "type": "object"
+          },
+          "sources": {
+            "items": {
+              "maxLength": 63,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "sources",
+          "build"
+        ],
+        "type": "object"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "maxLength": 63,
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "name": {
+      "maxLength": 63,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+      "type": "string"
+    },
+    "networks": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "http": {
+            "additionalProperties": false,
+            "properties": {
+              "hosts": {
+                "items": {
+                  "maxLength": 253,
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "ports": {
+                "items": {
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "hosts",
+              "ports"
+            ],
+            "type": "object"
+          },
+          "tls": {
+            "additionalProperties": false,
+            "properties": {
+              "hosts": {
+                "items": {
+                  "maxLength": 253,
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "ports": {
+                "items": {
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "maxItems": 64,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "hosts",
+              "ports"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "maxLength": 63,
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "pinsFile": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": "string"
+    },
+    "sources": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "git",
+                  "type": "string"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "revisionPin"
+                    ]
+                  },
+                  "required": [
+                    "revision"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "revision"
+                    ]
+                  },
+                  "required": [
+                    "revisionPin"
+                  ]
+                }
+              ],
+              "required": [
+                "repository"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "project",
+                  "type": "string"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "repository"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "revision"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "revisionPin"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "properties": {
+          "destination": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "gitMetadata": {
+            "type": "boolean"
+          },
+          "repository": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "revision": {
+            "pattern": "^[0-9a-f]{40}$",
+            "type": "string"
+          },
+          "revisionPin": {
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "project",
+              "git"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "destination"
+        ],
+        "type": "object"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "maxLength": 63,
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "targets": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "template": {
+            "maxLength": 63,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template"
+        ],
+        "type": "object"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "maxLength": 63,
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "templates": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "additionalProperties": false,
+            "properties": {
+              "containers": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "args": {
+                      "items": {
+                        "maxLength": 16384,
+                        "type": "string"
+                      },
+                      "maxItems": 256,
+                      "type": "array"
+                    },
+                    "command": {
+                      "allOf": [
+                        {
+                          "items": {
+                            "maxLength": 16384,
+                            "type": "string"
+                          },
+                          "maxItems": 256,
+                          "type": "array"
+                        }
+                      ],
+                      "minItems": 1
+                    },
+                    "env": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "name": {
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                            "type": "string"
+                          },
+                          "value": {
+                            "maxLength": 16384,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 128,
+                      "type": "array"
+                    },
+                    "name": {
+                      "maxLength": 63,
+                      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+                      "type": "string"
+                    },
+                    "securityContext": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "capabilities": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "add": {
+                              "items": {
+                                "enum": [
+                                  "CHOWN",
+                                  "DAC_OVERRIDE",
+                                  "DAC_READ_SEARCH",
+                                  "FOWNER",
+                                  "FSETID",
+                                  "KILL",
+                                  "SETGID",
+                                  "SETUID",
+                                  "SETPCAP",
+                                  "LINUX_IMMUTABLE",
+                                  "NET_BIND_SERVICE",
+                                  "NET_BROADCAST",
+                                  "NET_ADMIN",
+                                  "NET_RAW",
+                                  "IPC_LOCK",
+                                  "IPC_OWNER",
+                                  "SYS_MODULE",
+                                  "SYS_RAWIO",
+                                  "SYS_CHROOT",
+                                  "SYS_PTRACE",
+                                  "SYS_PACCT",
+                                  "SYS_ADMIN",
+                                  "SYS_BOOT",
+                                  "SYS_NICE",
+                                  "SYS_RESOURCE",
+                                  "SYS_TIME",
+                                  "SYS_TTY_CONFIG",
+                                  "MKNOD",
+                                  "LEASE",
+                                  "AUDIT_WRITE",
+                                  "AUDIT_CONTROL",
+                                  "SETFCAP",
+                                  "MAC_OVERRIDE",
+                                  "MAC_ADMIN",
+                                  "SYSLOG",
+                                  "WAKE_ALARM",
+                                  "BLOCK_SUSPEND",
+                                  "AUDIT_READ",
+                                  "PERFMON",
+                                  "BPF",
+                                  "CHECKPOINT_RESTORE"
+                                ]
+                              },
+                              "type": "array",
+                              "uniqueItems": true
+                            },
+                            "drop": {
+                              "items": {
+                                "enum": [
+                                  "CHOWN",
+                                  "DAC_OVERRIDE",
+                                  "DAC_READ_SEARCH",
+                                  "FOWNER",
+                                  "FSETID",
+                                  "KILL",
+                                  "SETGID",
+                                  "SETUID",
+                                  "SETPCAP",
+                                  "LINUX_IMMUTABLE",
+                                  "NET_BIND_SERVICE",
+                                  "NET_BROADCAST",
+                                  "NET_ADMIN",
+                                  "NET_RAW",
+                                  "IPC_LOCK",
+                                  "IPC_OWNER",
+                                  "SYS_MODULE",
+                                  "SYS_RAWIO",
+                                  "SYS_CHROOT",
+                                  "SYS_PTRACE",
+                                  "SYS_PACCT",
+                                  "SYS_ADMIN",
+                                  "SYS_BOOT",
+                                  "SYS_NICE",
+                                  "SYS_RESOURCE",
+                                  "SYS_TIME",
+                                  "SYS_TTY_CONFIG",
+                                  "MKNOD",
+                                  "LEASE",
+                                  "AUDIT_WRITE",
+                                  "AUDIT_CONTROL",
+                                  "SETFCAP",
+                                  "MAC_OVERRIDE",
+                                  "MAC_ADMIN",
+                                  "SYSLOG",
+                                  "WAKE_ALARM",
+                                  "BLOCK_SUSPEND",
+                                  "AUDIT_READ",
+                                  "PERFMON",
+                                  "BPF",
+                                  "CHECKPOINT_RESTORE"
+                                ]
+                              },
+                              "type": "array",
+                              "uniqueItems": true
+                            }
+                          },
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "capabilities"
+                      ],
+                      "type": "object"
+                    },
+                    "volumeMounts": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mountPath": {
+                            "maxLength": 1024,
+                            "pattern": "^/",
+                            "type": "string"
+                          },
+                          "name": {
+                            "maxLength": 63,
+                            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "mountPath"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 32,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "command"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 1,
+                "minItems": 1,
+                "type": "array"
+              },
+              "resources": {
+                "additionalProperties": false,
+                "properties": {
+                  "limits": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "cpuMillicores": {
+                        "maxLength": 20,
+                        "pattern": "^[1-9][0-9]*$",
+                        "type": "string"
+                      },
+                      "memoryBytes": {
+                        "maxLength": 20,
+                        "pattern": "^[1-9][0-9]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "cpuMillicores",
+                      "memoryBytes"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "limits"
+                ],
+                "type": "object"
+              },
+              "snapshotConfig": {
+                "additionalProperties": false,
+                "properties": {
+                  "goldenSnapshotConfig": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "GOLDEN_SNAPSHOT_MODE_DISABLED",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ],
+                    "type": "object"
+                  },
+                  "preferredFidelity": {
+                    "const": "SNAPSHOT_FIDELITY_MEMORY",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "volumes": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "durableDir": {
+                      "maxProperties": 0,
+                      "type": "object"
+                    },
+                    "name": {
+                      "maxLength": 63,
+                      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "durableDir"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "workerSelector": {
+                "additionalProperties": false,
+                "properties": {
+                  "matchLabels": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "resources",
+              "containers"
+            ],
+            "type": "object"
+          },
+          "environment": {
+            "maxLength": 63,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "type": "string"
+          },
+          "network": {
+            "maxLength": 63,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment",
+          "network",
+          "actor"
+        ],
+        "type": "object"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "maxLength": 63,
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+        "type": "string"
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "name",
+    "defaultTarget",
+    "sources",
+    "environments",
+    "templates",
+    "networks",
+    "targets"
+  ],
+  "title": "Broodfile",
+  "type": "object"
+}
