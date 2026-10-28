@@ -68,7 +68,7 @@ func classSetValid(parsed map[string]string) bool {
 		return false
 	}
 	for class, image := range parsed {
-		if class != classGvisor && class != "microvm" {
+		if class != classGvisor && class != "microvm" && class != "lxc" {
 			return false
 		}
 		if !digestImage(image) {
