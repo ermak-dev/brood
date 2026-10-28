@@ -17,6 +17,7 @@ type memStore struct {
 	members    map[Membership]struct{}
 	swarms     map[string]*Swarm
 	swarmsByAt map[string]string
+	grants     map[[2]string]string
 }
 
 func newMemStore() *memStore {
@@ -26,6 +27,7 @@ func newMemStore() *memStore {
 		members:    map[Membership]struct{}{},
 		swarms:     map[string]*Swarm{},
 		swarmsByAt: map[string]string{},
+		grants:     map[[2]string]string{},
 	}
 }
 
@@ -157,6 +159,7 @@ func (s *memStore) SaveSwarm(sw Swarm) error {
 	cp := sw
 	s.swarms[sw.ID] = &cp
 	s.swarmsByAt[sw.AtespaceName] = sw.ID
+	s.grants[[2]string{sw.ID, sw.OwnerID}] = RoleOwner
 	return nil
 }
 
@@ -195,23 +198,26 @@ func (s *memStore) UpdateSwarm(sw Swarm) error {
 	return nil
 }
 
-func (s *memStore) ChangeSwarmOwner(id, expectedOwnerID, newOwnerID string) error {
+func (s *memStore) ChangeSwarmOwner(actorID, id, expectedOwnerID, newOwnerID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cur, ok := s.swarms[id]
-	if !ok {
-		return ErrNotFound
-	}
-	if cur.State != StateActive {
-		return ErrState
+	cur, err := s.aclWriteAllowedLocked(actorID, id)
+	if err != nil {
+		return err
 	}
 	if cur.OwnerID != expectedOwnerID {
 		return ErrConflict
 	}
-	owner, ok := s.users[newOwnerID]
-	_, member := s.members[Membership{ProjectID: cur.ProjectID, UserID: newOwnerID}]
-	if !ok || owner.Disabled || (!member && !owner.IsAdmin) {
+	if !s.validGranteeLocked(cur.ProjectID, newOwnerID) {
 		return ErrNotAllowed
+	}
+	if err := s.changeGrantLocked(cur, newOwnerID, RoleOwner); err != nil {
+		return err
+	}
+	if expectedOwnerID != newOwnerID {
+		if err := s.changeGrantLocked(cur, expectedOwnerID, ""); err != nil {
+			return err
+		}
 	}
 	cur.OwnerID = newOwnerID
 	return nil

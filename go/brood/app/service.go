@@ -1,6 +1,9 @@
 package app
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Clock возвращает текущее время UTC; внедряется для тестов.
 type Clock func() time.Time
@@ -27,9 +30,19 @@ type Service struct {
 	provisioner Provisioner
 	now         Clock
 	newID       IDGen
+	projects    sync.Map
 }
 
 // NewService собирает сервис из зависимостей.
 func NewService(store Store, provisioner Provisioner, now Clock, newID IDGen) *Service {
 	return &Service{store: store, provisioner: provisioner, now: now, newID: newID}
+}
+
+// lockProject serializes resource creation for an existing, authorized project.
+// Keys are admitted only after validation, so arbitrary request IDs cannot grow it.
+func (s *Service) lockProject(projectID string) func() {
+	value, _ := s.projects.LoadOrStore(projectID, make(chan struct{}, 1))
+	gate := value.(chan struct{})
+	gate <- struct{}{}
+	return func() { <-gate }
 }
