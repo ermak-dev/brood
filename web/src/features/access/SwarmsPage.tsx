@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { useProjectStore } from '@/stores';
-import { accessApi, type AccessSwarm } from '@/services/brood/access';
+import { accessApi, type AccessProject, type AccessSwarm } from '@/services/brood/access';
 import { EntityTable, type Column } from '@/features/substrate/components/EntityTable';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import {
@@ -13,21 +13,29 @@ import {
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { ProjectSelect, useAccessProject } from './ProjectSelect';
+import { projectSectionPath } from './state';
+import { ProjectRoute } from './useRouteProject';
 import styles from '@/features/substrate/substrate.module.scss';
 
+/** brood: рои проекта из маршрута. Рой выбирается глобально в хедере; здесь
+ * он создаётся, удаляется и открывается в акторах или шаблонах. */
 export function SwarmsPage() {
+  const { t } = useTranslation();
+  return (
+    <ProjectRoute title={t('access.swarms')}>
+      {(project) => <Swarms project={project} />}
+    </ProjectRoute>
+  );
+}
+
+function Swarms({ project }: { project: AccessProject }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const admin = useAdministrator();
-  const selection = useAccessProject();
-  const projectId = selection.project?.id ?? '';
+  const projectId = project.id;
   const setSwarm = useProjectStore((state) => state.setProject);
   const activeSwarm = useProjectStore((state) => state.project);
-  const load = useCallback(
-    () => (projectId ? accessApi.swarms(projectId) : Promise.resolve([])),
-    [projectId]
-  );
+  const load = useCallback(() => accessApi.swarms(projectId), [projectId]);
   const resource = useAccessResource(load);
   const { run, confirm, busy } = useAccessActions(resource.refresh);
   const [creating, setCreating] = useState(false);
@@ -71,85 +79,93 @@ export function SwarmsPage() {
     <div className={styles.page}>
       <PageHeader
         title={t('access.swarms')}
+        meta={[project.name]}
         actions={
-          <Button disabled={!projectId || busy} onClick={() => setCreating(true)}>
-            {t('access.create_swarm')}
-          </Button>
+          <>
+            {admin && (
+              <Button
+                variant="secondary"
+                onClick={() => navigate(projectSectionPath('members', projectId))}
+              >
+                {t('access.membership')}
+              </Button>
+            )}
+            <Button disabled={busy} onClick={() => setCreating(true)}>
+              {t('access.create_swarm')}
+            </Button>
+          </>
         }
       />
-      <ProjectSelect selection={selection} />
       <p className={styles.sectionHint}>
         {t(admin ? 'access.admin_policy' : 'access.member_policy')}
       </p>
       <p className={styles.sectionHint}>{t('access.retry_unavailable')}</p>
-      {projectId && !selection.loading && (
-        <LoadState {...resource} retry={resource.refresh}>
-          <EntityTable
-            columns={columns}
-            rows={resource.data ?? []}
-            rowKey={(swarm) => swarm.id}
-            isActive={(swarm) => swarm.id === activeSwarm}
-            actionsLabel={t('substrate.actions')}
-            actions={(swarm) => (
-              <>
+      <LoadState {...resource} retry={resource.refresh}>
+        <EntityTable
+          columns={columns}
+          rows={resource.data ?? []}
+          rowKey={(swarm) => swarm.id}
+          isActive={(swarm) => swarm.id === activeSwarm}
+          actionsLabel={t('substrate.actions')}
+          actions={(swarm) => (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={swarm.state !== 'active'}
+                onClick={() => open(swarm, '/actors')}
+              >
+                {t('nav.actors')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={swarm.state !== 'active'}
+                onClick={() => open(swarm, '/templates')}
+              >
+                {t('nav.templates')}
+              </Button>
+              {['error', 'provisioning'].includes(swarm.state) && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={swarm.state !== 'active'}
-                  onClick={() => open(swarm, '/actors')}
+                  disabled={busy}
+                  onClick={() =>
+                    void run(() => accessApi.createSwarm(swarm.project_id, swarm.name))
+                  }
                 >
-                  {t('nav.actors')}
+                  {t('access.retry_create')}
                 </Button>
+              )}
+              {admin && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={swarm.state !== 'active'}
-                  onClick={() => open(swarm, '/templates')}
+                  disabled={busy}
+                  onClick={() => setTransfer(swarm)}
                 >
-                  {t('nav.templates')}
+                  {t('access.transfer')}
                 </Button>
-                {['error', 'provisioning'].includes(swarm.state) && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(() => accessApi.createSwarm(swarm.project_id, swarm.name))
-                    }
-                  >
-                    {t('access.retry_create')}
-                  </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy || swarm.state === 'deleted'}
+                className={styles.dangerText}
+                onClick={() => remove(swarm)}
+              >
+                {t(
+                  ['error', 'deleting'].includes(swarm.state)
+                    ? 'access.retry_delete'
+                    : 'substrate.delete'
                 )}
-                {admin && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => setTransfer(swarm)}
-                  >
-                    {t('access.transfer')}
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy || swarm.state === 'deleted'}
-                  className={styles.dangerText}
-                  onClick={() => remove(swarm)}
-                >
-                  {t(
-                    ['error', 'deleting'].includes(swarm.state)
-                      ? 'access.retry_delete'
-                      : 'substrate.delete'
-                  )}
-                </Button>
-              </>
-            )}
-          />
-          {resource.data?.length === 0 && <p>{t('access.no_swarms')}</p>}
-        </LoadState>
-      )}
-      {creating && projectId && (
+              </Button>
+            </>
+          )}
+        />
+        {resource.data?.length === 0 && <p>{t('access.no_swarms')}</p>}
+      </LoadState>
+      {creating && (
         <AccessEditor
           key={projectId}
           title={t('access.create_swarm')}

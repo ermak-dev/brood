@@ -605,24 +605,15 @@ export function MainLayout() {
           metaKey: 'nav_meta.dashboard',
           icon: sidebarIcons.dashboard,
         },
-        // brood: сущности установки -- проекты, рои, акторы, шаблоны,
-        // воркеры и политика доступа. Подзаголовок пункта -- короткая
-        // строка nav_meta, не абзац политики.
+        // brood: сущности установки -- проекты, акторы, шаблоны, воркеры
+        // и политика доступа. Подзаголовок пункта -- короткая строка
+        // nav_meta, не абзац политики. Рои и участники -- разделы проекта,
+        // своих пунктов меню у них нет: проект выбирается маршрутом.
         {
           path: '/projects',
           labelKey: 'access.projects',
           metaKey: 'nav_meta.projects',
           icon: sidebarIcons.projects,
-        },
-        {
-          path: '/swarms',
-          labelKey: 'access.swarms',
-          icon: sidebarIcons.projects,
-        },
-        {
-          path: '/permissions',
-          labelKey: 'access.permissions',
-          icon: sidebarIcons.policy,
         },
         {
           path: '/users',

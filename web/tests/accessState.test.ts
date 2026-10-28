@@ -5,6 +5,17 @@
 // STATUS: DONE
 import { expect, test } from 'bun:test';
 
+// Проект выбирается маршрутом: прежние ссылки с параметром запроса ведут в
+// раздел того же проекта, а без параметра -- к списку проектов.
+test('legacy project links map to the project section route', async () => {
+  const { projectSectionPath } = await import('../src/features/access/state');
+  expect(projectSectionPath('swarms', 'project-1')).toBe('/projects/project-1/swarms');
+  expect(projectSectionPath('members', 'project-1')).toBe('/projects/project-1/members');
+  expect(projectSectionPath('swarms', 'team/one')).toBe('/projects/team%2Fone/swarms');
+  expect(projectSectionPath('swarms', null)).toBe('/projects');
+  expect(projectSectionPath('members', '')).toBe('/projects');
+});
+
 test('selects the first project only without an explicit project ID', async () => {
   const { selectAccessProject, currentResource } = await import('../src/features/access/state');
   const projects = [{ id: 'project-1', name: 'Team' }];

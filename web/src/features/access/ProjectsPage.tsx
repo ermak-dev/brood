@@ -12,6 +12,7 @@ import {
   useAccessResource,
   useAdministrator,
 } from './shared';
+import { projectSectionPath } from './state';
 import styles from '@/features/substrate/substrate.module.scss';
 
 export function AccessProjectsPage() {
@@ -41,36 +42,27 @@ export function AccessProjectsPage() {
           columns={columns}
           rows={resource.data ?? []}
           rowKey={(project) => project.id}
+          // Строка ведёт в проект; его разделы -- рои и участники -- живут
+          // внутри него, а не отдельными пунктами меню.
+          onRowClick={(project) => navigate(projectSectionPath('swarms', project.id))}
           actionsLabel={t('substrate.actions')}
-          actions={(project) => (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate(`/swarms?project=${encodeURIComponent(project.id)}`)}
-              >
-                {t('access.swarms')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate(`/permissions?project=${encodeURIComponent(project.id)}`)}
-              >
-                {t('access.membership')}
-              </Button>
-              {admin && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  className={styles.dangerText}
-                  onClick={() => confirm(project.name, () => accessApi.deleteProject(project.id))}
-                >
-                  {t('substrate.delete')}
-                </Button>
-              )}
-            </>
-          )}
+          // Участнику действий над проектом не положено: без админа столбец
+          // действий не рисуется вовсе, а не стоит пустым.
+          actions={
+            admin
+              ? (project) => (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    className={styles.dangerText}
+                    onClick={() => confirm(project.name, () => accessApi.deleteProject(project.id))}
+                  >
+                    {t('substrate.delete')}
+                  </Button>
+                )
+              : undefined
+          }
         />
         {resource.data?.length === 0 && <p>{t('access.no_projects')}</p>}
       </LoadState>

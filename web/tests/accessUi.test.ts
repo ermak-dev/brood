@@ -28,16 +28,39 @@ test('retains original routes and adds isolated access routes with admin guards'
 });
 
 // Рой и его atespace — одна сущность интерфейса: второй страницы областей
-// нет, старый адрес ведёт к роям (docs/MODEL.md).
-test('the substrate areas page is a redirect to swarms, not a second page', () => {
+// нет, старый адрес ведёт к проектам (docs/MODEL.md).
+test('the substrate areas page is a redirect to projects, not a second page', () => {
   const routes = source('router/MainRoutes.tsx');
   expect(routes).toContain(
-    `path: '/substrate-projects', element: <Navigate to="/swarms" replace />`
+    `path: '/substrate-projects', element: <Navigate to="/projects" replace />`
   );
   expect(routes).not.toContain('substrate/ProjectsPage');
   const layout = source('components/layout/MainLayout.tsx');
   expect(layout).not.toContain('/substrate-projects');
   expect(layout).not.toContain('access.substrate_projects');
+});
+
+// Выбор проекта живёт в маршруте, а не во втором выпадающем списке рядом с
+// глобальным выбором роя; старые ссылки ведут в раздел того же проекта.
+test('a project is chosen by the route, and swarms and members are its sections', () => {
+  const routes = source('router/MainRoutes.tsx');
+  expect(routes).toContain(`path: '/projects/:project/swarms'`);
+  expect(routes).toContain(`path: '/projects/:project/members'`);
+  expect(routes).toContain('LegacyProjectRoute section="swarms"');
+  expect(routes).toContain('LegacyProjectRoute section="members"');
+  expect(routes).toContain('projectSectionPath(section, params.get(\'project\'))');
+  expect(routes).not.toContain('ProjectSelect');
+  for (const page of ['features/access/SwarmsPage.tsx', 'features/access/PermissionsPage.tsx']) {
+    expect(source(page)).toContain('ProjectRoute');
+    expect(source(page)).not.toContain('ProjectSelect');
+  }
+  // Рои и участники -- разделы проекта, а не пункты меню рядом с ним.
+  const layout = source('components/layout/MainLayout.tsx');
+  expect(layout).not.toContain(`path: '/swarms'`);
+  expect(layout).not.toContain(`path: '/permissions'`);
+  expect(layout).toContain(`path: '/projects'`);
+  // Участник проходит во вложенный маршрут, админское остаётся закрытым.
+  expect(source('features/access/permissions.ts')).toContain('startsWith');
 });
 
 test('membership and retry capabilities are stated truthfully, never guessed', async () => {
@@ -53,13 +76,21 @@ test('membership and retry capabilities are stated truthfully, never guessed', a
     expect(visibleAccessPath(path, false)).toBe(false);
     expect(visibleAccessPath(path, true)).toBe(true);
   }
-  for (const path of ['/projects', '/swarms', '/permissions', '/actors', '/templates']) {
+  for (const path of [
+    '/projects',
+    '/projects/:project/swarms',
+    '/projects/:project/members',
+    '/swarms',
+    '/permissions',
+    '/actors',
+    '/templates',
+  ]) {
     expect(visibleAccessPath(path, false)).toBe(true);
   }
   // Список участников существует и читается только администратором: панель
   // не запрашивает его обычному пользователю и не утверждает обратного.
   const page = source('features/access/PermissionsPage.tsx');
-  expect(page).toContain('admin && projectId ? accessApi.members(projectId)');
+  expect(page).toContain('admin ? accessApi.members(projectId)');
 });
 
 test('all locales explain actual permissions without dead claims', () => {
