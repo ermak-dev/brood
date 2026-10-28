@@ -110,7 +110,11 @@ def manifests(image, worker_images=None, proxy=False, registry=None):
                              "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
                      "ports": [{"port": 53, "protocol": "UDP"}, {"port": 53, "protocol": "TCP"}]},
                     {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ate-system"}}}],
-                     "ports": [{"port": 443}]}]}, "networking.k8s.io/v1")]
+                     "ports": [{"port": 443}]},
+                    # Service:443 маршрутизатора перенаправляется на pod:8443 до egress-проверки.
+                    {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ate-system"}},
+                             "podSelector": {"matchLabels": {"app": "atenet-router"}}}],
+                     "ports": [{"port": 8443, "protocol": "TCP"}]}]}, "networking.k8s.io/v1")]
     if proxy:
         objects[-1]["spec"]["egress"].append({"to": [{"podSelector": {"matchLabels": {"app": "cliproxy"}}}],
                                               "ports": [{"port": 8317}]})
