@@ -115,6 +115,9 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/admin/users/{username}/enable", s.handleAdminSetDisabled(false))
 	mux.HandleFunc("POST /api/admin/users/{username}/password-reset", s.handleAdminPasswordReset)
 	mux.HandleFunc("POST /api/admin/users/{username}/role", s.handleAdminRole)
+	mux.HandleFunc("GET /api/admin/users/{username}", s.handleAdminUser)
+	mux.HandleFunc("PUT /api/admin/users/{username}", s.handleAdminUser)
+	mux.HandleFunc("DELETE /api/admin/users/{username}", s.handleAdminUser)
 }
 
 // Middleware — LoadAndSave сессий и CSRF: читает session cookie,
@@ -477,6 +480,7 @@ func (s *Service) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 		Password    string `json:"password"`
 		DisplayName string `json:"display_name"`
 		IsAdmin     bool   `json:"is_admin"`
+		Disabled    bool   `json:"disabled"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -497,6 +501,7 @@ func (s *Service) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) 
 		DisplayName:  &display,
 		PasswordHash: hash,
 		IsAdmin:      body.IsAdmin,
+		Disabled:     body.Disabled,
 	}
 	if err := s.store.CreateUser(r.Context(), u); err != nil {
 		if store.IsUniqueViolation(err) {
