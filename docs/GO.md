@@ -53,8 +53,9 @@ Substrate закреплён в `go.mod` на публичной версии
 - `substrate`, `kube`: управляющие API.
 - `proxy`: HTTP/WebSocket к акторам с проверкой и отзывом доступа.
 - `server`: сборка сервера, маршруты, встроенная панель.
-- `clientapi`: веб-сессия CLI, TLS и защищённое сохранение credentials.
-- `build`: Broodfile, внешние Git/Docker buildx, комплект артефактов.
+- `clientapi`: веб-сессия CLI, TLS, chunked push и защищённое сохранение credentials.
+- `build`: текущий Broodfile, рабочие файлы, внешние Git/Docker buildx, локальный OCI-комплект.
+- `oci`: проверка digest/графа и потоковое чтение OCI-архива без распаковки.
 - `cmd/brood`, `cmd/bro`: сервер и клиент.
 
 API входа описан в `go/CONTRACT.md`. Наличие пакета и зелёные тесты не

@@ -35,6 +35,34 @@ Pinned Substrate: публичная версия go.ate.dev/substrate v0.6.1-0.
 - `POST /api/auth/logout` + X-CSRFToken: `204`, сервер удаляет сессию, cookie чистятся.
 - Ошибки — JSON `{"detail": "<английское сообщение>"}`; без трассировок и секретов.
 
+## Сборка и push
+
+`bro build [target]` читает текущий `./Broodfile`, не требует login/registry и
+сохраняет OCI-архив с JSON-артефактами атомарно. `--project NAME`/`BUILD_PROJECT`
+задаёт логическое назначение, не путь. `--ref`, `--registry`, `--atespace` удалены.
+Справка опций — `bro build --help`, не корневая справка.
+
+`bro push [target] --project NAME` использует текущую bro login сессию. Назначение
+разрешается в доступный активный swarm; сервер всегда назначает atespace сам.
+Base API: `/api/swarms/{id}/builds/{environment}`:
+
+- `HEAD /blobs/{sha256}` — 200/404, только свой repository.
+- `POST /uploads` — 201 `{upload_id}`, upload связан с точной сессией, TTL 30 минут.
+- `PATCH /uploads/{upload_id}` — octet-stream, Content-Length, chunk до 32 MiB; 204.
+- `PUT /uploads/{upload_id}?digest=sha256:...` — finalization, 204.
+- `PUT /manifests/{sha256}` — OCI manifest/index до 4 MiB, проверка digest и
+  связанных дескрипторов в своём repository; 200 `{image}`.
+- `POST /templates` — `{image, actor_template, egress_policy}`; 200
+  `{image, template, project}`. Image/atespace server-scoped, идентичный retry
+  идемпотентен; другое содержимое существующего имени — 409. Акторы не создаются.
+
+Все запросы используют обычные session/CSRF и owner/membership/admin проверки.
+Публичного `/v2/`, Docker credentials и отдельного push bearer нет. Registry URL
+остаётся серверной настройкой. Потоки ограничены размером, временем и количеством
+upload state; приватные Location/registry errors не передаются клиенту. Правила
+EgressPolicy включаются в golden policy шаблона согласно pinned Substrate API,
+а не применяются к несуществующему runtime actor.
+
 ## Соглашения
 
 - Ошибки: `fmt.Errorf`/ошибки-значения; отказы CLI — строкой, без паник.

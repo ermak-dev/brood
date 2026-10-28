@@ -1,5 +1,6 @@
 """Go-сервер на отдельном PVC, без автоматического публичного cutover."""
 
+import ipaddress
 import json
 from pathlib import Path
 import re
@@ -26,7 +27,17 @@ def approved_images(raw):
     return images
 
 
-def manifests(image, worker_images=None, proxy=False):
+def registry_endpoint(raw):
+    try:
+        address = ipaddress.IPv4Address(json.loads(raw)["IPAddress"])
+        if not address.is_private or address.is_loopback or address.is_unspecified or address.is_multicast:
+            raise ValueError
+    except (ValueError, KeyError, TypeError):
+        raise RuntimeError("cannot discover the owned internal registry endpoint") from None
+    return {"url": f"http://{address}:5000", "ip": str(address)}
+
+
+def manifests(image, worker_images=None, proxy=False, registry=None):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -55,6 +66,8 @@ def manifests(image, worker_images=None, proxy=False):
            "KUBE_API_URL": "https://kubernetes.default.svc",
            "KUBE_API_TOKEN": "/var/run/secrets/kubernetes.io/serviceaccount/token",
            "KUBE_API_CA": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"}
+    if registry:
+        env.update(BROOD_REGISTRY_URL=registry["url"], BROOD_REGISTRY_IMAGE_HOST=f"localhost:{local.REGISTRY_PORT}")
     container = {"name": "brood", "image": image, "args": ["serve"],
                  "ports": [{"name": "https", "containerPort": 8443}],
                  "securityContext": {"runAsNonRoot": True, "runAsUser": 65532,
@@ -101,12 +114,22 @@ def manifests(image, worker_images=None, proxy=False):
     if proxy:
         objects[-1]["spec"]["egress"].append({"to": [{"podSelector": {"matchLabels": {"app": "cliproxy"}}}],
                                               "ports": [{"port": 8317}]})
+    if registry:
+        objects[-1]["spec"]["egress"].append({"to": [{"ipBlock": {"cidr": registry["ip"] + "/32"}}],
+                                              "ports": [{"port": 5000, "protocol": "TCP"}]})
     return objects
 
 
 class Deploy:
     def __init__(self, cluster, get=config.get, project=config.PROJECT):
         self.cluster, self.get, self.project = cluster, get, Path(project)
+
+    def _registry_access(self):
+        code, out, _ = self.cluster.shell.output("docker", "inspect", "--format",
+            "{{json .NetworkSettings.Networks.kind}}", local.REGISTRY)
+        if code:
+            raise RuntimeError("cannot inspect the owned internal registry")
+        return registry_endpoint(out)
 
     def _worker_images(self):
         raw = self.get("WORKER_POOL_IMAGES")
@@ -162,6 +185,7 @@ class Deploy:
                 if not owned:
                     raise RuntimeError(f"refusing foreign {kind}/{name}")
         api_rules = infrastructure._api_egress()
+        registry = self._registry_access()
         with tempfile.TemporaryDirectory(prefix="brood-go-deploy-") as directory:
             root = Path(directory)
             metadata = root / "metadata.json"
@@ -179,7 +203,7 @@ class Deploy:
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
                 raise RuntimeError("Go image build returned invalid digest metadata")
             image = "localhost:5002/brood-go@" + digest
-            objects = manifests(image, workers, proxy=bool(proxy_url))
+            objects = manifests(image, workers, proxy=bool(proxy_url), registry=registry)
             objects[-1]["spec"]["egress"].extend(api_rules)
             if proxy_url:
                 objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",

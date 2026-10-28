@@ -48,39 +48,37 @@ legacy его полный прогон требует отдельной сво
 - локальные wheels зависимостей extra `dev` из `pyproject.toml`;
 - Go-клиент `bro` для единой сборки из Broodfile; отдельного Python compiler нет.
 
-Образ сейчас собирается для amd64. Снимки Git shallow: в них нет локального
-`.env`, `secrets/`, credential helper или истории до выбранного commit.
-Загрузчик workbench, Dockerfile и сценарий задания берутся из того же commit,
-что корневой `Broodfile`. Незакоммиченные изменения в снимок не накладываются;
-команда сообщает об их исключении.
+Образ сейчас собирается для amd64. Локальные Broodfile, Dockerfile, загрузчик
+и сценарий берутся из текущих рабочих файлов, включая изменения без commit.
+Запрошенная Git metadata реконструируется shallow, без локальных `.env`,
+`secrets/`, credential helper или истории до HEAD. Внешний Substrate закреплён commit.
 
 ## Сборка и шаблон
 
-На машине установки с принадлежащим ей Substrate:
-
-Экспортируйте `BUILD_REGISTRY` и `BUILD_ATESPACE` из доверенного `.env` либо передайте
-`--registry` и `--atespace`. Команды читают только выбранный Git commit:
+Из каталога с Broodfile, без требования локальной установки Substrate:
 
 ```sh
+bro build --help
 bro build --plan                    # проверенный план development без Docker
-bro build                           # образ и комплект development
+bro build                           # локальный OCI-образ и комплект development
 bro build coding                    # тот же environment, интерактивный шаблон
-bro build --ref COMMIT --export PATH # чистый переносимый контекст без Docker
+bro build --export PATH             # текущий переносимый контекст без Docker
+bro push coding --project WORKSPACE # публикация через текущую bro login сессию
 ```
 
 `--export` требует новый каталог и не публикует образ. Внешние источники
 читаются по закреплённому commit. Контракт — `docs/BUILD.md`.
 
 Результаты лежат в `.brood/build/development/` и `.brood/build/coding/`:
-`actor-template.json`, `egress-policy.json`, `build.json`. Шаблон регистрируется
-через авторизованный API, инструменты Substrate или редактор восстановленной
-React-панели в выбранном рое. Atespace берётся из контекста сборки. Новый
+`actor-template.json`, `egress-policy.json`, `build.json`, `image.oci.tar`.
+`bro push` загружает OCI chunks через авторизованный API и регистрирует шаблон
+в выбранном личном рое; atespace назначается сервером после проверки прав. Новый
 образ или runtime spec получает новое имя шаблона по hash. Golden snapshot
 выключен. Сама сборка ничего в Substrate не регистрирует и не запускает.
 
 `bin/brood workbench build` — тонкая dev-обёртка над внешним Go `bro build`;
 `bro` должен быть в PATH. Она не содержит второго compiler/schema и использует
-`BUILD_REGISTRY`/`BUILD_ATESPACE`. `workbench template` остаётся инструментом
+`BUILD_PROJECT` как необязательное имя назначения. `workbench template` остаётся инструментом
 явного формирования runtime/pool/policy. Для обычной сборки используйте
 `bro build`: он сохраняет весь согласованный комплект артефактов.
 

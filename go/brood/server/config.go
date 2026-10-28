@@ -74,6 +74,9 @@ type Config struct {
 	WorkerPoolImage  string
 	// CLIProxyURL and CLIProxyManagementKey configure the explicit LLM backend.
 	// The management credential is server-only and never returned to the panel.
+	// RegistryURL is the private OCI registry origin; RegistryImageHost is its worker-facing authority.
+	RegistryURL           string
+	RegistryImageHost     string
 	CLIProxyURL           string
 	CLIProxyManagementKey string
 }
@@ -118,6 +121,8 @@ func LoadConfig(get getenv) (Config, error) {
 		KubeCA:                envGet(get, "KUBE_API_CA"),
 		WorkerPoolImages:      envGet(get, "WORKER_POOL_IMAGES"),
 		WorkerPoolImage:       envGet(get, "WORKER_POOL_IMAGE"),
+		RegistryURL:           envGet(get, "BROOD_REGISTRY_URL"),
+		RegistryImageHost:     envGet(get, "BROOD_REGISTRY_IMAGE_HOST"),
 		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 	}
@@ -141,6 +146,9 @@ func LoadConfig(get getenv) (Config, error) {
 }
 
 func (cfg Config) validateAdapters() error {
+	if err := cfg.validateRegistry(); err != nil {
+		return err
+	}
 	if cfg.CLIProxyURL != "" {
 		u, err := url.Parse(cfg.CLIProxyURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {

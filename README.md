@@ -43,12 +43,15 @@ go/bin/brood serve
 ```sh
 go/bin/bro login http://127.0.0.1:8080
 go/bin/bro whoami
+go/bin/bro build development
+go/bin/bro push development --project my-workspace
 go/bin/bro logout
-go/bin/bro build development --registry localhost:5002 --atespace example
 ```
 
-Сборка использует внешние Git и Docker/buildx и только committed-снимки.
-Она выдаёт образ и манифесты, но не запускает акторов. Подробности —
+Сборка читает текущий `./Broodfile` и рабочие файлы, использует внешний Docker/buildx
+с OCI exporter; Git нужен для внешних pinned-источников и запрошенной Git metadata.
+Она сохраняет OCI-образ и шаблон локально без login. Отдельный `bro push` публикует
+готовый комплект через авторизованный серверный API, но не запускает акторов. Подробности —
 [Build](docs/BUILD.md), [Go](docs/GO.md), [Web](docs/WEB.md).
 
 ## Инструменты разработчика

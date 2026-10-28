@@ -258,46 +258,15 @@ func (c *Client) ProjectsList(ctx context.Context) ([]Project, error) {
 // call выполняет запрос к API: подставляет cookie из хранилища, шлёт
 // X-CSRFToken на изменяющие запросы, обновляет хранилище из Set-Cookie.
 func (c *Client) call(ctx context.Context, method, path string, body []byte, out any) error {
-	u := c.origin + path
 	var rdr io.Reader
+	media := ""
 	if body != nil {
 		rdr = bytes.NewReader(body)
+		media = "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, u, rdr)
+	resp, err := c.request(ctx, method, path, rdr, int64(len(body)), media, c.http.Timeout)
 	if err != nil {
 		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
-		req.Header.Set("Origin", c.origin)
-	}
-	c.mu.Lock()
-	stored := c.stored
-	c.mu.Unlock()
-	if stored.Session != "" {
-		req.AddCookie(&http.Cookie{Name: cookieSession, Value: stored.Session})
-	}
-	if stored.CSRF != "" {
-		req.AddCookie(&http.Cookie{Name: cookieCSRF, Value: stored.CSRF})
-		if method != http.MethodGet && method != http.MethodHead {
-			req.Header.Set(headerCSRF, stored.CSRF)
-		}
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return context.Canceled
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			return context.DeadlineExceeded
-		}
-		var certificateError *tls.CertificateVerificationError
-		if errors.As(err, &certificateError) {
-			return errors.New("TLS certificate verification failed; configure a trusted CA")
-		}
-		return fmt.Errorf("request to %s failed; check network and TLS configuration", c.origin)
 	}
 	defer resp.Body.Close()
 

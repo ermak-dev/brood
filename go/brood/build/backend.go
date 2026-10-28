@@ -18,6 +18,8 @@ type BackendOptions struct {
 	OwnershipCheck func() error
 	Cache          map[string]string
 	DockerEnv      []string
+	// ArchivePath is the persistent OCI archive destination for BackendBuildLocal.
+	ArchivePath string
 	// RegistryAllowlist разрешает префиксы реестров; пустой список
 	// разрешает локальный реестр разработки localhost:5002.
 	RegistryAllowlist []string
@@ -26,6 +28,7 @@ type BackendOptions struct {
 // BuildResult — итог успешной сборки.
 type BuildResult struct {
 	Image   string
+	Archive string
 	Sources map[string]any
 	Stdout  string
 	Stderr  string
@@ -76,6 +79,59 @@ func BackendBuild(project *Project, options BackendOptions) (*BuildResult, error
 			return nil, err
 		}
 	}
+	return backendBuild(project, options, "")
+}
+
+// BackendBuildLocal builds an OCI archive without publishing or checking registry ownership.
+// ArchivePath is replaced atomically only after a successful build and validation.
+func BackendBuildLocal(project *Project, options BackendOptions) (*BuildResult, error) {
+	if options.ArchivePath == "" {
+		return nil, fmt.Errorf("ArchivePath is required for a local build")
+	}
+	path, err := filepath.Abs(options.ArchivePath)
+	if err != nil {
+		return nil, err
+	}
+	if strings.ContainsAny(path, ",\n\r") {
+		return nil, fmt.Errorf("ArchivePath must not contain commas or controls")
+	}
+	if err := directoryChain(filepath.Dir(path), true); err != nil {
+		return nil, err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".image-*.oci.tar")
+	if err != nil {
+		return nil, err
+	}
+	staging := temporary.Name()
+	temporary.Close()
+	defer os.Remove(staging)
+	result, err := backendBuild(project, options, staging)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateOCIArchive(staging); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(staging, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	err = file.Sync()
+	file.Close()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(staging, path); err != nil {
+		return nil, err
+	}
+	result.Archive = path
+	return result, nil
+}
+
+// backendBuild объединяет экспорт, запуск buildx и чтение metadata одного вызова.
+func backendBuild(project *Project, options BackendOptions, archive string) (*BuildResult, error) {
+	plan := project.Plan
+	registry, _ := plan["registry"].(string)
 	root, err := os.MkdirTemp("", "brood-build-")
 	if err != nil {
 		return nil, err
@@ -103,9 +159,14 @@ func BackendBuild(project *Project, options BackendOptions) (*BuildResult, error
 		text, _ := value.(string)
 		arguments[name] = text
 	}
-	argv := []string{"docker", "buildx", "build", "--push", "--platform", platform,
+	argv := []string{"docker", "buildx", "build", "--platform", platform,
 		"--file", filepath.Join(source, dockerfile), "--tag", tag,
 		"--metadata-file", metadata}
+	if archive == "" {
+		argv = append(argv, "--push")
+	} else {
+		argv = append(argv, "--output", "type=oci,dest="+archive)
+	}
 	names := sortedKeys(arguments)
 	for _, name := range names {
 		argv = append(argv, "--build-arg", name+"="+arguments[name])

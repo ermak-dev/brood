@@ -1,8 +1,8 @@
-"""brood workbench build [--ref COMMIT] [--export PATH]: build or export the development image
+"""brood workbench build [--export PATH]: build or export the current development image
 
-Uses the current working copy's committed source and the pinned Substrate
-revision. Local .env, secrets and Git credentials are not copied. The image is
-published to BUILD_REGISTRY and printed by digest; BUILD_ATESPACE is required.
+Uses current working files and the pinned Substrate revision. Local .env,
+secrets and Git credentials are not copied. The OCI image and template are
+saved locally; bro push publishes them through a logged-in server session.
 The Go bro client must be installed on PATH. amd64 only.
 """
 import argparse
@@ -13,7 +13,6 @@ from brood.dev.workbench.build import Builder
 
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ref", default="HEAD")
     parser.add_argument("--export", help="prepare a clean context in a new directory without building")
     args = parser.parse_args(argv)
     builder = Builder()
@@ -21,8 +20,8 @@ def main(argv):
         path = Path(args.export)
         if path.exists():
             raise RuntimeError("workbench export directory already exists; choose a new path")
-        builder.context(args.export, args.ref)
+        builder.context(args.export)
         print(f"Workbench build context prepared at {path}")
     else:
-        print(builder.build(args.ref))
+        print(builder.build())
     return 0

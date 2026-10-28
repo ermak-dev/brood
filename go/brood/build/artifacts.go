@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -141,8 +142,13 @@ func planSourcesForArtifacts(plan map[string]any, reports map[string]any) (map[s
 		if !isMap {
 			return nil, fmt.Errorf("source report must be an object")
 		}
-		for _, key := range []string{"repository", "revision"} {
+		for _, key := range []string{"repository", "revision", "workingTree", "dirty"} {
 			if value, ok := report[key]; ok {
+				if key == "workingTree" || key == "dirty" {
+					if _, ok := value.(bool); !ok {
+						return nil, fmt.Errorf("working source provenance flags must be booleans")
+					}
+				}
 				if planned, exists := item[key]; exists && !valuesEqual(value, planned) {
 					return nil, fmt.Errorf("source report does not match planned input")
 				}
@@ -340,13 +346,20 @@ func ownedRun(output, runs, target string) error {
 	if err != nil {
 		return fmt.Errorf("refusing artifact output without an owned complete run")
 	}
-	if len(entries) != len(artifactFiles) {
+	if len(entries) != len(artifactFiles) && len(entries) != len(artifactFiles)+1 {
 		return fmt.Errorf("refusing artifact output without an owned complete run")
 	}
+	count := 0
 	for _, entry := range entries {
-		if !artifactFiles[entry.Name()] || !entry.Type().IsRegular() {
+		if (!artifactFiles[entry.Name()] && entry.Name() != "image.oci.tar") || !entry.Type().IsRegular() {
 			return fmt.Errorf("refusing artifact output without an owned complete run")
 		}
+		if artifactFiles[entry.Name()] {
+			count++
+		}
+	}
+	if count != len(artifactFiles) {
+		return fmt.Errorf("refusing artifact output without an owned complete run")
 	}
 	data, err := os.ReadFile(filepath.Join(run, "build.json"))
 	if err != nil {
@@ -409,6 +422,19 @@ func publishRefusal(err error) error {
 
 // Publish публикует новый комплект, сохраняя прежнюю ссылку при любом отказе.
 func Publish(projectRoot, target string, artifacts map[string]any) (string, error) {
+	return publishBundle(projectRoot, target, artifacts, "")
+}
+
+// PublishLocal atomically publishes the normal artifacts and image.oci.tar.
+// The caller's archive is preserved; existing owned outputs remain on failure.
+func PublishLocal(projectRoot, target string, artifacts map[string]any, archivePath string) (string, error) {
+	if err := ValidateOCIArchive(archivePath); err != nil {
+		return "", err
+	}
+	return publishBundle(projectRoot, target, artifacts, archivePath)
+}
+
+func publishBundle(projectRoot, target string, artifacts map[string]any, archivePath string) (string, error) {
 	if _, err := artifactLabel(target); err != nil {
 		return "", err
 	}
@@ -475,6 +501,32 @@ func Publish(projectRoot, target string, artifacts map[string]any) (string, erro
 			return "", preserveRun(run)
 		}
 		if err := file.Close(); err != nil {
+			return "", preserveRun(run)
+		}
+	}
+	if archivePath != "" {
+		input, err := os.OpenFile(archivePath, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return "", preserveRun(run)
+		}
+		info, statErr := input.Stat()
+		if statErr != nil || !info.Mode().IsRegular() {
+			input.Close()
+			return "", preserveRun(run)
+		}
+		file, err := os.OpenFile(filepath.Join(run, "image.oci.tar"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			input.Close()
+			return "", preserveRun(run)
+		}
+		_, copyErr := io.Copy(file, input)
+		input.Close()
+		syncErr := file.Sync()
+		closeErr := file.Close()
+		if copyErr != nil || syncErr != nil || closeErr != nil {
+			return "", preserveRun(run)
+		}
+		if err := ValidateOCIArchive(filepath.Join(run, "image.oci.tar")); err != nil {
 			return "", preserveRun(run)
 		}
 	}

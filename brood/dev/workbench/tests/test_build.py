@@ -28,17 +28,19 @@ class ImageBuildTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tools.cleanup()
 
-    def test_context_delegates_to_the_go_committed_source_exporter(self):
+    def test_context_delegates_to_current_directory_without_git_selection(self):
         with tempfile.TemporaryDirectory() as tmp:
             builder = build.Builder(project=tmp)
             with mock.patch.object(build.subprocess, "run", return_value=mock.Mock(
                     returncode=0, stdout="context\n", stderr="")) as run:
-                builder.context(Path(tmp) / "context", "main")
+                builder.context(Path(tmp) / "context")
             args = run.call_args.args[0]
             self.assertEqual(args[:3], ["bro", "build", "development"])
             self.assertIn("--export", args)
-            self.assertEqual(args[args.index("--ref") + 1], "main")
-            self.assertEqual(args[args.index("--project") + 1], tmp)
+            self.assertNotIn("--ref", args)
+            self.assertNotIn("--registry", args)
+            self.assertNotIn(tmp, args)
+            self.assertEqual(run.call_args.kwargs["cwd"], Path(tmp))
             self.assertTrue(run.call_args.kwargs["capture_output"])
 
     def test_build_keeps_go_published_artifacts_and_returns_only_the_image(self):
@@ -116,7 +118,7 @@ class ImageBuildTests(unittest.TestCase):
                 mock.patch.object(command, "Builder") as builder, mock.patch("builtins.print"):
             path = str(Path(tmp) / "context")
             self.assertEqual(command.main(["--export", path]), 0)
-            builder.return_value.context.assert_called_once_with(path, "HEAD")
+            builder.return_value.context.assert_called_once_with(path)
             builder.return_value.build.assert_not_called()
 
     def test_image_pins_the_verified_native_cli_and_terminal_tools(self):

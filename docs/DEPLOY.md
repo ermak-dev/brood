@@ -81,6 +81,13 @@ CLIProxyAPI/provider credentials живут отдельно и не являю�
 migration. Для Go разрешается только scoped network access к этому backend;
 management key хранится в server Secret и не попадает в browser/edge.
 
+Для `bro push` deploy после проверки владения Docker container/ID обнаруживает
+IP внутреннего registry в kind network. Go получает `BROOD_REGISTRY_URL` и
+`BROOD_REGISTRY_IMAGE_HOST=localhost:5002`, а NetworkPolicy — egress только на
+найденный IP:5000. Registry не перепубликуется наружу: внешний клиент передаёт
+chunks до 32 MiB через обычный HTTPS session/CSRF API. Ограничение edge 64 MiB
+сохраняется. Подробности — `docs/BUILD.md`.
+
 ## CI и restricted SSH
 
 Используется прежний runner builder с тегом docker; runner на target не
