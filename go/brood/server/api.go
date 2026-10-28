@@ -36,6 +36,7 @@ type swarmJSON struct {
 	Name          string `json:"name"`
 	AtespaceName  string `json:"atespace_name"`
 	State         string `json:"state"`
+	Retry         string `json:"retry"`
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
 }
@@ -44,7 +45,7 @@ type swarmJSON struct {
 func toSwarmJSON(sw app.Swarm, ownerUsername string) swarmJSON {
 	return swarmJSON{
 		ID: sw.ID, ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, OwnerUsername: ownerUsername, Name: sw.Name,
-		AtespaceName: sw.AtespaceName, State: string(sw.State),
+		AtespaceName: sw.AtespaceName, State: string(sw.State), Retry: sw.Retry,
 		CreatedAt: sw.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: sw.UpdatedAt.UTC().Format(time.RFC3339),
 	}
