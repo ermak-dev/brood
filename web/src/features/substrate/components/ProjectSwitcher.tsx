@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { projectSelectionPath } from '@/features/access/shardState';
 import { Button } from '@/components/ui/Button';
 import { IconSidebarProjects } from '@/components/ui/icons';
 import { useProjectStore } from '@/stores';
@@ -10,6 +12,8 @@ import { errorMessage } from '@/services/brood/http';
  * проекты; управление ими находится в левой панели, не дублируется здесь. */
 export function ProjectSwitcher() {
   const { t } = useTranslation();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
   const project = useProjectStore((state) => state.project);
   const setProject = useProjectStore((state) => state.setProject);
   const [open, setOpen] = useState(false);
@@ -80,6 +84,8 @@ export function ProjectSwitcher() {
                   aria-checked={project === item.id}
                   onClick={() => {
                     setProject(item.id);
+                    const destination = projectSelectionPath(pathname, item.id);
+                    if (destination) navigate(destination);
                     setOpen(false);
                   }}
                 >

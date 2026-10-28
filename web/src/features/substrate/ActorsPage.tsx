@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { actorsApi, templatesApi, type Actor, type ActorAction } from '@/services/brood/substrate';
+import { swarmCapabilities } from '@/features/access/shardState';
+import { useAdministrator } from '@/features/access/shared';
 import { ActorEditor } from './ActorEditor';
 import { EntityTable, type Column } from './components/EntityTable';
 import { PageHeader } from './components/PageHeader';
@@ -30,11 +32,18 @@ async function updateFresh(project: string, edited: Actor) {
  * placement. */
 export function ActorsPage() {
   const { t } = useTranslation();
+  const admin = useAdministrator();
   return (
     <ProjectScope title={t('actors.title')}>
       {(project) => (
         <SwarmSections project={project} title={t('actors.title')}>
-          {(swarm) => <Actors project={swarm.id} name={swarm.name} />}
+          {(swarm) => (
+            <Actors
+              project={swarm.id}
+              name={swarm.name}
+              canManage={swarmCapabilities(swarm, admin).manage}
+            />
+          )}
         </SwarmSections>
       )}
     </ProjectScope>
@@ -61,7 +70,15 @@ async function loadActors(project: string) {
   return { actors, templates: templates.map((tpl) => tpl.metadata.name), golden };
 }
 
-function Actors({ project, name }: { project: string; name: string }) {
+function Actors({
+  project,
+  name,
+  canManage,
+}: {
+  project: string;
+  name: string;
+  canManage: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const load = useCallback(() => loadActors(project), [project]);
   const { data: loaded, error, loading, refresh } = useResource(load);
@@ -130,7 +147,9 @@ function Actors({ project, name }: { project: string; name: string }) {
   ];
 
   const count = (state: string) => (data ?? []).filter((a) => stateOf(a) === state).length;
-  const create = <Button onClick={() => openEditor(null)}>{t('actors.create')}</Button>;
+  const create = canManage ? (
+    <Button onClick={() => openEditor(null)}>{t('actors.create')}</Button>
+  ) : undefined;
 
   return (
     <div className={styles.page}>
@@ -158,41 +177,44 @@ function Actors({ project, name }: { project: string; name: string }) {
           columns={columns}
           rows={data}
           rowKey={(a) => a.metadata.uid ?? a.metadata.name}
-          onRowClick={(a) => !goldenOf(a) && openEditor(a)}
+          onRowClick={canManage ? (a) => !goldenOf(a) && openEditor(a) : undefined}
           actionsLabel={t('substrate.actions')}
-          actions={(a) =>
-            goldenOf(a) ? null : (
-              <>
-                <a
-                  href={actorsApi.terminal(project, a.metadata.name)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {t('access.terminal')}
-                </a>
-                {stateOf(a) === 'running' && (
-                  <Button variant="ghost" size="sm" onClick={() => void act(a, 'suspend')}>
-                    {t('actors.suspend')}
-                  </Button>
-                )}
-                {stateOf(a) === 'suspended' && (
-                  <Button variant="ghost" size="sm" onClick={() => void act(a, 'resume')}>
-                    {t('actors.resume')}
-                  </Button>
-                )}
-                <Button variant="ghost" size="sm" onClick={() => openEditor(a)}>
-                  {t('substrate.edit')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={styles.dangerText}
-                  onClick={() => remove(a)}
-                >
-                  {t('substrate.delete')}
-                </Button>
-              </>
-            )
+          actions={
+            canManage
+              ? (a) =>
+                  goldenOf(a) ? null : (
+                    <>
+                      <a
+                        href={actorsApi.terminal(project, a.metadata.name)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {t('access.terminal')}
+                      </a>
+                      {stateOf(a) === 'running' && (
+                        <Button variant="ghost" size="sm" onClick={() => void act(a, 'suspend')}>
+                          {t('actors.suspend')}
+                        </Button>
+                      )}
+                      {stateOf(a) === 'suspended' && (
+                        <Button variant="ghost" size="sm" onClick={() => void act(a, 'resume')}>
+                          {t('actors.resume')}
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="sm" onClick={() => openEditor(a)}>
+                        {t('substrate.edit')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={styles.dangerText}
+                        onClick={() => remove(a)}
+                      >
+                        {t('substrate.delete')}
+                      </Button>
+                    </>
+                  )
+              : undefined
           }
         />
       ) : (
@@ -205,23 +227,25 @@ function Actors({ project, name }: { project: string; name: string }) {
         </div>
       )}
 
-      <ActorEditor
-        key={editor.session}
-        project={project}
-        actor={editor.actor}
-        templates={loaded?.templates ?? null}
-        open={editor.open}
-        onClose={closeEditor}
-        onSubmit={async (actor) => {
-          const name = actor.metadata.name;
-          const ok = await run(
-            () => (editor.actor ? updateFresh(project, actor) : actorsApi.create(project, actor)),
-            editor.actor ? t('actors.saved', { name }) : t('actors.created', { name })
-          );
-          if (ok) closeEditor();
-          return ok;
-        }}
-      />
+      {canManage && (
+        <ActorEditor
+          key={editor.session}
+          project={project}
+          actor={editor.actor}
+          templates={loaded?.templates ?? null}
+          open={editor.open}
+          onClose={closeEditor}
+          onSubmit={async (actor) => {
+            const name = actor.metadata.name;
+            const ok = await run(
+              () => (editor.actor ? updateFresh(project, actor) : actorsApi.create(project, actor)),
+              editor.actor ? t('actors.saved', { name }) : t('actors.created', { name })
+            );
+            if (ok) closeEditor();
+            return ok;
+          }}
+        />
+      )}
     </div>
   );
 }

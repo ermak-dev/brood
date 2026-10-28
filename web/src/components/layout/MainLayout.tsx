@@ -648,11 +648,6 @@ export function MainLayout() {
           metaKey: 'nav_meta.worker_pools',
           icon: sidebarIcons.workers,
         },
-        {
-          path: '/policy',
-          labelKey: 'access.permissions',
-          icon: sidebarIcons.policy,
-        },
       ],
     },
     {

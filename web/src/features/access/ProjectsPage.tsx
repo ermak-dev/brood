@@ -56,6 +56,16 @@ export function AccessProjectsPage() {
               <Button variant="ghost" size="sm" onClick={() => choose(project)}>
                 {t('access.choose_project')}
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setProject(project.id);
+                  navigate(`/projects/${encodeURIComponent(project.id)}`);
+                }}
+              >
+                {t('access.project_details')}
+              </Button>
               {admin && (
                 <Button
                   variant="ghost"

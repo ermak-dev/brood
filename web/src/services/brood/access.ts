@@ -5,11 +5,45 @@ export interface AccessProject {
   name: string;
 }
 
+export type SwarmRole = 'owner' | 'editor' | 'viewer';
+
+export interface ShardCapacity {
+  worker_selector: Record<string, string>;
+  max_swarms: string | null;
+  max_actors: string | null;
+  max_cpu_millicores: string | null;
+  max_memory_bytes: string | null;
+}
+
+export interface ShardUsage {
+  swarms: string;
+  actors: string;
+  cpu_millicores: string;
+  memory_bytes: string;
+}
+
+export interface ProjectDetail extends AccessProject {
+  capacity: ShardCapacity;
+  usage: ShardUsage | null;
+  usage_available: boolean;
+  usage_error?: string;
+}
+
+export interface SwarmMember {
+  user_id: string;
+  username: string;
+  display_name: string;
+  role: SwarmRole;
+  disabled: boolean;
+}
+
 export interface AccessSwarm {
   id: string;
   project_id: string;
   owner_id: string;
   owner_username: string;
+  role: SwarmRole;
+  retry?: 'create' | 'delete' | '';
   name: string;
   atespace_name: string;
   state: string;
@@ -55,6 +89,9 @@ export const accessApi = {
   resetPassword: (username: string, password: string) =>
     request<void>('POST', `${userPath(username)}/password-reset`, { new_password: password }),
   projects: () => request<AccessProject[]>('GET', '/api/projects'),
+  project: (id: string) => request<ProjectDetail>('GET', projectPath(id)),
+  setCapacity: (id: string, capacity: ShardCapacity) =>
+    request<void>('PUT', `${projectPath(id)}/capacity`, capacity),
   createProject: (name: string) => request<AccessProject>('POST', '/api/projects', { name }),
   deleteProject: (id: string) => request<void>('DELETE', projectPath(id)),
   addMember: (projectId: string, username: string) =>
@@ -62,6 +99,11 @@ export const accessApi = {
   removeMember: (projectId: string, username: string) =>
     request<void>('DELETE', `${projectPath(projectId)}/members/${segment(username)}`),
   swarms: (projectId: string) => request<AccessSwarm[]>('GET', `${projectPath(projectId)}/swarms`),
+  swarmMembers: (id: string) => request<SwarmMember[]>('GET', `${swarmPath(id)}/members`),
+  setSwarmMember: (id: string, username: string, role: SwarmRole) =>
+    request<void>('POST', `${swarmPath(id)}/members`, { username, role }),
+  removeSwarmMember: (id: string, username: string) =>
+    request<void>('DELETE', `${swarmPath(id)}/members/${segment(username)}`),
   createSwarm: (projectId: string, name: string) =>
     request<AccessSwarm>('POST', `${projectPath(projectId)}/swarms`, { name }),
   deleteSwarm: (id: string) => request<void>('DELETE', swarmPath(id)),
