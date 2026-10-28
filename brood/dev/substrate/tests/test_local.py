@@ -127,7 +127,7 @@ class World:
                 self.containers[NODE] = node()
             case ("kind.sh", "delete", "cluster", *_):
                 self.containers.pop(NODE, None)
-            case ("docker", "rm", "-f", name):
+            case ("docker", "rm", "-f", name) | ("docker", "rm", "-f", "-v", name):
                 del self.containers[name]
             case ("docker", "network", "connect", "kind", name):
                 self.containers[name]["network"] = True
@@ -351,12 +351,16 @@ class LifecycleTests(unittest.TestCase):
                     self.cluster(world).uninstall()
                 self.assertUntouched(world)
 
+    # BUG: Registry оставляет анонимный том после uninstall (#7).
+    # HYPOTHESIS: docker rm без -v не удаляет VOLUME образа registry.
+    # SOLUTION: Удаляем принадлежащий установке реестр с его анонимным томом.
+    # RESULT: FIXED — Docker-проверка: до правки остаётся один том, после — ноль.
     def test_uninstall(self):
         self.installed()
         world = World({NODE: node(), REGISTRY: registry()})
         self.cluster(world).uninstall()
         self.assertIn("kind.sh delete cluster --name substrate", world.calls)
-        self.assertIn(f"docker rm -f {REGISTRY}", world.calls)
+        self.assertIn(f"docker rm -f -v {REGISTRY}", world.calls)
         self.assertEqual(world.containers, {})
         # kubectl остаётся: uninstall удаляет данные кластера, не инструменты.
         self.assertEqual(os.listdir(self.state), ["kubectl"])
