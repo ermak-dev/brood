@@ -261,6 +261,9 @@ func (c *Client) DeleteAtespace(ctx context.Context, name string, uid ...string)
 	}
 	_, err := c.stub().DeleteAtespace(ctx, request)
 	if err != nil {
+		if status.Code(err) == codes.FailedPrecondition {
+			return fmt.Errorf("%w: %w", ErrAtespaceNotEmpty, mapGRPC(err))
+		}
 		return mapGRPC(err)
 	}
 	return nil
