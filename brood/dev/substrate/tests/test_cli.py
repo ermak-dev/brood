@@ -79,8 +79,11 @@ class ClusterTests(unittest.TestCase):
         self.assertEqual(c.shell.cwd, tmp)
         self.assertNotIn("ATE_CONFIG", c.shell.env)
 
+    # BUG: Подсказка без -A отклоняется kubectl-ate (#8).
+    # HYPOTHESIS: Общему списку акторов требуется явный scope всех atespace.
+    # SOLUTION: Подсказка передаёт -A, сохраняя shell quoting путей.
     def test_ready_line_quotes_paths(self):
         c = local.LocalCluster("/my src", shell=None)
         self.assertEqual(_common.ready(c),
                          "Substrate is ready: KUBECONFIG='/my src/bin/substrate/kubeconfig' "
-                         "'/my src/bin/kubectl-ate' get actors")
+                         "'/my src/bin/kubectl-ate' get actors -A")
