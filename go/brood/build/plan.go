@@ -279,7 +279,7 @@ type schemaNode struct {
 	uniqueItems bool
 	items       *schemaNode
 	minProps    int
-	maxProps    int
+	maxProps    *int64
 	propNames   *schemaNode
 	required    []string
 	addlFalse   bool
@@ -374,7 +374,7 @@ func init() {
 		typ: "object", addlFalse: true, required: []string{"name", "durableDir"},
 		props: schemaProperties(
 			"name", name,
-			"durableDir", &schemaNode{typ: "object", maxProps: 0},
+			"durableDir", &schemaNode{typ: "object", maxProps: numberPtr(0)},
 		),
 	}
 	limits := &schemaNode{
@@ -698,7 +698,7 @@ func evalObjectKeywords(schema *schemaNode, mapping map[string]any, path []any) 
 	if schema.minProps > 0 && len(mapping) < schema.minProps {
 		return &schemaError{path, "minProperties"}
 	}
-	if schema.maxProps > 0 && len(mapping) > schema.maxProps {
+	if schema.maxProps != nil && int64(len(mapping)) > *schema.maxProps {
 		return &schemaError{path, "maxProperties"}
 	}
 	if schema.propNames != nil {
