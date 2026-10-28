@@ -26,9 +26,10 @@ type Swarm struct {
 
 // PushResult identifies a registered template and immutable worker image.
 type PushResult struct {
-	Image    string `json:"image"`
-	Template string `json:"template"`
-	Project  string `json:"project"`
+	Image                string `json:"image"`
+	Template             string `json:"template"`
+	Project              string `json:"project"`
+	EgressPolicyDeferred bool   `json:"egress_policy_deferred"`
 }
 
 // SwarmsList lists only workspaces visible to the current user.

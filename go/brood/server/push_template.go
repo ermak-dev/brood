@@ -58,17 +58,20 @@ func (s *Server) pushTemplate(w http.ResponseWriter, r *http.Request, sw app.Swa
 		}
 		container.Image = request.Image
 	}
-	// EgressPolicy is actor-nested in the pinned API. Template-only publication
-	// uses golden policy rules, never an Actor RPC or a cross-atespace reference.
+	// Runtime-политика вложена в actor; golden policy — отдельная preview-возможность.
 	if unsafePushPolicy(policy.ProtoReflect()) {
 		writeDetail(w, 400, "external credential references are not supported by push")
 		return
 	}
-	if len(policy.Rules) > 0 {
-		template.GoldenEgressPolicy = &ateapi.EgressPolicyTemplate{Rules: policy.Rules}
-	} else {
-		template.GoldenEgressPolicy = nil
+	if template.GetSnapshotConfig().GetGoldenSnapshotConfig().GetMode() == ateapi.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED {
+		writeDetail(w, 400, "template-only push requires golden snapshots disabled")
+		return
 	}
+	if template.SnapshotConfig == nil {
+		template.SnapshotConfig = &ateapi.SnapshotConfig{}
+	}
+	template.SnapshotConfig.GoldenSnapshotConfig = &ateapi.GoldenSnapshotConfig{Mode: ateapi.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_DISABLED}
+	template.GoldenEgressPolicy = nil
 	scoped(&template, sw.AtespaceName)
 	// Resource identity and status are server-owned and excluded from retries.
 	template.Metadata = &ateapi.ResourceMetadata{Name: template.Metadata.Name, Atespace: sw.AtespaceName}
@@ -105,7 +108,8 @@ func (s *Server) pushTemplate(w http.ResponseWriter, r *http.Request, sw app.Swa
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]string{"image": request.Image, "template": template.Metadata.Name, "project": sw.ID})
+	writeJSON(w, 200, map[string]any{"image": request.Image, "template": template.Metadata.Name, "project": sw.ID,
+		"egress_policy_deferred": len(policy.Rules) > 0})
 }
 
 func unsafePushPolicy(message protoreflect.Message) bool {

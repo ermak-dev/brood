@@ -187,9 +187,11 @@ Registry не получает внешний listener или Docker credentials
 `BROOD_REGISTRY_IMAGE_HOST` (канонический host для воркеров, у kind `localhost:5002`).
 Штатный deploy обнаруживает адрес проверенного registry container в kind network
 и разрешает Go BFF egress только на его IP:5000. Без настроек push отвечает 503.
-В pinned Substrate `EgressPolicy` вложена в actor: push переносит правила в
-`ActorTemplate.golden_egress_policy`, не создаёт actor и не заявляет, что runtime
-политика будущего actor уже применена.
+В pinned Substrate `EgressPolicy` вложена в actor, а golden policy — отдельное
+preview-поле для golden actor. Template-only push не подменяет ими друг друга:
+golden snapshots остаются DISABLED (explicit ENABLED даёт отказ), runtime rules
+остаются в локальном `egress-policy.json`. Ответ `egress_policy_deferred: true`
+и сообщение CLI явно требуют применить эти правила при будущем создании actor.
 
 ## Границы
 
