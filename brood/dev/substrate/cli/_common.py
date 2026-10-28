@@ -35,4 +35,4 @@ def no_arguments(verb, argv):
 def ready(c):
     """Строка готовности: чем говорить с акторами этой установки."""
     return (f"Substrate is ready: KUBECONFIG={shlex.quote(c.kubeconfig)} "
-            f"{shlex.quote(c.kubectl_ate)} get actors")
+            f"{shlex.quote(c.kubectl_ate)} get actors -A")
