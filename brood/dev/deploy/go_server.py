@@ -117,7 +117,21 @@ def manifests(image, worker_images=None, proxy=False, registry=None):
     if registry:
         objects[-1]["spec"]["egress"].append({"to": [{"ipBlock": {"cidr": registry["ip"] + "/32"}}],
                                               "ports": [{"port": 5000, "protocol": "TCP"}]})
-    return objects
+    access = json.loads((Path(__file__).parent / "manifests" / "worker-access.json").read_text())
+    source_role = next(item for item in access["items"] if item["kind"] == "Role")
+    pod_rules = [rule for rule in source_role["rules"]
+                 if rule["apiGroups"] == [""] and rule["resources"] == ["pods"]]
+    if not pod_rules:
+        raise RuntimeError("worker pod diagnostic permissions are not configured")
+    name = "brood-go-pod-diagnostics"
+    metadata = {"name": name, "namespace": "brood", "labels": OWNER.copy()}
+    role = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
+            "metadata": metadata.copy(), "rules": pod_rules}
+    binding = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
+               "metadata": metadata.copy(),
+               "subjects": [{"kind": "ServiceAccount", "name": "django", "namespace": "brood"}],
+               "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": name}}
+    return [role, binding, *objects]
 
 
 class Deploy:
@@ -171,6 +185,7 @@ class Deploy:
         workers = self._worker_images()
         for kind, name in (("deployment", "brood-go"), ("service", "brood-go"),
                            ("pvc", "brood-go-data"), ("secret", "brood-go-env"), ("secret", "brood-go-tls"),
+                           ("role", "brood-go-pod-diagnostics"), ("rolebinding", "brood-go-pod-diagnostics"),
                            ("networkpolicy", "brood-go"), ("networkpolicy", "brood-go-cliproxy")):
             code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
                 "get", kind, name, "-n", "brood", "--ignore-not-found", "-o", "json")
