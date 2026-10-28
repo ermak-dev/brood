@@ -11,6 +11,11 @@
           "apiGroups": ["ate.dev"],
           "resources": ["workerpools"],
           "verbs": ["get", "list", "create", "update", "delete"]
+        },
+        {
+          "apiGroups": [""],
+          "resources": ["pods"],
+          "verbs": ["get", "list"]
         }
       ]
     },
