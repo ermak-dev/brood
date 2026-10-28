@@ -421,7 +421,11 @@ func (p *SubstrateProvisioner) DeleteAtespace(name, uid string) error {
 		return fmt.Errorf("%w: atespace %s belongs to uid %s",
 			app.ErrConflict, name, current.GetMetadata().GetUid())
 	}
-	return client.DeleteAtespace(context.Background(), name, uid)
+	err = client.DeleteAtespace(context.Background(), name, uid)
+	if errors.Is(err, substrate.ErrAtespaceNotEmpty) {
+		return fmt.Errorf("%w: %w", app.ErrSwarmNotEmpty, err)
+	}
+	return err
 }
 
 // configured возвращает клиент или отказ 503 с именами настроек.

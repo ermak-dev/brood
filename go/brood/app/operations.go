@@ -189,26 +189,15 @@ func (s *Service) resumeCreate(sw Swarm) (Swarm, error) {
 // Имя atespace проверяется по сохранённому UID, чужая одноимённая
 // область не удаляется. Сбой Substrate оставляет error с retry.
 func (s *Service) DeleteSwarm(userID, swarmID string) error {
-	sw, ok, err := s.store.SwarmByID(swarmID)
+	sw, err := s.swarmForDeletion(userID, swarmID)
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return fmt.Errorf("%w: swarm %s", ErrNotFound, swarmID)
-	}
-	u, ok, err := s.store.UserByID(userID)
+	unlock := s.lockProject(sw.ProjectID)
+	defer unlock()
+	sw, err = s.swarmForDeletion(userID, swarmID)
 	if err != nil {
 		return err
-	}
-	if !ok || u.Disabled {
-		return ErrNotAllowed
-	}
-	allowed, err := s.canOwnSwarm(u, sw)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrNotAllowed
 	}
 	if sw.State == StateDeleted {
 		// Повтор идемпотентен только для авторизованного вызывающего.
@@ -227,7 +216,16 @@ func (s *Service) DeleteSwarm(userID, swarmID string) error {
 		return fmt.Errorf("%w: delete from %s", ErrState, sw.State)
 	}
 	if err := s.provisioner.DeleteAtespace(sw.AtespaceName, sw.AtespaceUID); err != nil {
-		if _, gerr := s.provisioner.GetAtespace(sw.AtespaceName); !isNotFound(gerr) {
+		uid, gerr := s.provisioner.GetAtespace(sw.AtespaceName)
+		if errors.Is(err, ErrSwarmNotEmpty) && gerr == nil && uid != "" && uid == sw.AtespaceUID {
+			// Атомарный отказ позволяет откатить только локальное намерение удаления.
+			sw.State, sw.Retry, sw.UpdatedAt = StateActive, "", s.now()
+			if updateErr := s.store.UpdateSwarm(sw); updateErr != nil {
+				return errors.Join(err, updateErr)
+			}
+			return err
+		}
+		if !isNotFound(gerr) {
 			// Область ещё есть или её состояние неизвестно: фиксируем
 			// ошибку с retry. Чужую область с другим UID DeleteAtespace
 			// не удаляет сам.
@@ -239,6 +237,31 @@ func (s *Service) DeleteSwarm(userID, swarmID string) error {
 	sw.Retry = ""
 	_, err = s.transition(sw, StateDeleted)
 	return err
+}
+
+func (s *Service) swarmForDeletion(userID, swarmID string) (Swarm, error) {
+	swarm, ok, err := s.store.SwarmByID(swarmID)
+	if err != nil {
+		return Swarm{}, err
+	}
+	if !ok {
+		return Swarm{}, fmt.Errorf("%w: swarm %s", ErrNotFound, swarmID)
+	}
+	user, ok, err := s.store.UserByID(userID)
+	if err != nil {
+		return Swarm{}, err
+	}
+	if !ok || user.Disabled {
+		return Swarm{}, ErrNotAllowed
+	}
+	allowed, err := s.canOwnSwarm(user, swarm)
+	if err != nil {
+		return Swarm{}, err
+	}
+	if !allowed {
+		return Swarm{}, ErrNotAllowed
+	}
+	return swarm, nil
 }
 
 // TransferSwarm changes the primary owner, revoking the previous primary grant.

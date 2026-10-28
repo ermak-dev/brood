@@ -18,6 +18,8 @@ var (
 	ErrConflict = errors.New("conflict")
 	// ErrState — переход состояния роя нелегален.
 	ErrState = errors.New("illegal state transition")
+	// ErrSwarmNotEmpty identifies a confirmed atomic refusal without native deletion.
+	ErrSwarmNotEmpty = errors.New("swarm is not empty")
 	// ErrInvalidRole refuses role names outside the local ACL dictionary.
 	ErrInvalidRole = errors.New("swarm role must be one of: owner, editor, viewer")
 	// ErrInvalidWorkload rejects unresolved resources or placement outside the shard.
