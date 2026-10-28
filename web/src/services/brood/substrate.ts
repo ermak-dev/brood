@@ -242,7 +242,13 @@ export const workersApi = {
 // WorkerPool — Kubernetes-объект, не protojson ateapi. Предусловия исходного
 // чтения сохраняются: конфликт требует перечитать объект и повторить правку.
 export const workerPoolsApi = {
-  list: () => list<WorkerPool>('/api/worker-pools'),
+  list: async (): Promise<WorkerPool[]> => {
+    const body = await request<{ items: WorkerPool[] | null }>('GET', '/api/worker-pools');
+    if (!body || !('items' in body) || (body.items !== null && !Array.isArray(body.items))) {
+      throw new Error('Kubernetes returned an invalid WorkerPool list');
+    }
+    return body.items ?? [];
+  },
   defaults: () => request<WorkerPoolDefaults>('GET', '/api/worker-pool-defaults'),
   get: (name: string) => request<WorkerPool>('GET', `/api/worker-pools/${path(name)}`),
   create: (pool: WorkerPool) => request<WorkerPool>('POST', '/api/worker-pools', pool),
