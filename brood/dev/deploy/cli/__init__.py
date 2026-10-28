@@ -3,6 +3,7 @@
   brood deploy server    publish Go, bootstrap admin and retire Django/Postgres
   brood deploy go        build and prepare the private Go endpoint
   brood deploy microvm   switch an empty installation to a microVM worker pool
+  brood deploy lxc --trusted-workloads   prepare LXC image/config without changing pools
 
 Go deployment requires session/admin settings, approved WORKER_POOL_IMAGES,
 and TLS files. No legacy users are imported. Public rollout verifies admin
