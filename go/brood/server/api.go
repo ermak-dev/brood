@@ -27,20 +27,21 @@ type projectJSON struct {
 
 // swarmJSON — публичная форма роя.
 type swarmJSON struct {
-	ID           string `json:"id"`
-	ProjectID    string `json:"project_id"`
-	OwnerID      string `json:"owner_id"`
-	Name         string `json:"name"`
-	AtespaceName string `json:"atespace_name"`
-	State        string `json:"state"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID            string `json:"id"`
+	ProjectID     string `json:"project_id"`
+	OwnerID       string `json:"owner_id"`
+	OwnerUsername string `json:"owner_username"`
+	Name          string `json:"name"`
+	AtespaceName  string `json:"atespace_name"`
+	State         string `json:"state"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 // toSwarmJSON приводит роя к публичной форме; время — UTC RFC3339.
-func toSwarmJSON(sw app.Swarm) swarmJSON {
+func toSwarmJSON(sw app.Swarm, ownerUsername string) swarmJSON {
 	return swarmJSON{
-		ID: sw.ID, ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, Name: sw.Name,
+		ID: sw.ID, ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, OwnerUsername: ownerUsername, Name: sw.Name,
 		AtespaceName: sw.AtespaceName, State: string(sw.State),
 		CreatedAt: sw.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: sw.UpdatedAt.UTC().Format(time.RFC3339),
@@ -283,7 +284,7 @@ func (s *Server) handleProjectSwarms(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
-		s.writeSwarms(w, swarms)
+		s.writeSwarms(w, r, swarms)
 	case http.MethodPost:
 		var body struct {
 			Name string `json:"name"`
@@ -300,17 +301,37 @@ func (s *Server) handleProjectSwarms(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, toSwarmJSON(sw))
+		s.writeSwarm(w, r, http.StatusCreated, sw)
 	}
 }
 
 // writeSwarms пишет список роёв; пустой список — [].
-func (s *Server) writeSwarms(w http.ResponseWriter, swarms []app.Swarm) {
+func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []app.Swarm) {
 	out := make([]swarmJSON, 0, len(swarms))
+	owners := make(map[string]string)
 	for _, sw := range swarms {
-		out = append(out, toSwarmJSON(sw))
+		username, ok := owners[sw.OwnerID]
+		if !ok {
+			owner, err := s.store.GetUser(r.Context(), sw.OwnerID)
+			if err != nil {
+				apiError(w, r, err)
+				return
+			}
+			username = owner.Username
+			owners[sw.OwnerID] = username
+		}
+		out = append(out, toSwarmJSON(sw, username))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) writeSwarm(w http.ResponseWriter, r *http.Request, status int, sw app.Swarm) {
+	owner, err := s.store.GetUser(r.Context(), sw.OwnerID)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	writeJSON(w, status, toSwarmJSON(sw, owner.Username))
 }
 
 // handleSwarm — GET/DELETE /api/swarms/{id}: рой с проверкой доступа.
@@ -331,7 +352,7 @@ func (s *Server) handleSwarm(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, toSwarmJSON(sw))
+		s.writeSwarm(w, r, http.StatusOK, sw)
 	case http.MethodDelete:
 		if err := s.app.DeleteSwarm(user.ID, r.PathValue("id")); err != nil {
 			apiError(w, r, err)
