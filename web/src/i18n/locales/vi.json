@@ -2659,6 +2659,7 @@
     }
   },
   "worker_pools": {
+    "lxc_warning": "LXC thử nghiệm dùng chung nhân của nút, chỉ dành cho công việc đáng tin cậy. Mỗi worker hỗ trợ một actor. Không có checkpoint bộ nhớ hay tự động khôi phục tiến trình sau lỗi nút.",
     "title": "Nhóm worker",
     "create": "Tạo nhóm worker",
     "scope_hint": "Nhóm worker cung cấp tài nguyên cho toàn bộ hệ thống, không phụ thuộc dự án đang chọn.",

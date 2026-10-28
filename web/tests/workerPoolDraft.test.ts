@@ -34,9 +34,9 @@ const existing = (): WorkerPool => ({
 describe('worker pool runtime controls', () => {
   const microvmImage = `registry/microvm@sha256:${'b'.repeat(64)}`;
 
-  test('installed supported classes use their matching image, never lxc', () => {
+  test('installed supported classes use their matching image, never fullvm', () => {
     const images = drafts.workerPoolImages({ workerImage: image, workerImages: {
-      gvisor: image, microvm: microvmImage, lxc: 'unsupported',
+      gvisor: image, microvm: microvmImage, fullvm: 'unsupported',
     } });
     expect(images).toEqual({ gvisor: image, microvm: microvmImage });
     const draft = { ...newPoolDraft(images.microvm, 'microvm'), name: 'microvm-pool' };
@@ -44,7 +44,7 @@ describe('worker pool runtime controls', () => {
     expect(poolPayload(null, draft).spec).toEqual({
       replicas: 1, workerImage: microvmImage, sandboxClasses: [{ name: 'microvm' }],
     });
-    expect(validatePoolDraft({ ...draft, sandboxClass: 'lxc' })).toHaveProperty('sandboxClass');
+    expect(validatePoolDraft({ ...draft, sandboxClass: 'fullvm' })).toHaveProperty('sandboxClass');
   });
 
   test('legacy fallback applies only when the map is absent', () => {
@@ -52,7 +52,7 @@ describe('worker pool runtime controls', () => {
     expect(drafts.workerPoolImages({ workerImage: image, workerImages: {} })).toEqual({});
     expect(drafts.workerPoolImages({ workerImage: image, workerImages: { microvm: microvmImage } }))
       .toEqual({ microvm: microvmImage });
-    expect(drafts.workerPoolImages({ workerImage: '', workerImages: { gvisor: '', lxc: image } }))
+    expect(drafts.workerPoolImages({ workerImage: '', workerImages: { gvisor: '', fullvm: image } }))
       .toEqual({});
   });
 

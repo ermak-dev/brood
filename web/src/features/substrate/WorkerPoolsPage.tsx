@@ -60,6 +60,9 @@ export function WorkerPoolsPage() {
     <div className={styles.page}>
       <PageHeader title={t('worker_pools.title')} actions={create} />
       <p className={styles.notice}>{t('worker_pools.scope_hint')}</p>
+      {data?.some((pool) => pool.spec.sandboxClasses.some((entry) => entry.name === 'lxc')) && (
+        <p className={styles.notice} role="note">{t('worker_pools.lxc_warning')}</p>
+      )}
       {loading ? <LoadingSpinner /> : error ? (
         <EmptyState title={t('substrate.load_failed')} description={error} action={<Button onClick={() => void refresh()}>{t('worker_pools.retry')}</Button>} />
       ) : data?.length ? (
@@ -167,6 +170,7 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, images, onClose,
                 })} />}
             </Field>
           )}
+          {draft.sandboxClass === 'lxc' && <p className={styles.notice} role="note">{t('worker_pools.lxc_warning')}</p>}
           {input('workerImage', t('worker_pools.image'), t('worker_pools.image_hint'))}
         </Section>
         <Section title={t('worker_pools.resources')} hint={t('worker_pools.resources_hint')}>

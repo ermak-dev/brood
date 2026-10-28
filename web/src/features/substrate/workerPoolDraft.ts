@@ -14,7 +14,7 @@ export interface PoolDraft {
 
 export function workerPoolImages(defaults: WorkerPoolDefaults): Record<string, string> {
   const images = defaults.workerImages ?? { gvisor: defaults.workerImage };
-  return Object.fromEntries(['gvisor', 'microvm']
+  return Object.fromEntries(['gvisor', 'microvm', 'lxc']
     .filter((name) => Boolean(images[name]))
     .map((name) => [name, images[name]]));
 }
@@ -63,7 +63,7 @@ export function validatePoolDraft(draft: PoolDraft): Partial<Record<keyof PoolDr
   )) errors.name = 'name';
   if (!/^\d+$/.test(draft.replicas) || Number(draft.replicas) > 2147483647) errors.replicas = 'replicas';
   if (!draft.workerImage || /\s/.test(draft.workerImage)) errors.workerImage = 'image';
-  if (!['gvisor', 'microvm'].includes(draft.sandboxClass)) errors.sandboxClass = 'image';
+  if (!['gvisor', 'microvm', 'lxc'].includes(draft.sandboxClass)) errors.sandboxClass = 'image';
   for (const key of ['requestCpu', 'requestMemory', 'limitCpu', 'limitMemory'] as const) {
     if (draft[key] !== '' && quantity(draft[key]) === null) errors[key] = 'quantity';
   }
