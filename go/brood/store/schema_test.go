@@ -9,11 +9,11 @@ import (
 	"testing"
 )
 
-// FEATURE: Инициализация только текущей схемы без миграций.
-// SPEC: Чистая база содержит пять таблиц и retry; повторное открытие сохраняет
-// данные и схему; несовместимая база отвергается без обновления.
-// IMPLEMENTATION: Одна встроенная схема, создание и проверка в BEGIN IMMEDIATE.
-// RESULT: IMPLEMENTED — без версий и импорта; определения таблиц проверяются.
+// FEATURE: Инициализация текущей схемы и точное расширение ACL.
+// SPEC: Чистая база содержит шесть таблиц и retry; повторное открытие сохраняет
+// данные и схему; неизвестная база отвергается без обновления.
+// IMPLEMENTATION: Встроенные определения и ACL-расширение в BEGIN IMMEDIATE.
+// RESULT: IMPLEMENTED — без импорта и migration ledger; определения проверяются.
 // STATUS: DONE
 func TestOpenCurrentSchema(t *testing.T) {
 	s := newTestStore(t)
@@ -34,7 +34,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"project_members", "projects", "sessions", "swarms", "users"}
+	want := []string{"project_members", "projects", "sessions", "swarm_members", "swarms", "users"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}

@@ -47,15 +47,19 @@ func (s *Store) CreateSwarm(ctx context.Context, w Swarm) error {
 	if w.State == "" {
 		w.State = "provisioning"
 	}
-	_, err := s.conn(ctx).ExecContext(ctx, `
-		INSERT INTO swarms (id, project_id, owner_id, name, atespace_name, atespace_uid, state, created_at, updated_at, retry)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.ProjectID, w.OwnerID, w.Name, w.AtespaceName, w.AtespaceUID,
-		w.State, nowRFC3339(), nowRFC3339(), w.Retry)
-	if err != nil {
-		return wrapUnique(err, fmt.Sprintf("atespace %q", w.AtespaceName))
-	}
-	return nil
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		_, err := s.conn(ctx).ExecContext(ctx, `
+			INSERT INTO swarms (id, project_id, owner_id, name, atespace_name, atespace_uid, state, created_at, updated_at, retry)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			w.ID, w.ProjectID, w.OwnerID, w.Name, w.AtespaceName, w.AtespaceUID,
+			w.State, nowRFC3339(), nowRFC3339(), w.Retry)
+		if err != nil {
+			return wrapUnique(err, fmt.Sprintf("swarm %q or atespace %q", w.Name, w.AtespaceName))
+		}
+		_, err = s.conn(ctx).ExecContext(ctx,
+			`INSERT INTO swarm_members (swarm_id, user_id, role) VALUES (?, ?, 'owner')`, w.ID, w.OwnerID)
+		return err
+	})
 }
 
 // GetSwarm возвращает рой по ID.
@@ -141,7 +145,21 @@ func (s *Store) SetSwarmAtespaceUID(ctx context.Context, id string, uid *string)
 // SetSwarmOwner передаёт рой другому пользователю (административная
 // операция с проверкой членства на прикладном слое).
 func (s *Store) SetSwarmOwner(ctx context.Context, id, ownerID string) error {
-	return s.updateSwarm(ctx, id, ownerID, `owner_id = ?, updated_at = ?`)
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		current, err := s.GetSwarm(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.SetSwarmMember(ctx, id, ownerID, "owner"); err != nil {
+			return err
+		}
+		if current.OwnerID != ownerID {
+			if err := s.RemoveSwarmMember(ctx, id, current.OwnerID); err != nil {
+				return err
+			}
+		}
+		return s.updateSwarm(ctx, id, ownerID, `owner_id = ?, updated_at = ?`)
+	})
 }
 
 // updateSwarm выполняет UPDATE swarms с данным фрагментом SET.
