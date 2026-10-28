@@ -10,8 +10,6 @@
     "users": "使用者管理",
     "permissions": "存取權限",
     "membership": "專案成員",
-    "project": "專案",
-    "select_project": "選擇專案",
     "admin_policy": "管理員可管理整個安裝實例中的所有使用者、專案、成員和群組。",
     "member_policy": "專案成員可以建立自己的群組，只能檢視和管理自己的群組，不能存取其他成員的群組。",
     "server_authority": "伺服器會檢查每次操作。導覽選單可見不代表擁有存取權限。",

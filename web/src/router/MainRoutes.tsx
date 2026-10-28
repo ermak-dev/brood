@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
-import { Navigate, useRoutes, type Location } from 'react-router-dom';
+import { Navigate, useRoutes, useSearchParams, type Location } from 'react-router-dom';
 import { AccessProjectsPage } from '@/features/access/ProjectsPage';
 import { SwarmsPage } from '@/features/access/SwarmsPage';
 import { UsersPage } from '@/features/access/UsersPage';
 import { PermissionsPage } from '@/features/access/PermissionsPage';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
+import { projectSectionPath } from '@/features/access/state';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { ActorsPage } from '@/features/substrate/ActorsPage';
 import { PolicyPage } from '@/features/substrate/PolicyPage';
@@ -26,17 +27,28 @@ import { LogsPage } from '@/features/logs/LogsPage';
 import { SystemPage } from '@/pages/SystemPage';
 import { useAuthStore } from '@/stores';
 
+/** Старые адреса рои-и-участники выбирали проект параметром запроса; теперь
+ * проект — часть маршрута, и прежняя ссылка ведёт в его раздел. */
+function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' }) {
+  const [params] = useSearchParams();
+  return <Navigate to={projectSectionPath(section, params.get('project'))} replace />;
+}
+
 const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/', element: <DashboardPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
   // Проекты brood и их рои — отдельные сущности. Рой и его atespace —
   // одна сущность интерфейса, поэтому отдельной страницы областей нет:
-  // старый адрес ведёт к роям (docs/MODEL.md).
+  // старый адрес ведёт к роям (docs/MODEL.md). Проект выбирается маршрутом,
+  // а не вторым выпадающим списком рядом с глобальным выбором роя.
   { path: '/projects', element: <AccessProjectsPage /> },
-  { path: '/swarms', element: <SwarmsPage /> },
+  { path: '/projects/:project', element: <Navigate to="swarms" replace /> },
+  { path: '/projects/:project/swarms', element: <SwarmsPage /> },
+  { path: '/projects/:project/members', element: <PermissionsPage /> },
   { path: '/users', element: <UsersPage /> },
-  { path: '/permissions', element: <PermissionsPage /> },
-  { path: '/substrate-projects', element: <Navigate to="/swarms" replace /> },
+  { path: '/swarms', element: <LegacyProjectRoute section="swarms" /> },
+  { path: '/permissions', element: <LegacyProjectRoute section="members" /> },
+  { path: '/substrate-projects', element: <Navigate to="/projects" replace /> },
   { path: '/actors', element: <ActorsPage /> },
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
@@ -74,7 +86,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
 
 function AdminOnly({ children }: { children: ReactNode }) {
   const isSuperuser = useAdministrator();
-  return isSuperuser ? children : <Navigate to="/swarms" replace />;
+  return isSuperuser ? children : <Navigate to="/projects" replace />;
 }
 
 export function MainRoutes({ location }: { location?: Location }) {

@@ -4,6 +4,12 @@ export function selectAccessProject(projects: AccessProject[] | null, requested:
   return requested === null ? projects?.[0] : projects?.find((row) => row.id === requested);
 }
 
+/** Раздел проекта в маршруте. Старая ссылка выбирала проект параметром
+ * запроса; без параметра адресовать нечего, и ведём к списку проектов. */
+export function projectSectionPath(section: 'swarms' | 'members', project: string | null) {
+  return project ? `/projects/${encodeURIComponent(project)}/${section}` : '/projects';
+}
+
 export interface ResourceSnapshot<T> {
   source: () => Promise<T>;
   data: T | null;

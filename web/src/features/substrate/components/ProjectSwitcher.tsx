@@ -6,10 +6,12 @@ import { IconSidebarProjects } from '@/components/ui/icons';
 import { useProjectStore } from '@/stores';
 import { scopesApi, type SwarmScope } from '@/services/brood/substrate';
 
-/** brood: the active project (atespace) switcher in the header, beside the
- * language menu and in its popover style. Actors and templates are scoped to
- * it. The list is fetched each time the menu opens, so a project created a
- * moment ago is there. */
+/** brood: the active swarm switcher in the header, beside the language menu
+ * and in its popover style -- the one global scope of the panel. Actors,
+ * templates and the project-scoped policy are scoped to it; a swarm is listed
+ * as "project / swarm" because its name is unique only inside its project. The
+ * list is fetched each time the menu opens, so a swarm created a moment ago is
+ * there. */
 export function ProjectSwitcher() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -85,10 +87,10 @@ export function ProjectSwitcher() {
             role="menuitem"
             onClick={() => {
               setOpen(false);
-              navigate('/swarms');
+              navigate('/projects');
             }}
           >
-            <span>{t('access.swarms')}</span>
+            <span>{t('access.projects')}</span>
           </button>
         </div>
       )}

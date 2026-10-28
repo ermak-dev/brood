@@ -31,7 +31,7 @@ export function ProjectScope({ title, children }: ProjectScopeProps) {
         <EmptyState
           title={t('access.select_swarm')}
           description={t('access.select_swarm_hint')}
-          action={<Button onClick={() => navigate('/swarms')}>{t('access.swarms')}</Button>}
+          action={<Button onClick={() => navigate('/projects')}>{t('access.projects')}</Button>}
         />
       </div>
     </div>

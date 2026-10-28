@@ -10,8 +10,6 @@
     "users": "用户管理",
     "permissions": "访问权限",
     "membership": "项目成员",
-    "project": "项目",
-    "select_project": "选择项目",
     "admin_policy": "管理员可管理整个安装实例中的所有用户、项目、成员和群组。",
     "member_policy": "项目成员可以创建自己的群组，只能查看和管理自己的群组，不能访问其他成员的群组。",
     "server_authority": "服务器会检查每次操作。导航菜单可见不代表拥有访问权限。",

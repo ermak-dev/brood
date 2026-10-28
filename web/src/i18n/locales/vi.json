@@ -10,8 +10,6 @@
     "users": "Người dùng",
     "permissions": "Quyền truy cập",
     "membership": "Thành viên dự án",
-    "project": "Dự án",
-    "select_project": "Chọn dự án",
     "admin_policy": "Quản trị viên quản lý mọi người dùng, dự án, thành viên và bầy trong hệ thống.",
     "member_policy": "Thành viên dự án có thể tạo bầy của mình. Thành viên chỉ xem và quản lý bầy của mình, không phải bầy của thành viên khác.",
     "server_authority": "Máy chủ kiểm tra từng thao tác. Việc hiển thị mục điều hướng không cấp quyền truy cập.",
