@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/store"
 )
 
@@ -12,11 +13,16 @@ func (s *Server) handleMemberList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !user.IsAdmin {
-		writeDetail(w, http.StatusForbidden, "administrator access required")
+	id := r.PathValue("id")
+	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(id))
+	if err != nil {
+		apiError(w, r, err)
 		return
 	}
-	id := r.PathValue("id")
+	if !allowed {
+		writeDetail(w, http.StatusNotFound, "project not found")
+		return
+	}
 	if _, err := s.store.GetProject(r.Context(), id); errors.Is(err, store.ErrNotFound) {
 		writeDetail(w, http.StatusNotFound, "project not found")
 		return

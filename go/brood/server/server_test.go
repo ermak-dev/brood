@@ -438,10 +438,20 @@ func TestAdminScenario(t *testing.T) {
 	expectStatus(t, "transfer to non-member-check", resp, data, http.StatusNoContent)
 	resp, data, _ = ts.do(alice, "GET", "/api/swarms/"+bobSwarm, "", nil)
 	expectStatus(t, "alice reads transferred swarm", resp, data, http.StatusOK)
-	// Передача не-участнику — 403.
+	resp, data, _ = ts.do(admin, "POST", "/api/admin/users", ts.csrf(admin),
+		map[string]string{"username": "outsider", "password": "outsider-password-1"})
+	expectStatus(t, "create non-member", resp, data, http.StatusCreated)
+	resp, data, _ = ts.do(admin, "POST", "/api/swarms/"+aliceSwarm+"/transfer",
+		ts.csrf(admin), map[string]string{"username": "outsider"})
+	expectStatus(t, "transfer to ordinary non-member", resp, data, http.StatusForbidden)
 	resp, data, _ = ts.do(admin, "POST", "/api/swarms/"+aliceSwarm+"/transfer",
 		ts.csrf(admin), map[string]string{"username": "root"})
-	expectStatus(t, "transfer to admin non-member", resp, data, http.StatusForbidden)
+	expectStatus(t, "transfer to active admin", resp, data, http.StatusNoContent)
+	resp, data, _ = ts.do(alice, "GET", "/api/swarms/"+aliceSwarm, "", nil)
+	expectStatus(t, "old owner grant removed", resp, data, http.StatusNotFound)
+	resp, data, _ = ts.do(admin, "POST", "/api/swarms/"+aliceSwarm+"/transfer",
+		ts.csrf(admin), map[string]string{"username": "alice"})
+	expectStatus(t, "restore project member owner", resp, data, http.StatusNoContent)
 
 	// Удаление роя владельцем; повторное чтение — 404.
 	resp, data, _ = ts.do(alice, "DELETE", "/api/swarms/"+aliceSwarm, ts.csrf(alice), nil)

@@ -70,12 +70,19 @@ func (s *Server) mountSubstrateAPI() {
 	}))
 }
 
-// swarmFor авторизует доступ к рою: manage-swarm (владелец-участник или
-// админ, рой active). Чужой или отсутствующий рой — 404 без раскрытия
-// существования, как и остальной API роя. true — ответ записан.
+// swarmFor allows readers on GET and workload managers on mutations.
+// Inaccessible swarms stay hidden as 404; writable actor proxies authorize separately.
 func (s *Server) swarmFor(w http.ResponseWriter, r *http.Request, user store.User) (app.Swarm, bool) {
+	action := app.ActionManageSwarm
+	if r.Method == http.MethodGet {
+		action = app.ActionViewSwarm
+	}
+	return s.swarmForAction(w, r, user, action)
+}
+
+func (s *Server) swarmForAction(w http.ResponseWriter, r *http.Request, user store.User, action app.Action) (app.Swarm, bool) {
 	swarmID := r.PathValue("id")
-	ok, err := s.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+	ok, err := s.app.Can(user.ID, action, app.SwarmRes(swarmID))
 	if err != nil {
 		apiError(w, r, err)
 		return app.Swarm{}, false
@@ -265,12 +272,12 @@ func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scoped(&actor, sw.AtespaceName)
-	saved, err := client.CreateActor(r.Context(), &actor)
-	if err != nil {
+	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "create-actor", actor: &actor, name: name}
+	if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
 		apiError(w, r, err)
 		return
 	}
-	writeMessage(w, http.StatusCreated, saved)
+	writeMessage(w, http.StatusCreated, operation.savedActor)
 }
 
 // handleSwarmActor — GET/PUT/POST/DELETE /api/swarms/{id}/actors/{name}:
@@ -309,12 +316,12 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 		}
 		scoped(&actor, sw.AtespaceName)
 		actor.GetMetadata().Name = name
-		saved, err := client.UpdateActor(r.Context(), &actor)
-		if err != nil {
+		operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "update-actor", actor: &actor, name: name}
+		if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
 			apiError(w, r, err)
 			return
 		}
-		writeMessage(w, http.StatusOK, saved)
+		writeMessage(w, http.StatusOK, operation.savedActor)
 	case http.MethodPost:
 		verb, ok := readAction(w, r, "suspend", "resume")
 		if !ok {
@@ -329,7 +336,9 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 		if verb == "suspend" {
 			actor, err = client.SuspendActor(r.Context(), sw.AtespaceName, name)
 		} else {
-			actor, err = client.ResumeActor(r.Context(), sw.AtespaceName, name)
+			operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "resume-actor", name: name}
+			err = s.app.AdmitWorkload(user.ID, sw.ID, operation)
+			actor = operation.savedActor
 		}
 		if err != nil {
 			apiError(w, r, err)
@@ -388,12 +397,12 @@ func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scoped(&template, sw.AtespaceName)
-	saved, err := client.CreateActorTemplate(r.Context(), &template)
-	if err != nil {
+	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "create-template", template: &template}
+	if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
 		apiError(w, r, err)
 		return
 	}
-	writeMessage(w, http.StatusCreated, saved)
+	writeMessage(w, http.StatusCreated, operation.savedTemplate)
 }
 
 // handleSwarmTemplate — GET/DELETE /api/swarms/{id}/templates/{name}.
@@ -420,7 +429,8 @@ func (s *Server) handleSwarmTemplate(w http.ResponseWriter, r *http.Request) {
 		writeMessage(w, http.StatusOK, template)
 		return
 	}
-	if err := client.DeleteActorTemplate(r.Context(), sw.AtespaceName, name); err != nil {
+	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "delete-template", name: name}
+	if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
 		apiError(w, r, err)
 		return
 	}

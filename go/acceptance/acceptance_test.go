@@ -292,7 +292,7 @@ func testNoSubstrate(t *testing.T, bin binaries) {
 			if code != 404 {
 				t.Errorf("non-owner actor list status %d, want 404 even without Substrate", code)
 			}
-			user.browser.expect("POST", "/api/swarms/"+user.other.ID+"/transfer", map[string]string{"username": "bob"}, 403)
+			user.browser.expect("POST", "/api/swarms/"+user.other.ID+"/transfer", map[string]string{"username": "bob"}, 404)
 		}
 	}
 	check()

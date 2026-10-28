@@ -88,7 +88,12 @@ func (s *Server) pushTemplate(w http.ResponseWriter, r *http.Request, sw app.Swa
 		writeDetail(w, 503, "substrate is not configured")
 		return
 	}
-	_, err = s.ateapi.CreateActorTemplate(r.Context(), &template)
+	user, ok := currentUser(w, r)
+	if !ok {
+		return
+	}
+	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "create-template", template: &template}
+	err = s.app.AdmitWorkload(user.ID, sw.ID, operation)
 	if err != nil {
 		var api *substrate.APIError
 		if !errors.As(err, &api) || api.Status != 409 {
