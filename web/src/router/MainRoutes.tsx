@@ -9,7 +9,6 @@ import { visibleAccessPath } from '@/features/access/permissions';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { ActorsPage } from '@/features/substrate/ActorsPage';
 import { PolicyPage } from '@/features/substrate/PolicyPage';
-import { ProjectsPage } from '@/features/substrate/ProjectsPage';
 import { TemplatesPage } from '@/features/substrate/TemplatesPage';
 import { WorkersPage } from '@/features/substrate/WorkersPage';
 import { WorkerPoolsPage } from '@/features/substrate/WorkerPoolsPage';
@@ -30,13 +29,14 @@ import { useAuthStore } from '@/stores';
 const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/', element: <DashboardPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
-  // Проекты brood и их рои — отдельные сущности. Исходная страница
-  // областей Substrate сохранена в администраторском разделе.
+  // Проекты brood и их рои — отдельные сущности. Рой и его atespace —
+  // одна сущность интерфейса, поэтому отдельной страницы областей нет:
+  // старый адрес ведёт к роям (docs/MODEL.md).
   { path: '/projects', element: <AccessProjectsPage /> },
   { path: '/swarms', element: <SwarmsPage /> },
   { path: '/users', element: <UsersPage /> },
   { path: '/permissions', element: <PermissionsPage /> },
-  { path: '/substrate-projects', element: <ProjectsPage /> },
+  { path: '/substrate-projects', element: <Navigate to="/swarms" replace /> },
   { path: '/actors', element: <ActorsPage /> },
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
