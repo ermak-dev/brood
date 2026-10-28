@@ -13,6 +13,8 @@ const (
 	ActionViewSwarm Action = "view-swarm"
 	// ActionManageSwarm — управлять роем: акторы и терминал.
 	ActionManageSwarm Action = "manage-swarm"
+	// ActionManageSwarmACL permits explicit local grant administration.
+	ActionManageSwarmACL Action = "manage-swarm-acl"
 	// ActionDeleteSwarm — удалить рой.
 	ActionDeleteSwarm Action = "delete-swarm"
 	// ActionTransferOwnership — передать владение роем.
@@ -80,8 +82,8 @@ func canTransition(from, to SwarmState) bool {
 //   - активный админ управляет пользователями, проектами, членством
 //     и всеми активными роями;
 //   - активный участник видит проект и создаёт в нём рои;
-//   - рой доступен только владельцу (пока он участник проекта) и админу;
-//   - членство само по себе чужие рои не открывает.
+//   - swarm access requires an explicit role and project membership, or admin;
+//   - project membership alone never exposes another swarm.
 func (s *Service) Can(userID string, action Action, res Resource) (bool, error) {
 	u, ok, err := s.store.UserByID(userID)
 	if err != nil || !ok {
@@ -126,20 +128,17 @@ func (s *Service) canProject(u User, action Action, projectID string) (bool, err
 	return member, nil
 }
 
-// canSwarm решает действия над роем: доступ требует владения И
-// членства в проекте роя (или активного админа). Управление и передача
-// владения — только active-рою; просмотр — любому состоянию, кроме
-// deleted.
+// canSwarm requires an explicit local grant and project membership, unless
+// the user is an administrator. Workload/ACL changes require an active swarm;
+// an owner can also delete an error-state swarm. Deleted swarms never grant access.
 func (s *Service) canSwarm(u User, action Action, swarmID string) (bool, error) {
 	sw, ok, err := s.store.SwarmByID(swarmID)
 	if err != nil || !ok || sw.State == StateDeleted {
 		// Удалённый рой не существует ни для кого, включая админа.
 		return false, err
 	}
+	role := RoleOwner
 	if !u.IsAdmin {
-		if sw.OwnerID != u.ID {
-			return false, nil
-		}
 		member, err := s.store.IsMember(sw.ProjectID, u.ID)
 		if err != nil {
 			return false, err
@@ -147,16 +146,21 @@ func (s *Service) canSwarm(u User, action Action, swarmID string) (bool, error) 
 		if !member {
 			return false, nil
 		}
+		var granted bool
+		role, granted, err = s.store.SwarmRole(sw.ID, u.ID)
+		if err != nil || !granted {
+			return false, err
+		}
 	}
 	switch action {
 	case ActionViewSwarm:
-		return true, nil
+		return role == RoleOwner || role == RoleEditor || role == RoleViewer, nil
 	case ActionManageSwarm:
-		return sw.State == StateActive, nil
-	case ActionTransferOwnership:
-		return u.IsAdmin && sw.State == StateActive, nil
+		return (role == RoleOwner || role == RoleEditor) && sw.State == StateActive, nil
+	case ActionTransferOwnership, ActionManageSwarmACL:
+		return role == RoleOwner && sw.State == StateActive, nil
 	case ActionDeleteSwarm:
-		return sw.State == StateActive || sw.State == StateError, nil
+		return role == RoleOwner && (sw.State == StateActive || sw.State == StateError), nil
 	default:
 		return false, nil
 	}

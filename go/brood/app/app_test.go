@@ -201,7 +201,7 @@ func TestCan(t *testing.T) {
 		{"member views own swarm", idAlice, ActionViewSwarm, SwarmRes(sw.ID), true},
 		{"member manages own swarm", idAlice, ActionManageSwarm, SwarmRes(sw.ID), true},
 		{"member deletes own swarm", idAlice, ActionDeleteSwarm, SwarmRes(sw.ID), true},
-		{"member cannot transfer own swarm", idAlice, ActionTransferOwnership, SwarmRes(sw.ID), false},
+		{"owner can transfer own swarm with ACL", idAlice, ActionTransferOwnership, SwarmRes(sw.ID), true},
 		{"non-member cannot view project", idBob, ActionViewProject, ProjectRes(proj), false},
 		{"non-member cannot create swarm", idBob, ActionCreateSwarm, ProjectRes(proj), false},
 		{"non-member cannot view swarm", idBob, ActionViewSwarm, SwarmRes(sw.ID), false},
@@ -274,7 +274,7 @@ func TestCanSwarmStates(t *testing.T) {
 		{"delete deleting via Can", deleting, ActionDeleteSwarm, false},
 		{"delete provisioning", provisioning, ActionDeleteSwarm, false},
 		// Передача владения — только активного роя.
-		{"owner cannot transfer active", SwarmRes(active.ID), ActionTransferOwnership, false},
+		{"owner can transfer active with ACL", SwarmRes(active.ID), ActionTransferOwnership, true},
 		{"transfer error", errState, ActionTransferOwnership, false},
 	}
 	for _, tc := range cases {
@@ -765,9 +765,9 @@ func TestTransferSwarm(t *testing.T) {
 	proj := e.seedProject(t, idAlice, idBob)
 	sw := mustCreateSwarm(t, e, idAlice, proj, "alpha")
 
-	// Только администратор передаёт владение.
-	if err := e.svc.TransferSwarm(idAlice, sw.ID, idBob); !errors.Is(err, ErrNotAllowed) {
-		t.Fatalf("non-admin transfer: err=%v, want ErrNotAllowed", err)
+	// Членство в проекте без owner-роли не разрешает передачу владения.
+	if err := e.svc.TransferSwarm(idBob, sw.ID, idAlice); !errors.Is(err, ErrNotAllowed) {
+		t.Fatalf("non-owner transfer: err=%v, want ErrNotAllowed", err)
 	}
 	// Новый владелец должен быть активным участником проекта.
 	if err := e.store.CreateUser(User{ID: "u4", Username: "carol"}); err != nil {

@@ -65,6 +65,13 @@ type Swarm struct {
 	Retry string
 }
 
+// SwarmMember is an explicit local grant within one swarm.
+type SwarmMember struct {
+	SwarmID string
+	UserID  string
+	Role    string
+}
+
 // Store — минимальный интерфейс хранилища, нужный прикладному слою.
 // Таблицы по эпику #27: users, projects, project_members, swarms; сессии
 // (#30) прикладному слою не видны. Возвращает данные и молчит; печатают
@@ -108,7 +115,17 @@ type Store interface {
 	// и имя atespace должны совпадать с текущей записью атомарно.
 	UpdateSwarm(s Swarm) error
 	// ChangeSwarmOwner атомарно передаёт активный рой от ожидаемого владельца.
-	ChangeSwarmOwner(id, expectedOwnerID, newOwnerID string) error
+	ChangeSwarmOwner(actorID, id, expectedOwnerID, newOwnerID string) error
+	// SwarmRole returns an explicit grant; missing grants have ok=false.
+	SwarmRole(swarmID, userID string) (role string, ok bool, err error)
+	// SwarmMembers lists explicit grants without inferring project access.
+	SwarmMembers(swarmID string) ([]SwarmMember, error)
+	// SetSwarmMember rechecks actor and target authorization atomically.
+	SetSwarmMember(actorID, swarmID, userID, role string) error
+	// RemoveSwarmMember rechecks authorization and preserves an owner.
+	RemoveSwarmMember(actorID, swarmID, userID string) error
+	// SwarmsByMember lists explicitly granted swarms in one project.
+	SwarmsByMember(projectID, userID string) ([]Swarm, error)
 	// SwarmsByProject перечисляет рои проекта в порядке создания.
 	SwarmsByProject(projectID string) ([]Swarm, error)
 	// SwarmsByOwner перечисляет рои владельца в проекте.

@@ -125,7 +125,7 @@ func TestGatewayRevokedOwnerCannotTransition(t *testing.T) {
 			t.Errorf("revoked owner transitioned to %s: %v", state, err)
 		}
 	}
-	if err := g.ChangeSwarmOwner("s", "alice", "admin"); !errors.Is(err, app.ErrConflict) {
+	if err := g.ChangeSwarmOwner("admin", "s", "alice", "admin"); !errors.Is(err, app.ErrConflict) {
 		t.Errorf("stale transfer = %v, want conflict", err)
 	}
 	current, err := db.GetSwarm(context.Background(), "s")
@@ -172,12 +172,12 @@ type interleavedSwarmStore struct {
 	beforeOwnerChange func()
 }
 
-func (s *interleavedSwarmStore) ChangeSwarmOwner(id, expectedOwnerID, newOwnerID string) error {
+func (s *interleavedSwarmStore) ChangeSwarmOwner(actorID, id, expectedOwnerID, newOwnerID string) error {
 	if hook := s.beforeOwnerChange; hook != nil {
 		s.beforeOwnerChange = nil
 		hook()
 	}
-	return s.Store.ChangeSwarmOwner(id, expectedOwnerID, newOwnerID)
+	return s.Store.ChangeSwarmOwner(actorID, id, expectedOwnerID, newOwnerID)
 }
 
 func (s *interleavedSwarmStore) UpdateSwarm(sw app.Swarm) error {
@@ -213,7 +213,8 @@ func (p *swarmRaceProvisioner) DeleteAtespace(string, string) error {
 func swarmRaceFixture(t *testing.T) (*Gateway, *store.Store, *swarmRaceProvisioner) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "brood.db"))
+	path := filepath.Join(t.TempDir(), "brood.db")
+	db, err := store.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,12 @@ func swarmRaceFixture(t *testing.T) (*Gateway, *store.Store, *swarmRaceProvision
 			t.Fatal(err)
 		}
 	}
-	g := StoreGateway(db, nil)
+	catalog, err := OpenCatalog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { catalog.Close() })
+	g := StoreGateway(db, catalog)
 	if err := g.SaveSwarm(app.Swarm{ID: "s", ProjectID: "p", OwnerID: "alice", Name: "s", AtespaceName: "swarm-s", AtespaceUID: "uid", State: app.StateActive}); err != nil {
 		t.Fatal(err)
 	}

@@ -143,7 +143,11 @@ func (g *Gateway) MemberIDs(projectID string) ([]string, error) {
 }
 
 func (g *Gateway) SaveSwarm(s app.Swarm) error {
-	return g.store.CreateSwarm(context.Background(), toStoreSwarm(s))
+	err := g.store.CreateSwarm(context.Background(), toStoreSwarm(s))
+	if store.IsUniqueViolation(err) {
+		return fmt.Errorf("%w: swarm name or atespace is already in use", app.ErrExists)
+	}
+	return err
 }
 
 func (g *Gateway) SwarmByID(id string) (app.Swarm, bool, error) {
@@ -199,37 +203,17 @@ func (g *Gateway) UpdateSwarm(s app.Swarm) error {
 
 // ChangeSwarmOwner отделяет передачу владения от переходов жизненного цикла.
 // Проверки и запись атомарны относительно начала удаления; сети под замком нет.
-func (g *Gateway) ChangeSwarmOwner(id, expectedOwnerID, newOwnerID string) error {
+func (g *Gateway) ChangeSwarmOwner(actorID, id, expectedOwnerID, newOwnerID string) error {
 	return g.store.WithTx(context.Background(), func(ctx context.Context) error {
-		current, err := g.store.GetSwarm(ctx, id)
-		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("%w: swarm not found", app.ErrNotFound)
-		}
+		current, err := g.authorizeACLMutation(ctx, actorID, id)
 		if err != nil {
 			return err
-		}
-		if current.State != string(app.StateActive) {
-			return fmt.Errorf("%w: transfer from %s", app.ErrState, current.State)
 		}
 		if current.OwnerID != expectedOwnerID {
 			return fmt.Errorf("%w: swarm owner changed", app.ErrConflict)
 		}
-		owner, err := g.store.GetUser(ctx, newOwnerID)
-		if errors.Is(err, store.ErrNotFound) {
-			return app.ErrNotAllowed
-		}
-		if err != nil {
+		if err := g.requireACLGrantee(ctx, current.ProjectID, newOwnerID); err != nil {
 			return err
-		}
-		if owner.Disabled {
-			return app.ErrNotAllowed
-		}
-		member, err := g.store.IsMember(ctx, current.ProjectID, newOwnerID)
-		if err != nil {
-			return err
-		}
-		if !member && !owner.IsAdmin {
-			return app.ErrNotAllowed
 		}
 		return g.store.SetSwarmOwner(ctx, id, newOwnerID)
 	})

@@ -91,6 +91,11 @@ func (s *Service) CreateSwarm(userID, projectID, name string) (Swarm, error) {
 	if _, _, err := s.authorizeCreateSwarm(userID, projectID); err != nil {
 		return Swarm{}, err
 	}
+	unlock := s.lockProject(projectID)
+	defer unlock()
+	if _, _, err := s.authorizeCreateSwarm(userID, projectID); err != nil {
+		return Swarm{}, err
+	}
 
 	// Имя роя уникально в проекте. Незавершённое создание того же
 	// владельца продолжается, чужое имя — отказ.
@@ -117,6 +122,15 @@ func (s *Service) CreateSwarm(userID, projectID, name string) (Swarm, error) {
 		UpdatedAt:    s.now(),
 	}
 	if err := s.store.SaveSwarm(sw); err != nil {
+		if errors.Is(err, ErrExists) {
+			existing, found, lookupErr := s.findSwarmByName(projectID, name)
+			if lookupErr != nil {
+				return Swarm{}, lookupErr
+			}
+			if found && existing.OwnerID == userID {
+				return s.resumeCreate(existing)
+			}
+		}
 		return Swarm{}, fmt.Errorf("save swarm: %w", err)
 	}
 	return s.resumeCreate(sw)
@@ -173,17 +187,12 @@ func (s *Service) DeleteSwarm(userID, swarmID string) error {
 	if !ok || u.Disabled {
 		return ErrNotAllowed
 	}
-	if !u.IsAdmin {
-		if sw.OwnerID != userID {
-			return ErrNotAllowed
-		}
-		member, err := s.store.IsMember(sw.ProjectID, userID)
-		if err != nil {
-			return err
-		}
-		if !member {
-			return ErrNotAllowed
-		}
+	allowed, err := s.canOwnSwarm(u, sw)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrNotAllowed
 	}
 	if sw.State == StateDeleted {
 		// Повтор идемпотентен только для авторизованного вызывающего.
@@ -216,11 +225,15 @@ func (s *Service) DeleteSwarm(userID, swarmID string) error {
 	return err
 }
 
-// TransferSwarm передаёт владение роем. Только активный администратор;
-// новый владелец — активный участник проекта или админ. Atespace не меняется.
+// TransferSwarm changes the primary owner, revoking the previous primary grant.
+// An active owner or administrator may transfer to an active member or administrator.
 func (s *Service) TransferSwarm(actorID, swarmID, newOwnerID string) error {
-	if err := s.requireAdmin(actorID); err != nil {
+	actor, ok, err := s.store.UserByID(actorID)
+	if err != nil {
 		return err
+	}
+	if !ok || actor.Disabled {
+		return ErrNotAllowed
 	}
 	sw, ok, err := s.store.SwarmByID(swarmID)
 	if err != nil {
@@ -228,6 +241,13 @@ func (s *Service) TransferSwarm(actorID, swarmID, newOwnerID string) error {
 	}
 	if !ok || sw.State == StateDeleted {
 		return fmt.Errorf("%w: swarm %s", ErrNotFound, swarmID)
+	}
+	allowed, err := s.canOwnSwarm(actor, sw)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrNotAllowed
 	}
 	if sw.State != StateActive {
 		return fmt.Errorf("%w: transfer from %s", ErrState, sw.State)
@@ -246,7 +266,7 @@ func (s *Service) TransferSwarm(actorID, swarmID, newOwnerID string) error {
 	if !member && !newOwner.IsAdmin {
 		return ErrNotAllowed
 	}
-	if err := s.store.ChangeSwarmOwner(sw.ID, sw.OwnerID, newOwnerID); err != nil {
+	if err := s.store.ChangeSwarmOwner(actorID, sw.ID, sw.OwnerID, newOwnerID); err != nil {
 		return fmt.Errorf("transfer swarm: %w", err)
 	}
 	return nil
@@ -312,7 +332,7 @@ func (s *Service) ListSwarmsFor(userID, projectID string) ([]Swarm, error) {
 	if u.IsAdmin {
 		swarms, err = s.store.SwarmsByProject(projectID)
 	} else {
-		swarms, err = s.store.SwarmsByOwner(projectID, userID)
+		swarms, err = s.store.SwarmsByMember(projectID, userID)
 	}
 	if err != nil {
 		return nil, err

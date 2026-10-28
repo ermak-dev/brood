@@ -18,4 +18,6 @@ var (
 	ErrConflict = errors.New("conflict")
 	// ErrState — переход состояния роя нелегален.
 	ErrState = errors.New("illegal state transition")
+	// ErrInvalidRole refuses role names outside the local ACL dictionary.
+	ErrInvalidRole = errors.New("swarm role must be one of: owner, editor, viewer")
 )
