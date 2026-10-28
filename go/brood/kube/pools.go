@@ -497,6 +497,12 @@ func (p *Pools) body(body []byte, name *string, existing map[string]any) ([]byte
 	if err := p.validateSpec(spec, existing); err != nil {
 		return nil, err
 	}
+	if name == nil {
+		class := spec["sandboxClasses"].([]any)[0].(map[string]any)
+		if _, present := class["configRef"]; class["name"] == "lxc" && !present {
+			class["configRef"] = map[string]any{"name": "lxc-image"}
+		}
+	}
 	return mustMarshal(map[string]any{"apiVersion": "ate.dev/v1", "kind": "WorkerPool",
 		"metadata": identity, "spec": spec}), nil
 }
