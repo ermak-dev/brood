@@ -110,6 +110,22 @@ func (s *Service) CreateSwarm(userID, projectID, name string) (Swarm, error) {
 		return Swarm{}, fmt.Errorf("%w: swarm name %s in project", ErrExists, name)
 	}
 
+	capacity, err := s.store.ProjectCapacity(projectID)
+	if err != nil {
+		return Swarm{}, err
+	}
+	swarms, err := s.store.SwarmsByProject(projectID)
+	if err != nil {
+		return Swarm{}, err
+	}
+	usage, err := ShardUsageFromRecords(projectID, swarms, nil)
+	if err != nil {
+		return Swarm{}, err
+	}
+	if err := CheckShardCapacity(ShardCapacity{MaxSwarms: capacity.MaxSwarms}, usage, ShardUsage{Swarms: 1}); err != nil {
+		return Swarm{}, err
+	}
+
 	id := s.newID()
 	sw := Swarm{
 		ID:           id,
