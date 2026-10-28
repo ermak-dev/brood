@@ -27,6 +27,9 @@ var capacityLabelPart = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-
 var capacityDNSPart = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
 func validateCapacityLabels(labels map[string]string) error {
+	if len(labels) > 10 {
+		return fmt.Errorf("shard worker selector permits at most 10 labels")
+	}
 	for key, value := range labels {
 		parts := strings.Split(key, "/")
 		name := parts[len(parts)-1]
@@ -50,7 +53,8 @@ func validateCapacityLabels(labels map[string]string) error {
 	return nil
 }
 
-func validateProjectCapacity(capacity ProjectCapacity) error {
+// ValidateProjectCapacity checks limits and native worker labels before persistence.
+func ValidateProjectCapacity(capacity ProjectCapacity) error {
 	for _, limit := range []struct {
 		name  string
 		value *int64
@@ -94,7 +98,7 @@ func (s *Store) GetProjectCapacity(ctx context.Context, projectID string) (Proje
 			capacity.WorkerSelector[key] = value
 		}
 	}
-	if err := validateProjectCapacity(capacity); err != nil {
+	if err := ValidateProjectCapacity(capacity); err != nil {
 		return ProjectCapacity{}, err
 	}
 	return capacity, nil
@@ -102,7 +106,7 @@ func (s *Store) GetProjectCapacity(ctx context.Context, projectID string) (Proje
 
 // SetProjectCapacity replaces all shard properties atomically without tracking usage.
 func (s *Store) SetProjectCapacity(ctx context.Context, projectID string, capacity ProjectCapacity) error {
-	if err := validateProjectCapacity(capacity); err != nil {
+	if err := ValidateProjectCapacity(capacity); err != nil {
 		return err
 	}
 	labels := capacity.WorkerSelector
