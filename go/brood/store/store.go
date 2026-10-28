@@ -101,6 +101,9 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 	} else if err := checkCurrentSchema(ctx, tx); err != nil {
 		return err
 	}
+	if err := initializeACL(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema initialization: %w", err)
 	}
@@ -112,7 +115,11 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 // внутри литералов. Пробелы несущественны; retry, добавленный старым ALTER,
 // даёт то же определение. Посторонние служебные таблицы не меняются.
 func checkCurrentSchema(ctx context.Context, tx *sql.Tx) error {
-	for _, statement := range strings.Split(currentSchema, ";") {
+	return checkSchema(ctx, tx, currentSchema)
+}
+
+func checkSchema(ctx context.Context, tx *sql.Tx, expected string) error {
+	for _, statement := range strings.Split(expected, ";") {
 		fields := strings.Fields(statement)
 		if len(fields) == 0 {
 			continue
