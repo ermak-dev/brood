@@ -143,7 +143,36 @@ func (g *Gateway) MemberIDs(projectID string) ([]string, error) {
 }
 
 func (g *Gateway) SaveSwarm(s app.Swarm) error {
-	err := g.store.CreateSwarm(context.Background(), toStoreSwarm(s))
+	err := g.store.WithTx(context.Background(), func(ctx context.Context) error {
+		capacity, err := g.store.GetProjectCapacity(ctx, s.ProjectID)
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: project not found", app.ErrNotFound)
+		}
+		if err != nil {
+			return err
+		}
+		rows, err := g.store.ListSwarmsByProject(ctx, s.ProjectID)
+		if err != nil {
+			return err
+		}
+		swarms := make([]app.Swarm, 0, len(rows))
+		for _, row := range rows {
+			swarms = append(swarms, toAppSwarm(row))
+		}
+		for _, existing := range swarms {
+			if existing.State != app.StateDeleted && existing.Name == s.Name {
+				return fmt.Errorf("%w: swarm name is already in use", app.ErrExists)
+			}
+		}
+		usage, err := app.ShardUsageFromRecords(s.ProjectID, swarms, nil)
+		if err != nil {
+			return err
+		}
+		if err := app.CheckShardCapacity(app.ShardCapacity{MaxSwarms: capacity.MaxSwarms}, usage, app.ShardUsage{Swarms: 1}); err != nil {
+			return err
+		}
+		return g.store.CreateSwarm(ctx, toStoreSwarm(s))
+	})
 	if store.IsUniqueViolation(err) {
 		return fmt.Errorf("%w: swarm name or atespace is already in use", app.ErrExists)
 	}

@@ -20,4 +20,8 @@ var (
 	ErrState = errors.New("illegal state transition")
 	// ErrInvalidRole refuses role names outside the local ACL dictionary.
 	ErrInvalidRole = errors.New("swarm role must be one of: owner, editor, viewer")
+	// ErrInvalidWorkload rejects unresolved resources or placement outside the shard.
+	ErrInvalidWorkload = errors.New("invalid workload admission")
+	// ErrInvalidCapacity rejects unsupported shard limits or worker labels.
+	ErrInvalidCapacity = errors.New("invalid shard capacity")
 )

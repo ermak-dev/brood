@@ -89,6 +89,10 @@ type Store interface {
 	CreateProject(p Project) error
 	// ProjectByID возвращает проект; ok=false, если нет.
 	ProjectByID(id string) (Project, bool, error)
+	// ProjectCapacity returns the shard's placement labels and reservation limits.
+	ProjectCapacity(projectID string) (ShardCapacity, error)
+	// SetProjectCapacity rechecks administrator rights within the persistence transaction.
+	SetProjectCapacity(actorID, projectID string, capacity ShardCapacity) error
 	// Projects перечисляет все проекты по имени.
 	Projects() ([]Project, error)
 	// ProjectsForUser перечисляет проекты членства пользователя.

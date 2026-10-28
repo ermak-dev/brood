@@ -18,6 +18,7 @@ type memStore struct {
 	swarms     map[string]*Swarm
 	swarmsByAt map[string]string
 	grants     map[[2]string]string
+	capacities map[string]ShardCapacity
 }
 
 func newMemStore() *memStore {
@@ -28,6 +29,7 @@ func newMemStore() *memStore {
 		swarms:     map[string]*Swarm{},
 		swarmsByAt: map[string]string{},
 		grants:     map[[2]string]string{},
+		capacities: map[string]ShardCapacity{},
 	}
 }
 
@@ -78,6 +80,19 @@ func (s *memStore) ProjectByID(id string) (Project, bool, error) {
 	defer s.mu.Unlock()
 	p, ok := s.projects[id]
 	return p, ok, nil
+}
+
+func (s *memStore) ProjectCapacity(projectID string) (ShardCapacity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.capacities[projectID], nil
+}
+
+func (s *memStore) SetProjectCapacity(actorID, projectID string, capacity ShardCapacity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.capacities[projectID] = capacity
+	return nil
 }
 
 func (s *memStore) Projects() ([]Project, error) {
