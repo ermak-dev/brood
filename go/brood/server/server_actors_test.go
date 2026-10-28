@@ -647,35 +647,34 @@ func TestWorkersAdminOnly(t *testing.T) {
 func TestSwarmPolicy(t *testing.T) {
 	fake := newFakeAteapi()
 	ts := newSubstrateServer(t, fake)
-	_, alice, bob, swarmID := actorsSetup(t, ts.testServer)
+	admin, _, bob, swarmID := actorsSetup(t, ts.testServer)
 
-	// До создания — 404 от ateapi.
-	resp, data, _ := ts.do(alice, "GET", "/api/swarms/"+swarmID+"/policy", "", nil)
+	// Полный CRUD сохранён для администратора, даже в рое другого владельца.
+	resp, data, _ := ts.do(admin, "GET", "/api/swarms/"+swarmID+"/policy", "", nil)
 	expectStatus(t, "missing policy", resp, data, http.StatusNotFound)
 
 	bindings := []any{map[string]any{"role": "viewer", "members": []string{"user:someone"}}}
-	resp, data, _ = ts.do(alice, "POST", "/api/swarms/"+swarmID+"/policy", ts.csrf(alice),
+	resp, data, _ = ts.do(admin, "POST", "/api/swarms/"+swarmID+"/policy", ts.csrf(admin),
 		map[string]any{"bindings": bindings})
 	expectStatus(t, "create policy", resp, data, http.StatusCreated)
 	if meta, _ := data["metadata"].(map[string]any); meta["name"] != "default" {
 		t.Fatalf("policy name: %v", meta)
 	}
 
-	resp, data, _ = ts.do(alice, "GET", "/api/swarms/"+swarmID+"/policy", "", nil)
+	resp, data, _ = ts.do(admin, "GET", "/api/swarms/"+swarmID+"/policy", "", nil)
 	expectStatus(t, "get policy", resp, data, http.StatusOK)
 
-	resp, data, _ = ts.do(alice, "PUT", "/api/swarms/"+swarmID+"/policy", ts.csrf(alice),
+	resp, data, _ = ts.do(admin, "PUT", "/api/swarms/"+swarmID+"/policy", ts.csrf(admin),
 		map[string]any{"bindings": bindings})
 	expectStatus(t, "update policy", resp, data, http.StatusOK)
 
-	// Чужой рой — 404.
 	resp, data, _ = ts.do(bob, "GET", "/api/swarms/"+swarmID+"/policy", "", nil)
-	expectStatus(t, "bob reads policy", resp, data, http.StatusNotFound)
+	expectStatus(t, "bob reads policy", resp, data, http.StatusForbidden)
 
-	resp, data, _ = ts.do(alice, "DELETE", "/api/swarms/"+swarmID+"/policy",
-		ts.csrf(alice), nil)
+	resp, data, _ = ts.do(admin, "DELETE", "/api/swarms/"+swarmID+"/policy",
+		ts.csrf(admin), nil)
 	expectStatus(t, "delete policy", resp, data, http.StatusNoContent)
-	resp, data, _ = ts.do(alice, "GET", "/api/swarms/"+swarmID+"/policy", "", nil)
+	resp, data, _ = ts.do(admin, "GET", "/api/swarms/"+swarmID+"/policy", "", nil)
 	expectStatus(t, "policy after delete", resp, data, http.StatusNotFound)
 }
 

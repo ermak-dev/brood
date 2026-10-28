@@ -429,13 +429,16 @@ func (s *Server) handleSwarmTemplate(w http.ResponseWriter, r *http.Request) {
 
 // ─── Политика доступа роя ──────────────────────────────────────────────────
 
-// handleSwarmPolicy — GET/POST/PUT/DELETE /api/swarms/{id}/policy:
-// синглтон скоупа atespace роя. POST заводит, PUT заменяет целиком
-// (uid/version прочитанного — предусловие), глобальную ateapi удалить
-// нельзя — эту тоже.
+// handleSwarmPolicy serves the administrator-only native policy of a swarm.
+// PUT preserves the read UID/version precondition; DELETE removes only the
+// local policy, leaving global roles in effect.
 func (s *Server) handleSwarmPolicy(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
+		return
+	}
+	if !user.IsAdmin {
+		writeDetail(w, http.StatusForbidden, "administrator access required")
 		return
 	}
 	client, ok := s.clientOr503(w, r)
