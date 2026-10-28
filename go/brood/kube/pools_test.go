@@ -288,7 +288,7 @@ func TestParseImagesFailClosed(t *testing.T) {
 		{"[]", ""},
 		{"{}", ""},
 		{`{"gvisor":"worker:latest"}`, ""},
-		{`{"gvisor":"` + image + `","lxc":"` + microvmImg + `"}`, ""},
+		{`{"gvisor":"` + image + `","fullvm":"` + microvmImg + `"}`, ""},
 		{"", ""},
 		{"", "worker:latest"},
 	} {
