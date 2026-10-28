@@ -6,15 +6,20 @@ import { errorMessage } from '@/services/brood/http';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { Select, type SelectOption } from '@/components/ui/Select';
 import { EditorSheet } from '@/features/substrate/components/EditorSheet';
+import { Field } from '@/features/substrate/components/form';
 import styles from '@/features/substrate/substrate.module.scss';
-import { currentResource, type ResourceSnapshot } from './state';
+import { currentResource, validEditorField, type ResourceSnapshot } from './state';
 
 export function useAdministrator() {
   return useAuthStore((state) => 'isSuperuser' in state && state.isSuperuser === true);
 }
 
-export function useAccessResource<T>(load: () => Promise<T>) {
+export function useAccessResource<T>(
+  load: () => Promise<T>,
+  { headerRefresh = true }: { headerRefresh?: boolean } = {}
+) {
   const [snapshot, setSnapshot] = useState<ResourceSnapshot<T>>({
     source: load,
     data: null,
@@ -46,7 +51,7 @@ export function useAccessResource<T>(load: () => Promise<T>) {
       latest.current += 1;
     };
   }, [load, refresh]);
-  useHeaderRefresh(refresh);
+  useHeaderRefresh(refresh, headerRefresh);
   return { ...currentResource(snapshot, load), refresh };
 }
 
@@ -76,8 +81,14 @@ export function LoadState({
 export interface EditorField {
   name: string;
   label: string;
-  type?: 'text' | 'password' | 'checkbox';
+  type?: 'text' | 'password' | 'checkbox' | 'select';
   required?: boolean;
+  /** Варианты поля типа select: имя пользователя выбирается из списка, а не
+   * вводится руками -- опечатку иначе ловит только отказ сервера. */
+  options?: SelectOption[];
+  hint?: string;
+  /** Пустой список вариантов: выбирать нечего, и редактор говорит, почему. */
+  empty?: string;
 }
 
 export function AccessEditor({
@@ -96,11 +107,7 @@ export function AccessEditor({
   const { t } = useTranslation();
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const valid = fields.every(
-    (field) =>
-      !field.required ||
-      Boolean(field.type === 'password' ? values[field.name] : values[field.name]?.trim())
-  );
+  const valid = fields.every((field) => validEditorField(field, values[field.name]));
   const save = async () => {
     if (!valid || saving) return;
     setSaving(true);
@@ -130,7 +137,25 @@ export function AccessEditor({
         }}
       >
         {fields.map((field, index) =>
-          field.type === 'checkbox' ? (
+          field.type === 'select' ? (
+            <Field key={field.name} label={field.label} hint={field.hint}>
+              {(id) =>
+                field.options?.length ? (
+                  <Select
+                    id={id}
+                    fullWidth
+                    disabled={saving}
+                    value={values[field.name] ?? ''}
+                    placeholder={field.label}
+                    options={field.options}
+                    onChange={(value) => setValues({ ...values, [field.name]: value })}
+                  />
+                ) : (
+                  <p className={styles.fieldHint}>{field.empty}</p>
+                )
+              }
+            </Field>
+          ) : field.type === 'checkbox' ? (
             <label key={field.name} className={styles.fieldLabel}>
               <input
                 type="checkbox"
@@ -190,14 +215,17 @@ export function useAccessActions(refresh: () => Promise<void>) {
       setBusy(false);
     }
   };
+  // Текст подтверждения называет последствие именно этого действия: один
+  // текст на все действия обещал удаление проекта при разблокировке.
   const confirm = (
     name: string,
     mutation: () => Promise<unknown>,
-    title = t('substrate.delete')
+    title = t('substrate.delete'),
+    message = t('access.confirm', { name })
   ) => {
     showConfirmation({
       title,
-      message: t('access.confirm', { name }),
+      message,
       confirmText: title,
       cancelText: t('common.cancel'),
       variant: 'danger',

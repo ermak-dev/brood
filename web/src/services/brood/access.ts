@@ -9,6 +9,7 @@ export interface AccessSwarm {
   id: string;
   project_id: string;
   owner_id: string;
+  owner_username: string;
   name: string;
   atespace_name: string;
   state: string;
