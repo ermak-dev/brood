@@ -90,8 +90,11 @@ Brood #10 отдельно требует настоящее создание LX
 - Глобальный class-default не назначается: newest-default мог бы перепривязать
   существующие LXC-пулы. Чужой, terminating или изменённый `lxc-image` не
   перезаписывается. Другие configs и пулы не меняются.
-- Подготовка не создаёт WorkerPool и не останавливает gVisor/microVM. Отдельный
-  пользовательский командлет ведётся #76; напрямую Python-функции не запускают.
+- `brood deploy lxc --trusted-workloads` готовит образ/config, но не создаёт
+  WorkerPool и не останавливает gVisor/microVM. Без явного trusted-only
+  подтверждения команда отказывает до lookup кластера. `--help` перечисляет
+  shared-kernel/no-checkpoint ограничения без побочных эффектов. Полученный
+  digest добавляют в `WORKER_POOL_IMAGES` явно; это не автоматический rollout.
 - Server deploy не устанавливает новый runtime и не переключает пулы. Сборка
   LXC-образа и установка fork control plane — явные действия, не побочный эффект
   выкладки Go-сервера.
