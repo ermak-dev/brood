@@ -218,6 +218,7 @@ func (s *Server) mount() {
 	// прокси к ateapi с проверкой владения роем (#32); он же подключает
 	// маршруты proxy под /api/swarms/{id}/proxy/.
 	s.mountSubstrateAPI()
+	s.mountOrphanRecovery()
 	s.mountStatic()
 }
 

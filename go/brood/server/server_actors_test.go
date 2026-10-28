@@ -42,12 +42,14 @@ import (
 // substrate, здесь важен HTTP-слой.
 type fakeAteapi struct {
 	ateapi.UnimplementedControlServer
-	mu        sync.Mutex
-	atespaces map[string]*ateapi.Atespace
-	actors    map[string]*ateapi.Actor
-	templates map[string]*ateapi.ActorTemplate
-	workers   map[string]*ateapi.Worker
-	policies  map[string]*ateapi.AccessPolicy // "" — глобальная
+	mu                 sync.Mutex
+	atespaces          map[string]*ateapi.Atespace
+	actors             map[string]*ateapi.Actor
+	templates          map[string]*ateapi.ActorTemplate
+	workers            map[string]*ateapi.Worker
+	policies           map[string]*ateapi.AccessPolicy // "" — глобальная
+	namespaceReads     int
+	beforeNamespaceGet func()
 }
 
 func newFakeAteapi() *fakeAteapi {
@@ -84,11 +86,27 @@ func (f *fakeAteapi) CreateAtespace(_ context.Context, req *ateapi.CreateAtespac
 func (f *fakeAteapi) GetAtespace(_ context.Context, req *ateapi.GetAtespaceRequest) (*ateapi.Atespace, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.namespaceReads++
+	if hook := f.beforeNamespaceGet; hook != nil {
+		f.beforeNamespaceGet = nil
+		hook()
+	}
 	item, ok := f.atespaces[req.GetAtespace().GetName()]
 	if !ok {
 		return nil, grpcErr(codes.NotFound, "atespace not found")
 	}
 	return item, nil
+}
+
+func (f *fakeAteapi) ListAtespaces(_ context.Context, _ *ateapi.ListAtespacesRequest) (*ateapi.ListAtespacesResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.namespaceReads++
+	items := []*ateapi.Atespace{}
+	for _, item := range f.atespaces {
+		items = append(items, item)
+	}
+	return &ateapi.ListAtespacesResponse{Atespaces: items}, nil
 }
 
 func (f *fakeAteapi) DeleteAtespace(_ context.Context, req *ateapi.DeleteAtespaceRequest) (*ateapi.Atespace, error) {
