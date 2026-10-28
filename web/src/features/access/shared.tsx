@@ -83,6 +83,7 @@ export interface EditorField {
   label: string;
   type?: 'text' | 'password' | 'checkbox' | 'select';
   required?: boolean;
+  disabled?: boolean;
   /** Варианты поля типа select: имя пользователя выбирается из списка, а не
    * вводится руками -- опечатку иначе ловит только отказ сервера. */
   options?: SelectOption[];
@@ -97,15 +98,17 @@ export function AccessEditor({
   fields,
   submit,
   close,
+  initialValues = {},
 }: {
   title: string;
   description?: string;
   fields: EditorField[];
+  initialValues?: Record<string, string>;
   submit: (values: Record<string, string>) => Promise<boolean>;
   close: () => void;
 }) {
   const { t } = useTranslation();
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() => ({ ...initialValues }));
   const [saving, setSaving] = useState(false);
   const valid = fields.every((field) => validEditorField(field, values[field.name]));
   const save = async () => {
@@ -127,7 +130,9 @@ export function AccessEditor({
       saveLabel={t('substrate.save')}
       canSave={valid}
       saving={saving}
-      dirty={Object.values(values).some(Boolean)}
+      dirty={fields.some(
+        (field) => (values[field.name] ?? '') !== (initialValues[field.name] ?? '')
+      )}
     >
       <form
         className={styles.form}
@@ -144,7 +149,7 @@ export function AccessEditor({
                   <Select
                     id={id}
                     fullWidth
-                    disabled={saving}
+                    disabled={saving || field.disabled}
                     value={values[field.name] ?? ''}
                     placeholder={field.label}
                     options={field.options}
@@ -160,7 +165,7 @@ export function AccessEditor({
               <input
                 type="checkbox"
                 checked={values[field.name] === 'true'}
-                disabled={saving}
+                disabled={saving || field.disabled}
                 onChange={(event) =>
                   setValues({ ...values, [field.name]: String(event.target.checked) })
                 }
@@ -177,7 +182,7 @@ export function AccessEditor({
               value={values[field.name] ?? ''}
               autoFocus={index === 0}
               autoComplete={field.type === 'password' ? 'new-password' : 'off'}
-              disabled={saving}
+              disabled={saving || field.disabled}
               onChange={(event) => setValues({ ...values, [field.name]: event.target.value })}
             />
           )

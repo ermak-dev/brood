@@ -29,6 +29,7 @@ export interface CreateUser {
   password: string;
   display_name: string;
   is_admin: boolean;
+  disabled?: boolean;
 }
 
 const segment = encodeURIComponent;
@@ -40,6 +41,10 @@ const userPath = (username: string) => `/api/admin/users/${segment(username)}`;
 // Отдельного маршрута retry нет: сервер восстанавливает исходную операцию.
 export const accessApi = {
   users: () => request<AccessUser[]>('GET', '/api/admin/users'),
+  user: (username: string) => request<AccessUser>('GET', userPath(username)),
+  updateUser: (username: string, properties: Omit<AccessUser, 'username'>) =>
+    request<void>('PUT', userPath(username), properties),
+  deleteUser: (username: string) => request<void>('DELETE', userPath(username)),
   createUser: (body: CreateUser) =>
     request<Omit<AccessUser, 'disabled'>>('POST', '/api/admin/users', body),
   setDisabled: (username: string, disabled: boolean) =>

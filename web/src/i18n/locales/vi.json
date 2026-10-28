@@ -1,5 +1,10 @@
 {
   "access": {
+    "role": "Vai trò",
+    "user": "Người dùng",
+    "edit_user": "Sửa người dùng {{name}}",
+    "confirm_user": "Xóa người dùng {{name}}? Phiên đăng nhập và tư cách thành viên sẽ bị thu hồi. Hãy chuyển hoặc xóa các bầy của họ trước.",
+    "user_properties_hint": "Thay đổi vai trò hoặc trạng thái chặn sẽ thu hồi các phiên hiện có. Quản trị viên đang hoạt động cuối cùng được bảo vệ.",
     "grant_admin": "Cấp quyền quản trị",
     "revoke_admin": "Thu hồi quyền quản trị",
     "select_swarm": "Chọn bầy",

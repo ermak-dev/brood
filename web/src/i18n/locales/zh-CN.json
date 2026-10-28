@@ -1,5 +1,10 @@
 {
   "access": {
+    "role": "角色",
+    "user": "用户",
+    "edit_user": "编辑用户 {{name}}",
+    "confirm_user": "删除用户 {{name}}？会话和成员关系将被撤销。请先转移或删除其群组。",
+    "user_properties_hint": "更改角色或封禁状态将撤销现有会话。最后一个活跃管理员受到保护。",
     "grant_admin": "授予管理员权限",
     "revoke_admin": "撤销管理员权限",
     "select_swarm": "选择群组",

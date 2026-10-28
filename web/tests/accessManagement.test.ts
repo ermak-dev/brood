@@ -40,5 +40,9 @@ test('member listing and grant/revoke actions are exposed in the same panel', ()
   );
   expect(permissions).toContain('accessApi.members');
   expect(permissions).toContain('EntityTable');
-  expect(users).toContain('accessApi.setRole');
+  expect(users).toContain('accessApi.updateUser');
+  expect(users).toContain("name: 'is_admin'");
+  expect(users).toContain("name: 'disabled'");
+  expect(users).not.toContain('accessApi.setRole');
+  expect(users).not.toContain('accessApi.setDisabled');
 });
