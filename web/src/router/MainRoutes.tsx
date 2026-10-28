@@ -4,7 +4,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { AccessProjectsPage } from '@/features/access/ProjectsPage';
 import { SwarmsPage } from '@/features/access/SwarmsPage';
 import { UsersPage } from '@/features/access/UsersPage';
-import { PermissionsPage } from '@/features/access/PermissionsPage';
+import { ProjectDetailPage } from '@/features/access/ProjectDetailPage';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
@@ -29,7 +29,7 @@ import { useAuthStore, useProjectStore } from '@/stores';
 
 /** Старые ссылки выбирают тот же проект в глобальном контексте и переходят
  * в канонический раздел без второго независимого выбора. */
-function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' }) {
+function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' | 'detail' }) {
   const [params] = useSearchParams();
   const route = useParams();
   const requested = route.project || params.get('project');
@@ -39,8 +39,17 @@ function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' }) {
     if (requested) setProject(requested);
   }, [requested, setProject]);
   if (requested && selected !== requested) return <LoadingSpinner />;
-  if (requested) return <Navigate to={section === 'swarms' ? '/swarms' : '/policy'} replace />;
-  return section === 'swarms' ? <SwarmsPage /> : <Navigate to="/policy" replace />;
+  if (section === 'detail') return <ProjectDetailPage />;
+  if (requested)
+    return (
+      <Navigate
+        to={section === 'swarms' ? '/swarms' : `/projects/${encodeURIComponent(requested)}`}
+        replace
+      />
+    );
+  if (section === 'members' && selected)
+    return <Navigate to={`/projects/${encodeURIComponent(selected)}`} replace />;
+  return section === 'swarms' ? <SwarmsPage /> : <ProjectDetailPage />;
 }
 
 const createMainRoutes = (supportsPlugin: boolean) => [
@@ -48,7 +57,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/dashboard', element: <DashboardPage /> },
   // Проект — глобальный контекст; прежние адреса сохраняют выбор проекта.
   { path: '/projects', element: <AccessProjectsPage /> },
-  { path: '/projects/:project', element: <LegacyProjectRoute section="swarms" /> },
+  { path: '/projects/:project', element: <LegacyProjectRoute section="detail" /> },
   { path: '/projects/:project/swarms', element: <LegacyProjectRoute section="swarms" /> },
   { path: '/projects/:project/members', element: <LegacyProjectRoute section="members" /> },
   { path: '/users', element: <UsersPage /> },
@@ -59,7 +68,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
   { path: '/worker-pools', element: <WorkerPoolsPage /> },
-  { path: '/policy', element: <PermissionsPage /> },
+  { path: '/policy', element: <LegacyProjectRoute section="members" /> },
   { path: '/substrate-policy', element: <PolicyPage /> },
   { path: '/settings', element: <Navigate to="/config" replace /> },
   { path: '/api-keys', element: <Navigate to="/config" replace /> },

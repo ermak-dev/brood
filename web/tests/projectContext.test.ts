@@ -35,7 +35,10 @@ test('global switcher contains projects only, with no Projects shortcut', () => 
   const switcher = source('features/substrate/components/ProjectSwitcher.tsx');
   expect(switcher).toMatch(/accessApi\s*\.\s*projects\(/);
   expect(switcher).not.toContain('scopesApi');
-  expect(switcher).not.toContain('navigate(');
+  expect(switcher).not.toContain("navigate('/projects')");
+  expect(switcher).not.toContain('access.projects');
+  expect(switcher).toContain('projectSelectionPath(pathname, item.id)');
+  expect(switcher).toContain('if (destination) navigate(destination)');
   expect(switcher).not.toContain('role="menuitem"');
   expect(source('stores/useProjectStore.ts')).toContain("name: 'brood-project'");
   expect(source('features/access/ProjectsPage.tsx')).toContain('access.choose_project');

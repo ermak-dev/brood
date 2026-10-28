@@ -9,11 +9,11 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test('default access policy edits local project membership and retains a separate native page', () => {
+test('legacy local policy opens project details and retains a separate native page', () => {
   const routes = source('router/MainRoutes.tsx');
-  expect(routes).toContain("path: '/policy', element: <PermissionsPage />");
+  expect(routes).toContain("path: '/policy', element: <LegacyProjectRoute section=\"members\" />");
   expect(routes).toContain("path: '/substrate-policy', element: <PolicyPage />");
-  expect(source('features/access/PermissionsPage.tsx')).toContain('AccessMatrix');
+  expect(source('features/access/ProjectDetailPage.tsx')).toContain('ProjectMembers');
   expect(source('features/access/PermissionsPage.tsx')).toContain('memberCandidates');
   const native = source('features/substrate/PolicyPage.tsx');
   expect(native).toContain('PrincipalPicker');

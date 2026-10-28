@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { templatesApi, type ActorTemplate } from '@/services/brood/substrate';
+import { swarmCapabilities } from '@/features/access/shardState';
+import { useAdministrator } from '@/features/access/shared';
 import { EditorSheet } from './components/EditorSheet';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
@@ -20,11 +22,18 @@ import styles from './substrate.module.scss';
  * copy. */
 export function TemplatesPage() {
   const { t } = useTranslation();
+  const admin = useAdministrator();
   return (
     <ProjectScope title={t('templates.title')}>
       {(project) => (
         <SwarmSections project={project} title={t('templates.title')}>
-          {(swarm) => <Templates project={swarm.id} name={swarm.name} />}
+          {(swarm) => (
+            <Templates
+              project={swarm.id}
+              name={swarm.name}
+              canManage={swarmCapabilities(swarm, admin).manage}
+            />
+          )}
         </SwarmSections>
       )}
     </ProjectScope>
@@ -36,7 +45,15 @@ const fidelityOf = (tpl: ActorTemplate) =>
 
 const imagesOf = (tpl: ActorTemplate) => tpl.containers.map((c) => c.image).filter(Boolean);
 
-function Templates({ project, name }: { project: string; name: string }) {
+function Templates({
+  project,
+  name,
+  canManage,
+}: {
+  project: string;
+  name: string;
+  canManage: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const load = useCallback(() => templatesApi.list(project), [project]);
   const { data, error, loading, refresh } = useResource(load);
@@ -109,7 +126,9 @@ function Templates({ project, name }: { project: string; name: string }) {
     },
   ];
 
-  const create = <Button onClick={() => openEditor(null)}>{t('templates.create')}</Button>;
+  const create = canManage ? (
+    <Button onClick={() => openEditor(null)}>{t('templates.create')}</Button>
+  ) : undefined;
 
   return (
     <div className={styles.page}>
@@ -133,21 +152,25 @@ function Templates({ project, name }: { project: string; name: string }) {
           rowKey={(tpl) => tpl.metadata.uid ?? tpl.metadata.name}
           onRowClick={setViewing}
           actionsLabel={t('substrate.actions')}
-          actions={(tpl) => (
-            <>
-              <Button variant="ghost" size="sm" onClick={() => openEditor(tpl)}>
-                {t('templates.duplicate')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={styles.dangerText}
-                onClick={() => remove(tpl)}
-              >
-                {t('substrate.delete')}
-              </Button>
-            </>
-          )}
+          actions={
+            canManage
+              ? (tpl) => (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => openEditor(tpl)}>
+                      {t('templates.duplicate')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={styles.dangerText}
+                      onClick={() => remove(tpl)}
+                    >
+                      {t('substrate.delete')}
+                    </Button>
+                  </>
+                )
+              : undefined
+          }
         />
       ) : (
         <div className={styles.empty}>
@@ -167,7 +190,8 @@ function Templates({ project, name }: { project: string; name: string }) {
         title={viewing?.metadata.name ?? ''}
         description={t('templates.immutable_hint')}
         extra={
-          viewing && (
+          viewing &&
+          canManage && (
             <Button variant="secondary" onClick={() => openEditor(viewing)}>
               {t('templates.duplicate')}
             </Button>
@@ -205,22 +229,24 @@ function Templates({ project, name }: { project: string; name: string }) {
         )}
       </EditorSheet>
 
-      <TemplateEditor
-        key={editor.session}
-        project={project}
-        source={editor.source}
-        open={editor.open}
-        onClose={closeEditor}
-        onSubmit={async (tpl) => {
-          const name = tpl.metadata.name;
-          const ok = await run(
-            () => templatesApi.create(project, tpl),
-            t('templates.created', { name })
-          );
-          if (ok) closeEditor();
-          return ok;
-        }}
-      />
+      {canManage && (
+        <TemplateEditor
+          key={editor.session}
+          project={project}
+          source={editor.source}
+          open={editor.open}
+          onClose={closeEditor}
+          onSubmit={async (tpl) => {
+            const name = tpl.metadata.name;
+            const ok = await run(
+              () => templatesApi.create(project, tpl),
+              t('templates.created', { name })
+            );
+            if (ok) closeEditor();
+            return ok;
+          }}
+        />
+      )}
     </div>
   );
 }

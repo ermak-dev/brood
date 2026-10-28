@@ -51,7 +51,7 @@ test('legacy project routes bind the global project before opening a section', (
   expect(routes).toContain("route.project || params.get('project')");
   expect(routes).toContain('setProject(requested)');
   expect(routes).not.toContain('ProjectSelect');
-  for (const page of ['features/access/SwarmsPage.tsx', 'features/access/PermissionsPage.tsx']) {
+  for (const page of ['features/access/SwarmsPage.tsx', 'features/access/ProjectDetailPage.tsx']) {
     expect(source(page)).toContain('ProjectScope');
     expect(source(page)).not.toContain('ProjectSelect');
   }
@@ -89,10 +89,12 @@ test('membership and retry capabilities are stated truthfully, never guessed', a
   ]) {
     expect(visibleAccessPath(path, false)).toBe(true);
   }
-  // Список участников существует и читается только администратором: панель
-  // не запрашивает его обычному пользователю и не утверждает обратного.
+  // Участники проекта читают состав, но не получают админские действия.
   const page = source('features/access/PermissionsPage.tsx');
-  expect(page).toContain('admin ? accessApi.members(projectId)');
+  expect(page).toContain('() => accessApi.members(projectId)');
+  expect(page).toMatch(/actions=\{\s*admin\s*\?/);
+  expect(page).toContain('adding && admin');
+  expect(page).toContain('admin && adding ? accessApi.users()');
 });
 
 test('all locales explain actual permissions without dead claims', () => {
@@ -106,7 +108,7 @@ test('all locales explain actual permissions without dead claims', () => {
       'permissions',
       'member_policy',
       'admin_policy',
-      'retry_unavailable',
+      'retry_hint',
       'transfer_hint',
     ]) {
       expect(typeof access?.[key]).toBe('string');
