@@ -201,6 +201,7 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.auth.Mount(s.mux)
 	s.mux.HandleFunc("GET /api/admin/users", s.handleAdminUsers)
+	s.mux.HandleFunc("GET /api/identities", s.handleNativeIdentities)
 	s.mux.HandleFunc("GET /api/projects", s.handleProjects)
 	s.mux.HandleFunc("POST /api/projects", s.handleProjects)
 	s.mux.HandleFunc("DELETE /api/projects/{id}", s.handleProjectDelete)
