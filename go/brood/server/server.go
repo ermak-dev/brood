@@ -290,6 +290,15 @@ func (s *Server) mountWorkerPools() {
 			}
 			writeJSON(w, http.StatusOK, item)
 		}))
+	s.mux.HandleFunc("GET /api/worker-pools/{name}/diagnostics", handle(false,
+		func(w http.ResponseWriter, r *http.Request, _ []byte) {
+			pods, err := s.pools.Diagnostics(r.Context(), r.PathValue("name"))
+			if err != nil {
+				apiError(w, r, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"pods": pods})
+		}))
 	s.mux.HandleFunc("POST /api/worker-pools", handle(true,
 		func(w http.ResponseWriter, r *http.Request, body []byte) {
 			item, err := s.pools.Create(r.Context(), body)
