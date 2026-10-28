@@ -1,5 +1,10 @@
 {
   "access": {
+    "choose_project": "Chọn",
+    "select_project": "Chọn dự án",
+    "select_project_hint": "Chọn dự án từ menu trên cùng hoặc danh sách Dự án.",
+    "no_active_swarms": "Dự án không có bầy đang hoạt động nào có thể truy cập.",
+    "swarm": "Bầy",
     "role": "Vai trò",
     "user": "Người dùng",
     "edit_user": "Sửa người dùng {{name}}",

@@ -1,5 +1,10 @@
 {
   "access": {
+    "choose_project": "選擇",
+    "select_project": "選擇專案",
+    "select_project_hint": "請在頂部選單或專案清單中選擇專案。",
+    "no_active_swarms": "此專案沒有可存取的有效群組。",
+    "swarm": "群組",
     "role": "角色",
     "user": "使用者",
     "edit_user": "編輯使用者 {{name}}",

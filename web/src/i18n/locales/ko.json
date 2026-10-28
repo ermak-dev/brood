@@ -1,5 +1,10 @@
 {
   "access": {
+    "choose_project": "선택",
+    "select_project": "프로젝트 선택",
+    "select_project_hint": "상단 메뉴 또는 프로젝트 목록에서 프로젝트를 선택하세요.",
+    "no_active_swarms": "이 프로젝트에는 접근 가능한 활성 스웜이 없습니다.",
+    "swarm": "스웜",
     "role": "역할",
     "user": "사용자",
     "edit_user": "사용자 {{name}} 편집",

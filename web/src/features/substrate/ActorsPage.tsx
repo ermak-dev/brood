@@ -8,6 +8,7 @@ import { ActorEditor } from './ActorEditor';
 import { EntityTable, type Column } from './components/EntityTable';
 import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
+import { SwarmSections } from './components/SwarmSections';
 import { StateBadge } from './components/StateBadge';
 import { DASH, formatDate, shortState } from './format';
 import { useActions, useResource } from './hooks';
@@ -31,7 +32,11 @@ export function ActorsPage() {
   const { t } = useTranslation();
   return (
     <ProjectScope title={t('actors.title')}>
-      {(project) => <Actors project={project} />}
+      {(project) => (
+        <SwarmSections project={project} title={t('actors.title')}>
+          {(swarm) => <Actors project={swarm.id} name={swarm.name} />}
+        </SwarmSections>
+      )}
     </ProjectScope>
   );
 }
@@ -56,7 +61,7 @@ async function loadActors(project: string) {
   return { actors, templates: templates.map((tpl) => tpl.metadata.name), golden };
 }
 
-function Actors({ project }: { project: string }) {
+function Actors({ project, name }: { project: string; name: string }) {
   const { t, i18n } = useTranslation();
   const load = useCallback(() => loadActors(project), [project]);
   const { data: loaded, error, loading, refresh } = useResource(load);
@@ -130,9 +135,9 @@ function Actors({ project }: { project: string }) {
   return (
     <div className={styles.page}>
       <PageHeader
-        title={t('actors.title')}
+        title={name}
+        headingLevel={2}
         meta={[
-          project,
           data && t('actors.meta_count', { count: data.length }),
           data && count('running') > 0 && t('actors.meta_running', { count: count('running') }),
           data &&

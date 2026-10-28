@@ -40,23 +40,25 @@ test('the substrate areas page is a redirect to projects, not a second page', ()
   expect(layout).not.toContain('access.substrate_projects');
 });
 
-// Выбор проекта живёт в маршруте, а не во втором выпадающем списке рядом с
-// глобальным выбором роя; старые ссылки ведут в раздел того же проекта.
-test('a project is chosen by the route, and swarms and members are its sections', () => {
+// Старые ссылки сохраняют выбор проекта в новом глобальном контексте;
+// второй независимый селектор не возвращается.
+test('legacy project routes bind the global project before opening a section', () => {
   const routes = source('router/MainRoutes.tsx');
   expect(routes).toContain(`path: '/projects/:project/swarms'`);
   expect(routes).toContain(`path: '/projects/:project/members'`);
   expect(routes).toContain('LegacyProjectRoute section="swarms"');
   expect(routes).toContain('LegacyProjectRoute section="members"');
-  expect(routes).toContain("projectSectionPath(section, params.get('project'))");
+  expect(routes).toContain("route.project || params.get('project')");
+  expect(routes).toContain('setProject(requested)');
   expect(routes).not.toContain('ProjectSelect');
   for (const page of ['features/access/SwarmsPage.tsx', 'features/access/PermissionsPage.tsx']) {
-    expect(source(page)).toContain('ProjectRoute');
+    expect(source(page)).toContain('ProjectScope');
     expect(source(page)).not.toContain('ProjectSelect');
   }
-  // Рои и участники -- разделы проекта, а не пункты меню рядом с ним.
+  // Каталог роёв — самостоятельный ресурс выбранного проекта; управление
+  // участниками остаётся администраторским действием.
   const layout = source('components/layout/MainLayout.tsx');
-  expect(layout).not.toContain(`path: '/swarms'`);
+  expect(layout).toContain(`path: '/swarms'`);
   expect(layout).not.toContain(`path: '/permissions'`);
   expect(layout).toContain(`path: '/projects'`);
   // Участник проходит во вложенный маршрут, админское остаётся закрытым.
@@ -70,6 +72,8 @@ test('membership and retry capabilities are stated truthfully, never guessed', a
     '/workers',
     '/worker-pools',
     '/policy',
+    '/permissions',
+    '/projects/:project/members',
     '/config',
     '/ai-providers',
   ]) {
@@ -79,9 +83,7 @@ test('membership and retry capabilities are stated truthfully, never guessed', a
   for (const path of [
     '/projects',
     '/projects/:project/swarms',
-    '/projects/:project/members',
     '/swarms',
-    '/permissions',
     '/actors',
     '/templates',
   ]) {
@@ -150,7 +152,9 @@ test('project sections register one refresh for tables and picker resources', ()
     expect(text.match(/headerRefresh: false/g)?.length).toBe(2);
     expect(text).toContain('Promise.all(');
   }
-  expect(source('features/access/useRouteProject.tsx')).toContain('headerRefresh: false');
+  expect(source('features/substrate/components/ProjectScope.tsx')).toContain(
+    'headerRefresh: false'
+  );
 });
 
 // Подтверждение называет последствие своего действия, а не чужого.

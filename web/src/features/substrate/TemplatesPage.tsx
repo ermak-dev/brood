@@ -9,6 +9,7 @@ import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
 import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
+import { SwarmSections } from './components/SwarmSections';
 import { DASH, formatCpu, formatDate, formatMemory, selectorText } from './format';
 import { useActions, useResource } from './hooks';
 import { TemplateEditor } from './TemplateEditor';
@@ -21,7 +22,11 @@ export function TemplatesPage() {
   const { t } = useTranslation();
   return (
     <ProjectScope title={t('templates.title')}>
-      {(project) => <Templates project={project} />}
+      {(project) => (
+        <SwarmSections project={project} title={t('templates.title')}>
+          {(swarm) => <Templates project={swarm.id} name={swarm.name} />}
+        </SwarmSections>
+      )}
     </ProjectScope>
   );
 }
@@ -31,13 +36,17 @@ const fidelityOf = (tpl: ActorTemplate) =>
 
 const imagesOf = (tpl: ActorTemplate) => tpl.containers.map((c) => c.image).filter(Boolean);
 
-function Templates({ project }: { project: string }) {
+function Templates({ project, name }: { project: string; name: string }) {
   const { t, i18n } = useTranslation();
   const load = useCallback(() => templatesApi.list(project), [project]);
   const { data, error, loading, refresh } = useResource(load);
   const { run, confirm } = useActions(refresh);
   const [viewing, setViewing] = useState<ActorTemplate | null>(null);
-  const [editor, setEditor] = useState({ source: null as ActorTemplate | null, open: false, session: 0 });
+  const [editor, setEditor] = useState({
+    source: null as ActorTemplate | null,
+    open: false,
+    session: 0,
+  });
 
   const openEditor = (source: ActorTemplate | null) => {
     setViewing(null);
@@ -80,7 +89,9 @@ function Templates({ project }: { project: string }) {
       mono: true,
       render: (tpl) => {
         const images = imagesOf(tpl);
-        return images.length ? `${images[0]}${images.length > 1 ? ` +${images.length - 1}` : ''}` : DASH;
+        return images.length
+          ? `${images[0]}${images.length > 1 ? ` +${images.length - 1}` : ''}`
+          : DASH;
       },
     },
     {
@@ -103,8 +114,9 @@ function Templates({ project }: { project: string }) {
   return (
     <div className={styles.page}>
       <PageHeader
-        title={t('templates.title')}
-        meta={[project, data && t('templates.meta_count', { count: data.length })]}
+        title={name}
+        headingLevel={2}
+        meta={[data && t('templates.meta_count', { count: data.length })]}
         actions={create}
       />
 
@@ -126,7 +138,12 @@ function Templates({ project }: { project: string }) {
               <Button variant="ghost" size="sm" onClick={() => openEditor(tpl)}>
                 {t('templates.duplicate')}
               </Button>
-              <Button variant="ghost" size="sm" className={styles.dangerText} onClick={() => remove(tpl)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={styles.dangerText}
+                onClick={() => remove(tpl)}
+              >
                 {t('substrate.delete')}
               </Button>
             </>
@@ -134,7 +151,11 @@ function Templates({ project }: { project: string }) {
         />
       ) : (
         <div className={styles.empty}>
-          <EmptyState title={t('templates.empty')} description={t('templates.empty_hint')} action={create} />
+          <EmptyState
+            title={t('templates.empty')}
+            description={t('templates.empty_hint')}
+            action={create}
+          />
         </div>
       )}
 
@@ -192,7 +213,10 @@ function Templates({ project }: { project: string }) {
         onClose={closeEditor}
         onSubmit={async (tpl) => {
           const name = tpl.metadata.name;
-          const ok = await run(() => templatesApi.create(project, tpl), t('templates.created', { name }));
+          const ok = await run(
+            () => templatesApi.create(project, tpl),
+            t('templates.created', { name })
+          );
           if (ok) closeEditor();
           return ok;
         }}
