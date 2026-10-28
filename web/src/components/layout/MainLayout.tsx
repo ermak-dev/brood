@@ -605,12 +605,13 @@ export function MainLayout() {
           metaKey: 'nav_meta.dashboard',
           icon: sidebarIcons.dashboard,
         },
-        // brood: сущности Substrate установки -- проекты (atespace), акторы,
-        // шаблоны, воркеры и политика доступа.
+        // brood: сущности установки -- проекты, рои, акторы, шаблоны,
+        // воркеры и политика доступа. Подзаголовок пункта -- короткая
+        // строка nav_meta, не абзац политики.
         {
           path: '/projects',
           labelKey: 'access.projects',
-          metaKey: 'access.member_policy',
+          metaKey: 'nav_meta.projects',
           icon: sidebarIcons.projects,
         },
         {
@@ -627,11 +628,6 @@ export function MainLayout() {
           path: '/users',
           labelKey: 'access.users',
           icon: sidebarIcons.system,
-        },
-        {
-          path: '/substrate-projects',
-          labelKey: 'access.substrate_projects',
-          icon: sidebarIcons.projects,
         },
         {
           path: '/actors',
