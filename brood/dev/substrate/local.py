@@ -360,7 +360,7 @@ class LocalCluster:
         self._check_ownership()
         self._kind("delete", "cluster", "--name", CLUSTER)
         if self._exists(REGISTRY):
-            self.shell.run("docker", "rm", "-f", REGISTRY)
+            self.shell.run("docker", "rm", "-f", "-v", REGISTRY)
         for path in (self.owned, *self.ids.values(), self.kubeconfig):
             try:
                 os.remove(path)
