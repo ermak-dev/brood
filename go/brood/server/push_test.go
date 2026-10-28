@@ -139,13 +139,23 @@ func TestPushFlow(t *testing.T) {
 	if saved == nil || saved.Containers[0].Image != image {
 		t.Fatalf("scoped template %v", saved)
 	}
-	if saved.Resources.GetLimits().GetCpuMillicores() != 1000 || saved.Resources.GetLimits().GetMemoryBytes() != 1048576 || len(saved.GoldenEgressPolicy.GetRules()) != 1 {
+	if saved.Resources.GetLimits().GetCpuMillicores() != 1000 || saved.Resources.GetLimits().GetMemoryBytes() != 1048576 {
 		t.Fatalf("template settings lost: %v", saved)
+	}
+	// BUG: runtime policy нельзя подменять preview golden policy при snapshots disabled.
+	if saved.GoldenEgressPolicy != nil || saved.GetSnapshotConfig().GetGoldenSnapshotConfig().GetMode().String() != "GOLDEN_SNAPSHOT_MODE_DISABLED" || data["egress_policy_deferred"] != true {
+		t.Fatalf("push can create a golden actor or claim runtime policy was installed: %v, %v", saved, data)
 	}
 	if len(ts.fake.actors) != 0 {
 		t.Fatal("push created actors")
 	}
 	actorTemplate := template["actor_template"].(map[string]any)
+	actorTemplate["snapshotConfig"] = map[string]any{"goldenSnapshotConfig": map[string]string{"mode": "GOLDEN_SNAPSHOT_MODE_ENABLED"}}
+	resp, data, _ = ts.do(alice, "POST", base+"/templates", ts.csrf(alice), template)
+	expectStatus(t, "golden activation refused", resp, data, 400)
+	actorTemplate["snapshotConfig"] = map[string]any{"goldenSnapshotConfig": map[string]string{"mode": "GOLDEN_SNAPSHOT_MODE_DISABLED"}}
+	resp, data, _ = ts.do(alice, "POST", base+"/templates", ts.csrf(alice), template)
+	expectStatus(t, "explicit disabled retry", resp, data, 200)
 	actorTemplate["volumes"] = []any{map[string]any{"name": "foreign", "image": map[string]string{"reference": image}}}
 	resp, data, _ = ts.do(alice, "POST", base+"/templates", ts.csrf(alice), template)
 	expectStatus(t, "image-backed volume", resp, data, 400)

@@ -173,6 +173,9 @@ func (c command) push(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintln(c.out, result.Image)
 	fmt.Fprintf(c.out, "template %s (project %s)\n", result.Template, result.Project)
+	if result.EgressPolicyDeferred {
+		fmt.Fprintln(c.out, "egress policy deferred: apply egress-policy.json when creating an actor; golden snapshots remain disabled")
+	}
 	return nil
 }
 

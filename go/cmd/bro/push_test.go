@@ -82,7 +82,7 @@ func TestPushPreviouslyBuiltArchiveWithoutDocker(t *testing.T) {
 				w.WriteHeader(400)
 				return
 			}
-			fmt.Fprintf(w, `{"image":"localhost:5002/swarm-s1/python@%s","template":"example-development","project":"s1"}`, digest)
+			fmt.Fprintf(w, `{"image":"localhost:5002/swarm-s1/python@%s","template":"example-development","project":"s1","egress_policy_deferred":true}`, digest)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)
@@ -105,7 +105,7 @@ func TestPushPreviouslyBuiltArchiveWithoutDocker(t *testing.T) {
 	}
 	log := fakeDocker(t, "exit 99\n")
 	code, out, diagnostic := invoke(t, "", "push", "development", "--project", "example")
-	if code != 0 || !strings.Contains(out, "example-development") || diagnostic != "" {
+	if code != 0 || !strings.Contains(out, "example-development") || !strings.Contains(out, "egress policy deferred") || diagnostic != "" {
 		t.Fatalf("push %d %q %q requests=%v", code, out, diagnostic, calls)
 	}
 	if _, err := os.Stat(log); !os.IsNotExist(err) {

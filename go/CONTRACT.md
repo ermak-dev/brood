@@ -59,9 +59,11 @@ Base API: `/api/swarms/{id}/builds/{environment}`:
 Все запросы используют обычные session/CSRF и owner/membership/admin проверки.
 Публичного `/v2/`, Docker credentials и отдельного push bearer нет. Registry URL
 остаётся серверной настройкой. Потоки ограничены размером, временем и количеством
-upload state; приватные Location/registry errors не передаются клиенту. Правила
-EgressPolicy включаются в golden policy шаблона согласно pinned Substrate API,
-а не применяются к несуществующему runtime actor.
+upload state; приватные Location/registry errors не передаются клиенту.
+Template-only push нормализует unspecified golden mode в DISABLED и отказывает
+explicit ENABLED. Runtime EgressPolicy не преобразуется в preview golden policy:
+`egress_policy_deferred: true` и CLI-сообщение явно показывают, что правила из
+локального egress-policy.json нужно применить при будущем создании actor.
 
 ## Соглашения
 
