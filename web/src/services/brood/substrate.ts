@@ -171,6 +171,11 @@ export interface AccessPolicy {
   bindings?: Binding[];
 }
 
+export interface NativeIdentity {
+  id: string;
+  label: string;
+}
+
 export type ActorAction = 'suspend' | 'resume';
 
 const path = encodeURIComponent;
@@ -261,6 +266,7 @@ export const workerPoolsApi = {
 };
 
 export const policyApi = {
+  identities: () => request<NativeIdentity[]>('GET', '/api/identities'),
   get: (project: string) => request<AccessPolicy>('GET', policyPath(project)),
   create: (project: string, policy: AccessPolicy) =>
     request<AccessPolicy>('POST', policyPath(project), policy),

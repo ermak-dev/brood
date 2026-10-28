@@ -1,12 +1,11 @@
 import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { accessApi, type AccessProject } from '@/services/brood/access';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
-import { Section } from '@/features/substrate/components/form';
 import { EntityTable } from '@/features/substrate/components/EntityTable';
+import { ProjectScope } from '@/features/substrate/components/ProjectScope';
 import {
   AccessEditor,
   LoadState,
@@ -15,27 +14,28 @@ import {
   useAdministrator,
 } from './shared';
 import { memberCandidates } from './state';
-import { ProjectScope } from '@/features/substrate/components/ProjectScope';
+import { AccessMatrix } from './AccessMatrix';
 import styles from '@/features/substrate/substrate.module.scss';
 
-/** brood: участники проекта из маршрута. Состав читает и меняет только
- * администратор; участник видит модель доступа и свои проекты. */
+/** Пользовательские права — актуальная роль и членство проекта, не native
+ * identity Substrate. Изменения состава выполняются только выбором из списка. */
 export function PermissionsPage() {
   const { t } = useTranslation();
   return (
-    <ProjectScope title={t('access.membership')}>
-      {(project) => <Members project={project} />}
-    </ProjectScope>
+    <div className={styles.page}>
+      <PageHeader title={t('access.permissions')} />
+      <AccessMatrix />
+      <ProjectScope title={t('access.membership')} headingLevel={2}>
+        {(project) => <Members project={project} />}
+      </ProjectScope>
+    </div>
   );
 }
 
 function Members({ project }: { project: AccessProject }) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const admin = useAdministrator();
   const projectId = project.id;
-  // Список участников отдаётся только администратору: обычному участнику
-  // панель его не запрашивает.
   const loadMembers = useCallback(
     () => (admin ? accessApi.members(projectId) : Promise.resolve([])),
     [admin, projectId]
@@ -43,8 +43,6 @@ function Members({ project }: { project: AccessProject }) {
   const members = useAccessResource(loadMembers, { headerRefresh: false });
   const { run, confirm, busy } = useAccessActions(members.refresh);
   const [adding, setAdding] = useState(false);
-  // Кандидаты в участники: пользователи установки, кроме уже добавленных и
-  // заблокированных. Список открыт только администратору -- он же и добавляет.
   const loadUsers = useCallback(
     () => (admin && adding ? accessApi.users() : Promise.resolve([])),
     [admin, adding]
@@ -55,72 +53,69 @@ function Members({ project }: { project: AccessProject }) {
   });
   const candidates = memberCandidates(users.data, members.data);
   return (
-    <div className={styles.page}>
+    <section className={styles.page}>
       <PageHeader
         title={t('access.membership')}
+        headingLevel={2}
         meta={[project.name]}
         actions={
-          <Button variant="secondary" onClick={() => navigate('/swarms')}>
-            {t('access.swarms')}
-          </Button>
-        }
-      />
-      <Section title={t(admin ? 'access.administrator' : 'access.member')}>
-        <p>{t(admin ? 'access.admin_policy' : 'access.member_policy')}</p>
-        <p>{t('access.server_authority')}</p>
-      </Section>
-      <Section title={t('access.membership')}>
-        {!admin && <p>{t('access.membership_hint')}</p>}
-        {/* Исключение живёт в строке участника: вводить имя руками, чтобы
-            удалить видимую строку, незачем. */}
-        {admin && (
-          <div className={styles.rowActions}>
+          admin && (
             <Button disabled={busy} onClick={() => setAdding(true)}>
               {t('access.add_member')}
             </Button>
-          </div>
-        )}
-        {admin && (
-          <LoadState {...members} retry={members.refresh}>
-            <EntityTable
-              rows={members.data ?? []}
-              rowKey={(member) => member.username}
-              columns={[
-                {
-                  key: 'username',
-                  label: t('access.username'),
-                  primary: true,
-                  render: (member) => member.username,
-                },
-                {
-                  key: 'display_name',
-                  label: t('access.display_name'),
-                  render: (member) => member.display_name,
-                },
-              ]}
-              actionsLabel={t('substrate.actions')}
-              actions={(member) => (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() =>
-                    confirm(
-                      member.username,
-                      () => accessApi.removeMember(projectId, member.username),
-                      t('access.remove_member'),
-                      t('access.confirm_member', { name: member.username })
-                    )
-                  }
-                >
-                  {t('access.remove_member')}
-                </Button>
-              )}
-            />
-            {members.data?.length === 0 && <p>{t('access.empty')}</p>}
-          </LoadState>
-        )}
-      </Section>
+          )
+        }
+      />
+      {admin && (
+        <LoadState {...members} retry={members.refresh}>
+          <EntityTable
+            rows={members.data ?? []}
+            rowKey={(member) => member.username}
+            columns={[
+              {
+                key: 'username',
+                label: t('access.username'),
+                primary: true,
+                render: (member) => member.username,
+              },
+              {
+                key: 'display_name',
+                label: t('access.display_name'),
+                render: (member) => member.display_name,
+              },
+              {
+                key: 'role',
+                label: t('access.role'),
+                render: (member) => t(member.is_admin ? 'access.administrator' : 'access.user'),
+              },
+              {
+                key: 'state',
+                label: t('access.state'),
+                render: (member) => t(member.disabled ? 'access.disabled' : 'access.enabled'),
+              },
+            ]}
+            actionsLabel={t('substrate.actions')}
+            actions={(member) => (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() =>
+                  confirm(
+                    member.username,
+                    () => accessApi.removeMember(projectId, member.username),
+                    t('access.remove_member'),
+                    t('access.confirm_member', { name: member.username })
+                  )
+                }
+              >
+                {t('access.remove_member')}
+              </Button>
+            )}
+          />
+          {members.data?.length === 0 && <p>{t('access.empty')}</p>}
+        </LoadState>
+      )}
       {adding && admin && (
         <AccessEditor
           key={projectId}
@@ -134,8 +129,6 @@ function Members({ project }: { project: AccessProject }) {
               type: 'select',
               required: true,
               options: candidates,
-              // Пока список грузится или не пришёл, поле говорит именно это,
-              // а не «кандидатов нет».
               empty:
                 users.error ||
                 members.error ||
@@ -147,6 +140,6 @@ function Members({ project }: { project: AccessProject }) {
           submit={(values) => run(() => accessApi.addMember(projectId, values.username))}
         />
       )}
-    </div>
+    </section>
   );
 }

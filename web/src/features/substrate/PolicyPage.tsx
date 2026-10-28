@@ -9,7 +9,8 @@ import { BroodApiError } from '@/services/brood/http';
 import { policyApi, type AccessPolicy, type Binding } from '@/services/brood/substrate';
 import { accessApi } from '@/services/brood/access';
 import { useAccessResource } from '@/features/access/shared';
-import { ChipsInput } from './components/ChipsInput';
+import { PrincipalPicker } from './components/PrincipalPicker';
+import { principalOptions } from './principalOptions';
 import { Field, Section } from './components/form';
 import { PageHeader } from './components/PageHeader';
 import { Segmented } from './components/Segmented';
@@ -64,11 +65,12 @@ export function PolicyPage() {
     if (!project) setScope('global');
   }, [project]);
 
+  const waitingForSwarm = scope === 'project' && !project;
   const load = useCallback(
-    () =>
-      scope === 'project' && !project ? Promise.resolve({ policy: null }) : loadPolicy(target),
-    [scope, project, target]
+    () => (waitingForSwarm ? Promise.resolve({ policy: null }) : loadPolicy(target)),
+    [waitingForSwarm, target]
   );
+  const identities = useResource(policyApi.identities);
   const { data, error, loading, refresh } = useResource(load);
   const { run, confirm } = useActions(refresh);
   const [draft, setDraft] = useState<Binding[] | null>(null);
@@ -92,6 +94,7 @@ export function PolicyPage() {
 
   const roles = ROLES[scope];
   const bindings = draft ?? [];
+  const choices = principalOptions(identities.data, bindings);
   const dirty =
     draft !== null && JSON.stringify(cleaned(draft)) !== JSON.stringify(cleaned(loaded));
   const members = loaded.reduce((sum, b) => sum + (b.members?.length ?? 0), 0);
@@ -142,7 +145,7 @@ export function PolicyPage() {
   return (
     <div className={styles.page}>
       <PageHeader
-        title={t('policy.title')}
+        title={t('access.substrate_policy')}
         meta={[
           scopeLabel,
           policy && t('policy.meta_bindings', { count: loaded.length }),
@@ -192,7 +195,16 @@ export function PolicyPage() {
         />
       </div>
 
+      <p className={styles.notice}>{t('access.native_policy_hint')}</p>
       <p className={styles.notice}>{t(`policy.roles_hint_${scope}`)}</p>
+      {identities.error && (
+        <div role="alert">
+          <p>{identities.error}</p>
+          <Button variant="secondary" onClick={() => void identities.refresh()}>
+            {t('access.refresh')}
+          </Button>
+        </div>
+      )}
 
       {loading ? (
         <LoadingSpinner />
@@ -263,11 +275,11 @@ export function PolicyPage() {
                   </Field>
                   <Field label={t('policy.members')} hint={t('policy.members_hint')}>
                     {(id) => (
-                      <ChipsInput
+                      <PrincipalPicker
                         id={id}
-                        unique
+                        options={choices}
                         values={binding.members ?? []}
-                        placeholder="user:system:serviceaccount:team:alice"
+                        disabled={saving || identities.loading}
                         onChange={(values) => setBinding(index, { members: values })}
                       />
                     )}

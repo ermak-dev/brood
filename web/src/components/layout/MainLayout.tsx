@@ -650,8 +650,7 @@ export function MainLayout() {
         },
         {
           path: '/policy',
-          labelKey: 'nav.policy',
-          metaKey: 'nav_meta.policy',
+          labelKey: 'access.permissions',
           icon: sidebarIcons.policy,
         },
       ],
@@ -707,6 +706,11 @@ export function MainLayout() {
       id: 'control',
       labelKey: 'nav_groups.control',
       items: [
+        {
+          path: '/substrate-policy',
+          labelKey: 'access.substrate_policy',
+          icon: sidebarIcons.policy,
+        },
         {
           path: '/config',
           labelKey: 'nav.config_management',
