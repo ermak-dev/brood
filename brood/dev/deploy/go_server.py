@@ -20,7 +20,7 @@ def approved_images(raw):
         images = json.loads(raw)
     except (ValueError, TypeError):
         raise RuntimeError("WORKER_POOL_IMAGES must contain deployed digest-pinned images") from None
-    if (not isinstance(images, dict) or "gvisor" not in images or set(images) - {"gvisor", "microvm"}
+    if (not isinstance(images, dict) or "gvisor" not in images or set(images) - {"gvisor", "microvm", "lxc"}
             or any(not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}", value)
                    for value in images.values())):
         raise RuntimeError("WORKER_POOL_IMAGES must contain deployed digest-pinned images")

@@ -63,9 +63,15 @@ func TestRepositoryWorkbenchContract(t *testing.T) {
 	if reflect.DeepEqual(plans[0]["actor"], plans[1]["actor"]) {
 		t.Fatal("targets must retain distinct runtime commands")
 	}
-	revision := pins["SUBSTRATE_COMMIT"]
-	if len(revision) != 40 || !strings.Contains(read("go/go.mod"), revision[:12]) {
-		t.Fatal("Go dependency and Broodfile must share the pinned Substrate commit")
+	revision := pins["SUBSTRATE_SDK_COMMIT"]
+	if revision != "4ebd668d62e3f55753765a46579fc6deb81b2f7f" || !strings.Contains(read("go/go.mod"), revision[:12]) {
+		t.Fatal("public Go SDK dependency must keep its independently verified pin")
+	}
+	substrate := plans[0]["sources"].(map[string]any)["substrate"].(map[string]any)
+	if pins["SUBSTRATE_COMMIT"] != "f5d03ca0e49be0c429d892437ab5b93924026af0" ||
+		substrate["revision"] != pins["SUBSTRATE_COMMIT"] ||
+		substrate["repository"] != "git@git.ermak.dev:ermak/substrate.git" {
+		t.Fatal("workbench source must use the verified LXC fork pin, not the public SDK pin")
 	}
 	if !strings.Contains(pins["PYTHON_IMAGE"], "@sha256:") {
 		t.Fatal("Python base image must be digest pinned")

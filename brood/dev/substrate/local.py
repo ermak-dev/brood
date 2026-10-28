@@ -3,7 +3,7 @@
 Порт hack/substrate.sh. Substrate собирается из checkout'а substrate и
 раскатывается в отдельный кластер kind со своим kubeconfig: текущий контекст
 kubectl не меняется. Checkout -- SUBSTRATE_SOURCE разработчика либо свой
-клон официального репозитория на закреплённом коммите (sync). Состояние лежит в
+клон проверенного форка на закреплённом коммите (sync). Состояние лежит в
 <checkout>/bin/substrate, там же, где его держал скрипт: kubectl, kubeconfig
 и записи владения. Установка, сделанная скриптом, остаётся той же установкой.
 
@@ -62,7 +62,7 @@ MARKERS = ("hack/kind.sh", "hack/install-ate-kind.sh", "cmd/kubectl-ate")
 # по digest: раскатка одного коммита brood всегда ставит один и тот же
 # Substrate. Новый Substrate -- правка pins.json после сверки DEPLOY с его
 # hack/install-ate-kind.sh; тот же pin использует Broodfile.
-REPOSITORY = "https://github.com/agent-substrate/substrate.git"
+REPOSITORY = "git@git.ermak.dev:ermak/substrate.git"
 COMMIT = json.loads(Path(__file__).parents[1].joinpath("pins.json").read_text())["SUBSTRATE_COMMIT"]
 
 

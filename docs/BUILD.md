@@ -33,7 +33,11 @@ store нужен docker-container builder, выбранный через `BUILDX
 В этом проекте `development` прогоняет тесты и вложенный deploy, `coding`
 запускает интерактивный терминал. Обе цели разделяют environment `workbench`.
 Внешние Git-источники получаются по закреплённому commit. Клон Substrate
-оператора, локальный кластер и login для plan/export не требуются.
+оператора, локальный кластер и login в brood для plan/export не требуются.
+Корневой Broodfile использует приватный Substrate-форк: хостовому Git нужен
+read access либо явно настроенный проверенный checkout-кэш. Это отдельное
+право на исходники, не сессия brood. SSH keys, credential helpers и локальная
+Git-конфигурация не попадают в экспортированный source или образ.
 
 ## Документ
 

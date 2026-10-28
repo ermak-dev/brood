@@ -8,6 +8,16 @@ from brood.dev.deploy.go_server import Deploy, manifests
 
 
 class GoWorkerSettingsTests(unittest.TestCase):
+    def test_explicit_lxc_image_is_retained_without_enabling_other_runtimes(self):
+        approved = {"gvisor": "localhost:5002/ateworker-gvisor@sha256:" + "a" * 64,
+                    "lxc": "localhost:5002/ateworker-lxc@sha256:" + "d" * 64}
+        shell = Mock()
+        def get(key):
+            return json.dumps(approved) if key == "WORKER_POOL_IMAGES" else ""
+        self.assertEqual(Deploy(SimpleNamespace(shell=shell), get=get)._worker_images(), approved)
+        shell.output.assert_not_called()
+        shell.run.assert_not_called()
+
     def test_missing_worker_settings_are_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "WORKER_POOL_IMAGES"):
             manifests("localhost:5002/brood-go@sha256:" + "a" * 64)

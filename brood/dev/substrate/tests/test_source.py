@@ -123,6 +123,6 @@ class StepTests(unittest.TestCase):
 
 
 class PinTests(unittest.TestCase):
-    def test_official_repository_at_full_commit(self):
-        self.assertEqual(local.REPOSITORY, "https://github.com/agent-substrate/substrate.git")
-        self.assertRegex(local.COMMIT, r"^[0-9a-f]{40}$")
+    def test_verified_lxc_fork_at_full_commit(self):
+        self.assertEqual(local.REPOSITORY, "git@git.ermak.dev:ermak/substrate.git")
+        self.assertEqual(local.COMMIT, "f5d03ca0e49be0c429d892437ab5b93924026af0")

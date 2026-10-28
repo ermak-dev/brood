@@ -59,7 +59,7 @@ server/edge ресурсов до сборки и записи. Namespace дол
 | `BROOD_PUBLIC_HOST` | DNS-имя публичного входа, присутствующее в TLS certificate |
 | `BROOD_HTTPS_PORT`, `BROOD_HTTP_PORT` | опубликованные host ports, задаются при создании kind |
 | `BROOD_ADMIN_USERNAME`, `BROOD_ADMIN_PASSWORD` | initial admin и проверка доступа; пароль минимум 12 символов |
-| `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательный microvm |
+| `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательные microvm и подготовленный lxc |
 | `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only key |
 
 TLS: `secrets/tls.crt` и `secrets/tls.key`. Go и edge используют один

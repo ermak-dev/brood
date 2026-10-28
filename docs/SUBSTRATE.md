@@ -13,15 +13,24 @@ brood substrate uninstall  # удалить кластер вместе с да�
 
 ## Откуда Substrate
 
-Без настроек `install` ставит официальный репозиторий
-github.com/agent-substrate/substrate на коммите `COMMIT` из
-`brood/dev/substrate/local.py`. Свой клон лежит в каталоге данных
+Без `SUBSTRATE_SOURCE` команда `install` берёт проверенный форк
+`git@git.ermak.dev:ermak/substrate.git`, runtime commit закреплён ключом
+`SUBSTRATE_COMMIT` в `brood/dev/pins.json` (его читает `local.COMMIT`).
+Доступ к приватному Git выполняет хостовый Git; ключи не копируются в образы
+или акторы. Свой клон лежит в каталоге данных
 пользователя, `$XDG_DATA_HOME/brood/substrate` (по умолчанию
 `~/.local/share/brood/substrate`), а не в рабочей копии brood: записи владения
 кластера в `<checkout>/bin/substrate` переживают джобу CI. `install` заводит
 клон или переводит его на `COMMIT`; клон с правками в отслеживаемых файлах или
 с другим origin — отказ. `start`, `stop` и `uninstall` клон не трогают и в сеть
 не ходят.
+
+Старый managed clone с GitHub origin не переназначается автоматически.
+Не удаляйте его ради смены URL: в `bin/substrate` находятся записи владения
+и kubeconfig действующего кластера. Изменение origin этого клона требует
+явного решения владельца с сохранением состояния; произвольный чужой клон
+остаётся отказом. Developer override `SUBSTRATE_SOURCE` также не переносит
+записи владения между checkout автоматически.
 
 Новый Substrate — правка `COMMIT`, после того как флаги `DEPLOY` сверены с
 `hack/install-ate-kind.sh` этого коммита. `DEPLOY` также держит
