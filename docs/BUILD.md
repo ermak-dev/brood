@@ -43,6 +43,31 @@ store нужен docker-container builder, выбранный через `BUILDX
 Размер документа не более 1 MiB. Вложенные структуры проверяются строгим Go-validator.
 Имена — DNS labels. Roles/topologies пока не поддерживаются и не игнорируются.
 
+Машиночитаемый контракт для редакторов —
+`go/brood/build/broodfile.schema.json` (JSON Schema 2020-12). Он генерируется
+из тех же структурных ограничений, что использует Go-validator; тест сравнивает
+артефакт с ними, включая нулевые пределы и составные условия. Проверки YAML,
+межобъектных ссылок, безопасных путей, Git URLs и диапазона uint64 дополнительно
+выполняет компилятор: JSON Schema не заменяет `bro build --plan`.
+
+Положительные примеры: корневой `Broodfile` с целями development/coding и
+`go/brood/build/testdata/minimal.yaml` для стороннего проекта без nested Docker.
+Примеры отказов до сборки:
+
+| Изменение корректного документа | Причина |
+|---|---|
+| `apiVersion: brood.dev/v2` | неподдерживаемая версия, `const` |
+| `topologies: {}` в корне | неизвестное поле, `additionalProperties` |
+| `durableDir: {unsupported: true}` в томе | пустой объект обязателен, `maxProperties` |
+| `revision: main` у Git source | требуется полный commit SHA |
+
+Для обновления артефакта после изменения validator из `go/`:
+
+```sh
+BROOD_UPDATE_SCHEMA=1 go test ./brood/build -run '^TestBroodfileSchemaArtifact$'
+go test ./brood/build
+```
+
 ```yaml
 apiVersion: brood.dev/v1alpha1
 name: example
