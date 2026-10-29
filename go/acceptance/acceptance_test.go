@@ -27,6 +27,7 @@ func TestRealBinaries(t *testing.T) {
 		{"BrowserSecurityAndAuthorization", testBrowserSecurity},
 		{"NoSubstrateDurableOwnerOnlyError", testNoSubstrate},
 		{"DisablePasswordResetAndMembershipRevocation", testRevocation},
+		{"SessionExpiry", testSessionExpiry},
 		{"NegativeCLIArguments", testNegativeCLI},
 		{"ActiveSwarmWithTLSInfrastructureFake", testInfrastructureFake},
 	} {
