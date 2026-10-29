@@ -250,13 +250,18 @@ func (f *fakeControl) DeleteActor(ctx context.Context, req *ateapi.DeleteActorRe
 	if err := f.enter(ctx, "DeleteActor"); err != nil {
 		return nil, err
 	}
-	item, err := f.actor("DeleteActor", req.GetActor())
-	if err != nil {
-		return nil, err
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.actors, req.GetActor().GetAtespace()+"/"+req.GetActor().GetName())
+	key := req.GetActor().GetAtespace() + "/" + req.GetActor().GetName()
+	item, ok := f.actors[key]
+	if !ok {
+		return nil, status.Error(codes.NotFound, fmt.Sprintf("DeleteActor: actor %s not found", req.GetActor().GetName()))
+	}
+	f.deleteUID = req.GetOptions().GetUid()
+	if f.deleteUID != "" && f.deleteUID != item.GetMetadata().GetUid() {
+		return nil, status.Error(codes.Aborted, "actor UID changed")
+	}
+	delete(f.actors, key)
 	return item, nil
 }
 
@@ -378,13 +383,18 @@ func (f *fakeControl) DeleteActorTemplate(ctx context.Context, req *ateapi.Delet
 	if err := f.enter(ctx, "DeleteActorTemplate"); err != nil {
 		return nil, err
 	}
-	item, err := f.templateOf(req.GetActorTemplate())
-	if err != nil {
-		return nil, err
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.templates, req.GetActorTemplate().GetAtespace()+"/"+req.GetActorTemplate().GetName())
+	key := req.GetActorTemplate().GetAtespace() + "/" + req.GetActorTemplate().GetName()
+	item, ok := f.templates[key]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "actor template not found")
+	}
+	f.deleteUID = req.GetOptions().GetUid()
+	if f.deleteUID != "" && f.deleteUID != item.GetMetadata().GetUid() {
+		return nil, status.Error(codes.Aborted, "template UID changed")
+	}
+	delete(f.templates, key)
 	return item, nil
 }
 
