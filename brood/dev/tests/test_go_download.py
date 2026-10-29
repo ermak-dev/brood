@@ -167,6 +167,13 @@ exec "$REAL_CURL" "${args[@]}"
                 self.assertIn("bash /tmp/go-download.sh", recipe)
                 self.assertNotIn('curl -fsSL \"https://go.dev/dl/', recipe)
 
+    def test_server_build_context_explicitly_includes_the_shared_downloader(self):
+        rules = (ROOT / "deploy/Dockerfile.go.dockerignore").read_text().splitlines()
+        self.assertIn("!.ci/", rules)
+        self.assertIn("!.ci/go-download.sh", rules)
+        self.assertNotIn("!.ci/**", rules)
+        self.assertIn("**/.env", rules)
+
     def test_checksum_mismatch_never_extracts_or_retries_bad_content(self):
         result, calls, extracted = self.bootstrap("corrupt")
         self.assertNotEqual(result.returncode, 0)
