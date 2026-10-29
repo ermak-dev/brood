@@ -291,24 +291,30 @@ func (p *Proxy) RecheckNow() {
 	}
 	p.mu.Unlock()
 
+	var checks sync.WaitGroup
 	for _, lc := range current {
-		if lc.valid != nil && !lc.valid() {
-			p.revoke(lc, "session revoked")
-			continue
-		}
-		allowed, err := p.cfg.Authorize(lc.user.ID, app.ActionManageSwarm, app.SwarmRes(lc.swarm.ID))
-		switch {
-		case err != nil:
-			// Сбой проверки небезопасен: закрываем соединение.
-			p.revoke(lc, "authorization check failed")
-		case !allowed:
-			p.revoke(lc, "access revoked")
-		default:
-			if sw, ok, err := p.cfg.Swarms.SwarmByID(lc.swarm.ID); err != nil || !ok || sw.State != app.StateActive {
-				p.revoke(lc, "swarm is not active")
+		checks.Add(1)
+		go func() {
+			defer checks.Done()
+			if lc.valid != nil && !lc.valid() {
+				p.revoke(lc, "session revoked")
+				return
 			}
-		}
+			allowed, err := p.cfg.Authorize(lc.user.ID, app.ActionManageSwarm, app.SwarmRes(lc.swarm.ID))
+			switch {
+			case err != nil:
+				// Сбой проверки небезопасен: закрываем соединение.
+				p.revoke(lc, "authorization check failed")
+			case !allowed:
+				p.revoke(lc, "access revoked")
+			default:
+				if sw, ok, err := p.cfg.Swarms.SwarmByID(lc.swarm.ID); err != nil || !ok || sw.State != app.StateActive {
+					p.revoke(lc, "swarm is not active")
+				}
+			}
+		}()
 	}
+	checks.Wait()
 }
 
 // revoke закрывает соединение, снимает с реестра и пишет аудит.

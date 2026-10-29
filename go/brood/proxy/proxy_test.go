@@ -740,6 +740,248 @@ func waitClosed(conn net.Conn, reader *bufio.Reader, timeout time.Duration) bool
 	return false
 }
 
+func TestRecheckNowChecksConnectionsConcurrently(t *testing.T) {
+	const count = 3
+	revalidating := make(chan string, count)
+	authorizing := make(chan string, count)
+	releaseSession := make(chan struct{})
+	releaseAuth := make(chan struct{})
+	validated := map[string]chan struct{}{}
+	for _, id := range []string{"u1", "u2", "u3"} {
+		validated[id] = make(chan struct{})
+	}
+	audit := &auditLog{}
+	p := New(Config{
+		Revalidate: func(r *http.Request) bool {
+			id := r.URL.Path
+			revalidating <- id
+			<-releaseSession
+			close(validated[id])
+			return true
+		},
+		Authorize: func(id string, action app.Action, res app.Resource) (bool, error) {
+			select {
+			case <-validated[id]:
+			default:
+				t.Errorf("authorization started before session validation for %s", id)
+			}
+			if action != app.ActionManageSwarm || res != app.SwarmRes("sw1") {
+				t.Errorf("authorization action=%v resource=%+v", action, res)
+			}
+			authorizing <- id
+			<-releaseAuth
+			return false, nil
+		},
+		Audit:  audit.record,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	var conns []*liveConn
+	for id := range validated {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.URL.Path = id
+		lc := &liveConn{
+			user: Identity{ID: id, Username: id}, swarm: activeSwarm("sw1", "at1"),
+			actor: "a1", valid: p.sessionCheck(r),
+		}
+		conns = append(conns, lc)
+		p.track(lc)
+	}
+	done := make(chan struct{})
+	go func() {
+		p.RecheckNow()
+		close(done)
+	}()
+	var sessionOnce, authOnce sync.Once
+	releaseSessions := func() { sessionOnce.Do(func() { close(releaseSession) }) }
+	releaseAuthorization := func() { authOnce.Do(func() { close(releaseAuth) }) }
+	defer func() {
+		releaseSessions()
+		releaseAuthorization()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("RecheckNow did not finish after releasing callbacks")
+		}
+		p.Close()
+	}()
+	for _, phase := range []struct {
+		name    string
+		entered <-chan string
+		release func()
+	}{
+		{"Revalidate", revalidating, releaseSessions},
+		{"Authorize", authorizing, releaseAuthorization},
+	} {
+		seen := map[string]bool{}
+		deadline := time.After(5 * time.Second)
+		for len(seen) < count {
+			select {
+			case id := <-phase.entered:
+				if seen[id] {
+					t.Fatalf("%s called twice for %s", phase.name, id)
+				}
+				seen[id] = true
+			case <-done:
+				t.Fatalf("RecheckNow returned while %s callbacks were blocked", phase.name)
+			case <-deadline:
+				t.Fatalf("%s started for %d/%d connections before barrier release; checks are serialized", phase.name, len(seen), count)
+			}
+		}
+		select {
+		case <-done:
+			t.Fatalf("RecheckNow returned before %s completed", phase.name)
+		default:
+		}
+		phase.release()
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RecheckNow did not finish")
+	}
+	for _, lc := range conns {
+		if !lc.closed {
+			t.Errorf("connection %s was not closed before RecheckNow returned", lc.user.ID)
+		}
+	}
+	if len(p.conns) != 0 {
+		t.Fatalf("%d revoked connections remain tracked", len(p.conns))
+	}
+	events := audit.snapshot()
+	if len(events) != count {
+		t.Fatalf("audit count = %d, want %d", len(events), count)
+	}
+	seen := map[string]bool{}
+	for _, event := range events {
+		if seen[event.Username] || event.Allowed || event.Reason != "access revoked" || event.SwarmID != "sw1" || event.Actor != "a1" {
+			t.Errorf("unexpected audit event: %+v", event)
+		}
+		seen[event.Username] = true
+	}
+}
+
+func TestRecheckNowPreservesDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		valid      bool
+		allowed    bool
+		authErr    error
+		swarms     fakeSwarms
+		wantReason string
+	}{
+		{name: "session revoked", wantReason: "session revoked"},
+		{name: "authorization error", valid: true, allowed: true, authErr: errors.New("unavailable"), wantReason: "authorization check failed"},
+		{name: "access revoked", valid: true, wantReason: "access revoked"},
+		{name: "missing swarm", valid: true, allowed: true, wantReason: "swarm is not active"},
+		{name: "inactive swarm", valid: true, allowed: true, swarms: fakeSwarms{"sw1": {ID: "sw1", State: app.StateDeleting}}, wantReason: "swarm is not active"},
+		{name: "allowed", valid: true, allowed: true, swarms: fakeSwarms{"sw1": activeSwarm("sw1", "at1")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			audit := &auditLog{}
+			authCalls := 0
+			p := New(Config{
+				Swarms: tc.swarms,
+				Authorize: func(string, app.Action, app.Resource) (bool, error) {
+					authCalls++
+					return tc.allowed, tc.authErr
+				},
+				Audit: audit.record, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			})
+			defer p.Close()
+			lc := &liveConn{user: Identity{ID: "u1", Username: "alice"}, swarm: activeSwarm("sw1", "at1"), actor: "a1", valid: func() bool { return tc.valid }}
+			p.track(lc)
+			p.RecheckNow()
+			if (authCalls == 1) != tc.valid {
+				t.Errorf("authorization calls = %d, session valid = %v", authCalls, tc.valid)
+			}
+			revoked := tc.wantReason != ""
+			_, tracked := p.conns[lc]
+			if lc.closed != revoked || tracked == revoked {
+				t.Errorf("closed=%v tracked=%v, want revoked=%v", lc.closed, tracked, revoked)
+			}
+			events := audit.snapshot()
+			if !revoked {
+				if len(events) != 0 {
+					t.Errorf("allowed recheck emitted audit: %+v", events)
+				}
+				return
+			}
+			if len(events) != 1 || events[0] != (AuditEvent{Username: "alice", SwarmID: "sw1", Actor: "a1", Reason: tc.wantReason}) {
+				t.Errorf("revocation audit = %+v, want reason %q", events, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestRecheckNowConcurrentCloseAndTracking(t *testing.T) {
+	const count = 32
+	entered := make(chan struct{}, count)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseChecks := func() { releaseOnce.Do(func() { close(release) }) }
+	canceled := make(chan struct{}, count*2)
+	p := New(Config{
+		Authorize: func(string, app.Action, app.Resource) (bool, error) {
+			entered <- struct{}{}
+			<-release
+			return false, errors.New("unavailable")
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	var conns []*liveConn
+	for range count {
+		lc := &liveConn{cancel: func() { canceled <- struct{}{} }}
+		p.track(lc)
+		conns = append(conns, lc)
+	}
+	done := make(chan struct{})
+	go func() {
+		p.RecheckNow()
+		close(done)
+	}()
+	defer func() {
+		releaseChecks()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("recheck did not finish after concurrent close")
+		}
+		p.Close()
+		if len(canceled) != count {
+			t.Errorf("cancel calls = %d, want exactly %d", len(canceled), count)
+		}
+		if len(p.conns) != 0 {
+			t.Errorf("%d connections remain tracked", len(p.conns))
+		}
+	}()
+	deadline := time.After(5 * time.Second)
+	for range count {
+		select {
+		case <-entered:
+		case <-deadline:
+			t.Fatal("not all checks reached authorization barrier")
+		}
+	}
+	var closing sync.WaitGroup
+	closing.Add(1)
+	go func() {
+		defer closing.Done()
+		p.Close()
+	}()
+	for _, lc := range conns {
+		closing.Add(1)
+		go func() {
+			defer closing.Done()
+			p.untrack(lc)
+			other := &liveConn{}
+			p.track(other)
+			p.untrack(other)
+		}()
+	}
+	releaseChecks()
+	closing.Wait()
+}
+
 func TestRevocationClosesConnection(t *testing.T) {
 	up := newWSTestUpstream(t)
 	h := newHarness(t, fixedUser("u1", "alice"), fakeSwarms{"sw1": activeSwarm("sw1", "at1")})
