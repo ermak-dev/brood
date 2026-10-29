@@ -24,6 +24,26 @@ Git config не входят в source export и не переносятся в 
 (`docs/SUBSTRATE.md`). Старый managed clone с другим origin не переписывается
 автоматически и не удаляется вместе с записями владения.
 
+## Совместимость существующей установки
+
+В `f5d03ca0` PostgreSQL-миграции до v0.6.0 сведены в новый
+`000001_initial.sql`. Старую pre-squash базу обновлять нельзя: это явно
+зафиксировано в `docs/dev/postgresql-schema-evolution.md` форка. Совпадение
+protobuf/gRPC-контракта не означает совместимость истории базы.
+
+Не удаляйте рабочую базу и не редактируйте `schema_migrations` ради запуска
+нового control plane. Source override не является миграцией данных. Для
+проверки нового runtime нужна новая изолированная установка. Один дополнительный
+namespace на прежней ноде не изолирует cluster-wide controllers, CRD и atelet:
+второй atelet использует тот же `/var/lib/ate` и worker-support socket.
+
+Workbench позволяет проверять новую установку внутри собственного Docker и
+kind в отдельной microVM актора, без сокета, kubeconfig и credentials рабочей
+установки. Это не обновление production Substrate и не разрешение создавать
+дополнительные VM/ноды на хосте, сбрасывать пользовательские акторы или менять
+host kernel, CNI и firewall. Положительный fresh-install proof необходимо
+отличать от ещё не реализованного обновления pre-squash базы с сохранением данных.
+
 ## Что реализовано в форке
 
 `cmd/ateworker-lxc` — обычный WorkerPool pod с Worker RPC и штатной регистрацией,
