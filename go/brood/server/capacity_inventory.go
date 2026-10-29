@@ -42,15 +42,8 @@ func nativeShardReservations(ctx context.Context, client *substrate.Client, swar
 		if swarm.State == app.StateDeleted {
 			continue
 		}
-		if swarm.AtespaceUID == "" {
-			return nil, &shardInventoryError{cause: errors.New("swarm has no saved namespace UID")}
-		}
-		namespace, err := client.GetAtespace(ctx, swarm.AtespaceName)
-		if err != nil {
+		if err := checkNativeNamespace(ctx, client, swarm); err != nil {
 			return nil, &shardInventoryError{cause: err}
-		}
-		if namespace.GetMetadata().GetName() != swarm.AtespaceName || namespace.GetMetadata().GetUid() != swarm.AtespaceUID {
-			return nil, &shardInventoryError{cause: errors.New("native namespace identity differs from the saved binding")}
 		}
 		templates, err := client.ListActorTemplates(ctx, swarm.AtespaceName)
 		if err != nil {
@@ -79,6 +72,9 @@ func nativeShardReservations(ctx context.Context, client *substrate.Client, swar
 		}
 		actors, err := client.ListActors(ctx, swarm.AtespaceName)
 		if err != nil {
+			return nil, &shardInventoryError{cause: err}
+		}
+		if err := checkNativeNamespace(ctx, client, swarm); err != nil {
 			return nil, &shardInventoryError{cause: err}
 		}
 		for _, actor := range actors {

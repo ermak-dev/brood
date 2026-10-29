@@ -14,30 +14,21 @@ import (
 )
 
 type nativeWorkloadOperation struct {
-	server        *Server
-	context       context.Context
-	swarm         app.Swarm
-	action        string
-	actor         *ateapi.Actor
-	template      *ateapi.ActorTemplate
-	name          string
-	currentActor  *ateapi.Actor
-	savedActor    *ateapi.Actor
-	savedTemplate *ateapi.ActorTemplate
+	server          *Server
+	context         context.Context
+	swarm           app.Swarm
+	action          string
+	actor           *ateapi.Actor
+	template        *ateapi.ActorTemplate
+	name            string
+	currentActor    *ateapi.Actor
+	currentTemplate *ateapi.ActorTemplate
+	savedActor      *ateapi.Actor
+	savedTemplate   *ateapi.ActorTemplate
 }
 
 func (o *nativeWorkloadOperation) boundNamespace() error {
-	space, err := o.server.ateapi.GetAtespace(o.context, o.swarm.AtespaceName)
-	if err != nil {
-		return err
-	}
-	if o.swarm.AtespaceUID == "" || space.GetMetadata().GetUid() != o.swarm.AtespaceUID || space.GetMetadata().GetName() != o.swarm.AtespaceName {
-		return fmt.Errorf("%w: swarm namespace identity changed", app.ErrConflict)
-	}
-	if space.GetMetadata().GetDeleteTime() != nil {
-		return fmt.Errorf("%w: swarm namespace is terminating", app.ErrConflict)
-	}
-	return nil
+	return checkNativeNamespace(o.context, o.server.ateapi, o.swarm)
 }
 
 func (o *nativeWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmission, error) {
@@ -58,6 +49,7 @@ func (o *nativeWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmis
 		if err != nil {
 			return plan, err
 		}
+		o.currentTemplate = current
 		actors, err := o.server.ateapi.ListActors(o.context, o.swarm.AtespaceName)
 		if err != nil {
 			return plan, err
@@ -197,7 +189,7 @@ func (o *nativeWorkloadOperation) Apply(labels map[string]string) error {
 		}
 		o.savedActor, err = o.server.ateapi.ResumeActor(o.context, o.swarm.AtespaceName, o.name)
 	case "delete-template":
-		err = o.server.ateapi.DeleteActorTemplate(o.context, o.swarm.AtespaceName, o.name)
+		err = o.server.ateapi.DeleteActorTemplateUID(o.context, o.swarm.AtespaceName, o.name, o.currentTemplate.GetMetadata().GetUid())
 	case "create-template":
 		o.template.WorkerSelector = workerSelector(labels)
 		o.savedTemplate, err = o.server.ateapi.CreateActorTemplate(o.context, o.template)
