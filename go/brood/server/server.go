@@ -128,14 +128,16 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	// ticker rechecks authorization and the original session, including
 	// ordinary requests still waiting for upstream headers or bodies.
 	srv.proxy = proxy.New(proxy.Config{
-		Swarms:       srv.gateway,
-		Authorize:    srv.app.Can,
-		CurrentUser:  srv.actorViewUser,
-		RequestHook:  srv.actorViewRequest,
-		ResponseHook: srv.actorViewResponse,
-		Upstream:     NewSubstrateResolver(srv.ateapi, cfg.AtenetRouter),
-		Revalidate:   srv.validProxySession,
-		RouterTLS:    &proxy.TLSFiles{CertFile: cfg.AtenetCert, KeyFile: cfg.AtenetKey, CAFile: cfg.AtenetCA, ServerName: cfg.AtenetServerName},
+		Swarms:    srv.gateway,
+		Authorize: srv.canUseNative,
+		// Две native-проверки по 5 секунд должны уложиться в минутный отзыв.
+		RecheckInterval: 45 * time.Second,
+		CurrentUser:     srv.actorViewUser,
+		RequestHook:     srv.actorViewRequest,
+		ResponseHook:    srv.actorViewResponse,
+		Upstream:        NewSubstrateResolver(srv.ateapi, cfg.AtenetRouter),
+		Revalidate:      srv.validProxySession,
+		RouterTLS:       &proxy.TLSFiles{CertFile: cfg.AtenetCert, KeyFile: cfg.AtenetKey, CAFile: cfg.AtenetCA, ServerName: cfg.AtenetServerName},
 	})
 	srv.mux = http.NewServeMux()
 	srv.mount()

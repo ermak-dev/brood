@@ -37,7 +37,7 @@ func TestActorViewCannotAcquirePortalAuthority(t *testing.T) {
 	defer upstream.Close()
 	target, _ := url.Parse(upstream.URL)
 	ts.srv.proxy.Close()
-	ts.srv.proxy = proxy.New(proxy.Config{Swarms: ts.srv.gateway, Authorize: ts.srv.app.Can, CurrentUser: ts.srv.actorViewUser, Upstream: viewResolver{target}, RequestHook: ts.srv.actorViewRequest, ResponseHook: ts.srv.actorViewResponse, Revalidate: ts.srv.validProxySession})
+	ts.srv.proxy = proxy.New(proxy.Config{Swarms: ts.srv.gateway, Authorize: ts.srv.canUseNative, CurrentUser: ts.srv.actorViewUser, Upstream: viewResolver{target}, RequestHook: ts.srv.actorViewRequest, ResponseHook: ts.srv.actorViewResponse, Revalidate: ts.srv.validProxySession})
 	resp, err := admin.Get(ts.http.URL + "/api/swarms/" + swarm + "/proxy/actors/evil/")
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func viewTestProxy(t *testing.T, ts *testServer, handler http.Handler) {
 	t.Cleanup(upstream.Close)
 	target, _ := url.Parse(upstream.URL)
 	ts.srv.proxy.Close()
-	ts.srv.proxy = proxy.New(proxy.Config{Swarms: ts.srv.gateway, Authorize: ts.srv.app.Can, CurrentUser: ts.srv.actorViewUser, Upstream: viewResolver{target}, RequestHook: ts.srv.actorViewRequest, ResponseHook: ts.srv.actorViewResponse, Revalidate: ts.srv.validProxySession})
+	ts.srv.proxy = proxy.New(proxy.Config{Swarms: ts.srv.gateway, Authorize: ts.srv.canUseNative, CurrentUser: ts.srv.actorViewUser, Upstream: viewResolver{target}, RequestHook: ts.srv.actorViewRequest, ResponseHook: ts.srv.actorViewResponse, Revalidate: ts.srv.validProxySession})
 }
 
 func issueView(t *testing.T, ts *testServer, client *http.Client, swarm string) string {
@@ -190,9 +190,10 @@ func TestActorViewScopeAndRevocation(t *testing.T) {
 }
 
 func TestActorViewRealWebSocket(t *testing.T) {
-	for _, revoke := range []string{"logout", "viewer role"} {
+	for _, revoke := range []string{"logout", "viewer role", "native namespace"} {
 		t.Run(revoke, func(t *testing.T) {
-			ts := newTestServer(t)
+			fake := newFakeAteapi()
+			ts := newSubstrateServer(t, fake).testServer
 			_, alice, bob, swarm := actorsSetup(t, ts)
 			issuer := alice
 			if revoke == "viewer role" {
@@ -263,6 +264,16 @@ func TestActorViewRealWebSocket(t *testing.T) {
 			if revoke == "logout" {
 				response, data, _ := ts.do(issuer, "POST", "/api/auth/logout", ts.csrf(issuer), nil)
 				expectStatus(t, "logout", response, data, 204)
+			} else if revoke == "native namespace" {
+				name := swarmAtespace(t, ts.srv, swarm)
+				fake.mu.Lock()
+				fake.atespaces[name].Metadata.Uid = "replacement-native-namespace"
+				fake.mu.Unlock()
+				response, data, _ := ts.do(issuer, "GET", "/api/auth/session", "", nil)
+				expectStatus(t, "session survives namespace replacement", response, data, 200)
+				if data["authenticated"] != true {
+					t.Fatal("native identity test was confounded by session revocation")
+				}
 			} else {
 				response, data, _ := ts.do(alice, "POST", "/api/swarms/"+swarm+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "viewer"})
 				expectStatus(t, "revoke terminal write permission", response, data, 204)

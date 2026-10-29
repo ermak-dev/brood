@@ -42,14 +42,16 @@ import (
 // substrate, здесь важен HTTP-слой.
 type fakeAteapi struct {
 	ateapi.UnimplementedControlServer
-	mu                 sync.Mutex
-	atespaces          map[string]*ateapi.Atespace
-	actors             map[string]*ateapi.Actor
-	templates          map[string]*ateapi.ActorTemplate
-	workers            map[string]*ateapi.Worker
-	policies           map[string]*ateapi.AccessPolicy // "" — глобальная
-	namespaceReads     int
-	beforeNamespaceGet func()
+	mu                   sync.Mutex
+	atespaces            map[string]*ateapi.Atespace
+	actors               map[string]*ateapi.Actor
+	templates            map[string]*ateapi.ActorTemplate
+	workers              map[string]*ateapi.Worker
+	policies             map[string]*ateapi.AccessPolicy // "" — глобальная
+	namespaceReads       int
+	beforeNamespaceGet   func()
+	beforeResourceRead   func()
+	beforeResourceDelete func()
 }
 
 func newFakeAteapi() *fakeAteapi {
@@ -137,6 +139,9 @@ func (f *fakeAteapi) DeleteAtespace(_ context.Context, req *ateapi.DeleteAtespac
 func (f *fakeAteapi) ListActors(_ context.Context, req *ateapi.ListActorsRequest) (*ateapi.ListActorsResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeResourceRead != nil {
+		f.beforeResourceRead()
+	}
 	items := []*ateapi.Actor{}
 	for _, item := range f.actors {
 		if item.GetMetadata().GetAtespace() == req.GetAtespace() {
@@ -149,6 +154,9 @@ func (f *fakeAteapi) ListActors(_ context.Context, req *ateapi.ListActorsRequest
 func (f *fakeAteapi) GetActor(_ context.Context, req *ateapi.GetActorRequest) (*ateapi.Actor, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeResourceRead != nil {
+		f.beforeResourceRead()
+	}
 	item, ok := f.actors[req.GetActor().GetAtespace()+"/"+req.GetActor().GetName()]
 	if !ok {
 		return nil, grpcErr(codes.NotFound, fmt.Sprintf("actor %s not found", req.GetActor().GetName()))
@@ -175,9 +183,12 @@ func (f *fakeAteapi) UpdateActor(_ context.Context, req *ateapi.UpdateActorReque
 	defer f.mu.Unlock()
 	item := req.GetActor()
 	key := item.GetMetadata().GetAtespace() + "/" + item.GetMetadata().GetName()
-	if _, ok := f.actors[key]; !ok {
+	stored, ok := f.actors[key]
+	if !ok {
 		return nil, grpcErr(codes.NotFound, "actor not found")
 	}
+	item.Metadata = stored.Metadata
+	item.Status = stored.Status
 	f.actors[key] = item
 	return item, nil
 }
@@ -201,10 +212,16 @@ func (f *fakeAteapi) ResumeActor(_ context.Context, req *ateapi.ResumeActorReque
 func (f *fakeAteapi) DeleteActor(_ context.Context, req *ateapi.DeleteActorRequest) (*ateapi.Actor, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeResourceDelete != nil {
+		f.beforeResourceDelete()
+	}
 	key := req.GetActor().GetAtespace() + "/" + req.GetActor().GetName()
 	item, ok := f.actors[key]
 	if !ok {
 		return nil, grpcErr(codes.NotFound, "actor not found")
+	}
+	if uid := req.GetOptions().GetUid(); uid != "" && uid != item.GetMetadata().GetUid() {
+		return nil, grpcErr(codes.Aborted, "actor UID changed")
 	}
 	delete(f.actors, key)
 	return item, nil
@@ -223,6 +240,9 @@ func (f *fakeAteapi) actorOf(ref *ateapi.ObjectRef) (*ateapi.Actor, error) {
 func (f *fakeAteapi) ListActorTemplates(_ context.Context, req *ateapi.ListActorTemplatesRequest) (*ateapi.ListActorTemplatesResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeResourceRead != nil {
+		f.beforeResourceRead()
+	}
 	items := []*ateapi.ActorTemplate{}
 	for _, item := range f.templates {
 		if item.GetMetadata().GetAtespace() == req.GetAtespace() {
@@ -235,6 +255,9 @@ func (f *fakeAteapi) ListActorTemplates(_ context.Context, req *ateapi.ListActor
 func (f *fakeAteapi) GetActorTemplate(_ context.Context, req *ateapi.GetActorTemplateRequest) (*ateapi.ActorTemplate, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeResourceRead != nil {
+		f.beforeResourceRead()
+	}
 	item, ok := f.templates[req.GetActorTemplate().GetAtespace()+"/"+req.GetActorTemplate().GetName()]
 	if !ok {
 		return nil, grpcErr(codes.NotFound, "actor template not found")
@@ -259,10 +282,16 @@ func (f *fakeAteapi) CreateActorTemplate(_ context.Context, req *ateapi.CreateAc
 func (f *fakeAteapi) DeleteActorTemplate(_ context.Context, req *ateapi.DeleteActorTemplateRequest) (*ateapi.ActorTemplate, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.beforeResourceDelete != nil {
+		f.beforeResourceDelete()
+	}
 	key := req.GetActorTemplate().GetAtespace() + "/" + req.GetActorTemplate().GetName()
 	item, ok := f.templates[key]
 	if !ok {
 		return nil, grpcErr(codes.NotFound, "actor template not found")
+	}
+	if uid := req.GetOptions().GetUid(); uid != "" && uid != item.GetMetadata().GetUid() {
+		return nil, grpcErr(codes.Aborted, "actor template UID changed")
 	}
 	delete(f.templates, key)
 	return item, nil

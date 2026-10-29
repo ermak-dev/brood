@@ -21,8 +21,8 @@ const actorViewLimit = 4096
 
 type actorViewKey struct{}
 type actorView struct {
-	token, session, userID, username, swarm, actor, owner, project, atespace, origin string
-	expires                                                                          time.Time
+	token, session, userID, username, swarm, actor, owner, project, atespace, atespaceUID, origin string
+	expires                                                                                       time.Time
 }
 type actorViews struct {
 	mu      sync.Mutex
@@ -53,11 +53,11 @@ func (s *Server) validActorView(v actorView) bool {
 		return false
 	}
 	sw, found, err := s.gateway.SwarmByID(v.swarm)
-	if err != nil || !found || sw.State != app.StateActive || sw.OwnerID != v.owner || sw.ProjectID != v.project || sw.AtespaceName != v.atespace {
+	if err != nil || !found || sw.State != app.StateActive || sw.OwnerID != v.owner || sw.ProjectID != v.project || sw.AtespaceName != v.atespace || sw.AtespaceUID != v.atespaceUID {
 		return false
 	}
 	allowed, err := s.app.Can(id, app.ActionManageSwarm, app.SwarmRes(v.swarm))
-	return err == nil && allowed
+	return err == nil && allowed && s.checkSwarmNamespace(ctx, sw) == nil
 }
 
 func viewSegment(s string) bool {
@@ -125,7 +125,7 @@ func (s *Server) issueActorView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := base64.RawURLEncoding.EncodeToString(random[:])
-	v := actorView{token: token, session: cookie.Value, userID: user.ID, username: user.Username, swarm: sw.ID, actor: actor, owner: sw.OwnerID, project: sw.ProjectID, atespace: sw.AtespaceName, origin: viewOrigin(r), expires: time.Now().Add(actorViewTTL)}
+	v := actorView{token: token, session: cookie.Value, userID: user.ID, username: user.Username, swarm: sw.ID, actor: actor, owner: sw.OwnerID, project: sw.ProjectID, atespace: sw.AtespaceName, atespaceUID: sw.AtespaceUID, origin: viewOrigin(r), expires: time.Now().Add(actorViewTTL)}
 	s.views.mu.Lock()
 	for key, old := range s.views.tickets {
 		if !time.Now().Before(old.expires) {

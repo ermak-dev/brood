@@ -100,6 +100,12 @@ func (s *Server) swarmForAction(w http.ResponseWriter, r *http.Request, user sto
 		writeDetail(w, http.StatusNotFound, "swarm not found")
 		return app.Swarm{}, false
 	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodDelete {
+		if err := s.checkSwarmNamespace(r.Context(), sw); err != nil {
+			apiError(w, r, err)
+			return app.Swarm{}, false
+		}
+	}
 	return sw, true
 }
 
@@ -255,6 +261,9 @@ func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
+		if !s.nativeReadBound(w, r, sw) {
+			return
+		}
 		writeList(w, actors)
 		return
 	}
@@ -304,6 +313,9 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
+		if !s.nativeReadBound(w, r, sw) {
+			return
+		}
 		writeMessage(w, http.StatusOK, actor)
 	case http.MethodPut:
 		var actor ateapi.Actor
@@ -334,7 +346,10 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 		var actor *ateapi.Actor
 		var err error
 		if verb == "suspend" {
-			actor, err = client.SuspendActor(r.Context(), sw.AtespaceName, name)
+			err = s.checkSwarmNamespace(r.Context(), sw)
+			if err == nil {
+				actor, err = client.SuspendActor(r.Context(), sw.AtespaceName, name)
+			}
 		} else {
 			operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "resume-actor", name: name}
 			err = s.app.AdmitWorkload(user.ID, sw.ID, operation)
@@ -350,7 +365,15 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if err := client.DeleteActor(r.Context(), sw.AtespaceName, name); err != nil {
+		actor, err := client.GetActor(r.Context(), sw.AtespaceName, name)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		if !s.nativeReadBound(w, r, sw) {
+			return
+		}
+		if err := client.DeleteActorUID(r.Context(), sw.AtespaceName, name, actor.GetMetadata().GetUid()); err != nil {
 			apiError(w, r, err)
 			return
 		}
@@ -379,6 +402,9 @@ func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
 		templates, err := client.ListActorTemplates(r.Context(), sw.AtespaceName)
 		if err != nil {
 			apiError(w, r, err)
+			return
+		}
+		if !s.nativeReadBound(w, r, sw) {
 			return
 		}
 		writeList(w, templates)
@@ -426,6 +452,9 @@ func (s *Server) handleSwarmTemplate(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
+		if !s.nativeReadBound(w, r, sw) {
+			return
+		}
 		writeMessage(w, http.StatusOK, template)
 		return
 	}
@@ -465,6 +494,9 @@ func (s *Server) handleSwarmPolicy(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
+		if !s.nativeReadBound(w, r, sw) {
+			return
+		}
 		writeMessage(w, http.StatusOK, policy)
 		return
 	}
@@ -486,6 +518,10 @@ func (s *Server) handleSwarmPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	sw, ok := s.swarmFor(w, r, user)
 	if !ok {
+		return
+	}
+	if err := s.checkSwarmNamespace(r.Context(), sw); err != nil {
+		apiError(w, r, err)
 		return
 	}
 	scoped(&policy, sw.AtespaceName)
