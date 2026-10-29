@@ -1,4 +1,4 @@
-ARG PYTHON_IMAGE=python:3.12@sha256:0d0db5b17f11b1b7d1aafa74ceadaa64ba0944b267ff6fc22008a197acd6b9ad
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
 FROM oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04 AS panel
 WORKDIR /app
 COPY web/package.json web/bun.lock ./
@@ -7,6 +7,8 @@ COPY web/ ./
 RUN VERSION=v1.26.7+brood bun run build
 
 FROM ${PYTHON_IMAGE} AS build
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY brood/dev/pins.json /tmp/pins.json
 RUN python3 -I -c 'import json; p=json.load(open("/tmp/pins.json")); print(p["GO_VERSION"]); print(p["GO_SHA256"])' > /tmp/go-pins \
     && version="$(sed -n '1p' /tmp/go-pins)" \
