@@ -172,8 +172,50 @@ class LifecycleTests(unittest.TestCase):
         changes = [c for c in world.calls
                    if c.split()[:2] in (["docker", "stop"], ["docker", "start"], ["docker", "rm"],
                                         ["docker", "run"], ["kind.sh", "delete"],
-                                        ["kind.sh", "create"])]
+                                        ["kind.sh", "create"], ["docker", "update"])]
         self.assertEqual(changes, [])
+
+    # BUG: после reboot узел работает, но registry с restart=no остаётся выключенным (#82).
+    # HYPOTHESIS: install и start не согласуют restart policy принадлежащего registry.
+    # SOLUTION: unless-stopped при создании и update/start по проверенному сохранённому Id.
+    # RESULT: FIXED — 274 теста проходят; проверка reboot на стенде остаётся оператору.
+    # STATUS: FIXED
+    def test_registry_restart_policy_on_create_and_existing_lifecycle(self):
+        for command, existing in (("install", False), ("install", True), ("start", True)):
+            with self.subTest(command=command, existing=existing):
+                self.setUp()
+                if existing:
+                    self.installed()
+                world = World({NODE: node(), REGISTRY: registry()} if existing else {})
+                getattr(self.cluster(world), command)()
+                if not existing:
+                    creation = next(c for c in world.calls if c.startswith("docker run"))
+                    self.assertIn("--restart=unless-stopped", creation)
+                update = f"docker update --restart=unless-stopped {REGISTRY_ID}"
+                self.assertEqual({c for c in world.calls if c.startswith("docker update")},
+                                 {update})
+                self.assertLess(world.calls.index(update),
+                                world.calls.index(f"docker start {REGISTRY_ID}"))
+
+    def test_registry_policy_reconciliation_refuses_unverified_containers(self):
+        for command in ("install", "start"):
+            for labels, saved_id in (({"created-by": "foreign"}, REGISTRY_ID),
+                                     ({}, "replaced"), ({}, "")):
+                with self.subTest(command=command, labels=labels, saved_id=saved_id):
+                    self.setUp()
+                    self.installed(registry_id=saved_id)
+                    world = World({NODE: node(), REGISTRY: registry(labels)})
+                    with self.assertRaises(RuntimeError):
+                        getattr(self.cluster(world), command)()
+                    self.assertUntouched(world)
+                    self.assertFalse(any(c.startswith("docker update") for c in world.calls))
+
+    def test_stop_and_check_do_not_change_registry_restart_policy_or_start_containers(self):
+        self.installed()
+        world = World({NODE: node(), REGISTRY: registry()})
+        self.cluster(world).stop()
+        self.cluster(world).check()
+        self.assertFalse(any(c.startswith(("docker update", "docker start")) for c in world.calls))
 
     # ─── start, stop ─────────────────────────────────────────────────────
     def test_start_without_ownership_refuses(self):
@@ -197,7 +239,8 @@ class LifecycleTests(unittest.TestCase):
         changes = [c for c in world.calls if not c.startswith(("docker container inspect",
                                                                 "docker inspect", "docker info"))]
         self.assertEqual(changes, [
-            f"docker start {REGISTRY}",
+            f"docker update --restart=unless-stopped {REGISTRY_ID}",
+            f"docker start {REGISTRY_ID}",
             f"docker start {NODE}",
             f"docker exec {NODE} test -d /proc/sys/net/ipv6",
             f"docker exec {NODE} sysctl net.ipv4.conf.all.proxy_arp=1",
@@ -240,7 +283,7 @@ class LifecycleTests(unittest.TestCase):
         c = self.cluster(world)
         c.install()
         calls = world.calls
-        self.assertIn(f"docker run -d --restart=no --label created-by=substrate-local "
+        self.assertIn(f"docker run -d --restart=unless-stopped --label created-by=substrate-local "
                       f"-p 127.0.0.1:5002:5000 --name {REGISTRY} {local.REGISTRY_IMAGE}", calls)
         self.assertIn(f"kind.sh create cluster --name substrate --config {local.KIND_CONFIG} "
                       f"--wait 180s", calls)
@@ -284,7 +327,7 @@ class LifecycleTests(unittest.TestCase):
         self.installed()
         world = World({NODE: node(), REGISTRY: registry()})
         self.cluster(world, fetch=self.no_fetch).install()
-        self.assertIn(f"docker start {REGISTRY}", world.calls)
+        self.assertIn(f"docker start {REGISTRY_ID}", world.calls)
         self.assertNotIn(f"docker network connect kind {REGISTRY}", world.calls)
         self.assertFalse(any(c.startswith(("docker run", "kind.sh create")) for c in world.calls))
         self.assertTrue(any(c.startswith("install-ate-kind.sh deploy") for c in world.calls))

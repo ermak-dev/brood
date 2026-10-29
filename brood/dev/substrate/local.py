@@ -308,11 +308,12 @@ class LocalCluster:
             self._download_kubectl()
         run = self.shell.run
         if not self._exists(REGISTRY):
-            run("docker", "run", "-d", "--restart=no", "--label", f"created-by={REGISTRY_OWNER}",
+            run("docker", "run", "-d", "--restart=unless-stopped", "--label",
+                f"created-by={REGISTRY_OWNER}",
                 "-p", f"127.0.0.1:{REGISTRY_PORT}:5000", "--name", REGISTRY, REGISTRY_IMAGE)
             self._record(REGISTRY)
         else:
-            run("docker", "start", REGISTRY)
+            self._start_registry()
         if not self._exists(NODE):
             config_path = KIND_CONFIG
             if self.ports:
@@ -389,11 +390,21 @@ class LocalCluster:
                                f"cluster; recreate it with brood substrate uninstall, then "
                                f"brood substrate install")
 
+    def _start_registry(self):
+        """После сверки владения согласовать reboot, сохранив явную остановку.
+
+        Используем сохранённый Id: подмена имени после проверки не должна
+        перенести restart policy на чужой контейнер.
+        """
+        registry_id = _read(self.ids[REGISTRY])
+        self.shell.run("docker", "update", "--restart=unless-stopped", registry_id)
+        self.shell.run("docker", "start", registry_id)
+
     def _start(self):
         self._check_ownership()
         if not (self._exists(NODE) and self._exists(REGISTRY)):
             raise RuntimeError("Substrate is incomplete: run brood substrate install")
-        self.shell.run("docker", "start", REGISTRY)
+        self._start_registry()
         self.shell.run("docker", "start", NODE)
         self._require_ipv6()
         self._proxy_arp()
