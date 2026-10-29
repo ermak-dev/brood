@@ -54,7 +54,8 @@ class LXCTests(unittest.TestCase):
         self.assertEqual(desired["metadata"]["labels"], {infrastructure.OWNER[0]: infrastructure.OWNER[1]})
         self.assertNotIn("sandboxconfig.ate.dev/is-class-default", desired["metadata"].get("annotations", {}))
         self.assertEqual(desired["spec"], {"sandboxClass": "lxc", "defaultVersion": "image",
-                         "versions": [{"name": "image", "assets": {"amd64": {}, "arm64": {}}}]})
+                         "versions": [{"name": "image", "state": "Enabled",
+                                       "assets": {"amd64": {}, "arm64": {}}}]})
         owned = copy.deepcopy(desired)
         owned["metadata"].update(uid="own-config", resourceVersion="7")
         self.assertIsNone(lxc.configuration({"items": [owned]}))
@@ -69,6 +70,40 @@ class LXCTests(unittest.TestCase):
             mutate(existing)
             with self.subTest(existing=existing), self.assertRaises(RuntimeError):
                 lxc.configuration({"items": [existing]})
+
+    # BUG: #84: API добавляет state=Enabled и ломает точное сравнение своего config.
+    # HYPOTHESIS: явный native default сохранит строгую проверку spec при повторе.
+    # SOLUTION: desired явно содержит state=Enabled, без нормализации чужого spec.
+    # RESULT: FIXED — повтор не пишет config; Disabled и неизвестные state отвергаются.
+    # STATUS: FIXED
+    def test_prepare_reuses_api_defaulted_owned_configuration_without_writes(self):
+        owned = lxc.configuration({"items": []})
+        owned["metadata"].update(uid="own-config", resourceVersion="7")
+        owned["spec"]["versions"][0]["state"] = "Enabled"
+        before = copy.deepcopy(owned)
+        cluster = self.cluster(configs={"items": [owned]})
+        build = Mock(return_value=IMAGE)
+        try:
+            result = lxc.Deploy(cluster, build=build).prepare()
+        except RuntimeError as error:
+            self.fail(f"API-defaulted owned configuration must be reusable: {error}")
+        self.assertEqual(result, IMAGE)
+        self.assertEqual(owned, before)
+        self.assertFalse(cluster.created)
+        build.assert_called_once_with(cluster)
+        self.assertNotIn("create", str(cluster.shell.mock_calls))
+        self.assertNotIn("delete", str(cluster.shell.mock_calls))
+        self.assertNotIn("scale", str(cluster.shell.mock_calls))
+        cluster.shell.run.assert_not_called()
+
+    def test_configuration_refuses_disabled_or_unknown_version_state(self):
+        for state in ("Disabled", "unknown", None):
+            with self.subTest(state=state):
+                owned = lxc.configuration({"items": []})
+                owned["metadata"].update(uid="own-config", resourceVersion="7")
+                owned["spec"]["versions"][0]["state"] = state
+                with self.assertRaisesRegex(RuntimeError, "identity or spec"):
+                    lxc.configuration({"items": [owned]})
 
     def cluster(self, crd=CRD, configs=None):
         shell = Mock(env={"PATH": "/bin"})
