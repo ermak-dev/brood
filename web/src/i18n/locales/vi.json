@@ -2659,6 +2659,9 @@
     }
   },
   "worker_pools": {
+    "labels": "Nhãn của pool",
+    "labels_hint": "Bộ lập lịch đối chiếu worker selector của mẫu actor với các nhãn này. Pool không có nhãn phù hợp sẽ không nhận actor đó, dù báo bao nhiêu tài nguyên.",
+    "no_labels": "không có nhãn",
     "lxc_warning": "LXC thử nghiệm dùng chung nhân của nút, chỉ dành cho công việc đáng tin cậy. Mỗi worker hỗ trợ một actor. Không có checkpoint bộ nhớ hay tự động khôi phục tiến trình sau lỗi nút.",
     "title": "Nhóm worker",
     "create": "Tạo nhóm worker",
@@ -2690,6 +2693,7 @@
     "limit_cpu": "Giới hạn CPU",
     "limit_memory": "Giới hạn bộ nhớ",
     "validation": {
+      "label": "Dùng nhãn Kubernetes: tiền tố DNS tùy chọn và tên tối đa 63 ký tự, bắt đầu và kết thúc bằng chữ hoặc số.",
       "name": "Dùng tên DNS chữ thường, tối đa 253 ký tự, mỗi phần tối đa 63 ký tự.",
       "replicas": "Nhập số nguyên từ 0 đến 2147483647.",
       "image": "Nhập ảnh worker không có khoảng trắng.",

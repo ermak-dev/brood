@@ -89,4 +89,23 @@ export function isShortName(name: string): boolean {
   return name.length <= 63 && /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name);
 }
 
+const LABEL_NAME = /^[a-zA-Z0-9]([-a-zA-Z0-9_.]*[a-zA-Z0-9])?$/;
+const DNS_SUBDOMAIN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
+
+/** k8s label key: a name, optionally behind one DNS-subdomain prefix. Checked
+ * here so a typo is named in the form instead of coming back as a 422. */
+export function isLabelKey(key: string): boolean {
+  const slash = key.indexOf('/');
+  if (slash === -1) return key.length <= 63 && LABEL_NAME.test(key);
+  const prefix = key.slice(0, slash);
+  const name = key.slice(slash + 1);
+  return prefix.length > 0 && prefix.length <= 253 && DNS_SUBDOMAIN.test(prefix)
+    && name.length <= 63 && LABEL_NAME.test(name);
+}
+
+/** k8s label value: a name, or empty. */
+export function isLabelValue(value: string): boolean {
+  return value === '' || (value.length <= 63 && LABEL_NAME.test(value));
+}
+
 export const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;

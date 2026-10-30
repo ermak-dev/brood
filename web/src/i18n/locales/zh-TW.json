@@ -2679,6 +2679,9 @@
     }
   },
   "worker_pools": {
+    "labels": "資源池標籤",
+    "labels_hint": "調度器用這些標籤比對 actor 範本的 worker selector。沒有相符標籤的資源池，無論回報多少容量，都無法承載該 actor。",
+    "no_labels": "無標籤",
     "lxc_warning": "實驗性 LXC 共用節點核心，僅適用於受信任的工作負載。每個工作節點支援一個 Actor。不支援記憶體檢查點，也不保證節點故障後自動恢復程序。",
     "title": "工作節點池",
     "create": "建立工作節點池",
@@ -2710,6 +2713,7 @@
     "limit_cpu": "CPU 限制",
     "limit_memory": "記憶體限制",
     "validation": {
+      "label": "請使用 Kubernetes 標籤：可選 DNS 前綴和最多 63 個字元的名稱，首尾為字母或數字。",
       "name": "使用小寫 DNS 名稱，總長不超過 253 字元，每段不超過 63 字元。",
       "replicas": "輸入 0 到 2147483647 之間的整數。",
       "image": "輸入不含空白的工作節點映像。",
