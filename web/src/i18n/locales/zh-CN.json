@@ -2506,11 +2506,17 @@
     "storage_hint": "留空则使用安装的默认存储"
   },
   "workers": {
+    "replace": "恢复容量",
+    "replace_title": "恢复资源池容量？",
+    "replace_message": "worker {{name}} 将被删除，资源池会创建替代节点。为保护 actor，仅允许替换未分配资源的节点。此操作不会自动启动 actor。",
+    "replaced": "已请求替换 worker。请刷新列表以查看就绪的节点。",
+    "drained_hint": "已退出服务的节点：{{count}}。它们不接收 actor，也不会自行恢复。选择“恢复容量”以替换未分配资源的节点。",
+
     "title": "工作节点",
     "meta_count": "节点：{{count}}",
     "meta_active": "活跃：{{count}}",
-    "meta_draining": "排空中：{{count}}",
-    "managed_hint": "工作节点由 ate-controller 依据池中的 pod 创建和更新：标签来自 WorkerPool，可用性来自 pod 就绪状态，手动修改会被覆盖。此处仅可排空：该操作不可逆，节点将不再接收新 actor。",
+    "meta_draining": "已退出服务：{{count}}",
+    "managed_hint": "资源池会自动启动工作节点。要增加容量，请创建资源池或增加现有池的工作节点数量。",
     "pool": "池",
     "node": "节点",
     "actors": "Actor",
@@ -2520,15 +2526,15 @@
     "load": "负载：已用 / 容量",
     "labels": "标签",
     "labels_hint": "来自 WorkerPool；模板和 actor 的 workerSelector 据此选择节点",
-    "drain": "排空",
-    "drain_title": "排空工作节点",
-    "drain_message": "排空工作节点 {{name}}？不可撤销：调度器将不再在其上放置 actor。",
-    "drained": "工作节点 {{name}} 正在排空",
+    "drain": "退出服务",
+    "drain_title": "让此节点退出服务？",
+    "drain_message": "worker {{name}} 将永久停止接收 actor。已分配的 actor 可能无法恢复运行。这不是暂停。恢复容量需要在无资源分配时替换该节点。",
+    "drained": "worker {{name}} 已退出服务，不会自行恢复。",
     "empty": "暂无工作节点",
     "empty_hint": "要添加工作节点，请在工作池中创建池。",
     "state": {
       "active": "活跃",
-      "draining": "排空中",
+      "draining": "已退出服务",
       "unavailable": "不可用"
     }
   },
