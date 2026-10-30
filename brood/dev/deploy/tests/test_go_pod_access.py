@@ -1,6 +1,7 @@
-"""FEATURE: Go deploy доставляет собственный read-only Role для диагностики.
+"""FEATURE: Go deploy доставляет собственный Role для pod своего namespace.
 
 SPEC: Общий historical Role не перезаписывается; чужой объект — отказ до сборки.
+Набор глаголов берётся из общего манифеста, второго источника прав нет.
 """
 import json
 import unittest
@@ -19,7 +20,7 @@ class GoPodAccessTests(unittest.TestCase):
             "name": "brood-go-pod-diagnostics", "namespace": "brood", "labels": OWNER,
         })
         self.assertEqual(roles[0]["rules"], [
-            {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list"]},
+            {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list", "delete"]},
         ])
         binding = next(obj for obj in objects if obj["kind"] == "RoleBinding")
         self.assertEqual(binding["roleRef"]["name"], "brood-go-pod-diagnostics")
