@@ -53,7 +53,7 @@ def configuration(response):
     desired = {"apiVersion": "ate.dev/v1", "kind": "SandboxConfig", "metadata": {
         "name": CONFIG, "labels": {infrastructure.OWNER[0]: infrastructure.OWNER[1]}},
         "spec": {"sandboxClass": "lxc", "defaultVersion": "image", "versions": [
-            {"name": "image", "assets": {"amd64": {}, "arm64": {}}}]}}
+            {"name": "image", "state": "Enabled", "assets": {"amd64": {}, "arm64": {}}}]}}
     try:
         items = response["items"]
         if not isinstance(items, list):
