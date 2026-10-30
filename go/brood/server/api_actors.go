@@ -357,6 +357,9 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 			actor = operation.savedActor
 		}
 		if err != nil {
+			if verb == "resume" && s.writePlacementFailure(w, r, user, sw, name, err) {
+				return
+			}
 			apiError(w, r, err)
 			return
 		}
