@@ -42,43 +42,27 @@ export function WorkersPage() {
   const { confirm } = useActions(refresh);
   const [viewing, setViewing] = useState<Worker | null>(null);
 
-  const drain = (worker: Worker) =>
-    confirm({
-      title: t('workers.drain_title'),
-      message: t('workers.drain_message', { name: worker.metadata.name }),
-      confirmText: t('workers.drain'),
-      success: t('workers.drained', { name: worker.metadata.name }),
-      run: async () => {
-        await workersApi.drain(worker.metadata.name);
-        setViewing(null);
-      },
-    });
-
-  const replace = (worker: Worker) =>
-    confirm({
-      title: t('workers.replace_title'),
-      message: t('workers.replace_message', { name: worker.metadata.name }),
-      confirmText: t('workers.replace'),
-      success: t('workers.replaced', { name: worker.metadata.name }),
-      run: async () => {
-        await workersApi.replace(worker.metadata.name);
-        setViewing(null);
-      },
-    });
-
-  // Одна кнопка строки и карточки: что предложить, решает состояние.
-  const action = (worker: Worker, inRow: boolean) => {
+  const action = (worker: Worker, size?: 'sm') => {
     const next = workerAction(stateOf(worker));
     if (!next) return null;
-    const recovery = next === 'replace';
     return (
       <Button
-        variant={recovery ? (inRow ? 'secondary' : 'primary') : inRow ? 'ghost' : 'danger'}
-        size={inRow ? 'sm' : undefined}
-        className={!recovery && inRow ? styles.dangerText : undefined}
-        onClick={() => (recovery ? replace(worker) : drain(worker))}
+        variant={next === 'replace' ? 'secondary' : 'danger'}
+        size={size}
+        onClick={() => confirm({
+          title: t(`workers.${next}_title`),
+          message: t(`workers.${next}_message`, { name: worker.metadata.name }),
+          confirmText: t(`workers.${next}`),
+          success: t(next === 'replace' ? 'workers.replaced' : 'workers.drained', {
+            name: worker.metadata.name,
+          }),
+          run: async () => {
+            await workersApi[next](worker.metadata.name);
+            setViewing(null);
+          },
+        })}
       >
-        {t(recovery ? 'workers.replace' : 'workers.drain')}
+        {t(`workers.${next}`)}
       </Button>
     );
   };
@@ -137,7 +121,7 @@ export function WorkersPage() {
           rowKey={(w) => w.metadata.uid ?? w.metadata.name}
           onRowClick={setViewing}
           actionsLabel={t('substrate.actions')}
-          actions={(w) => action(w, true)}
+          actions={(w) => stateOf(w) === 'draining' ? action(w, 'sm') : null}
         />
       ) : (
         <div className={styles.empty}>
@@ -152,7 +136,7 @@ export function WorkersPage() {
         size="lg"
         eyebrow={viewing?.workerPool}
         title={viewing?.metadata.name ?? ''}
-        extra={viewing && action(viewing, false)}
+        extra={viewing && action(viewing)}
       >
         {viewing && (
           <div className={styles.form}>
