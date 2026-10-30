@@ -242,6 +242,10 @@ export const workersApi = {
   list: () => list<Worker>('/api/workers'),
   drain: (name: string) =>
     request<Worker>('POST', `/api/workers/${path(name)}`, { action: 'drain' }),
+  // Единственный выход из осушения: под удаляется, Deployment заводит новый,
+  // и его запись регистрируется заново.
+  replace: (name: string) =>
+    request<null>('POST', `/api/workers/${path(name)}`, { action: 'replace' }),
 };
 
 // WorkerPool — Kubernetes-объект, не protojson ateapi. Предусловия исходного

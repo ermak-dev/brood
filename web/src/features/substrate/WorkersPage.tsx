@@ -12,6 +12,7 @@ import { PageHeader } from './components/PageHeader';
 import { StateBadge } from './components/StateBadge';
 import { DASH, formatCpu, formatDate, formatMemory, shortState } from './format';
 import { useActions, useResource } from './hooks';
+import { workerAction } from './workerActions';
 import styles from './substrate.module.scss';
 
 const stateOf = (worker: Worker) => shortState(worker.status?.state, 'WORKER_STATE_');
@@ -29,8 +30,11 @@ function usage(
 
 /** brood: the install's workers -- mirrors of the pool's pods that
  * ate-controller writes (labels from the WorkerPool, availability from pod
- * readiness), so a hand edit would be undone at the next sync. Drain is the
- * one lasting action: final, the scheduler stops placing actors there. */
+ * readiness), so a hand edit would be undone at the next sync.
+ *
+ * Draining is final: the record never becomes schedulable again, while its pod
+ * keeps running and holding the pool's place. Replacing is the way back --
+ * the pod is deleted and the Deployment brings up a fresh, schedulable one. */
 export function WorkersPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -49,6 +53,35 @@ export function WorkersPage() {
         setViewing(null);
       },
     });
+
+  const replace = (worker: Worker) =>
+    confirm({
+      title: t('workers.replace_title'),
+      message: t('workers.replace_message', { name: worker.metadata.name }),
+      confirmText: t('workers.replace'),
+      success: t('workers.replaced', { name: worker.metadata.name }),
+      run: async () => {
+        await workersApi.replace(worker.metadata.name);
+        setViewing(null);
+      },
+    });
+
+  // Одна кнопка строки и карточки: что предложить, решает состояние.
+  const action = (worker: Worker, inRow: boolean) => {
+    const next = workerAction(stateOf(worker));
+    if (!next) return null;
+    const recovery = next === 'replace';
+    return (
+      <Button
+        variant={recovery ? (inRow ? 'secondary' : 'primary') : inRow ? 'ghost' : 'danger'}
+        size={inRow ? 'sm' : undefined}
+        className={!recovery && inRow ? styles.dangerText : undefined}
+        onClick={() => (recovery ? replace(worker) : drain(worker))}
+      >
+        {t(recovery ? 'workers.replace' : 'workers.drain')}
+      </Button>
+    );
+  };
 
   const columns: Column<Worker>[] = [
     { key: 'name', label: t('substrate.name'), primary: true, render: (w) => w.metadata.name },
@@ -87,6 +120,9 @@ export function WorkersPage() {
         ]}
       />
       <p className={styles.notice}>{t('workers.managed_hint')}</p>
+      {count('draining') > 0 && (
+        <p className={styles.notice} role="note">{t('workers.drained_hint', { count: count('draining') })}</p>
+      )}
 
       {loading ? (
         <LoadingSpinner />
@@ -101,13 +137,7 @@ export function WorkersPage() {
           rowKey={(w) => w.metadata.uid ?? w.metadata.name}
           onRowClick={setViewing}
           actionsLabel={t('substrate.actions')}
-          actions={(w) =>
-            stateOf(w) === 'active' && (
-              <Button variant="ghost" size="sm" className={styles.dangerText} onClick={() => drain(w)}>
-                {t('workers.drain')}
-              </Button>
-            )
-          }
+          actions={(w) => action(w, true)}
         />
       ) : (
         <div className={styles.empty}>
@@ -122,14 +152,7 @@ export function WorkersPage() {
         size="lg"
         eyebrow={viewing?.workerPool}
         title={viewing?.metadata.name ?? ''}
-        extra={
-          viewing &&
-          stateOf(viewing) === 'active' && (
-            <Button variant="danger" onClick={() => drain(viewing)}>
-              {t('workers.drain')}
-            </Button>
-          )
-        }
+        extra={viewing && action(viewing, false)}
       >
         {viewing && (
           <div className={styles.form}>

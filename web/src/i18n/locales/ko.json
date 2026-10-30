@@ -2508,11 +2508,16 @@
     "storage_hint": "비우면 설치의 기본 저장소"
   },
   "workers": {
+    "replace": "교체",
+    "replace_title": "드레인된 워커 교체",
+    "replace_message": "워커 {{name}}을(를) 교체할까요? 해당 pod이 삭제되고 풀이 새 pod을 시작하며, 스케줄 가능한 워커로 등록됩니다. 드레인된 워커는 달리 되살릴 수 없습니다.",
+    "replaced": "워커 {{name}}을(를) 교체하는 중입니다",
+    "drained_hint": "드레인된 워커는 풀의 자리를 계속 차지하지만 actor를 받지 않으며 스스로 복구되지 않습니다. 용량을 되찾으려면 교체하세요. ({{count}})",
     "title": "워커",
     "meta_count": "워커: {{count}}",
     "meta_active": "활성: {{count}}",
-    "meta_draining": "배수 중: {{count}}",
-    "managed_hint": "워커는 ate-controller가 풀의 pod로 만들고 갱신합니다: 레이블은 WorkerPool에서, 가용성은 pod 준비 상태에서 오므로 수동 편집은 되돌려집니다. 여기서는 배수만 가능합니다: 되돌릴 수 없으며 새 actor가 배치되지 않습니다.",
+    "meta_draining": "드레인됨: {{count}}",
+    "managed_hint": "ate-controller가 풀의 pod에서 워커를 만들고 갱신합니다. 레이블은 WorkerPool에서, 가용성은 pod 준비 상태에서 오므로 수동 수정은 되돌려집니다. 드레인은 되돌릴 수 없으며, 드레인된 워커의 용량은 교체로 돌아옵니다.",
     "pool": "풀",
     "node": "노드",
     "actors": "Actor",
@@ -2524,13 +2529,13 @@
     "labels_hint": "WorkerPool에서 옴; 템플릿과 actor의 workerSelector가 이것으로 워커를 고릅니다",
     "drain": "배수",
     "drain_title": "워커 배수",
-    "drain_message": "워커 {{name}}을(를) 배수할까요? 되돌릴 수 없습니다: 스케줄러가 더 이상 actor를 배치하지 않습니다.",
-    "drained": "워커 {{name}} 배수 중",
+    "drain_message": "워커 {{name}}을(를) 드레인할까요? 되돌릴 수 없습니다. 이 워커는 다시는 actor를 받지 않으며, pod은 교체할 때까지 계속 실행됩니다. 용량은 교체로만 돌아옵니다.",
+    "drained": "워커 {{name}}이(가) 드레인되었습니다. 용량을 되찾으려면 교체하세요",
     "empty": "워커 없음",
     "empty_hint": "워커를 추가하려면 워커 풀에서 풀을 만드세요.",
     "state": {
       "active": "활성",
-      "draining": "배수 중",
+      "draining": "드레인됨",
       "unavailable": "사용 불가"
     }
   },

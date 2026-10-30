@@ -2508,11 +2508,16 @@
     "storage_hint": "Empty -- the install's default storage"
   },
   "workers": {
+    "replace": "Replace",
+    "replace_title": "Replace drained worker",
+    "replace_message": "Replace worker {{name}}? Its pod is deleted and the pool starts a fresh one, which registers as a schedulable worker. A drained worker cannot be revived any other way.",
+    "replaced": "Worker {{name}} is being replaced",
+    "drained_hint": "Drained workers still hold their place in the pool but take no actors, and they never recover. Replace them to get the capacity back. ({{count}})",
     "title": "Workers",
     "meta_count": "workers: {{count}}",
     "meta_active": "active: {{count}}",
-    "meta_draining": "draining: {{count}}",
-    "managed_hint": "ate-controller creates and updates workers from the pool's pods: labels come from the WorkerPool and availability from pod readiness, so a manual edit would be undone. Draining is the one action here: it is final, no new actors are placed on the worker.",
+    "meta_draining": "drained: {{count}}",
+    "managed_hint": "ate-controller creates and updates workers from the pool’s pods: labels come from the WorkerPool and availability from pod readiness, so a manual edit would be undone. Draining is final, and replacing a drained worker is how its capacity comes back.",
     "pool": "Pool",
     "node": "Node",
     "actors": "Actors",
@@ -2524,13 +2529,13 @@
     "labels_hint": "From the WorkerPool; the workerSelector of templates and actors picks workers by them",
     "drain": "Drain",
     "drain_title": "Drain worker",
-    "drain_message": "Drain worker {{name}}? This cannot be undone: the scheduler stops placing actors on it.",
-    "drained": "Worker {{name}} is draining",
+    "drain_message": "Drain worker {{name}}? This is final: the worker never takes actors again, and its pod keeps running until you replace it. Capacity comes back only by replacing the worker.",
+    "drained": "Worker {{name}} is drained; replace it to get its capacity back",
     "empty": "No workers",
     "empty_hint": "Create a pool in Worker pools to add workers.",
     "state": {
       "active": "active",
-      "draining": "draining",
+      "draining": "drained",
       "unavailable": "unavailable"
     }
   },

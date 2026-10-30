@@ -2514,11 +2514,16 @@
     "storage_hint": "Để trống -- kho mặc định của bản cài"
   },
   "workers": {
+    "replace": "Thay thế",
+    "replace_title": "Thay thế worker đã drain",
+    "replace_message": "Thay thế worker {{name}}? Pod của nó bị xóa và pool khởi tạo pod mới, đăng ký thành worker nhận được actor. Worker đã drain không thể khôi phục bằng cách khác.",
+    "replaced": "Đang thay thế worker {{name}}",
+    "drained_hint": "Worker đã drain vẫn chiếm chỗ trong pool nhưng không nhận actor và không tự phục hồi. Hãy thay thế để lấy lại tài nguyên. ({{count}})",
     "title": "Worker",
     "meta_count": "worker: {{count}}",
     "meta_active": "hoạt động: {{count}}",
-    "meta_draining": "đang drain: {{count}}",
-    "managed_hint": "ate-controller tạo và cập nhật worker theo pod của pool: nhãn lấy từ WorkerPool, khả dụng theo trạng thái sẵn sàng của pod, nên sửa tay sẽ bị hoàn lại. Ở đây chỉ có drain: không hoàn tác được, worker không nhận actor mới.",
+    "meta_draining": "đã drain: {{count}}",
+    "managed_hint": "ate-controller tạo và cập nhật worker từ pod của pool: nhãn lấy từ WorkerPool, khả dụng lấy từ trạng thái sẵn sàng của pod, nên sửa tay sẽ bị hoàn tác. Drain là vĩnh viễn, và thay thế là cách lấy lại tài nguyên của worker đã drain.",
     "pool": "Pool",
     "node": "Node",
     "actors": "Actor",
@@ -2530,13 +2535,13 @@
     "labels_hint": "Từ WorkerPool; workerSelector của mẫu và actor chọn worker theo đó",
     "drain": "Drain",
     "drain_title": "Drain worker",
-    "drain_message": "Drain worker {{name}}? Không hoàn tác được: bộ lập lịch ngừng đặt actor lên nó.",
-    "drained": "Worker {{name}} đang drain",
+    "drain_message": "Drain worker {{name}}? Điều này là vĩnh viễn: worker sẽ không bao giờ nhận actor nữa, và pod của nó vẫn chạy cho đến khi bạn thay thế. Tài nguyên chỉ trở lại khi thay thế worker.",
+    "drained": "Worker {{name}} đã drain; hãy thay thế để lấy lại tài nguyên",
     "empty": "Chưa có worker",
     "empty_hint": "Để thêm worker, hãy tạo nhóm trong mục Nhóm worker.",
     "state": {
       "active": "hoạt động",
-      "draining": "đang drain",
+      "draining": "đã drain",
       "unavailable": "không khả dụng"
     }
   },
