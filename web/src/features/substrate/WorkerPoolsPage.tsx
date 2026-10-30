@@ -144,6 +144,7 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, images, missing,
   // Обновление списка из шапки не меняет предусловие открытого черновика.
   const [{ source, initial }] = useState(() => ({ source: loadedSource, initial: loadedDraft }));
   const [draft, setDraft] = useState(initial);
+  const [touched, setTouched] = useState<Partial<Record<keyof PoolDraft, boolean>>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const { run } = useActions(refresh);
@@ -170,7 +171,8 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, images, missing,
   type TextField = { [K in keyof PoolDraft]: PoolDraft[K] extends string ? K : never }[keyof PoolDraft];
   const input = (field: TextField, label: string, hint?: string) => (
     <Input label={label} value={draft[field]} disabled={saving || field === 'workerImage' || (field === 'name' && source !== null)}
-      hint={hint} error={errors[field] ? t(`worker_pools.validation.${errors[field]}`) : undefined}
+      hint={hint} error={touched[field] && errors[field] ? t(`worker_pools.validation.${errors[field]}`) : undefined}
+      onBlur={() => setTouched((current) => ({ ...current, [field]: true }))}
       onChange={(event) => setDraft({ ...draft, [field]: event.target.value })}
       {...(field === 'replicas' ? { type: 'number', min: 0, max: 2147483647, step: 1 } : {})} />
   );
