@@ -189,6 +189,41 @@ UpdateActor с исходными UID/version, затем ResumeActor. Это д
 становятся распределённой quota-транзакцией: admission сериализован внутри
 одного процесса Brood и считает актуальные native записи без второго счётчика.
 
+## Восстановление ёмкости и отказ размещения
+
+`POST /api/workers/{name}` принимает `{"action":"drain"}` или
+`{"action":"replace"}`. Обе операции требуют активного администратора и
+обычной защиты Origin/CSRF. `drain` — необратимый native переход в `DRAINING`,
+а не пауза воркера и не ожидание автоматического возврата. Сам по себе этот
+вызов не удаляет pod. Повторно сделать ту же запись Worker активной нельзя.
+
+`replace` возвращает 204 после принятого Kubernetes удаления, не после
+регистрации замены. Допускается только `DRAINING` в namespace установки
+`brood` с нулевыми actor/CPU/memory allocations; иначе 409 без удаления.
+Имя и UID pod читаются из native Worker, pod должен иметь метку
+`ate.dev/worker-pool`. Kubernetes DeleteOptions содержит UID precondition,
+поэтому замена с тем же именем не удаляется вместо прежнего pod. Deployment
+создаёт новый pod и новую запись Worker; клиенты перечитывают список до
+готовности. Пул и его runtime не меняются, акторы не запускаются автоматически.
+Сервисный аккаунт получает namespaced `pods: get/list/delete`; RBAC не умеет
+ограничивать delete по метке, проверку метки выполняет библиотека.
+
+Точный native отказ resume `no worker has room for the actor` сохраняет
+исходный HTTP-статус и получает `code=actor_placement_unavailable` вместе с
+английским `detail`. Обычному участнику возвращается общая причина без чтения
+глобального списка воркеров. Активному администратору добавляется `placement`:
+`workers` с `name` и `reasons`, `noWorkers`, `templateSelector`, `actorSelector`,
+`unchecked`. Причина содержит `code`, для неактивного воркера — native `state`,
+для CPU/памяти/слотов — decimal strings `required` и `available`. CPU измеряется
+в millicores, память — в bytes; свободный остаток может быть отрицательным.
+
+Оба selector применяются одновременно. Проверяются регистрация, состояние и
+видимые ресурсы, но не воспроизводится весь native scheduler: отсутствие
+видимых причин не означает успех, ограничения snapshot/runtime могут остаться
+неизвестными. Ошибка ListWorkers не превращается в пустой список. Admin-флаг
+перечитывается до и после RPC, native namespace UID проверяется вокруг чтений.
+Посторонние native отказы сохраняют прежний контракт без этой диагностики.
+
 ## Сборка и push
 
 `bro build [target]` читает текущий `./Broodfile`, не требует login/registry и

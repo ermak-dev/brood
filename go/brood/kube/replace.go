@@ -9,13 +9,11 @@ import (
 // принадлежат пулу; соседей установки это действие не касается.
 const podLabel = "ate.dev/worker-pool"
 
-// ReplaceWorkerPod удаляет один под воркера, чтобы его Deployment создал
-// новый. Это единственный выход из WORKER_STATE_DRAINING: состояние
-// окончательное, запись Worker в работу уже не вернётся, а под продолжает
-// жить и держать место пула.
-//
-// Удаление привязано к uid пода: под с тем же именем, созданный на замену,
-// никогда не будет удалён вместо исходного. Под без метки пула не трогаем.
+// ReplaceWorkerPod deletes a worker pod so its Deployment can create a new one.
+// DRAINING is final: the old Worker record cannot become schedulable again.
+// Deletion requires the observed pod UID and a worker-pool label; a replacement
+// pod with the same name is protected by the Kubernetes UID precondition.
+// Callers must verify that the worker is drained and has no actor allocations.
 func (p *Pools) ReplaceWorkerPod(ctx context.Context, pod, uid string) error {
 	name, err := validName(pod)
 	if err != nil || name == "" || uid == "" {
