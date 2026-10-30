@@ -2659,6 +2659,8 @@
     }
   },
   "worker_pools": {
+    "not_installed": "Được hỗ trợ nhưng không hiển thị ở đây, vì bản cài đặt này chưa khai báo image worker cho chúng: {{classes}}.",
+    "lxc_install_hint": "Chuẩn bị LXC bằng “brood deploy lxc --trusted-workloads”, rồi thêm digest được in ra vào WORKER_POOL_IMAGES.",
     "labels": "Nhãn của pool",
     "labels_hint": "Bộ lập lịch đối chiếu worker selector của mẫu actor với các nhãn này. Pool không có nhãn phù hợp sẽ không nhận actor đó, dù báo bao nhiêu tài nguyên.",
     "no_labels": "không có nhãn",

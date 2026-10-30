@@ -2651,6 +2651,8 @@
     }
   },
   "worker_pools": {
+    "not_installed": "受支持但此处不提供，因为本安装未为其声明 worker 镜像：{{classes}}。",
+    "lxc_install_hint": "用“brood deploy lxc --trusted-workloads”准备 LXC，然后把打印出的 digest 加入 WORKER_POOL_IMAGES。",
     "labels": "资源池标签",
     "labels_hint": "调度器用这些标签匹配 actor 模板的 worker selector。没有匹配标签的资源池，无论报告多少容量，都无法承载该 actor。",
     "no_labels": "无标签",

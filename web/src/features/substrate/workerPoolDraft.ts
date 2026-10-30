@@ -16,11 +16,26 @@ export interface PoolDraft {
   labels: Record<string, string>;
 }
 
+/** Классы песочницы, которые понимает панель, в порядке предложения. Один
+ * список на форму и проверку: иначе они разъедутся. */
+export const SANDBOX_CLASSES = ['gvisor', 'microvm', 'lxc'] as const;
+
+const declaredImages = (defaults: WorkerPoolDefaults): Record<string, string> =>
+  defaults.workerImages ?? { gvisor: defaults.workerImage };
+
 export function workerPoolImages(defaults: WorkerPoolDefaults): Record<string, string> {
-  const images = defaults.workerImages ?? { gvisor: defaults.workerImage };
-  return Object.fromEntries(['gvisor', 'microvm', 'lxc']
+  const images = declaredImages(defaults);
+  return Object.fromEntries(SANDBOX_CLASSES
     .filter((name) => Boolean(images[name]))
     .map((name) => [name, images[name]]));
+}
+
+/** Поддерживаемые классы, для которых установка не объявила образ. Панель
+ * называет их вместо того, чтобы молча опустить: иначе неустановленный класс
+ * неотличим от неподдерживаемого. */
+export function missingSandboxClasses(defaults: WorkerPoolDefaults): string[] {
+  const images = declaredImages(defaults);
+  return SANDBOX_CLASSES.filter((name) => !images[name]);
 }
 
 export function newPoolDraft(workerImage: string, sandboxClass = 'gvisor'): PoolDraft {
@@ -68,7 +83,8 @@ export function validatePoolDraft(draft: PoolDraft): Partial<Record<keyof PoolDr
   )) errors.name = 'name';
   if (!/^\d+$/.test(draft.replicas) || Number(draft.replicas) > 2147483647) errors.replicas = 'replicas';
   if (!draft.workerImage || /\s/.test(draft.workerImage)) errors.workerImage = 'image';
-  if (!['gvisor', 'microvm', 'lxc'].includes(draft.sandboxClass)) errors.sandboxClass = 'image';
+  if (!SANDBOX_CLASSES.includes(draft.sandboxClass as (typeof SANDBOX_CLASSES)[number]))
+    errors.sandboxClass = 'image';
   if (!Object.entries(draft.labels).every(([key, value]) => isLabelKey(key) && isLabelValue(value)))
     errors.labels = 'label';
   for (const key of ['requestCpu', 'requestMemory', 'limitCpu', 'limitMemory'] as const) {

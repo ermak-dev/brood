@@ -2679,6 +2679,8 @@
     }
   },
   "worker_pools": {
+    "not_installed": "受支援但此處不提供，因為本安裝未為其宣告 worker 映像：{{classes}}。",
+    "lxc_install_hint": "用「brood deploy lxc --trusted-workloads」準備 LXC，然後把印出的 digest 加入 WORKER_POOL_IMAGES。",
     "labels": "資源池標籤",
     "labels_hint": "調度器用這些標籤比對 actor 範本的 worker selector。沒有相符標籤的資源池，無論回報多少容量，都無法承載該 actor。",
     "no_labels": "無標籤",

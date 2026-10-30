@@ -2653,6 +2653,8 @@
     }
   },
   "worker_pools": {
+    "not_installed": "지원되지만 이 설치가 워커 이미지를 선언하지 않아 여기에 제공되지 않습니다: {{classes}}.",
+    "lxc_install_hint": "LXC는 “brood deploy lxc --trusted-workloads”로 준비한 뒤, 출력된 digest를 WORKER_POOL_IMAGES에 추가하세요.",
     "labels": "풀 레이블",
     "labels_hint": "스케줄러는 actor 템플릿의 worker selector를 이 레이블과 대조합니다. 일치하는 레이블이 없는 풀은 아무리 많은 용량을 보고해도 해당 actor를 수용할 수 없습니다.",
     "no_labels": "레이블 없음",
