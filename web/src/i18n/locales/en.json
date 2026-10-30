@@ -2653,6 +2653,8 @@
     }
   },
   "worker_pools": {
+    "not_installed": "Supported but not offered here, because this installation declares no worker image for them: {{classes}}.",
+    "lxc_install_hint": "Prepare LXC with “brood deploy lxc --trusted-workloads”, then add the digest it prints to WORKER_POOL_IMAGES.",
     "labels": "Pool labels",
     "labels_hint": "The scheduler matches an actor template’s worker selector against these labels. A pool with no matching label cannot host that actor, whatever capacity it reports.",
     "no_labels": "no labels",

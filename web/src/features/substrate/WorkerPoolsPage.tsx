@@ -14,7 +14,7 @@ import { KeyValueEditor } from './components/KeyValueEditor';
 import { PageHeader } from './components/PageHeader';
 import { DASH, fromPairs, toPairs, type Pair } from './format';
 import { useActions, useResource } from './hooks';
-import { newPoolDraft, poolDraft, poolPayload, validatePoolDraft, workerPoolImages, type PoolDraft } from './workerPoolDraft';
+import { missingSandboxClasses, newPoolDraft, poolDraft, poolPayload, validatePoolDraft, workerPoolImages, type PoolDraft } from './workerPoolDraft';
 import styles from './substrate.module.scss';
 
 const versioned = (pool: WorkerPool) => Boolean(pool.metadata.uid && pool.metadata.resourceVersion);
@@ -109,14 +109,20 @@ function PoolEditor({ name, onClose, refresh }: EditorProps) {
   const load = useCallback(async () => {
     if (name !== undefined) {
       const source = await workerPoolsApi.get(name);
-      return { source, draft: poolDraft(source), images: {} };
+      return { source, draft: poolDraft(source), images: {}, missing: [] as string[] };
     }
-    const images = workerPoolImages(await workerPoolsApi.defaults());
+    const defaults = await workerPoolsApi.defaults();
+    const images = workerPoolImages(defaults);
     const sandboxClass = Object.keys(images)[0] ?? '';
-    return { source: null, draft: newPoolDraft(images[sandboxClass] ?? '', sandboxClass), images };
+    return {
+      source: null,
+      draft: newPoolDraft(images[sandboxClass] ?? '', sandboxClass),
+      images,
+      missing: missingSandboxClasses(defaults),
+    };
   }, [name]);
   const resource = useResource(load, { headerRefresh: false });
-  if (resource.data) return <PoolForm source={resource.data.source} initial={resource.data.draft} images={resource.data.images} onClose={onClose} refresh={refresh} />;
+  if (resource.data) return <PoolForm source={resource.data.source} initial={resource.data.draft} images={resource.data.images} missing={resource.data.missing} onClose={onClose} refresh={refresh} />;
   return (
     <EditorSheet open onClose={onClose} title={name ?? t('worker_pools.create')}>
       {resource.error ? <EmptyState title={t('substrate.load_failed')} description={resource.error}
@@ -129,9 +135,11 @@ interface FormProps extends Omit<EditorProps, 'name'> {
   source: WorkerPool | null;
   initial: PoolDraft;
   images: Record<string, string>;
+  /** Поддерживаемые классы без объявленного образа: их называем, а не прячем. */
+  missing: string[];
 }
 
-function PoolForm({ source: loadedSource, initial: loadedDraft, images, onClose, refresh }: FormProps) {
+function PoolForm({ source: loadedSource, initial: loadedDraft, images, missing, onClose, refresh }: FormProps) {
   const { t } = useTranslation();
   // Обновление списка из шапки не меняет предусловие открытого черновика.
   const [{ source, initial }] = useState(() => ({ source: loadedSource, initial: loadedDraft }));
@@ -191,6 +199,12 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, images, onClose,
             </Field>
           )}
           {draft.sandboxClass === 'lxc' && <p className={styles.notice} role="note">{t('worker_pools.lxc_warning')}</p>}
+          {!source && missing.length > 0 && (
+            <p className={styles.notice} role="note">
+              {t('worker_pools.not_installed', { classes: missing.join(', ') })}
+              {missing.includes('lxc') && ` ${t('worker_pools.lxc_install_hint')}`}
+            </p>
+          )}
           {input('workerImage', t('worker_pools.image'), t('worker_pools.image_hint'))}
         </Section>
         <Section title={t('worker_pools.labels')} hint={t('worker_pools.labels_hint')}>
