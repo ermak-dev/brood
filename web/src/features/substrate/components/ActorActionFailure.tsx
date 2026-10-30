@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { errorMessage } from '@/services/brood/http';
-import { formatCpu, formatMemory, selectorText } from '../format';
+import { DASH, formatCpu, formatMemory, selectorText } from '../format';
 import { placementFailure, type PlacementReason } from '../placementFailure';
 import { StateBadge } from './StateBadge';
 import styles from '../substrate.module.scss';
@@ -21,12 +21,11 @@ const REASONS: Record<string, string> = {
 
 function ResourceReason({ reason }: { reason: PlacementReason }) {
   const { t } = useTranslation();
-  let format: (value: string | undefined) => string = (value) => value ?? '—';
+  let format: (value: string | undefined) => string = (value) => value ?? DASH;
   if (reason.code === 'insufficient CPU') format = formatCpu;
   if (reason.code === 'insufficient memory bytes') format = formatMemory;
-  const display = (value: string | undefined) => value === '0' ? '0' : format(value);
   return <>{t('placement.resources', {
-    required: display(reason.required), available: display(reason.available),
+    required: format(reason.required), available: format(reason.available),
   })}</>;
 }
 
