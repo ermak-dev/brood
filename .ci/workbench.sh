@@ -45,6 +45,7 @@ bin/brood substrate start
 status deploying "Preparing guest infrastructure and deploying the private Go endpoint"
 bin/brood workbench prepare
 bin/brood deploy go
+bash .ci/workbench-https.sh
 
 status passed "Python dev checks, Go tests, binary builds and isolated Go endpoint deployment passed"
 printf 'Workbench build, tests and isolated deployment passed\n'
