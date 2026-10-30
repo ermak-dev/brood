@@ -39,8 +39,10 @@ export function formatDate(value: string | undefined, language: string): string 
 /** int64 millicores (string in protojson) -> '1.5 CPU' / '250m'; the number
  * and its unit never part across lines. */
 export function formatCpu(millicores: string | number | undefined): string {
-  const value = Number(millicores ?? 0);
-  if (!value) return DASH;
+  if (millicores === undefined || millicores === '') return DASH;
+  const value = Number(millicores);
+  if (!Number.isFinite(value)) return DASH;
+  if (value === 0) return '0 CPU';
   return value >= 1000 ? `${+(value / 1000).toFixed(2)}\u00a0CPU` : `${value}m`;
 }
 
@@ -48,8 +50,9 @@ const MIB = 1024 * 1024;
 
 /** int64 bytes (string in protojson) -> '512 MiB' / '2 GiB'. */
 export function formatMemory(bytes: string | number | undefined): string {
-  const value = Number(bytes ?? 0);
-  if (!value) return DASH;
+  if (bytes === undefined || bytes === '') return DASH;
+  const value = Number(bytes);
+  if (!Number.isFinite(value)) return DASH;
   return value >= 1024 * MIB
     ? `${+(value / 1024 / MIB).toFixed(2)}\u00a0GiB`
     : `${+(value / MIB).toFixed(1)}\u00a0MiB`;
