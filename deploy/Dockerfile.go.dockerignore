@@ -1,4 +1,6 @@
 **
+!.ci/
+!.ci/go-download.sh
 !go/
 !go/**
 !web/

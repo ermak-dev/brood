@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=engine /usr/local/bin/ /usr/local/bin/
 COPY --from=engine /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+COPY brood/.ci/go-download.sh /tmp/go-download.sh
 RUN mkdir -p /tmp/workbench-go \
-    && curl -fsSL -o /tmp/workbench-go/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+    && bash /tmp/go-download.sh "$GO_VERSION" "$GO_SHA256" /tmp/workbench-go/go.tar.gz \
     && printf '%s  %s\n' "${GO_SHA256}" /tmp/workbench-go/go.tar.gz | sha256sum -c - \
     && tar -xzf /tmp/workbench-go/go.tar.gz -C /usr/local \
     && rm -rf /tmp/workbench-go
