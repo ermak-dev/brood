@@ -52,6 +52,10 @@ type fakeAteapi struct {
 	beforeNamespaceGet   func()
 	beforeResourceRead   func()
 	beforeResourceDelete func()
+	resumeError          error
+	workerReads          int
+	beforeWorkerList     func()
+	workerReadError      error
 }
 
 func newFakeAteapi() *fakeAteapi {
@@ -202,6 +206,12 @@ func (f *fakeAteapi) SuspendActor(_ context.Context, req *ateapi.SuspendActorReq
 }
 
 func (f *fakeAteapi) ResumeActor(_ context.Context, req *ateapi.ResumeActorRequest) (*ateapi.ResumeActorResponse, error) {
+	f.mu.Lock()
+	failure := f.resumeError
+	f.mu.Unlock()
+	if failure != nil {
+		return nil, failure
+	}
 	item, err := f.actorOf(req.GetActor())
 	if err != nil {
 		return nil, err
@@ -300,6 +310,13 @@ func (f *fakeAteapi) DeleteActorTemplate(_ context.Context, req *ateapi.DeleteAc
 func (f *fakeAteapi) ListWorkers(_ context.Context, _ *ateapi.ListWorkersRequest) (*ateapi.ListWorkersResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.workerReads++
+	if f.beforeWorkerList != nil {
+		f.beforeWorkerList()
+	}
+	if f.workerReadError != nil {
+		return nil, f.workerReadError
+	}
 	items := []*ateapi.Worker{}
 	for _, item := range f.workers {
 		items = append(items, item)
