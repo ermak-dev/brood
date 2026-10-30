@@ -15,7 +15,17 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 source .ci/go-toolchain.sh
 cd go
-go mod download
+for attempt in 1 2 3; do
+    printf 'Downloading Go modules: attempt %s/3\n' "$attempt"
+    if timeout --signal=TERM --kill-after=10s 600s go mod download; then
+        break
+    fi
+    if (( attempt == 3 )); then
+        printf '%s\n' 'Go module download failed after 3 bounded attempts' >&2
+        exit 1
+    fi
+    sleep 2
+done
 make fmt-check
 make vet
 make test

@@ -15,7 +15,8 @@ test:
 go-test:
   stage: test
   tags: [docker]
-  timeout: 45 minutes
+  # До 40 минут SDK и 30 минут модулей, затем все проверки и сборки.
+  timeout: 90 minutes
   script:
     - bash .ci/go-test.sh
   artifacts:
