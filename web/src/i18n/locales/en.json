@@ -1,4 +1,28 @@
 {
+  "placement": {
+    "title": "Could not start “{{name}}”",
+    "member_hint": "No suitable worker is available. Ask an administrator to check worker availability, placement labels, and project capacity.",
+    "unavailable": "Detailed diagnostics are unavailable. Refresh the worker list and check states, labels, and free resources.",
+    "template_selector": "Required template labels",
+    "actor_selector": "Actor and project labels",
+    "empty": "No workers are registered. Create a pool or check whether an existing pool is starting.",
+    "worker": "Worker {{name}}",
+    "unknown": "No visible blocker was found, but snapshot and runtime constraints can still prevent placement.",
+    "resources": "Required: {{required}}; available: {{available}}.",
+    "advisory": "This is a snapshot taken after the refusal. Replacing a worker or editing labels does not start the actor automatically; Substrate makes the final placement decision.",
+    "reasons": {
+      "registration": "Worker registration is incomplete.",
+      "inactive": "Not accepting actors:",
+      "sandbox": "The sandbox class does not match the saved state.",
+      "node": "The saved state requires another node.",
+      "template": "Pool labels do not match the template requirements.",
+      "actor": "Pool labels do not match actor or project constraints.",
+      "slots": "No actor slots are free.",
+      "cpu": "Not enough free CPU.",
+      "memory": "Not enough free memory.",
+      "unknown": "The current snapshot cannot confirm this constraint."
+    }
+  },
   "access": {
     "project_details": "Project details",
     "capacity": "Capacity and reservations",

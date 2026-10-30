@@ -1,4 +1,28 @@
 {
+  "placement": {
+    "title": "Không thể khởi động “{{name}}”",
+    "member_hint": "Không có worker phù hợp. Hãy nhờ quản trị viên kiểm tra trạng thái worker, nhãn bố trí và tài nguyên dự án.",
+    "unavailable": "Không có chẩn đoán chi tiết. Làm mới danh sách worker và kiểm tra trạng thái, nhãn và tài nguyên còn trống.",
+    "template_selector": "Nhãn mà mẫu yêu cầu",
+    "actor_selector": "Nhãn actor và dự án",
+    "empty": "Chưa có worker đăng ký. Tạo pool hoặc kiểm tra pool hiện có đang khởi động.",
+    "worker": "Worker {{name}}",
+    "unknown": "Không thấy nguyên nhân rõ ràng, nhưng ràng buộc trạng thái lưu và runtime vẫn có thể ngăn bố trí.",
+    "resources": "Cần: {{required}}; còn trống: {{available}}.",
+    "advisory": "Đây là ảnh chụp trạng thái sau khi bị từ chối. Thay worker hoặc sửa nhãn không tự khởi động actor; Substrate đưa ra quyết định bố trí cuối cùng.",
+    "reasons": {
+      "registration": "Worker chưa hoàn tất đăng ký.",
+      "inactive": "Không nhận actor:",
+      "sandbox": "Lớp sandbox không phù hợp trạng thái đã lưu.",
+      "node": "Trạng thái đã lưu cần node khác.",
+      "template": "Nhãn pool không khớp yêu cầu của mẫu.",
+      "actor": "Nhãn pool không khớp ràng buộc actor hoặc dự án.",
+      "slots": "Không còn slot actor trống.",
+      "cpu": "Không đủ CPU còn trống.",
+      "memory": "Không đủ bộ nhớ còn trống.",
+      "unknown": "Không thể xác nhận ràng buộc này từ ảnh chụp hiện tại."
+    }
+  },
   "access": {
     "project_details": "Chi tiết dự án",
     "capacity": "Dung lượng và tài nguyên đặt trước",

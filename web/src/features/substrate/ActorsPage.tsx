@@ -7,6 +7,7 @@ import { actorsApi, templatesApi, type Actor, type ActorAction } from '@/service
 import { swarmCapabilities } from '@/features/access/shardState';
 import { useAdministrator } from '@/features/access/shared';
 import { ActorEditor } from './ActorEditor';
+import { ActorActionFailure } from './components/ActorActionFailure';
 import { EntityTable, type Column } from './components/EntityTable';
 import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
@@ -39,8 +40,10 @@ export function ActorsPage() {
         <SwarmSections project={project} title={t('actors.title')}>
           {(swarm) => (
             <Actors
+              key={swarm.id}
               project={swarm.id}
               name={swarm.name}
+              administrator={admin}
               canManage={swarmCapabilities(swarm, admin).manage}
             />
           )}
@@ -74,10 +77,12 @@ function Actors({
   project,
   name,
   canManage,
+  administrator,
 }: {
   project: string;
   name: string;
   canManage: boolean;
+  administrator: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const load = useCallback(() => loadActors(project), [project]);
@@ -91,11 +96,25 @@ function Actors({
     setEditor((prev) => ({ actor, open: true, session: prev.session + 1 }));
   const closeEditor = () => setEditor((prev) => ({ ...prev, open: false }));
 
-  const act = (actor: Actor, action: ActorAction) =>
-    run(
-      () => actorsApi.act(project, actor.metadata.name, action),
-      t(`actors.${action}_done`, { name: actor.metadata.name })
-    );
+  const [actionFailure, setActionFailure] = useState<{ name: string; error: unknown } | null>(null);
+  const [acting, setActing] = useState(false);
+  const act = async (actor: Actor, action: ActorAction) => {
+    if (acting) return;
+    setActing(true);
+    setActionFailure(null);
+    try {
+      await run(async () => {
+        try {
+          return await actorsApi.act(project, actor.metadata.name, action);
+        } catch (error) {
+          setActionFailure({ name: actor.metadata.name, error });
+          throw error;
+        }
+      }, t(`actors.${action}_done`, { name: actor.metadata.name }));
+    } finally {
+      setActing(false);
+    }
+  };
 
   const remove = (actor: Actor) =>
     confirm({
@@ -166,6 +185,15 @@ function Actors({
         actions={create}
       />
 
+      {actionFailure && (
+        <ActorActionFailure
+          name={actionFailure.name}
+          error={actionFailure.error}
+          administrator={administrator}
+          onClose={() => setActionFailure(null)}
+        />
+      )}
+
       {loading ? (
         <LoadingSpinner />
       ) : error ? (
@@ -192,12 +220,12 @@ function Actors({
                         {t('access.terminal')}
                       </a>
                       {stateOf(a) === 'running' && (
-                        <Button variant="ghost" size="sm" onClick={() => void act(a, 'suspend')}>
+                        <Button variant="ghost" size="sm" disabled={acting} onClick={() => void act(a, 'suspend')}>
                           {t('actors.suspend')}
                         </Button>
                       )}
                       {stateOf(a) === 'suspended' && (
-                        <Button variant="ghost" size="sm" onClick={() => void act(a, 'resume')}>
+                        <Button variant="ghost" size="sm" disabled={acting} onClick={() => void act(a, 'resume')}>
                           {t('actors.resume')}
                         </Button>
                       )}

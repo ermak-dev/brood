@@ -691,6 +691,15 @@
   color: var(--text-secondary);
 }
 
+.operationFailure {
+  border-left-color: var(--viz-failure);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+
+  p, ul, dl { margin: 8px 0; }
+  dd { margin-left: 0; }
+}
+
 /* ─── сегментный переключатель (язык ModeSwitch апстрима) ──────────── */
 
 .segmented {

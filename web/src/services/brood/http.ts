@@ -8,7 +8,7 @@
 export class BroodApiError extends Error {
   status: number;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, public readonly body?: unknown) {
     super(message);
     this.name = 'BroodApiError';
     this.status = status;
@@ -49,7 +49,8 @@ export async function request<T>(method: string, url: string, body?: unknown): P
     const detail = failure?.detail ?? failure?.error;
     throw new BroodApiError(
       response.status,
-      typeof detail === 'string' ? detail : `HTTP ${response.status}`
+      typeof detail === 'string' ? detail : `HTTP ${response.status}`,
+      data
     );
   }
   return data as T;
