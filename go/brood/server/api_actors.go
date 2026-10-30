@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/kube"
 	"brood.dev/go/brood/store"
 	"brood.dev/go/brood/substrate"
 	ateapi "go.ate.dev/substrate/api/ateapi/v1"
@@ -568,8 +569,10 @@ func (s *Server) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	writeList(w, workers)
 }
 
-// handleWorker — GET/POST /api/workers/{name}: POST — только drain,
-// руками долговечно только он.
+// handleWorker — GET/POST /api/workers/{name}: POST — drain или replace.
+// drain окончателен: осушенная запись не возвращается в работу, а её под живёт
+// дальше и держит место пула. replace — выход из этого состояния: под удаляется,
+// и Deployment заводит новый, чья запись регистрируется заново.
 func (s *Server) handleWorker(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
@@ -593,7 +596,12 @@ func (s *Server) handleWorker(w http.ResponseWriter, r *http.Request) {
 		writeMessage(w, http.StatusOK, worker)
 		return
 	}
-	if _, ok := readAction(w, r, "drain"); !ok {
+	action, ok := readAction(w, r, "drain", "replace")
+	if !ok {
+		return
+	}
+	if action == "replace" {
+		s.replaceWorker(w, r, client, name)
 		return
 	}
 	worker, err := client.DrainWorker(r.Context(), name)
@@ -602,6 +610,43 @@ func (s *Server) handleWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeMessage(w, http.StatusOK, worker)
+}
+
+// replaceWorker удаляет под воркера, которого планировщик уже не использует.
+// Здоровый воркер не заменяется: его акторы прервались бы без причины, и
+// порядок остаётся прежним — сперва drain, потом замена.
+func (s *Server) replaceWorker(w http.ResponseWriter, r *http.Request, client *substrate.Client, name string) {
+	if s.pools == nil {
+		writeDetail(w, http.StatusServiceUnavailable,
+			"worker pod access is not configured: check KUBE_API_URL, KUBE_API_TOKEN and KUBE_API_CA")
+		return
+	}
+	worker, err := client.GetWorker(r.Context(), name)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	if worker.GetStatus().GetState() != ateapi.WorkerState_WORKER_STATE_DRAINING {
+		writeDetail(w, http.StatusConflict,
+			"only a drained worker is replaced here; drain it first if you mean to retire it")
+		return
+	}
+	allocated := worker.GetStatus().GetAllocated()
+	if allocated.GetActors() != 0 || allocated.GetCpuMillicores() != 0 || allocated.GetMemoryBytes() != 0 {
+		writeDetail(w, http.StatusConflict,
+			"this drained worker still has actor allocations; replacement is blocked to preserve its actors")
+		return
+	}
+	if worker.GetWorkerNamespace() != kube.Namespace {
+		writeDetail(w, http.StatusConflict,
+			"this worker runs outside the installation namespace and is not replaced from here")
+		return
+	}
+	if err := s.pools.ReplaceWorkerPod(r.Context(), worker.GetWorkerPod(), worker.GetWorkerPodUid()); err != nil {
+		apiError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ─── Глобальная политика ───────────────────────────────────────────────────
