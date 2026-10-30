@@ -77,6 +77,28 @@ func TestReplaceDrainedWorkerReturnsCapacity(t *testing.T) {
 	}
 }
 
+func TestReplaceRefusesADrainedWorkerWithAllocations(t *testing.T) {
+	for _, allocation := range []*ateapi.WorkerResources{
+		{Actors: 1}, {CpuMillicores: 1}, {MemoryBytes: 1},
+	} {
+		t.Run(allocation.String(), func(t *testing.T) {
+			fake := newFakeAteapi()
+			item := worker(ateapi.WorkerState_WORKER_STATE_DRAINING)
+			item.Status.Allocated = allocation
+			fake.workers["worker-1"] = item
+			ts := newSubstrateServer(t, fake)
+			admin, _, _, _ := actorsSetup(t, ts.testServer)
+			deletes := kubeFor(t, ts)
+			resp, data, _ := ts.do(admin, "POST", "/api/workers/worker-1", ts.csrf(admin),
+				map[string]string{"action": "replace"})
+			expectStatus(t, "allocated worker", resp, data, http.StatusConflict)
+			if deletes.Load() != 0 {
+				t.Fatal("replacement would interrupt an allocated actor")
+			}
+		})
+	}
+}
+
 func TestReplaceRefusesAWorkerThatStillTakesActors(t *testing.T) {
 	fake := newFakeAteapi()
 	fake.mu.Lock()

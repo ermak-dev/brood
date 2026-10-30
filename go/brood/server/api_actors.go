@@ -631,6 +631,12 @@ func (s *Server) replaceWorker(w http.ResponseWriter, r *http.Request, client *s
 			"only a drained worker is replaced here; drain it first if you mean to retire it")
 		return
 	}
+	allocated := worker.GetStatus().GetAllocated()
+	if allocated.GetActors() != 0 || allocated.GetCpuMillicores() != 0 || allocated.GetMemoryBytes() != 0 {
+		writeDetail(w, http.StatusConflict,
+			"this drained worker still has actor allocations; replacement is blocked to preserve its actors")
+		return
+	}
 	if worker.GetWorkerNamespace() != kube.Namespace {
 		writeDetail(w, http.StatusConflict,
 			"this worker runs outside the installation namespace and is not replaced from here")
