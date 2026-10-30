@@ -10,8 +10,9 @@ import { workerPoolsApi, type WorkerPool } from '@/services/brood/substrate';
 import { EditorSheet } from './components/EditorSheet';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Field, Section } from './components/form';
+import { KeyValueEditor } from './components/KeyValueEditor';
 import { PageHeader } from './components/PageHeader';
-import { DASH } from './format';
+import { DASH, fromPairs, toPairs, type Pair } from './format';
 import { useActions, useResource } from './hooks';
 import { newPoolDraft, poolDraft, poolPayload, validatePoolDraft, workerPoolImages, type PoolDraft } from './workerPoolDraft';
 import styles from './substrate.module.scss';
@@ -36,6 +37,22 @@ function PoolResolution({ pool }: { pool: WorkerPool }) {
   })}</>;
 }
 
+/** Метки пула -- то, по чему планировщик сопоставляет его воркеров с
+ * workerSelector шаблона. Пул без меток не примет ни одного такого актора,
+ * поэтому пустой набор назван словами, а не прочерком. */
+function PoolLabels({ pool }: { pool: WorkerPool }) {
+  const { t } = useTranslation();
+  const labels = Object.entries(pool.metadata.labels ?? {});
+  if (!labels.length) return <span className={styles.muted}>{t('worker_pools.no_labels')}</span>;
+  return (
+    <div className={styles.chips}>
+      {labels.map(([key, value]) => (
+        <span key={key} className={`${styles.chip} ${styles.chipStatic}`}>{key}={value}</span>
+      ))}
+    </div>
+  );
+}
+
 export function WorkerPoolsPage() {
   const { t } = useTranslation();
   const { data, error, loading, refresh } = useResource(workerPoolsApi.list);
@@ -53,6 +70,7 @@ export function WorkerPoolsPage() {
     { key: 'desired', label: t('worker_pools.replicas'), render: (pool) => pool.spec.replicas },
     { key: 'observed', label: t('worker_pools.observed'), render: (pool) => pool.status?.replicas ?? DASH },
     { key: 'ready', label: t('worker_pools.ready'), render: (pool) => pool.status ? (pool.status.readyReplicas ?? 0) : DASH },
+    { key: 'labels', label: t('worker_pools.labels'), render: (pool) => <PoolLabels pool={pool} /> },
     { key: 'resolution', label: t('worker_pools.resolution'), render: (pool) => <PoolResolution pool={pool} /> },
   ];
   const create = <Button onClick={() => setEditing({})}>{t('worker_pools.create')}</Button>;
@@ -140,7 +158,9 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, images, onClose,
     setSaving(false);
     if (ok) onClose();
   };
-  const input = (field: keyof PoolDraft, label: string, hint?: string) => (
+  // Текстовые поля черновика; метки правит KeyValueEditor, а не этот помощник.
+  type TextField = { [K in keyof PoolDraft]: PoolDraft[K] extends string ? K : never }[keyof PoolDraft];
+  const input = (field: TextField, label: string, hint?: string) => (
     <Input label={label} value={draft[field]} disabled={saving || field === 'workerImage' || (field === 'name' && source !== null)}
       hint={hint} error={errors[field] ? t(`worker_pools.validation.${errors[field]}`) : undefined}
       onChange={(event) => setDraft({ ...draft, [field]: event.target.value })}
@@ -172,6 +192,17 @@ function PoolForm({ source: loadedSource, initial: loadedDraft, images, onClose,
           )}
           {draft.sandboxClass === 'lxc' && <p className={styles.notice} role="note">{t('worker_pools.lxc_warning')}</p>}
           {input('workerImage', t('worker_pools.image'), t('worker_pools.image_hint'))}
+        </Section>
+        <Section title={t('worker_pools.labels')} hint={t('worker_pools.labels_hint')}>
+          <KeyValueEditor
+            initial={toPairs(initial.labels)}
+            onChange={(pairs: Pair[]) => setDraft((current) => ({ ...current, labels: fromPairs(pairs) }))}
+            keyPlaceholder={t('substrate.label_key')}
+            valuePlaceholder={t('substrate.label_value')}
+            addLabel={t('substrate.add_label')}
+            disabled={saving}
+          />
+          {errors.labels && <p className={styles.fieldError} role="alert">{t('worker_pools.validation.label')}</p>}
         </Section>
         <Section title={t('worker_pools.resources')} hint={t('worker_pools.resources_hint')}>
           <div className={styles.grid2}>

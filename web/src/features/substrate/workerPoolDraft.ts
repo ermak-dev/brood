@@ -1,5 +1,5 @@
 import type { WorkerPool, WorkerPoolDefaults } from '@/services/brood/substrate';
-import { clone } from './format';
+import { clone, isLabelKey, isLabelValue } from './format';
 
 export interface PoolDraft {
   name: string;
@@ -10,6 +10,10 @@ export interface PoolDraft {
   requestMemory: string;
   limitCpu: string;
   limitMemory: string;
+  // Метки пула, а не его подов: планировщик читает их с записи Worker, куда
+  // ate-controller переносит именно metadata.labels. Без них пул не совпадёт
+  // ни с одним workerSelector.
+  labels: Record<string, string>;
 }
 
 export function workerPoolImages(defaults: WorkerPoolDefaults): Record<string, string> {
@@ -22,7 +26,7 @@ export function workerPoolImages(defaults: WorkerPoolDefaults): Record<string, s
 export function newPoolDraft(workerImage: string, sandboxClass = 'gvisor'): PoolDraft {
   return {
     name: '', replicas: '1', workerImage, sandboxClass,
-    requestCpu: '', requestMemory: '', limitCpu: '', limitMemory: '',
+    requestCpu: '', requestMemory: '', limitCpu: '', limitMemory: '', labels: {},
   };
 }
 
@@ -37,6 +41,7 @@ export function poolDraft(pool: WorkerPool): PoolDraft {
     requestMemory: resources?.requests?.memory ?? '',
     limitCpu: resources?.limits?.cpu ?? '',
     limitMemory: resources?.limits?.memory ?? '',
+    labels: { ...(pool.metadata.labels ?? {}) },
   };
 }
 
@@ -64,6 +69,8 @@ export function validatePoolDraft(draft: PoolDraft): Partial<Record<keyof PoolDr
   if (!/^\d+$/.test(draft.replicas) || Number(draft.replicas) > 2147483647) errors.replicas = 'replicas';
   if (!draft.workerImage || /\s/.test(draft.workerImage)) errors.workerImage = 'image';
   if (!['gvisor', 'microvm', 'lxc'].includes(draft.sandboxClass)) errors.sandboxClass = 'image';
+  if (!Object.entries(draft.labels).every(([key, value]) => isLabelKey(key) && isLabelValue(value)))
+    errors.labels = 'label';
   for (const key of ['requestCpu', 'requestMemory', 'limitCpu', 'limitMemory'] as const) {
     if (draft[key] !== '' && quantity(draft[key]) === null) errors[key] = 'quantity';
   }
@@ -82,6 +89,8 @@ export function poolPayload(source: WorkerPool | null, draft: PoolDraft): Worker
     spec: { replicas: 1, workerImage: draft.workerImage, sandboxClasses: [{ name: draft.sandboxClass }] },
   };
   delete pool.status;
+  if (Object.keys(draft.labels).length) pool.metadata.labels = { ...draft.labels };
+  else delete pool.metadata.labels;
   pool.spec.replicas = Number(draft.replicas);
   for (const [group, resource, field] of [
     ['requests', 'cpu', 'requestCpu'], ['requests', 'memory', 'requestMemory'],

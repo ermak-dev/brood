@@ -2653,6 +2653,9 @@
     }
   },
   "worker_pools": {
+    "labels": "Pool labels",
+    "labels_hint": "The scheduler matches an actor template’s worker selector against these labels. A pool with no matching label cannot host that actor, whatever capacity it reports.",
+    "no_labels": "no labels",
     "lxc_warning": "Experimental LXC shares the node kernel: trusted workloads only. Each worker supports one actor. No memory checkpoint or automatic process recovery after node failure.",
     "title": "Worker pools",
     "create": "Create worker pool",
@@ -2684,6 +2687,7 @@
     "limit_cpu": "CPU limit",
     "limit_memory": "Memory limit",
     "validation": {
+      "label": "Use a Kubernetes label: an optional DNS prefix and a name of at most 63 characters, starting and ending alphanumeric.",
       "name": "Use a lowercase DNS name, at most 253 characters, with labels of at most 63 characters.",
       "replicas": "Enter a whole number from 0 to 2147483647.",
       "image": "No valid deployed worker image is available for this sandbox class.",
