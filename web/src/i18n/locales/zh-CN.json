@@ -1,4 +1,28 @@
 {
+  "placement": {
+    "title": "无法启动“{{name}}”",
+    "member_hint": "没有可用的合适节点。请管理员检查节点可用性、调度标签和项目容量。",
+    "unavailable": "无法获取详细诊断。请刷新节点列表，检查状态、标签和空闲资源。",
+    "template_selector": "模板要求的标签",
+    "actor_selector": "Actor 和项目标签",
+    "empty": "没有已注册的节点。请创建资源池或检查现有池是否正在启动。",
+    "worker": "节点 {{name}}",
+    "unknown": "未发现可见限制，但保存状态和运行时约束仍可能阻止调度。",
+    "resources": "需要：{{required}}；可用：{{available}}。",
+    "advisory": "这是拒绝后的状态快照。替换节点或修改标签不会自动启动 actor；最终调度决定由 Substrate 做出。",
+    "reasons": {
+      "registration": "节点尚未完成注册。",
+      "inactive": "不接收 actor：",
+      "sandbox": "沙箱类别与保存状态不匹配。",
+      "node": "保存状态需要其他节点。",
+      "template": "资源池标签不符合模板要求。",
+      "actor": "资源池标签不符合 actor 或项目约束。",
+      "slots": "没有空闲的 actor 名额。",
+      "cpu": "空闲 CPU 不足。",
+      "memory": "空闲内存不足。",
+      "unknown": "当前快照无法确认此约束。"
+    }
+  },
   "access": {
     "project_details": "项目详情",
     "capacity": "容量与预留",

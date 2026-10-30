@@ -1,4 +1,28 @@
 {
+  "placement": {
+    "title": "無法啟動「{{name}}」",
+    "member_hint": "沒有可用的合適節點。請管理員檢查節點可用性、排程標籤和專案容量。",
+    "unavailable": "無法取得詳細診斷。請重新整理節點清單，檢查狀態、標籤和可用資源。",
+    "template_selector": "範本要求的標籤",
+    "actor_selector": "Actor 和專案標籤",
+    "empty": "沒有已註冊的節點。請建立資源池或檢查現有池是否正在啟動。",
+    "worker": "節點 {{name}}",
+    "unknown": "未發現可見限制，但儲存狀態和執行階段約束仍可能阻止排程。",
+    "resources": "需要：{{required}}；可用：{{available}}。",
+    "advisory": "這是拒絕後的狀態快照。替換節點或修改標籤不會自動啟動 actor；最終排程決定由 Substrate 做出。",
+    "reasons": {
+      "registration": "節點尚未完成註冊。",
+      "inactive": "不接收 actor：",
+      "sandbox": "沙箱類別與儲存狀態不符。",
+      "node": "儲存狀態需要其他節點。",
+      "template": "資源池標籤不符合範本要求。",
+      "actor": "資源池標籤不符合 actor 或專案約束。",
+      "slots": "沒有可用的 actor 名額。",
+      "cpu": "可用 CPU 不足。",
+      "memory": "可用記憶體不足。",
+      "unknown": "目前快照無法確認此約束。"
+    }
+  },
   "access": {
     "project_details": "專案詳情",
     "capacity": "容量與保留",
