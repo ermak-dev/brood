@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import socket
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
@@ -46,6 +47,40 @@ class GoManifestTests(unittest.TestCase):
                for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertIn("gvisor", json.loads(env.get("WORKER_POOL_IMAGES", "{}")))
 
+    def test_https_origins_reject_malformed_authorities_without_resolution(self):
+        for origin in ("https://[2001:db8::1]junk", "https://brood.invalid\u007f",
+                       "https://brood.invalid:", "https://brood.invalid:0", "https://brood.invalid/?"):
+            with self.subTest(origin=origin), self.assertRaisesRegex(RuntimeError, "BROOD_PUBLIC_ORIGIN"):
+                go_server.https_origin(origin, "BROOD_PUBLIC_ORIGIN")
+
+    def test_runtime_pool_top_level_fields_and_per_endpoint_ports(self):
+        for field in ("template", "templateDigest", "capacity"):
+            self.assertEqual(go_server.proxmox_runtime_endpoints(json.dumps({"lab": {
+                field: None, "endpoint": "https://pve.invalid:8006"}})), {"https://pve.invalid:8006"})
+        self.assertEqual(go_server.proxmox_runtime_endpoints('{"lab":{"endpoint":"https://unused.invalid"}}'), set())
+        resolver = Mock(side_effect=lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.23.4.5" if port == 443 else "10.23.4.6", port))])
+        self.assertEqual(go_server.proxmox_egress({"https://pve.invalid", "https://other.invalid:8006"}, resolver), [
+            {"to": [{"ipBlock": {"cidr": "10.23.4.5/32"}}], "ports": [{"port": 443, "protocol": "TCP"}]},
+            {"to": [{"ipBlock": {"cidr": "10.23.4.6/32"}}], "ports": [{"port": 8006, "protocol": "TCP"}]}])
+        deploy = go_server.Deploy(Mock(), resolver=resolver)
+        self.assertIs(deploy.resolver, resolver)
+        for endpoint in ("http://pve.invalid", "https://pve.invalid:0", "https://pve.invalid:65536",
+                         "https://token@pve.invalid", "https://pve.invalid/api2", "https://pve.invalid?x"):
+            resolver.reset_mock()
+            with self.subTest(endpoint=endpoint), self.assertRaisesRegex(RuntimeError, "BROOD_PROXMOX_POOLS"):
+                go_server.proxmox_egress({endpoint}, resolver)
+            resolver.assert_not_called()
+
+    def test_mapped_ipv4_egress_uses_kubernetes_valid_ipv4_cidr(self):
+        resolver = Mock(return_value=[
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::ffff:10.23.4.5", 8006, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.23.4.5", 8006)),
+        ])
+        self.assertEqual(go_server.proxmox_egress({"https://[::ffff:10.23.4.5]:8006"}, resolver), [
+            {"to": [{"ipBlock": {"cidr": "10.23.4.5/32"}}],
+             "ports": [{"port": 8006, "protocol": "TCP"}]}])
+
     def test_image_must_be_pinned(self):
         for image in ("localhost:5002/brood-go:latest", "", None):
             with self.subTest(image=image), self.assertRaises(RuntimeError):
@@ -67,6 +102,7 @@ class GoDeploymentTests(unittest.TestCase):
 
         def output(*args):
             for key in ("BROOD_SESSION_SECRET", *go_server.PROXMOX_SETTINGS,
+                        "BROOD_PUBLIC_ORIGIN", "BROOD_PROXMOX_RELAY_SECRET",
                         "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY"):
                 value = settings.get(key)
                 if value:
@@ -310,3 +346,121 @@ class GoDeploymentTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "cannot check ownership"):
                         deploy.run()
                 deploy.cluster.shell.output.assert_called_once()
+
+    # FEATURE: Runtime Proxmox получает отдельные server-only настройки и точный egress.
+    # SPEC: Парные origin/relay, отказ без утечки, DNS seam, /32 и /128 на точный порт.
+    # IMPLEMENTATION: Явные Secret refs сервера, инъекция resolver и отдельные egress-правила.
+    # RESULT: IMPLEMENTED — старый config-only режим сохраняется без DNS и API egress.
+    # STATUS: DONE
+    def runtime_settings(self, endpoint="https://pve.invalid:8006"):
+        return {
+            "BROOD_PROXMOX_POOLS": json.dumps({"lab": {
+                "endpoint": endpoint, "template": "local:vztmpl/test.tar.zst",
+                "templateDigest": "sha256:" + "d" * 64,
+                "capacity": {"actors": 1, "cpuMillicores": "1000", "memoryBytes": "1073741824", "diskGiB": 8},
+                "caPEM": "private-ca-sentinel"}}),
+            "BROOD_PROXMOX_TOKENS": '{"lab":"private-token-sentinel"}',
+            "BROOD_PUBLIC_ORIGIN": "https://brood.invalid",
+            "BROOD_PROXMOX_RELAY_SECRET": "relay-secret-" * 4,
+        }
+
+    def test_runtime_secret_refs_checksum_and_exact_server_egress(self):
+        settings = self.runtime_settings()
+        answers = [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fd00::12", 8006, 0, 0)),
+                   (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.23.4.5", 8006)),
+                   (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.23.4.5", 8006))]
+        with patch.object(go_server.socket, "getaddrinfo", return_value=answers) as resolver:
+            first = self.capture_release(settings)
+            second = self.capture_release({**settings, "BROOD_PROXMOX_RELAY_SECRET": "rotated-relay-" * 4})
+        self.assertEqual(resolver.call_count, 2)
+        resolver.assert_called_with("pve.invalid", 8006, type=socket.SOCK_STREAM)
+        baseline = next(o for o in render("localhost:5002/brood-go@sha256:" + "a" * 64)
+                        if o["kind"] == "NetworkPolicy")
+        for objects in (first, second):
+            policy = next(o for o in objects if o["kind"] == "NetworkPolicy")
+            self.assertEqual(policy["spec"]["podSelector"], {"matchLabels": {"app": "brood-go"}})
+            self.assertEqual(policy["spec"]["egress"], baseline["spec"]["egress"] + [
+                {"to": [{"ipBlock": {"cidr": ip}}], "ports": [{"port": 8006, "protocol": "TCP"}]}
+                for ip in ("10.23.4.5/32", "fd00::12/128")])
+            deployment = next(o for o in objects if o["kind"] == "Deployment")
+            pod = deployment["spec"]["template"]["spec"]
+            self.assertNotIn("hostNetwork", pod)
+            env = {e["name"]: e for e in pod["containers"][0]["env"]}
+            secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+            self.assertNotIn("stringData", secret)
+            for key in settings:
+                self.assertIn(key, secret["data"])
+                self.assertEqual(env[key], {"name": key, "valueFrom": {
+                    "secretKeyRef": {"name": "brood-go-env", "key": key}}})
+            for obj in objects:
+                if obj["kind"] not in ("Deployment", "Secret"):
+                    self.assertNotIn("BROOD_PROXMOX_", json.dumps(obj))
+            self.assertFalse(any(o["kind"] in ("Actor", "WorkerPool", "StatefulSet") for o in objects))
+        templates = [next(o for o in objects if o["kind"] == "Deployment")["spec"]["template"]
+                     for objects in (first, second)]
+        self.assertNotEqual(templates[0]["metadata"]["annotations"], templates[1]["metadata"]["annotations"])
+
+    def test_runtime_invalid_settings_fail_before_native_calls_without_values(self):
+        settings = self.runtime_settings()
+        variants = [{**settings, key: value} for key, value in (
+            ("BROOD_PUBLIC_ORIGIN", ""), ("BROOD_PROXMOX_RELAY_SECRET", ""),
+            ("BROOD_PROXMOX_RELAY_SECRET", "short"), ("BROOD_PROXMOX_RELAY_SECRET", "x" * 32),
+            *(("BROOD_PUBLIC_ORIGIN", origin) for origin in (
+                "http://brood.invalid", "https://user:password@brood.invalid", "https://brood.invalid/path",
+                "https://brood.invalid?", "https://brood.invalid#", "https://brood.invalid:0",
+                "https://brood.invalid:", "https://brood.invalid:65536", "https://brood.invalid/",
+                "https://[2001:db8::1]junk", "https://brood.invalid\u007f")))]
+        for values in variants:
+            with self.subTest(keys=list(values)):
+                deploy = self.deploy(values)
+                with patch.object(go_server, "Infrastructure") as infrastructure:
+                    with self.assertRaises(RuntimeError) as raised:
+                        deploy.run()
+                self.assertIn("BROOD_", str(raised.exception))
+                for value in values.values():
+                    if value:
+                        self.assertNotIn(value, str(raised.exception))
+                infrastructure.assert_not_called()
+                deploy.cluster.shell.output.assert_not_called()
+
+    def test_runtime_resolver_seam_defaults_deduplicates_and_sanitizes(self):
+        resolver = Mock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.23.4.5", 443))])
+        deploy = self.deploy(self.runtime_settings("https://pve.invalid"))
+        deploy.resolver = resolver
+        with patch.object(go_server, "Infrastructure") as infrastructure:
+            infrastructure.side_effect = RuntimeError("stop after validation")
+            with self.assertRaisesRegex(RuntimeError, "stop after validation"):
+                deploy.run()
+        resolver.assert_called_once_with("pve.invalid", 443, type=socket.SOCK_STREAM)
+        for address in ("127.0.0.1", "0.0.0.0", "224.0.0.1", "169.254.1.2", "::1", "::", "ff02::1", "fe80::1", "::ffff:127.0.0.1"):
+            resolver.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))]
+            with self.subTest(address=address), self.assertRaisesRegex(RuntimeError, "BROOD_PROXMOX_POOLS"):
+                deploy.run()
+        resolver.return_value = []
+        with self.assertRaisesRegex(RuntimeError, "BROOD_PROXMOX_POOLS"):
+            deploy.run()
+        resolver.side_effect = socket.gaierror("private-token-sentinel private-ca-sentinel")
+        with self.assertRaises(RuntimeError) as raised:
+            deploy.run()
+        self.assertNotIn("sentinel", str(raised.exception))
+
+    def test_optional_runtime_pair_uses_utf8_bytes_and_removal_clears_refs(self):
+        settings = {"BROOD_PUBLIC_ORIGIN": "https://brood.invalid:8443", "BROOD_PROXMOX_RELAY_SECRET": "я" * 16}
+        with patch.object(go_server.socket, "getaddrinfo", side_effect=AssertionError("unexpected DNS")):
+            configured = self.capture_release(settings)
+            removed = self.capture_release({})
+        for objects, expected in ((configured, settings), (removed, {})):
+            secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+            decoded = {key: base64.b64decode(value).decode("utf-8") for key, value in secret["data"].items()}
+            self.assertEqual(decoded, {"BROOD_SESSION_SECRET": "x" * 32, **expected})
+            deployment = next(o for o in objects if o["kind"] == "Deployment")
+            env = {e["name"] for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+            self.assertEqual(set(settings) & env, set(expected))
+
+    def test_config_only_does_not_resolve_or_open_api_egress(self):
+        with patch.object(go_server.socket, "getaddrinfo", side_effect=AssertionError("unexpected DNS")):
+            objects = self.capture_release({"BROOD_PROXMOX_POOLS": '{"lab":{"endpoint":"https://pve.invalid:8006"}}',
+                                            "BROOD_PROXMOX_TOKENS": '{"lab":"token"}'})
+        self.assertEqual(next(o for o in objects if o["kind"] == "NetworkPolicy"),
+                         next(o for o in render("localhost:5002/brood-go@sha256:" + "a" * 64)
+                              if o["kind"] == "NetworkPolicy"))
