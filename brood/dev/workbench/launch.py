@@ -18,11 +18,11 @@ class Launcher:
         manifest._dns_label(template)
         self.cluster.check()
         source = self._ate("get", "actor-template", template, "-a", atespace)
-        if source.get("workerSelector", {}).get("matchLabels") != {
-                "brood.dev/purpose": "development"}:
+        profile = manifest.profile_of(source)
+        if source.get("workerSelector") != manifest.worker_selector(profile):
             raise RuntimeError("workbench requires a template with the development worker selector")
         policy = manifest.egress_policy(atespace, name, manifest.PUBLIC_HOSTS + tuple(extra_hosts),
-                                         profile=manifest.profile_of(source))
+                                         profile=profile)
         self._ate("create", "actor", name, "-a", atespace, "--template", template)
         with tempfile.TemporaryDirectory(prefix="brood-workbench-policy.") as directory:
             path = Path(directory) / "policy.json"

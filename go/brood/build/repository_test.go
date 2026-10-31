@@ -44,8 +44,25 @@ func TestRepositoryWorkbenchContract(t *testing.T) {
 			t.Fatal("workbench must use one isolated guest container")
 		}
 		caps := containers[0].(map[string]any)["securityContext"].(map[string]any)["capabilities"].(map[string]any)["add"].([]any)
-		if len(caps) != 41 {
-			t.Fatalf("guest capability contract changed: %v", caps)
+		wantCaps := strings.Fields("CHOWN DAC_OVERRIDE FOWNER FSETID KILL SETGID SETUID SETPCAP NET_BIND_SERVICE NET_ADMIN NET_RAW SYS_CHROOT SYS_PTRACE SYS_ADMIN SYS_RESOURCE MKNOD AUDIT_WRITE SETFCAP SYSLOG")
+		if len(caps) != len(wantCaps) {
+			t.Fatalf("LXC workbench capability contract changed: %v", caps)
+		}
+		for i, capability := range wantCaps {
+			if caps[i] != capability {
+				t.Fatalf("capability %d = %v, want %s", i, caps[i], capability)
+			}
+		}
+		wantSelector := map[string]any{"matchLabels": map[string]any{
+			"brood.dev/purpose": "development", "brood.dev/sandbox": "lxc",
+			"ate.dev/lxc-nesting": "enabled",
+		}}
+		if !reflect.DeepEqual(actor["workerSelector"], wantSelector) {
+			t.Fatalf("workbench must select explicit LXC capacity: %v", actor["workerSelector"])
+		}
+		snapshot := actor["snapshotConfig"].(map[string]any)
+		if snapshot["preferredFidelity"] != "SNAPSHOT_FIDELITY_VOLUMES" {
+			t.Fatalf("LXC workbench must not request memory checkpoint: %v", snapshot)
 		}
 		network := marshal(t, plan["network"])
 		if strings.Contains(network, "*") {

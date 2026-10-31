@@ -82,18 +82,27 @@ def actor_template(image, atespace, name=_DEFAULT_NAME, profile="build"):
     return result
 
 
+def worker_selector(profile="build"):
+    """Селектор workbench берётся из того же объявления, что и сам шаблон."""
+    _profile(profile)
+    target = "coding" if profile == "claude-code" else "development"
+    return copy.deepcopy(_declarations()["templates"][target]["actor"]["workerSelector"])
+
+
 def worker_pool(worker_image):
-    """Отдельный microVM-пул с меткой для селектора шаблона разработки."""
+    """Отдельный LXC-пул с метками селектора шаблона разработки."""
     _image(worker_image)
+    labels = worker_selector()["matchLabels"]
     return {
         "apiVersion": "ate.dev/v1", "kind": "WorkerPool",
         "metadata": {"name": "brood-development", "namespace": "brood",
-                     "labels": {"brood.dev/purpose": "development"}},
+                     "labels": copy.deepcopy(labels)},
         "spec": {
             "replicas": 1, "workerImage": worker_image,
-            "sandboxClasses": [{"name": "microvm", "configRef": {"name": "microvm"}}],
+            "sandboxClasses": [{"name": "lxc", "configRef": {"name": "lxc-image"}}],
             "template": {
-                "labels": {"brood.dev/purpose": "development"},
+                "labels": {key: value for key, value in labels.items()
+                           if not key.startswith("ate.dev/")},
                 "nodeSelector": {"kubernetes.io/arch": "amd64"},
                 "resources": {"requests": {"cpu": "2", "memory": "8Gi"},
                               "limits": {"cpu": "6", "memory": "10Gi"}}},

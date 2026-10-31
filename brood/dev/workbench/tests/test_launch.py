@@ -6,11 +6,32 @@ from unittest import mock
 from brood.dev.workbench import launch
 
 
+SELECTOR = {"matchLabels": {"brood.dev/purpose": "development", "brood.dev/sandbox": "lxc",
+                            "ate.dev/lxc-nesting": "enabled"}}
+
+
 class LaunchTests(unittest.TestCase):
     def launcher(self):
         cluster = mock.Mock(kubectl_ate="/substrate/bin/kubectl-ate")
         cluster.shell.output.return_value = (0, "{}", "")
         return launch.Launcher(cluster)
+
+    def test_declared_lxc_profiles_are_accepted_but_legacy_selector_is_refused(self):
+        from brood.dev.workbench import manifest
+        for profile in ("build", "claude-code"):
+            runner = self.launcher()
+            source = manifest.actor_template("example/workbench@sha256:" + "a" * 64,
+                                             "builds", profile=profile)
+            runner.cluster.shell.output.side_effect = [
+                (0, json.dumps(source), ""), (0, "{}", ""), (0, "{}", ""), (0, "{}", "")]
+            with self.subTest(profile=profile):
+                runner.start("builds", "template", "job")
+        runner = self.launcher()
+        runner.cluster.shell.output.return_value = (0, json.dumps({
+            "workerSelector": {"matchLabels": {"brood.dev/purpose": "development"}}}), "")
+        with self.assertRaisesRegex(RuntimeError, "development.*selector"):
+            runner.start("builds", "template", "job")
+        self.assertEqual(runner.cluster.shell.output.call_count, 1)
 
     def test_order_is_template_check_create_policy_resume(self):
         runner = self.launcher()
@@ -20,8 +41,7 @@ class LaunchTests(unittest.TestCase):
             command = args[2:4]
             events.append(command)
             if command == ("get", "actor-template"):
-                return 0, json.dumps({"workerSelector": {"matchLabels": {
-                    "brood.dev/purpose": "development"}}}), ""
+                return 0, json.dumps({"workerSelector": SELECTOR}), ""
             if command == ("create", "egress-policy"):
                 with open(args[args.index("-f") + 1]) as f:
                     policy = json.load(f)
@@ -42,8 +62,7 @@ class LaunchTests(unittest.TestCase):
         def output(*args):
             events.append(args[2:4])
             if args[2:4] == ("get", "actor-template"):
-                return 0, json.dumps({"workerSelector": {"matchLabels": {
-                    "brood.dev/purpose": "development"}}, "containers": [{"env": [
+                return 0, json.dumps({"workerSelector": SELECTOR, "containers": [{"env": [
                         {"name": "BROOD_WORKBENCH_PROFILE", "value": "claude-code"}]}]}), ""
             if args[2:4] == ("create", "egress-policy"):
                 with open(args[args.index("-f") + 1]) as file:
@@ -65,7 +84,7 @@ class LaunchTests(unittest.TestCase):
     def test_policy_failure_keeps_the_new_actor_suspended(self):
         runner = self.launcher()
         runner.cluster.shell.output.side_effect = [
-            (0, '{"workerSelector":{"matchLabels":{"brood.dev/purpose":"development"}}}', ""),
+            (0, json.dumps({"workerSelector": SELECTOR}), ""),
             (0, "{}", ""), (1, "", "policy denied")]
         with self.assertRaisesRegex(RuntimeError, "policy denied.*suspended|suspended.*policy denied"):
             runner.start("builds", "template", "job")

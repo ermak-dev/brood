@@ -5,14 +5,13 @@ from brood.dev.workbench import manifest
 
 
 IMAGE = "ghcr.io/example/workbench@sha256:" + "a" * 64
-PURPOSE = {"brood.dev/purpose": "development"}
+PURPOSE = {"brood.dev/purpose": "development", "brood.dev/sandbox": "lxc",
+           "ate.dev/lxc-nesting": "enabled"}
+POD_LABELS = {"brood.dev/purpose": "development", "brood.dev/sandbox": "lxc"}
 CAPABILITIES = """
-CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER FSETID KILL SETGID SETUID SETPCAP
-LINUX_IMMUTABLE NET_BIND_SERVICE NET_BROADCAST NET_ADMIN NET_RAW IPC_LOCK IPC_OWNER
-SYS_MODULE SYS_RAWIO SYS_CHROOT SYS_PTRACE SYS_PACCT SYS_ADMIN SYS_BOOT SYS_NICE
-SYS_RESOURCE SYS_TIME SYS_TTY_CONFIG MKNOD LEASE AUDIT_WRITE AUDIT_CONTROL SETFCAP
-MAC_OVERRIDE MAC_ADMIN SYSLOG WAKE_ALARM BLOCK_SUSPEND AUDIT_READ PERFMON BPF
-CHECKPOINT_RESTORE
+CHOWN DAC_OVERRIDE FOWNER FSETID KILL SETGID SETUID SETPCAP NET_BIND_SERVICE
+NET_ADMIN NET_RAW SYS_CHROOT SYS_PTRACE SYS_ADMIN SYS_RESOURCE MKNOD
+AUDIT_WRITE SETFCAP SYSLOG
 """.split()
 
 
@@ -28,7 +27,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(result["resources"], {"limits": {
             "cpuMillicores": "4000", "memoryBytes": "8589934592"}})
         self.assertEqual(result["snapshotConfig"], {
-            "preferredFidelity": "SNAPSHOT_FIDELITY_MEMORY",
+            "preferredFidelity": "SNAPSHOT_FIDELITY_VOLUMES",
             "goldenSnapshotConfig": {"mode": "GOLDEN_SNAPSHOT_MODE_DISABLED"}})
         self.assertEqual(result["volumes"], [{"name": "workspace", "durableDir": {}}])
         self.assertEqual(len(result["containers"]), 1)
@@ -50,7 +49,7 @@ class ManifestTests(unittest.TestCase):
                 "PIP_NO_INDEX": "1"}.items()])
         self.assertEqual(container["securityContext"], {
             "capabilities": {"add": CAPABILITIES}})
-        self.assertEqual(len(set(CAPABILITIES)), 41)
+        self.assertEqual(len(set(CAPABILITIES)), 19)
         serialized = json.dumps(result)
         for forbidden in ("hostPath", "privileged", "kubeconfig", "goldenEgressPolicy"):
             self.assertNotIn(forbidden, serialized)
@@ -71,6 +70,19 @@ class ManifestTests(unittest.TestCase):
                                    "CLAUDE_CODE_OAUTH_TOKEN", "GITLAB_TOKEN", "SSH_AUTH_SOCK"})
         self.assertNotIn("dangerously", json.dumps(result))
         self.assertEqual(manifest.profile_of(result), "claude-code")
+
+    def test_both_profiles_require_lxc_without_global_kernel_capabilities(self):
+        for profile in ("build", "claude-code"):
+            with self.subTest(profile=profile):
+                result = manifest.actor_template(IMAGE, "builds", profile=profile)
+                self.assertEqual(result["workerSelector"], {"matchLabels": PURPOSE})
+                self.assertEqual(result["snapshotConfig"]["preferredFidelity"],
+                                 "SNAPSHOT_FIDELITY_VOLUMES")
+                capabilities = result["containers"][0]["securityContext"]["capabilities"]["add"]
+                self.assertEqual(capabilities, CAPABILITIES)
+                self.assertFalse(set(capabilities) & {
+                    "SYS_MODULE", "SYS_RAWIO", "SYS_BOOT", "SYS_TIME", "BPF",
+                    "PERFMON", "CHECKPOINT_RESTORE"})
 
     def test_profile_policy_adds_only_explicit_claude_hosts(self):
         default = manifest.egress_policy("builds", "job")
@@ -107,8 +119,8 @@ class ManifestTests(unittest.TestCase):
             "apiVersion": "ate.dev/v1", "kind": "WorkerPool",
             "metadata": {"name": "brood-development", "namespace": "brood", "labels": PURPOSE},
             "spec": {"replicas": 1, "workerImage": IMAGE,
-                     "sandboxClasses": [{"name": "microvm", "configRef": {"name": "microvm"}}],
-                     "template": {"labels": PURPOSE, "nodeSelector": {"kubernetes.io/arch": "amd64"},
+                     "sandboxClasses": [{"name": "lxc", "configRef": {"name": "lxc-image"}}],
+                     "template": {"labels": POD_LABELS, "nodeSelector": {"kubernetes.io/arch": "amd64"},
                                   "resources": {
                          "requests": {"cpu": "2", "memory": "8Gi"},
                          "limits": {"cpu": "6", "memory": "10Gi"}}}}})
