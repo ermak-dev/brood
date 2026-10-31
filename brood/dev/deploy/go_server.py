@@ -1,5 +1,7 @@
 """Go-сервер на отдельном PVC, без автоматического публичного cutover."""
 
+import base64
+import hashlib
 import ipaddress
 import json
 from pathlib import Path
@@ -13,6 +15,7 @@ from brood.dev.substrate import local
 
 
 OWNER = {"app.kubernetes.io/managed-by": "brood-go"}
+PROXMOX_SETTINGS = ("BROOD_PROXMOX_POOLS", "BROOD_PROXMOX_TOKENS")
 
 
 def approved_images(raw):
@@ -37,7 +40,7 @@ def registry_endpoint(raw):
     return {"url": f"http://{address}:5000", "ip": str(address)}
 
 
-def manifests(image, worker_images=None, proxy=False, registry=None):
+def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -86,6 +89,9 @@ def manifests(image, worker_images=None, proxy=False, registry=None):
     if proxy:
         container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": key}}} for key in ("CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY"))
+    if proxmox:
+        container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
+            "name": "brood-go-env", "key": key}}} for key in PROXMOX_SETTINGS)
     deployment = obj("Deployment", "brood-go", {
         "replicas": 1, "strategy": {"type": "Recreate"}, "selector": {"matchLabels": {"app": "brood-go"}},
         "template": {"metadata": {"labels": labels}, "spec": {
@@ -176,6 +182,13 @@ class Deploy:
         if not secret or len(secret) < 32:
             raise RuntimeError("Go deployment needs BROOD_SESSION_SECRET of at least 32 characters in .env")
         environment = {"BROOD_SESSION_SECRET": secret}
+        proxmox = {key: self.get(key) for key in PROXMOX_SETTINGS}
+        if any(proxmox.values()):
+            for key, value in proxmox.items():
+                if not value or not value.strip():
+                    raise RuntimeError(f"{key} is required for Proxmox configuration")
+            # JSON и CA проверяет Go; здесь только парность и явный список ключей.
+            environment.update(proxmox)
         proxy_url = self.get("CLIPROXY_URL")
         if proxy_url:
             proxy_key = self.get("CLIPROXY_MANAGEMENT_KEY")
@@ -222,7 +235,15 @@ class Deploy:
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
                 raise RuntimeError("Go image build returned invalid digest metadata")
             image = "localhost:5002/brood-go@" + digest
-            objects = manifests(image, workers, proxy=bool(proxy_url), registry=registry)
+            objects = manifests(image, workers, proxy=bool(proxy_url), registry=registry,
+                                proxmox=all(key in environment for key in PROXMOX_SETTINGS))
+            # data сохраняет владение apply ключами, включая их удаление при отключении.
+            env_data = {key: base64.b64encode(value.encode("utf-8")).decode("ascii")
+                        for key, value in environment.items()}
+            checksum = hashlib.sha256(json.dumps(
+                env_data, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            deployment = next(obj for obj in objects if obj["kind"] == "Deployment")
+            deployment["spec"]["template"]["metadata"]["annotations"] = {"brood.dev/server-env-sha256": checksum}
             objects[-1]["spec"]["egress"].extend(api_rules)
             if proxy_url:
                 objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
@@ -230,11 +251,11 @@ class Deploy:
                     "spec": {"podSelector": {"matchLabels": {"app": "cliproxy"}}, "policyTypes": ["Ingress"],
                              "ingress": [{"from": [{"podSelector": {"matchLabels": {"app": "brood-go"}}}],
                                           "ports": [{"port": 8317}]}]}})
-            for name, values, secret_type in (("brood-go-env", environment, "Opaque"),
-                                             ("brood-go-tls", tls, "kubernetes.io/tls")):
+            for name, values, field, secret_type in (("brood-go-env", env_data, "data", "Opaque"),
+                                                    ("brood-go-tls", tls, "stringData", "kubernetes.io/tls")):
                 objects.append({"apiVersion": "v1", "kind": "Secret", "type": secret_type,
                                 "metadata": {"name": name, "namespace": "brood", "labels": OWNER.copy()},
-                                "stringData": values})
+                                field: values})
             path = root / "release.json"
             path.touch(mode=0o600)
             path.write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
