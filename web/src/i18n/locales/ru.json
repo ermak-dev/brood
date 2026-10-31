@@ -2675,6 +2675,19 @@
       "reverting": "откатывается"
     }
   },
+  "proxmox_connections": {
+    "title": "Подключения Proxmox",
+    "endpoint": "Адрес API",
+    "node": "Нода",
+    "resource_pool": "Пул ресурсов PVE",
+    "storage": "Хранилище",
+    "network": "Сеть",
+    "credential_configured": "Учётные данные настроены",
+    "yes": "Да",
+    "no": "Нет",
+    "runtime_not_installed": "Runtime не установлен. Настроенные подключения не являются готовыми воркерами и не добавляют ёмкость.",
+    "load_failed": "Не удалось загрузить подключения Proxmox"
+  },
   "worker_pools": {
     "not_installed": "Поддерживаются, но здесь не предлагаются, потому что установка не объявила для них образ воркера: {{classes}}.",
     "lxc_install_hint": "LXC готовится командой «brood deploy lxc --trusted-workloads»; затем добавьте напечатанный digest в WORKER_POOL_IMAGES.",

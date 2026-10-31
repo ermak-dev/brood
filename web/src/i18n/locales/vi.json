@@ -2687,6 +2687,19 @@
       "reverting": "đang hoàn tác"
     }
   },
+  "proxmox_connections": {
+    "title": "Kết nối Proxmox",
+    "endpoint": "Địa chỉ API",
+    "node": "Nút",
+    "resource_pool": "Nhóm tài nguyên PVE",
+    "storage": "Lưu trữ",
+    "network": "Mạng",
+    "credential_configured": "Đã cấu hình thông tin xác thực",
+    "yes": "Có",
+    "no": "Không",
+    "runtime_not_installed": "Chưa cài đặt môi trường chạy. Kết nối đã cấu hình không phải là worker sẵn sàng và không cung cấp tài nguyên worker.",
+    "load_failed": "Không thể tải kết nối Proxmox"
+  },
   "worker_pools": {
     "not_installed": "Được hỗ trợ nhưng không hiển thị ở đây, vì bản cài đặt này chưa khai báo image worker cho chúng: {{classes}}.",
     "lxc_install_hint": "Chuẩn bị LXC bằng “brood deploy lxc --trusted-workloads”, rồi thêm digest được in ra vào WORKER_POOL_IMAGES.",
