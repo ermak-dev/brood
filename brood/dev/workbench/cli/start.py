@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from brood.dev.workbench import runtime, storage
+from brood.dev.workbench import bootstrap, runtime
 
 
 def main(argv):
@@ -39,8 +39,7 @@ def main(argv):
                           "--directory", str(root / "results")],
                          stdout=output, stderr=subprocess.STDOUT)
     try:
-        runtime.prepare_kernel_log_device()
-        storage.prepare(root)
+        bootstrap.prepare(root, os.environ.get("container", ""))
         runtime.start_docker(root)
     except RuntimeError as error:
         runtime.write_status(root, "failed", str(error))
