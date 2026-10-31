@@ -1,7 +1,7 @@
 """brood workbench template: print development manifests as JSON
 
   --image DIGEST --atespace NAME                ActorTemplate
-  --kind pool --image WORKER_DIGEST              dedicated microVM WorkerPool
+  --kind pool --image WORKER_DIGEST              trusted LXC nesting WorkerPool
   --kind policy --atespace NAME --actor NAME     per-actor egress policy
   --profile claude-code                         interactive coding profile
 
