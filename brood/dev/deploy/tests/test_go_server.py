@@ -1,4 +1,6 @@
 """Go-выкладка хранит SQLite на PVC и не меняет другие runtime и данные."""
+import base64
+import hashlib
 import json
 from pathlib import Path
 import unittest
@@ -51,12 +53,117 @@ class GoManifestTests(unittest.TestCase):
 
 
 class GoDeploymentTests(unittest.TestCase):
-    def deploy(self):
+    def deploy(self, settings=None):
         cluster = Mock()
         workers = {"gvisor": "localhost:5002/ateworker-gvisor@sha256:" + "b" * 64}
         values = {"BROOD_SESSION_SECRET": "x" * 32, "WORKER_POOL_IMAGES": json.dumps(workers),
                   "BROOD_RELEASE_SHA": "c" * 40}
+        values.update(settings or {})
         return go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout")
+
+    def capture_release(self, settings):
+        deploy = self.deploy(settings)
+        applied = []
+
+        def output(*args):
+            for key in ("BROOD_SESSION_SECRET", *go_server.PROXMOX_SETTINGS,
+                        "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY"):
+                value = settings.get(key)
+                if value:
+                    self.assertNotIn(value, args)
+            if "build" in args:
+                Path(args[args.index("--metadata-file") + 1]).write_text(
+                    json.dumps({"containerimage.digest": "sha256:" + "a" * 64}))
+            if "apply" in args:
+                applied.extend(json.loads(Path(args[args.index("-f") + 1]).read_text())["items"])
+            return 0, "", ""
+
+        deploy.cluster.shell.output.side_effect = output
+        with patch.object(go_server, "Infrastructure") as infrastructure, \
+                patch.object(deploy, "_registry_access", return_value=None), \
+                patch("builtins.print") as printed:
+            infrastructure.return_value._tls.return_value = {"tls.crt": "cert", "tls.key": "key"}
+            infrastructure.return_value._api_egress.return_value = []
+            deploy.run()
+            printed.assert_not_called()
+        return applied
+
+    # BUG: stringData не удаляет сохранённые data-ключи после отключения Proxmox.
+    # HYPOTHESIS: apply должен владеть настоящими data-ключами, не входным stringData.
+    def test_server_secret_owns_encoded_data_and_removes_only_previous_keys(self):
+        settings = {
+            "BROOD_PROXMOX_POOLS": '{ "lab": {"caPEM": "line1\\nline2\\n", "name": "тест"} }\n',
+            "BROOD_PROXMOX_TOKENS": '{ "lab-token": "synthetic-token=\\n" }\n',
+        }
+        previous = self.capture_release(settings)
+        current = self.capture_release({})
+        previous_secret, current_secret = [
+            next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+            for objects in (previous, current)]
+        for secret, expected in ((previous_secret, {"BROOD_SESSION_SECRET": "x" * 32, **settings}),
+                                 (current_secret, {"BROOD_SESSION_SECRET": "x" * 32})):
+            self.assertNotIn("stringData", secret)
+            self.assertEqual(secret.get("data"), {
+                key: base64.b64encode(value.encode("utf-8")).decode("ascii")
+                for key, value in expected.items()})
+            self.assertEqual({key: base64.b64decode(value).decode("utf-8")
+                              for key, value in secret["data"].items()}, expected)
+        # Модель удаления ключей map, которыми владеет last-applied; не эмуляция API.
+        stored = {**previous_secret["data"], "unrelated": "a2VlcA=="}
+        for key in previous_secret["data"].keys() - current_secret["data"].keys():
+            stored.pop(key)
+        stored.update(current_secret["data"])
+        self.assertEqual(stored, {**current_secret["data"], "unrelated": "a2VlcA=="})
+        self.assertTrue(set(go_server.PROXMOX_SETTINGS).isdisjoint(stored))
+
+    # BUG: Обновление Secret при том же digest не перезапускает сервер с новыми env.
+    # HYPOTHESIS: Хеш всего env Secret в pod template меняет шаблон без раскрытия значений.
+    def test_server_config_checksum_rolls_same_image_on_every_secret_change(self):
+        pools = {"lab": {"endpoint": "https://pve.invalid:8006", "caPEM": "synthetic-ca"}}
+        settings = {
+            "BROOD_SESSION_SECRET": "synthetic-session-" * 3,
+            "BROOD_PROXMOX_POOLS": json.dumps(pools),
+            "BROOD_PROXMOX_TOKENS": json.dumps({"lab": "synthetic-token"}),
+            "CLIPROXY_URL": "http://synthetic-proxy.invalid:8317",
+            "CLIPROXY_MANAGEMENT_KEY": "synthetic-proxy-key",
+        }
+
+        def checksum(values):
+            objects = self.capture_release(values)
+            deployment = next(o for o in objects if o["kind"] == "Deployment")
+            template = deployment["spec"]["template"]
+            self.assertEqual(template["spec"]["containers"][0]["image"],
+                             "localhost:5002/brood-go@sha256:" + "a" * 64)
+            checksum = template["metadata"].get("annotations", {}).get("brood.dev/server-env-sha256")
+            self.assertIsNotNone(checksum, "server env changes need a pod-template checksum")
+            data = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")["data"]
+            self.assertEqual(checksum, hashlib.sha256(
+                json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest())
+            env = {entry["name"]: entry for entry in template["spec"]["containers"][0]["env"]}
+            for key in data:
+                self.assertEqual(env[key], {"name": key, "valueFrom": {
+                    "secretKeyRef": {"name": "brood-go-env", "key": key}}})
+            for value in (*values.values(), *data.values()):
+                self.assertNotIn(value, json.dumps(deployment))
+            return checksum
+
+        original = checksum(settings)
+        self.assertEqual(checksum(dict(reversed(list(settings.items())))), original)
+        variants = {
+            "token": {**settings, "BROOD_PROXMOX_TOKENS": '{"lab":"rotated-token"}'},
+            "endpoint": {**settings, "BROOD_PROXMOX_POOLS": json.dumps({"lab": {
+                **pools["lab"], "endpoint": "https://changed.invalid:8006"}})},
+            "ca": {**settings, "BROOD_PROXMOX_POOLS": json.dumps({"lab": {
+                **pools["lab"], "caPEM": "rotated-ca"}})},
+            "remove": {key: value for key, value in settings.items() if key not in go_server.PROXMOX_SETTINGS},
+            "session": {**settings, "BROOD_SESSION_SECRET": "rotated-session-" * 3},
+            "proxy_url": {**settings, "CLIPROXY_URL": "http://changed-proxy.invalid:8317"},
+            "proxy_key": {**settings, "CLIPROXY_MANAGEMENT_KEY": "rotated-proxy-key"},
+            "proxy_remove": {key: value for key, value in settings.items() if not key.startswith("CLIPROXY_")},
+        }
+        for name, values in variants.items():
+            with self.subTest(change=name):
+                self.assertNotEqual(checksum(values), original)
 
     def test_build_and_apply_only_go_without_deleting_data(self):
         deploy = self.deploy()
@@ -91,6 +198,11 @@ class GoDeploymentTests(unittest.TestCase):
                 self.assertEqual(pod["containers"][0]["image"], "localhost:5002/brood-go@" + digest)
                 self.assertNotIn("initContainers", pod)
                 self.assertFalse(any(o["kind"] in ("WorkerPool", "StatefulSet") for o in objects))
+                self.assertNotIn("BROOD_PROXMOX_", json.dumps(objects))
+                secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+                self.assertNotIn("stringData", secret)
+                self.assertEqual(secret["data"], {
+                    "BROOD_SESSION_SECRET": base64.b64encode(("x" * 32).encode()).decode("ascii")})
                 return 0, "", ""
             self.assertIn("rollout", args)
             events.append("rollout")
@@ -107,6 +219,87 @@ class GoDeploymentTests(unittest.TestCase):
         self.assertLess(events.index("build"), events.index("apply"))
         self.assertLess(events.index("apply"), events.index("rollout"))
         deploy.cluster.shell.run.assert_not_called()
+
+    # FEATURE: Настройки Proxmox передаются только серверу через Secret.
+    # SPEC: Явный список ключей, парность до сборки и записи, без новых ресурсов и egress.
+    def test_proxmox_settings_reach_only_server_secret(self):
+        settings = {
+            "BROOD_PROXMOX_POOLS": json.dumps({"lab": {
+                "endpoint": "https://pve.invalid:8006", "tokenID": "test@pve!brood",
+                "node": "node", "resourcePool": "brood", "storage": "local",
+                "network": "vmbr0", "credentialRef": "lab-token", "caPEM": "test-ca-sentinel"}}),
+            "BROOD_PROXMOX_TOKENS": json.dumps({"lab-token": "proxmox-token-sentinel"}),
+        }
+        deploy = self.deploy({**settings, "UNRELATED_SECRET": "unrelated-sentinel",
+                              "BROOD_PROXMOX_OTHER": "other-sentinel"})
+        applied = []
+
+        def output(*args):
+            for value in settings.values():
+                self.assertNotIn(value, args)
+            self.assertNotIn("delete", args)
+            self.assertNotIn("scale", args)
+            if "build" in args:
+                Path(args[args.index("--metadata-file") + 1]).write_text(
+                    json.dumps({"containerimage.digest": "sha256:" + "a" * 64}))
+            if "apply" in args:
+                path = Path(args[args.index("-f") + 1])
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                applied.extend(json.loads(path.read_text())["items"])
+            return 0, "", ""
+
+        deploy.cluster.shell.output.side_effect = output
+        with patch.object(go_server, "Infrastructure") as infrastructure, \
+                patch.object(deploy, "_registry_access", return_value=None):
+            infrastructure.return_value._tls.return_value = {"tls.crt": "cert", "tls.key": "key"}
+            infrastructure.return_value._api_egress.return_value = []
+            deploy.run()
+        secret = next(o for o in applied if o["metadata"]["name"] == "brood-go-env")
+        self.assertNotIn("stringData", secret)
+        self.assertEqual(secret["data"], {
+            key: base64.b64encode(value.encode("utf-8")).decode("ascii")
+            for key, value in {"BROOD_SESSION_SECRET": "x" * 32, **settings}.items()})
+        deployment = next(o for o in applied if o["kind"] == "Deployment")
+        env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+        for key in settings:
+            self.assertEqual(env.get(key), {"name": key, "valueFrom": {
+                "secretKeyRef": {"name": "brood-go-env", "key": key}}})
+        baseline = render("localhost:5002/brood-go@sha256:" + "a" * 64)
+        self.assertEqual([(o["kind"], o["metadata"]["name"]) for o in applied if o["kind"] != "Secret"],
+                         [(o["kind"], o["metadata"]["name"]) for o in baseline])
+        for obj in applied:
+            self.assertNotIn("unrelated-sentinel", json.dumps(obj))
+            self.assertNotIn("other-sentinel", json.dumps(obj))
+            if obj is not secret:
+                self.assertNotIn("proxmox-token-sentinel", json.dumps(obj))
+                self.assertNotIn("test-ca-sentinel", json.dumps(obj))
+                for value in settings.values():
+                    self.assertNotIn(value, json.dumps(obj))
+            if obj["kind"] not in ("Secret", "Deployment"):
+                for key in settings:
+                    self.assertNotIn(key, json.dumps(obj))
+            if obj["kind"] == "NetworkPolicy":
+                self.assertEqual(obj, next(o for o in baseline if o["kind"] == "NetworkPolicy"))
+        self.assertFalse(any(o["kind"] in ("Actor", "WorkerPool", "StatefulSet") for o in applied))
+
+    def test_partial_proxmox_settings_refuse_before_native_calls(self):
+        for missing, present in (("BROOD_PROXMOX_POOLS", "BROOD_PROXMOX_TOKENS"),
+                                 ("BROOD_PROXMOX_TOKENS", "BROOD_PROXMOX_POOLS")):
+            for empty in (None, "", " \t\n"):
+                with self.subTest(missing=missing, empty=empty):
+                    settings = {present: "configuration-sentinel"}
+                    if empty is not None:
+                        settings[missing] = empty
+                    deploy = self.deploy(settings)
+                    deploy.cluster.shell.output.side_effect = AssertionError("unexpected native call")
+                    with patch.object(go_server, "Infrastructure") as infrastructure:
+                        with self.assertRaises(RuntimeError) as raised:
+                            deploy.run()
+                    self.assertIn(missing, str(raised.exception))
+                    self.assertNotIn("configuration-sentinel", str(raised.exception))
+                    infrastructure.assert_not_called()
+                    deploy.cluster.check.assert_not_called()
+                    deploy.cluster.shell.output.assert_not_called()
 
     def test_malformed_ownership_response_refuses_before_build(self):
         for response in ("not json", "[]", '{"metadata":null}', '{"metadata":{"labels":[]}}'):
