@@ -88,6 +88,45 @@ IP внутреннего registry в kind network. Go получает `BROOD_R
 chunks до 32 MiB через обычный HTTPS session/CSRF API. Ограничение edge 64 MiB
 сохраняется. Подробности — `docs/BUILD.md`.
 
+## Proxmox runtime
+
+`BROOD_PROXMOX_POOLS` и `BROOD_PROXMOX_TOKENS` передаются парой как JSON maps
+в `data` серверного Secret `brood-go-env`. Карты содержат endpoint/CA и
+credentialRef/token соответственно; полный контракт проверяет Go-сервер.
+Без runtime-полей существующая config-only установка не требует новых
+настроек, не разрешает DNS endpoints при выкладке и не получает API egress.
+
+Наличие любого из `template`, `templateDigest`, `capacity` на верхнем уровне
+пула включает runtime-проверку выкладки. Для этого нужны две явные настройки:
+
+| Настройка | Назначение |
+|---|---|
+| `BROOD_PUBLIC_ORIGIN` | строгий HTTPS origin без credentials, path (включая `/`), query и fragment |
+| `BROOD_PROXMOX_RELAY_SECRET` | отдельный случайный relay key, минимум 32 UTF-8 байта, не равный `BROOD_SESSION_SECRET` |
+
+При явном указании этой пары она проверяется и передаётся серверу даже без
+runtime-пула. Одиночная настройка отвергается. Значения не выводятся и не
+передаются build args, edge, акторам или воркерам: только server Secret и
+точечные `secretKeyRef` серверного контейнера. Детерминированный SHA-256 всего
+`Secret.data` в pod template перезапускает сервер также при ротации relay key
+или origin с прежним image digest. Удаление настроек сохраняет прежнее
+владение `data`-ключами через apply; чужие ключи не затрагиваются.
+
+До сборки и записи deploy разрешает только endpoints runtime-пулов из
+`BROOD_PROXMOX_POOLS` через `socket.getaddrinfo` (инъецируемый resolver в тестах).
+Endpoint должен быть HTTPS origin; порт берётся из URL, без явного порта — 443,
+не неявный Proxmox 8006. Ошибка DNS, пустой ответ, loopback, unspecified,
+multicast, link-local или reserved адрес останавливают выкладку без значений
+endpoint, CA или токенов в диагностике. Частные unicast IP разрешены.
+
+Серверная NetworkPolicy сохраняет native DNS/Substrate/Kubernetes API,
+registry и proxy правила и добавляет отдельные TCP egress правила: каждый
+найденный IPv4 `/32` или IPv6 `/128` только на точный порт своего endpoint.
+Широких CIDR, host networking и новых actor/worker разрешений нет. Изменение
+DNS требует новой выкладки: список адресов фиксируется в NetworkPolicy.
+Публичный TLS остаётся существующим `secrets/tls.crt`/`secrets/tls.key`;
+дополнительная настройка guest CA этим слоем не вводится.
+
 ## CI и restricted SSH
 
 Используется прежний runner builder с тегом docker; runner на target не

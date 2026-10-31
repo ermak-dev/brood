@@ -6,6 +6,8 @@ import ipaddress
 import json
 from pathlib import Path
 import re
+import socket
+from urllib.parse import urlsplit
 import tempfile
 import uuid
 
@@ -16,6 +18,66 @@ from brood.dev.substrate import local
 
 OWNER = {"app.kubernetes.io/managed-by": "brood-go"}
 PROXMOX_SETTINGS = ("BROOD_PROXMOX_POOLS", "BROOD_PROXMOX_TOKENS")
+PROXMOX_RUNTIME_SETTINGS = ("BROOD_PUBLIC_ORIGIN", "BROOD_PROXMOX_RELAY_SECRET")
+
+
+def https_origin(raw, setting):
+    try:
+        if not isinstance(raw, str) or not raw.isascii() or any(c.isspace() or ord(c) < 32 for c in raw):
+            raise ValueError
+        url = urlsplit(raw)
+        if (url.scheme != "https" or not url.hostname or url.username is not None or url.password is not None
+                or url.path or "?" in raw or "#" in raw or "%" in raw or "\\" in raw
+                or url.netloc.endswith(":") or not 1 <= (url.port or 443) <= 65535 or url.port == 0):
+            raise ValueError
+        try:
+            ipaddress.ip_address(url.hostname)
+        except ValueError:
+            if len(url.hostname) > 253 or any(not re.fullmatch(
+                    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                    for label in url.hostname.rstrip(".").split(".")):
+                raise ValueError from None
+        return url.hostname, url.port or 443
+    except (ValueError, TypeError):
+        raise RuntimeError(f"{setting} must contain a valid HTTPS origin without credentials, path, query or fragment") from None
+
+
+def proxmox_runtime_endpoints(raw):
+    try:
+        pools = json.loads(raw) if raw else {}
+        if not isinstance(pools, dict) or any(not isinstance(pool, dict) for pool in pools.values()):
+            raise ValueError
+    except (ValueError, TypeError):
+        raise RuntimeError("BROOD_PROXMOX_POOLS must contain a JSON object of pools") from None
+    endpoints = {pool.get("endpoint") for pool in pools.values()
+                 if any(key in pool for key in ("template", "templateDigest", "capacity"))
+                 and isinstance(pool.get("endpoint"), str)}
+    if any(not isinstance(pool.get("endpoint"), str) for pool in pools.values()
+           if any(key in pool for key in ("template", "templateDigest", "capacity"))):
+        raise RuntimeError("BROOD_PROXMOX_POOLS runtime requires an HTTPS endpoint")
+    return endpoints
+
+
+def proxmox_egress(endpoints, resolver):
+    rules = set()
+    for endpoint in sorted(endpoints):
+        host, port = https_origin(endpoint, "BROOD_PROXMOX_POOLS")
+        try:
+            answers = resolver(host, port, type=socket.SOCK_STREAM)
+            if not answers:
+                raise ValueError
+            for answer in answers:
+                address = ipaddress.ip_address(answer[4][0])
+                checked = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) else None
+                checked = checked or address
+                if (checked.is_loopback or checked.is_unspecified or checked.is_multicast
+                        or checked.is_link_local or checked.is_reserved or "%" in str(address)):
+                    raise ValueError
+                rules.add((str(checked) + f"/{checked.max_prefixlen}", port))
+        except (OSError, ValueError, TypeError, IndexError):
+            raise RuntimeError("BROOD_PROXMOX_POOLS endpoint resolution failed or returned an unsafe address") from None
+    return [{"to": [{"ipBlock": {"cidr": cidr}}], "ports": [{"port": port, "protocol": "TCP"}]}
+            for cidr, port in sorted(rules)]
 
 
 def approved_images(raw):
@@ -40,7 +102,7 @@ def registry_endpoint(raw):
     return {"url": f"http://{address}:5000", "ip": str(address)}
 
 
-def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False):
+def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -92,6 +154,9 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
     if proxmox:
         container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": key}}} for key in PROXMOX_SETTINGS)
+    if proxmox_runtime:
+        container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
+            "name": "brood-go-env", "key": key}}} for key in PROXMOX_RUNTIME_SETTINGS)
     deployment = obj("Deployment", "brood-go", {
         "replicas": 1, "strategy": {"type": "Recreate"}, "selector": {"matchLabels": {"app": "brood-go"}},
         "template": {"metadata": {"labels": labels}, "spec": {
@@ -145,8 +210,9 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
 
 
 class Deploy:
-    def __init__(self, cluster, get=config.get, project=config.PROJECT):
+    def __init__(self, cluster, get=config.get, project=config.PROJECT, resolver=None):
         self.cluster, self.get, self.project = cluster, get, Path(project)
+        self.resolver = resolver or socket.getaddrinfo
 
     def _registry_access(self):
         code, out, _ = self.cluster.shell.output("docker", "inspect", "--format",
@@ -187,8 +253,20 @@ class Deploy:
             for key, value in proxmox.items():
                 if not value or not value.strip():
                     raise RuntimeError(f"{key} is required for Proxmox configuration")
-            # JSON и CA проверяет Go; здесь только парность и явный список ключей.
+            # Полный контракт JSON и CA проверяет Go; deploy читает только runtime endpoints.
             environment.update(proxmox)
+        endpoints = proxmox_runtime_endpoints(proxmox["BROOD_PROXMOX_POOLS"])
+        runtime_env = {key: self.get(key) for key in PROXMOX_RUNTIME_SETTINGS}
+        if endpoints or any(runtime_env.values()):
+            for key, value in runtime_env.items():
+                if not value:
+                    raise RuntimeError(f"{key} is required for Proxmox runtime configuration")
+            https_origin(runtime_env["BROOD_PUBLIC_ORIGIN"], "BROOD_PUBLIC_ORIGIN")
+            relay = runtime_env["BROOD_PROXMOX_RELAY_SECRET"]
+            if len(relay.encode("utf-8")) < 32 or relay == secret:
+                raise RuntimeError("BROOD_PROXMOX_RELAY_SECRET needs at least 32 bytes and must differ from BROOD_SESSION_SECRET")
+            environment.update(runtime_env)
+        pve_rules = proxmox_egress(endpoints, self.resolver)
         proxy_url = self.get("CLIPROXY_URL")
         if proxy_url:
             proxy_key = self.get("CLIPROXY_MANAGEMENT_KEY")
@@ -236,7 +314,8 @@ class Deploy:
                 raise RuntimeError("Go image build returned invalid digest metadata")
             image = "localhost:5002/brood-go@" + digest
             objects = manifests(image, workers, proxy=bool(proxy_url), registry=registry,
-                                proxmox=all(key in environment for key in PROXMOX_SETTINGS))
+                                proxmox=all(key in environment for key in PROXMOX_SETTINGS),
+                                proxmox_runtime=all(key in environment for key in PROXMOX_RUNTIME_SETTINGS))
             # data сохраняет владение apply ключами, включая их удаление при отключении.
             env_data = {key: base64.b64encode(value.encode("utf-8")).decode("ascii")
                         for key, value in environment.items()}
@@ -244,7 +323,7 @@ class Deploy:
                 env_data, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
             deployment = next(obj for obj in objects if obj["kind"] == "Deployment")
             deployment["spec"]["template"]["metadata"]["annotations"] = {"brood.dev/server-env-sha256": checksum}
-            objects[-1]["spec"]["egress"].extend(api_rules)
+            objects[-1]["spec"]["egress"].extend([*api_rules, *pve_rules])
             if proxy_url:
                 objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
                     "metadata": {"name": "brood-go-cliproxy", "namespace": "brood", "labels": OWNER.copy()},
