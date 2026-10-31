@@ -85,7 +85,7 @@ func TestRepositoryWorkbenchContract(t *testing.T) {
 		t.Fatal("public Go SDK dependency must keep its independently verified pin")
 	}
 	substrate := plans[0]["sources"].(map[string]any)["substrate"].(map[string]any)
-	if pins["SUBSTRATE_COMMIT"] != "f0e0a630a2d72a013d9ad97ea71d092bd7c26713" ||
+	if pins["SUBSTRATE_COMMIT"] != "0d435f2e2ff86b73fc9982d9aac3fa77d7b2ed9f" ||
 		substrate["revision"] != pins["SUBSTRATE_COMMIT"] ||
 		substrate["repository"] != "git@git.ermak.dev:ermak/substrate.git" {
 		t.Fatal("workbench source must use the verified LXC fork pin, not the public SDK pin")
