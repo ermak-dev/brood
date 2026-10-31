@@ -25,6 +25,7 @@ import (
 const maxBody = 1 << 20
 
 var (
+	ErrNotFound   = errors.New("PVE resource not found")
 	ErrPermission = errors.New("PVE permission denied")
 	ErrOwnership  = errors.New("PVE container ownership check failed")
 	ErrCollision  = errors.New("PVE VMID conflict; reconcile before allocating again")
@@ -242,6 +243,8 @@ func (c *Client) requestData(ctx context.Context, method, path string, form url.
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		switch resp.StatusCode {
+		case 404:
+			return ErrNotFound
 		case 401, 403:
 			return ErrPermission
 		case 409:
@@ -318,6 +321,10 @@ func (c *Client) NextID(ctx context.Context) (int, error) {
 	if err := c.request(ctx, http.MethodGet, "/cluster/nextid", nil, &raw); err != nil {
 		return 0, err
 	}
+	return parseVMID(raw)
+}
+
+func parseVMID(raw json.RawMessage) (int, error) {
 	var s string
 	if json.Unmarshal(raw, &s) != nil {
 		s = string(raw)
@@ -327,6 +334,24 @@ func (c *Client) NextID(ctx context.Context) (int, error) {
 		return 0, errors.New("invalid PVE next VMID")
 	}
 	return id, nil
+}
+
+// ConfirmAbsent positively checks the global VMID registry, not ACL-filtered
+// inventory. Only a successful exact-ID response proves absence at this instant;
+// all errors retain the reservation. It does not reserve the now-free VMID.
+func (c *Client) ConfirmAbsent(ctx context.Context, id int) error {
+	if !validVMID(id) {
+		return errors.New("invalid PVE VMID")
+	}
+	var raw json.RawMessage
+	if err := c.request(ctx, http.MethodGet, "/cluster/nextid?"+url.Values{"vmid": {strconv.Itoa(id)}}.Encode(), nil, &raw); err != nil {
+		return err
+	}
+	free, err := parseVMID(raw)
+	if err != nil || free != id {
+		return errors.New("PVE VMID absence was not confirmed")
+	}
+	return nil
 }
 
 // Create submits exactly once and returns the UPID for durable persistence.
@@ -403,6 +428,27 @@ func (c *Client) ctPath(id int) string { return "/nodes/" + c.cfg.Node + "/lxc/"
 func (c *Client) GetConfig(ctx context.Context, id int) (CTConfig, error) {
 	cfg, _, err := c.getConfig(ctx, id, false)
 	return cfg, err
+}
+
+// InspectOwned verifies both config views, consistent digests and current pool
+// membership before returning sanitized configuration for restart adoption. Like
+// mutations, it cannot make pool membership atomic with a later external action.
+func (c *Client) InspectOwned(ctx context.Context, ref OwnedCT) (CTConfig, error) {
+	digest, err := c.ownedDigest(ctx, ref, true)
+	if err != nil {
+		return CTConfig{}, err
+	}
+	cfg, raw, err := c.getConfig(ctx, ref.VMID, false)
+	if err != nil {
+		return CTConfig{}, err
+	}
+	if cfg.Digest != digest {
+		return CTConfig{}, ErrOwnership
+	}
+	if err := c.validateOwnedConfig(ref, cfg, raw); err != nil {
+		return CTConfig{}, err
+	}
+	return cfg, nil
 }
 
 // Config is an alias for GetConfig.
