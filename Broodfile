@@ -45,6 +45,8 @@ templates:
             - {name: SUBSTRATE_SOURCE, value: /workspace/substrate}
             - {name: TMPDIR, value: /workspace/tmp}
             - {name: DOCKER_HOST, value: 'unix:///var/run/docker.sock'}
+            - {name: GOMAXPROCS, value: '4'}
+            - {name: GOFLAGS, value: '-p=2'}
             - {name: PIP_FIND_LINKS, value: /opt/wheels}
             - {name: PIP_NO_INDEX, value: '1'}
           volumeMounts: [{name: workspace, mountPath: /workspace}]
@@ -80,6 +82,8 @@ templates:
             - {name: SUBSTRATE_SOURCE, value: /workspace/substrate}
             - {name: TMPDIR, value: /workspace/tmp}
             - {name: DOCKER_HOST, value: 'unix:///var/run/docker.sock'}
+            - {name: GOMAXPROCS, value: '4'}
+            - {name: GOFLAGS, value: '-p=2'}
             - {name: PIP_FIND_LINKS, value: /opt/wheels}
             - {name: PIP_NO_INDEX, value: '1'}
             - {name: BROOD_WORKBENCH_PROFILE, value: claude-code}

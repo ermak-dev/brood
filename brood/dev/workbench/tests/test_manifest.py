@@ -45,7 +45,8 @@ class ManifestTests(unittest.TestCase):
             {"name": name, "value": value} for name, value in {
                 "HOME": "/workspace/home", "XDG_DATA_HOME": "/workspace/data",
                 "SUBSTRATE_SOURCE": "/workspace/substrate", "TMPDIR": "/workspace/tmp",
-                "DOCKER_HOST": "unix:///var/run/docker.sock", "PIP_FIND_LINKS": "/opt/wheels",
+                "DOCKER_HOST": "unix:///var/run/docker.sock", "GOMAXPROCS": "4", "GOFLAGS": "-p=2",
+                "PIP_FIND_LINKS": "/opt/wheels",
                 "PIP_NO_INDEX": "1"}.items()])
         self.assertEqual(container["securityContext"], {
             "capabilities": {"add": CAPABILITIES}})
@@ -70,6 +71,15 @@ class ManifestTests(unittest.TestCase):
                                    "CLAUDE_CODE_OAUTH_TOKEN", "GITLAB_TOKEN", "SSH_AUTH_SOCK"})
         self.assertNotIn("dangerously", json.dumps(result))
         self.assertEqual(manifest.profile_of(result), "claude-code")
+
+    def test_go_compilation_is_bounded_for_both_four_cpu_profiles(self):
+        for profile in ("build", "claude-code"):
+            with self.subTest(profile=profile):
+                template = manifest.actor_template(IMAGE, "builds", profile=profile)
+                env = {item["name"]: item["value"] for item in template["containers"][0]["env"]}
+                self.assertEqual(env.get("GOMAXPROCS"), "4")
+                self.assertEqual(env.get("GOFLAGS"), "-p=2")
+                self.assertEqual(template["resources"]["limits"]["cpuMillicores"], "4000")
 
     def test_both_profiles_require_lxc_without_global_kernel_capabilities(self):
         for profile in ("build", "claude-code"):
