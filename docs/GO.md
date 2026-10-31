@@ -28,7 +28,8 @@ CI запускает `bash .ci/go-test.sh` на существующем Docker
 
 | Пакет | Назначение |
 |---|---|
-| `golang.org/x/crypto` | Argon2id |
+| `golang.org/x/crypto` | Argon2id и SSH multiplexing гостевого Proxmox relay с закреплённым host key |
+| `golang.org/x/net` | WebSocket-транспорт исходящего WSS relay; существующий pin, без новой зависимости |
 | `golang.org/x/term` | Ввод пароля без эха с безопасным отказом |
 | `modernc.org/sqlite` | SQLite без cgo |
 | `gopkg.in/yaml.v3` | Broodfile |
