@@ -36,6 +36,7 @@ func (e *ConfigError) Error() string {
 // Config — настройки сервера из переменных окружения. Поля с опцией
 // заполнены через lookup; необходимые проверки выполняет New.
 type Config struct {
+	proxmox *proxmoxRegistry
 	// DBPath — путь файла SQLite (BROOD_DB_PATH, по умолчанию ./brood.db).
 	DBPath string
 	// Addr — адрес HTTP-слушателя (BROOD_ADDR, по умолчанию 127.0.0.1:8080).
@@ -142,6 +143,11 @@ func LoadConfig(get getenv) (Config, error) {
 		return cfg, &ConfigError{Setting: "BROOD_SESSION_SECRET",
 			Detail: fmt.Sprintf("must be at least %d bytes when HTTP is used", secretMinBytes)}
 	}
+	registry, err := loadProxmoxRegistry(get)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.proxmox = registry
 	return cfg, cfg.validateAdapters()
 }
 
