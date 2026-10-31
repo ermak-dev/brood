@@ -10,7 +10,7 @@ import (
 )
 
 // FEATURE: Инициализация текущей схемы и точное расширение ACL.
-// SPEC: Чистая база содержит семь таблиц и retry; повторное открытие сохраняет
+// SPEC: Чистая база содержит девять таблиц и retry; повторное открытие сохраняет
 // данные и схему; неизвестная база отвергается без обновления.
 // IMPLEMENTATION: Встроенные определения и ACL-расширение в BEGIN IMMEDIATE.
 // RESULT: IMPLEMENTED — без импорта и migration ledger; определения проверяются.
@@ -34,7 +34,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"project_capacity", "project_members", "projects", "sessions", "swarm_members", "swarms", "users"}
+	want := []string{"managed_actors", "managed_pools", "project_capacity", "project_members", "projects", "sessions", "swarm_members", "swarms", "users"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}
