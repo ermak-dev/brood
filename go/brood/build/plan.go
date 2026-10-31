@@ -402,7 +402,7 @@ func init() {
 			"snapshotConfig", &schemaNode{
 				typ: "object", addlFalse: true,
 				props: schemaProperties(
-					"preferredFidelity", &schemaNode{typ: "string", constV: "SNAPSHOT_FIDELITY_MEMORY", constSet: true},
+					"preferredFidelity", &schemaNode{typ: "string", enum: []any{"SNAPSHOT_FIDELITY_VOLUMES", "SNAPSHOT_FIDELITY_MEMORY"}},
 					"goldenSnapshotConfig", &schemaNode{
 						typ: "object", addlFalse: true, required: []string{"mode"},
 						props: schemaProperties("mode", &schemaNode{
