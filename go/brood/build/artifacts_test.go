@@ -111,6 +111,46 @@ func TestExactEgressRulesAndSnapshotSettingsPreserved(t *testing.T) {
 	}
 }
 
+// FEATURE: Явная fidelity VOLUMES поддерживается наряду с MEMORY (#96).
+// SPEC: VOLUMES означает холодную загрузку с durable volumes; компилятор и
+// рендер сохраняют оба значения, остальные значения и неверные типы запрещены.
+// IMPLEMENTATION: Одиночная константа заменена закрытым enum из двух значений.
+// RESULT: IMPLEMENTED — оба значения сохраняются; неподдерживаемые отклоняются.
+// STATUS: DONE
+func TestSnapshotFidelityCompileAndRender(t *testing.T) {
+	for _, fidelity := range []string{"SNAPSHOT_FIDELITY_VOLUMES", "SNAPSHOT_FIDELITY_MEMORY"} {
+		t.Run(fidelity, func(t *testing.T) {
+			document := minimal(t)
+			actor := document["templates"].(map[string]any)["python"].(map[string]any)["actor"].(map[string]any)
+			actor["snapshotConfig"] = map[string]any{"preferredFidelity": fidelity}
+			parsed, err := ParseDocument(marshal(t, document), "fidelity.yaml")
+			wantNoError(t, err)
+			plan := planned(t, parsed, planOptions{filename: "fidelity.yaml"})
+			if got := plan["actor"].(map[string]any)["snapshotConfig"].(map[string]any)["preferredFidelity"]; got != fidelity {
+				t.Fatalf("compiled preferredFidelity = %v, want %s", got, fidelity)
+			}
+			result := mustRender(t, plan, artifactImage(plan, "a"))
+			if got := result["actor-template.json"].(map[string]any)["snapshotConfig"].(map[string]any)["preferredFidelity"]; got != fidelity {
+				t.Fatalf("rendered preferredFidelity = %v, want %s", got, fidelity)
+			}
+		})
+	}
+	for _, fidelity := range []any{"SNAPSHOT_FIDELITY_ROOTFS", "SNAPSHOT_FIDELITY_UNSPECIFIED", "SNAPSHOT_FIDELITY_INVALID", "", nil, 1} {
+		t.Run(fmt.Sprintf("reject_%v", fidelity), func(t *testing.T) {
+			document := minimal(t)
+			actor := document["templates"].(map[string]any)["python"].(map[string]any)["actor"].(map[string]any)
+			actor["snapshotConfig"] = map[string]any{"preferredFidelity": fidelity}
+			_, parseErr := ParseDocument(marshal(t, document), "fidelity.yaml")
+			_, planErr := MakePlan(document, nil, "", "localhost:5000/team", "development", "fidelity.yaml")
+			for stage, err := range map[string]error{"parse": parseErr, "compile": planErr} {
+				if err == nil || !strings.Contains(err.Error(), "preferredFidelity") || !strings.Contains(err.Error(), "fidelity.yaml") {
+					t.Errorf("%s must reject %v with field and filename, got %v", stage, fidelity, err)
+				}
+			}
+		})
+	}
+}
+
 func TestTemplateHashChangesForRuntimeNetworkImageAndIdentity(t *testing.T) {
 	plan := artifactPlan(t)
 	original := mustRender(t, plan, artifactImage(plan, "a"))
