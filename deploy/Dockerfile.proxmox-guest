@@ -1,0 +1,54 @@
+ARG PYTHON_IMAGE
+FROM oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04 AS bun
+FROM ${PYTHON_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DISABLE_AUTOUPDATER=1 GOTOOLCHAIN=local CGO_ENABLED=0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git tmux busybox-static nftables iproute2 tini \
+        cmake gcc make libjson-c-dev libwebsockets-dev libwebsockets-evlib-uv libuv1-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+COPY pins.json /tmp/pins.json
+COPY go-download.sh /tmp/go-download.sh
+RUN python3 -I -c 'import json; p=json.load(open("/tmp/pins.json")); print(p["GO_VERSION"]); print(p["GO_SHA256"])' > /tmp/go-pins \
+    && version="$(sed -n '1p' /tmp/go-pins)" \
+    && checksum="$(sed -n '2p' /tmp/go-pins)" \
+    && mkdir /tmp/toolchain \
+    && bash /tmp/go-download.sh "$version" "$checksum" /tmp/toolchain/go.tar.gz \
+    && printf '%s  %s\n' "$checksum" /tmp/toolchain/go.tar.gz | sha256sum -c - \
+    && tar -xzf /tmp/toolchain/go.tar.gz -C /usr/local \
+    && rm -rf /tmp/toolchain /tmp/go-pins /tmp/pins.json /tmp/go-download.sh
+ENV PATH=/usr/local/go/bin:${PATH}
+ARG TTYD_VERSION=1.7.7
+ARG TTYD_SHA256=039dd995229377caee919898b7bd54484accec3bba49c118e2d5cd6ec51e3650
+RUN mkdir -p /tmp/ttyd/source \
+    && curl -fsSL -o /tmp/ttyd/source.tar.gz \
+        "https://codeload.github.com/tsl0922/ttyd/tar.gz/refs/tags/${TTYD_VERSION}" \
+    && printf '%s  %s\n' "$TTYD_SHA256" /tmp/ttyd/source.tar.gz | sha256sum -c - \
+    && tar -xzf /tmp/ttyd/source.tar.gz -C /tmp/ttyd/source --strip-components=1 \
+    && cmake -S /tmp/ttyd/source -B /tmp/ttyd/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/ttyd/build --parallel 2 \
+    && install -m 0755 /tmp/ttyd/build/ttyd /usr/bin/ttyd \
+    && rm -rf /tmp/ttyd \
+    && ttyd --version
+ARG CLAUDE_VERSION=2.1.310
+ARG CLAUDE_SHA256=b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56
+RUN curl -fsSL -o /usr/local/bin/claude \
+        "https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude" \
+    && printf '%s  %s\n' "$CLAUDE_SHA256" /usr/local/bin/claude | sha256sum -c - \
+    && chmod 0755 /usr/local/bin/claude
+# Root нужен только supervisor; UID/caps/NoNewPrivs актора задаёт brood-guest.
+RUN groupadd --gid 1000 actor \
+    && useradd --uid 1000 --gid 1000 --home-dir /workspace/home --no-create-home --shell /bin/bash actor \
+    && mkdir -p /workspace /opt/seeds
+COPY brood-guest /usr/local/bin/brood-guest
+COPY proxmox-guest-dhcp.sh /usr/local/libexec/proxmox-guest-dhcp.sh
+COPY seed/ /opt/seeds/
+RUN chmod 0755 /usr/local/bin/brood-guest /usr/local/libexec/proxmox-guest-dhcp.sh
+ARG SOURCE_COMMIT
+LABEL org.opencontainers.image.revision=${SOURCE_COMMIT}
+WORKDIR /workspace
+USER 0:0
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/brood-guest"]
+CMD []
