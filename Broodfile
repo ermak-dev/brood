@@ -28,10 +28,12 @@ templates:
       workerSelector:
         matchLabels:
           brood.dev/purpose: development
+          brood.dev/sandbox: lxc
+          ate.dev/lxc-nesting: enabled
       resources:
         limits: {cpuMillicores: '4000', memoryBytes: '8589934592'}
       snapshotConfig:
-        preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+        preferredFidelity: SNAPSHOT_FIDELITY_VOLUMES
         goldenSnapshotConfig: {mode: GOLDEN_SNAPSHOT_MODE_DISABLED}
       containers:
         - name: main
@@ -48,13 +50,10 @@ templates:
           volumeMounts: [{name: workspace, mountPath: /workspace}]
           securityContext:
             capabilities:
-              add: [CHOWN, DAC_OVERRIDE, DAC_READ_SEARCH, FOWNER, FSETID, KILL,
-                    SETGID, SETUID, SETPCAP, LINUX_IMMUTABLE, NET_BIND_SERVICE,
-                    NET_BROADCAST, NET_ADMIN, NET_RAW, IPC_LOCK, IPC_OWNER, SYS_MODULE,
-                    SYS_RAWIO, SYS_CHROOT, SYS_PTRACE, SYS_PACCT, SYS_ADMIN, SYS_BOOT,
-                    SYS_NICE, SYS_RESOURCE, SYS_TIME, SYS_TTY_CONFIG, MKNOD, LEASE,
-                    AUDIT_WRITE, AUDIT_CONTROL, SETFCAP, MAC_OVERRIDE, MAC_ADMIN, SYSLOG,
-                    WAKE_ALARM, BLOCK_SUSPEND, AUDIT_READ, PERFMON, BPF, CHECKPOINT_RESTORE]
+              add: [CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID,
+                    SETPCAP, NET_BIND_SERVICE, NET_ADMIN, NET_RAW,
+                    SYS_CHROOT, SYS_PTRACE, SYS_ADMIN, SYS_RESOURCE, MKNOD,
+                    AUDIT_WRITE, SETFCAP, SYSLOG]
       volumes: [{name: workspace, durableDir: {}}]
   coding:
     environment: workbench
@@ -63,10 +62,12 @@ templates:
       workerSelector:
         matchLabels:
           brood.dev/purpose: development
+          brood.dev/sandbox: lxc
+          ate.dev/lxc-nesting: enabled
       resources:
         limits: {cpuMillicores: '4000', memoryBytes: '8589934592'}
       snapshotConfig:
-        preferredFidelity: SNAPSHOT_FIDELITY_MEMORY
+        preferredFidelity: SNAPSHOT_FIDELITY_VOLUMES
         goldenSnapshotConfig: {mode: GOLDEN_SNAPSHOT_MODE_DISABLED}
       containers:
         - name: main
@@ -90,13 +91,10 @@ templates:
           volumeMounts: [{name: workspace, mountPath: /workspace}]
           securityContext:
             capabilities:
-              add: [CHOWN, DAC_OVERRIDE, DAC_READ_SEARCH, FOWNER, FSETID, KILL,
-                    SETGID, SETUID, SETPCAP, LINUX_IMMUTABLE, NET_BIND_SERVICE,
-                    NET_BROADCAST, NET_ADMIN, NET_RAW, IPC_LOCK, IPC_OWNER, SYS_MODULE,
-                    SYS_RAWIO, SYS_CHROOT, SYS_PTRACE, SYS_PACCT, SYS_ADMIN, SYS_BOOT,
-                    SYS_NICE, SYS_RESOURCE, SYS_TIME, SYS_TTY_CONFIG, MKNOD, LEASE,
-                    AUDIT_WRITE, AUDIT_CONTROL, SETFCAP, MAC_OVERRIDE, MAC_ADMIN, SYSLOG,
-                    WAKE_ALARM, BLOCK_SUSPEND, AUDIT_READ, PERFMON, BPF, CHECKPOINT_RESTORE]
+              add: [CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, SETGID, SETUID,
+                    SETPCAP, NET_BIND_SERVICE, NET_ADMIN, NET_RAW,
+                    SYS_CHROOT, SYS_PTRACE, SYS_ADMIN, SYS_RESOURCE, MKNOD,
+                    AUDIT_WRITE, SETFCAP, SYSLOG]
       volumes: [{name: workspace, durableDir: {}}]
 networks:
   development:
