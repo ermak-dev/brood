@@ -141,6 +141,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	})
 	srv.mux = http.NewServeMux()
 	srv.mount()
+	srv.mountProxmoxPools(cfg.proxmox)
 	srv.mountLLM(cfg)
 	srv.mountPush(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
