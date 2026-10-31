@@ -8,7 +8,7 @@
 
 Runtime живёт в форке https://git.ermak.dev/ermak/substrate; upstream —
 https://github.com/agent-substrate/substrate. Installer и корневой Broodfile
-закрепляют проверенный commit `f5d03ca0e49be0c429d892437ab5b93924026af0` ключом
+закрепляют проверенный commit `f0e0a630a2d72a013d9ad97ea71d092bd7c26713` ключом
 `SUBSTRATE_COMMIT` в `brood/dev/pins.json`.
 
 Публичный Go SDK сервера/клиента остаётся на `4ebd668d62e3f55753765a46579fc6deb81b2f7f`
@@ -61,6 +61,22 @@ ko/distroless образ для этого класса непригоден. Sa
 Cold start/resume после отсутствия процесса не равен восстановлению RAM.
 Операции, требующие memory checkpoint, отклоняются в API до изменения живого
 актора, его назначения и томов. Автоматический suspend brood не включает.
+
+## Доверенный workbench-профиль
+
+Метка `ate.dev/lxc-nesting=enabled` в `WorkerPool.metadata.labels` явно включает
+профиль вложенных Docker/kind. Он добавляет FSETID, KILL, AUDIT_WRITE и SYSLOG,
+а также запрос одного ресурса `ate.dev/kmsg`. Штатный device plugin atelet
+передаёт только настоящий `/dev/kmsg` с правом чтения и соответствующим
+device-cgroup allow. Одной capability или hostPath для этого недостаточно.
+Worker pod остаётся непривилегированным; обычные LXC-пулы и остальные классы
+не расширяются. Профиль допускает чтение общего kernel log доверенной нагрузкой.
+
+Переключение метки вызывает rollout воркеров и может вытеснить акторы.
+Используйте отдельный пустой пул, не меняйте занятый пользовательский пул.
+Недоступный на ноде kernel-log device означает отсутствие требуемого ресурса,
+а не разрешение расширить права всей VM. Подготовка actor-local devpts и
+ext4 workspace описана в `docs/WORKBENCH.md`; полный live-прогон отслеживает #96.
 
 ## Гарантии и ограничения
 
@@ -140,12 +156,20 @@ HTTPS проверен с CA и именем. После успеха удале
 этого удалена внешняя проверочная среда. Чистая корневая development/coding
 приёмка итогового commit описана отдельно в `docs/WORKBENCH.md`.
 
-Production runtime остался на прежнем публичном pin: этот результат доказывает
-fresh install, но не обновление старой PostgreSQL. База и migration ledger не
+В приёмке 2026-10-30 production runtime оставался на прежнем публичном pin:
+тот результат доказывал fresh install, но не обновление старой PostgreSQL.
+База и migration ledger не
 сбрасывались. Пользовательские coding-акторы не использовались, исходный пул
 не переключался, host runtime policy и PVE не менялись. Нехватка ёмкости
 по-прежнему не разрешает останавливать пользовательские акторы, уменьшать
 их ресурсы или создавать VM/ноду без отдельного согласования.
+
+2026-10-31 пользователь отдельно разрешил удалить старые данные и создать
+установку заново (#95). Удалены только проверенные kind-кластер и registry
+с их томами; `.env`, TLS и доступ выкладки сохранены. На свежем `f5d03ca0`
+создан настоящий LXC-актор через Brood: проверены RUNNING, runtime class lxc
+и HTTP 200 через защищённый actor-view. Это не data-preserving migration
+старой базы и не доказательство полного LXC development/coding workbench.
 
 ## Proxmox не входит в MVP
 
