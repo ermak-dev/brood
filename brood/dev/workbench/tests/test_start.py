@@ -9,6 +9,30 @@ from brood.dev.workbench.cli import start
 
 
 class StartCommandTests(unittest.TestCase):
+    def test_native_lxc_marker_selects_private_bootstrap_before_docker(self):
+        from brood.dev.workbench import bootstrap
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "logs").mkdir()
+            events = []
+            with mock.patch.dict(os.environ, {
+                    "BROOD_WORKBENCH": "1", "DOCKER_HOST": "unix:///var/run/docker.sock",
+                    "WORKBENCH_ROOT": str(root), "WORKBENCH_SEEDS": "/opt/seeds",
+                    "container": "lxc"}, clear=True), \
+                    mock.patch.object(start.runtime, "prepare_workspace", return_value=root / "brood"), \
+                    mock.patch.object(start.runtime, "write_status"), \
+                    mock.patch.object(start.runtime, "prepare_kernel_log_device"), \
+                    mock.patch("brood.dev.workbench.storage.prepare") as loop, \
+                    mock.patch.object(bootstrap, "prepare", side_effect=lambda *args: events.append(args)) as prepare, \
+                    mock.patch.object(start.runtime, "start_docker", side_effect=lambda _: events.append("docker")), \
+                    mock.patch.object(start.subprocess, "Popen"), \
+                    mock.patch.object(start.os, "chdir"), mock.patch.object(start.os, "execvp"), \
+                    mock.patch("builtins.print"):
+                start.main(["--", "bash"])
+                prepare.assert_called_once_with(root, "lxc")
+                self.assertEqual(events, [(root, "lxc"), "docker"])
+                loop.assert_not_called()
+
     def test_invalid_results_port_is_refused_before_preparing_the_workspace(self):
         with mock.patch.object(start.runtime, "prepare_workspace") as prepare, \
                 mock.patch("sys.stderr"):
