@@ -156,6 +156,18 @@ export interface WorkerPool {
   [field: string]: unknown;
 }
 
+export interface ProxmoxPool {
+  name: string;
+  endpoint: string;
+  tokenID: string;
+  node: string;
+  resourcePool: string;
+  storage: string;
+  network: string;
+  credentialConfigured: boolean;
+  runtimeAvailable: false;
+}
+
 export interface WorkerPoolDefaults {
   workerImage: string;
   workerImages?: Record<string, string>;
@@ -267,6 +279,17 @@ export const workerPoolsApi = {
     request<null>('DELETE', `/api/worker-pools/${path(pool.metadata.name)}`, {
       metadata: { uid: pool.metadata.uid, resourceVersion: pool.metadata.resourceVersion },
     }),
+};
+
+// Подключения не являются WorkerPool: собственный envelope и никакой ёмкости.
+export const proxmoxPoolsApi = {
+  list: async (): Promise<ProxmoxPool[]> => {
+    const body = await request<{ items: ProxmoxPool[] }>('GET', '/api/proxmox-pools');
+    if (!body || !Array.isArray(body.items)) {
+      throw new Error('Server returned an invalid Proxmox connection list');
+    }
+    return body.items;
+  },
 };
 
 export const policyApi = {

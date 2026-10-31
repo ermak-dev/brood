@@ -2681,6 +2681,19 @@
       "reverting": "되돌리는 중"
     }
   },
+  "proxmox_connections": {
+    "title": "Proxmox 연결",
+    "endpoint": "API 주소",
+    "node": "노드",
+    "resource_pool": "PVE 리소스 풀",
+    "storage": "스토리지",
+    "network": "네트워크",
+    "credential_configured": "자격 증명 구성됨",
+    "yes": "예",
+    "no": "아니요",
+    "runtime_not_installed": "런타임이 설치되지 않았습니다. 구성된 연결은 준비된 워커가 아니며 워커 용량을 제공하지 않습니다.",
+    "load_failed": "Proxmox 연결을 불러올 수 없습니다"
+  },
   "worker_pools": {
     "not_installed": "지원되지만 이 설치가 워커 이미지를 선언하지 않아 여기에 제공되지 않습니다: {{classes}}.",
     "lxc_install_hint": "LXC는 “brood deploy lxc --trusted-workloads”로 준비한 뒤, 출력된 digest를 WORKER_POOL_IMAGES에 추가하세요.",

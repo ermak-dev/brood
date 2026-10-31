@@ -2708,6 +2708,19 @@
       "reverting": "回滾中"
     }
   },
+  "proxmox_connections": {
+    "title": "Proxmox 連線",
+    "endpoint": "API 位址",
+    "node": "節點",
+    "resource_pool": "PVE 資源池",
+    "storage": "儲存空間",
+    "network": "網路",
+    "credential_configured": "憑證已設定",
+    "yes": "是",
+    "no": "否",
+    "runtime_not_installed": "執行環境未安裝。已設定的連線不是就緒的工作節點，也不提供工作節點容量。",
+    "load_failed": "無法載入 Proxmox 連線"
+  },
   "worker_pools": {
     "not_installed": "受支援但此處不提供，因為本安裝未為其宣告 worker 映像：{{classes}}。",
     "lxc_install_hint": "用「brood deploy lxc --trusted-workloads」準備 LXC，然後把印出的 digest 加入 WORKER_POOL_IMAGES。",

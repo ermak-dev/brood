@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Select } from '@/components/ui/Select';
 import { BroodApiError, errorMessage } from '@/services/brood/http';
-import { workerPoolsApi, type WorkerPool } from '@/services/brood/substrate';
+import { proxmoxPoolsApi, workerPoolsApi, type ProxmoxPool, type WorkerPool } from '@/services/brood/substrate';
+import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { EditorSheet } from './components/EditorSheet';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Field, Section } from './components/form';
@@ -56,6 +57,8 @@ function PoolLabels({ pool }: { pool: WorkerPool }) {
 export function WorkerPoolsPage() {
   const { t } = useTranslation();
   const { data, error, loading, refresh } = useResource(workerPoolsApi.list);
+  const connections = useResource(proxmoxPoolsApi.list, { headerRefresh: false });
+  useHeaderRefresh(connections.refresh);
   const { confirm } = useActions(refresh);
   const [editing, setEditing] = useState<{ name?: string } | null>(null);
   const remove = (pool: WorkerPool) => confirm({
@@ -93,8 +96,47 @@ export function WorkerPoolsPage() {
           )}
         />
       ) : <EmptyState title={t('worker_pools.empty')} description={t('worker_pools.empty_hint')} action={create} />}
+      <ProxmoxConnections items={connections.data} error={connections.error} onRetry={connections.refresh} />
       {editing && <PoolEditor key={editing.name ?? ''} name={editing.name} onClose={() => setEditing(null)} refresh={refresh} />}
     </div>
+  );
+}
+
+interface ProxmoxConnectionsProps {
+  items: ProxmoxPool[] | null;
+  error: string | null;
+  onRetry: () => void;
+}
+
+/** Подключения видны даже при отказе Kubernetes; секреты и счётчики сюда не попадают. */
+export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnectionsProps) {
+  const { t } = useTranslation();
+  if (!error && !items?.length) return null;
+  const columns: Column<ProxmoxPool>[] = [
+    { key: 'name', label: t('substrate.name'), primary: true, render: (pool) => pool.name },
+    { key: 'endpoint', label: t('proxmox_connections.endpoint'), render: (pool) => pool.endpoint },
+    { key: 'node', label: t('proxmox_connections.node'), render: (pool) => pool.node },
+    { key: 'resourcePool', label: t('proxmox_connections.resource_pool'), render: (pool) => pool.resourcePool },
+    { key: 'storage', label: t('proxmox_connections.storage'), render: (pool) => pool.storage },
+    { key: 'network', label: t('proxmox_connections.network'), render: (pool) => pool.network },
+    { key: 'credential', label: t('proxmox_connections.credential_configured'), render: (pool) =>
+      t(pool.credentialConfigured ? 'proxmox_connections.yes' : 'proxmox_connections.no') },
+  ];
+  return (
+    <section className={styles.section} aria-label={t('proxmox_connections.title')}>
+      <h2 className={styles.sectionTitle}>{t('proxmox_connections.title')}</h2>
+      {error ? (
+        <div className={styles.toolbar}>
+          <p className={styles.fieldError} role="alert">{t('proxmox_connections.load_failed')}</p>
+          <Button variant="secondary" size="sm" onClick={onRetry}>{t('worker_pools.retry')}</Button>
+        </div>
+      ) : (
+        <>
+          <p className={styles.sectionHint}>{t('proxmox_connections.runtime_not_installed')}</p>
+          <EntityTable columns={columns} rows={items ?? []} rowKey={(pool) => pool.name} />
+        </>
+      )}
+    </section>
   );
 }
 

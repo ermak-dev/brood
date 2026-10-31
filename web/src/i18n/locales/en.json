@@ -2681,6 +2681,19 @@
       "reverting": "reverting"
     }
   },
+  "proxmox_connections": {
+    "title": "Proxmox connections",
+    "endpoint": "Endpoint",
+    "node": "Node",
+    "resource_pool": "PVE resource pool",
+    "storage": "Storage",
+    "network": "Network",
+    "credential_configured": "Credential configured",
+    "yes": "Yes",
+    "no": "No",
+    "runtime_not_installed": "Runtime not installed. Configured connections are not ready workers and provide no worker capacity.",
+    "load_failed": "Could not load Proxmox connections"
+  },
   "worker_pools": {
     "not_installed": "Supported but not offered here, because this installation declares no worker image for them: {{classes}}.",
     "lxc_install_hint": "Prepare LXC with “brood deploy lxc --trusted-workloads”, then add the digest it prints to WORKER_POOL_IMAGES.",
