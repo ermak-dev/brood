@@ -17,16 +17,19 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
 
+var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
 func TestExchangeReceipts(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("transport intentionally refuses root")
 	}
-	for _, status := range []string{"delivered", "held", "denied", "refused", "expired", "dropped", "", "wrong-id"} {
+	for _, status := range []string{"delivered", "held", "denied", "refused", "expired", "expired-refused", "dropped", "", "wrong-id"} {
 		t.Run(status, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "42.sock")
 			l, err := net.Listen("unix", path)
@@ -67,7 +70,8 @@ func TestExchangeReceipts(t *testing.T) {
 				if filepath.Dir(from) != filepath.Dir(path) {
 					t.Error("callback outside session socket directory")
 				}
-				if status != "" {
+				// CLI 2.1.310 пишет квитанцию только для канонического UUID.
+				if status != "" && canonicalUUID.MatchString(msg["msg_id"].(string)) {
 					cb, err := net.Dial("unix", from)
 					if err != nil {
 						done <- err
@@ -79,7 +83,11 @@ func TestExchangeReceipts(t *testing.T) {
 						id = "unrelated"
 						got = "delivered"
 					}
-					err = json.NewEncoder(cb).Encode(Frame{"type": "control", "action": "peer_message_status", "orig_msg_id": id, "status": got})
+					receipt := Frame{"type": "control", "action": "peer_message_status", "orig_msg_id": id, "status": got}
+					if status == "expired-refused" {
+						receipt["status"], receipt["status_detail"] = "expired", "refused"
+					}
+					err = json.NewEncoder(cb).Encode(receipt)
 					cb.Close()
 					if err != nil {
 						done <- err
@@ -97,6 +105,9 @@ func TestExchangeReceipts(t *testing.T) {
 			want := status
 			if want == "" || want == "wrong-id" {
 				want = "unconfirmed"
+			}
+			if want == "expired-refused" {
+				want = "refused"
 			}
 			if result.Status != want || result.Idle {
 				t.Fatalf("receipt: %#v, want %s", result, want)
@@ -142,6 +153,10 @@ func TestExchangeIdleDoesNotProveDelivery(t *testing.T) {
 		}
 		if frame["action"] != "notify_when_idle" || frame["from_mode"] != "prompting" {
 			t.Errorf("subscription: %#v", frame)
+		}
+		if !canonicalUUID.MatchString(frame["msg_id"].(string)) {
+			done <- nil
+			return
 		}
 		cb, err := net.Dial("unix", strings.TrimPrefix(frame["from"].(string), "uds:"))
 		if err != nil {

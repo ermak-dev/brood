@@ -59,7 +59,14 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	if err != nil {
 		return Delivery{}, err
 	}
-	msgID, idleID := rand.Text(), rand.Text()
+	msgID, err := newUUID()
+	if err != nil {
+		return Delivery{}, errors.New("cannot create message identity")
+	}
+	idleID, err := newUUID()
+	if err != nil {
+		return Delivery{}, errors.New("cannot create message identity")
+	}
 	user, err := UserFrame(envelope, "next", address, msgID)
 	if err != nil {
 		return Delivery{}, err
@@ -130,6 +137,10 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 					result.Status = "delivered"
 				case "held", "denied", "refused", "expired", "dropped":
 					result.Status = frame["status"].(string)
+					// Отказ получателя Claude Code шлёт как expired с деталью refused.
+					if result.Status == "expired" && frame["status_detail"] == "refused" {
+						result.Status = "refused"
+					}
 					return result, nil
 				}
 			}
@@ -141,6 +152,19 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 			return result, nil
 		}
 	}
+}
+
+// newUUID returns a canonical lowercase UUIDv4; Claude Code correlates receipts
+// only when the message ID has canonical UUID form.
+func newUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	h := hex.EncodeToString(b[:])
+	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:], nil
 }
 
 func minDeadline(a, b time.Time) time.Time {
