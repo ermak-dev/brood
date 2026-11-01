@@ -49,6 +49,8 @@ type Server struct {
 	views     actorViews
 	mux       *http.ServeMux
 	cancel    context.CancelFunc
+
+	managedLLM http.Handler
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -152,6 +154,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProxmoxPools(cfg.proxmox)
 	srv.mountProxmoxConnections()
 	srv.mountLLM(cfg)
+	srv.managedLLM = srv.managedLLMHandler(cfg)
 	srv.mountPush(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel
@@ -198,6 +201,10 @@ func (s *Server) Close() error {
 func (s *Server) Handler() http.Handler {
 	browser := s.actorViewHandler(s.browserProtection())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicManagedLLMPath(r.URL.Path) {
+			s.managedLLM.ServeHTTP(w, r)
+			return
+		}
 		if publicGuestPath(r.URL.Path) {
 			s.guestRoute(w, r)
 			return

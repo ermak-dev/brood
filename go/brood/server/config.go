@@ -80,7 +80,13 @@ type Config struct {
 	RegistryImageHost     string
 	CLIProxyURL           string
 	CLIProxyManagementKey string
+	// CLIProxyAPIKey is the server-only model credential (CLIPROXY_API_KEY).
+	CLIProxyAPIKey string `json:"-"`
 }
+
+// String and GoString keep server credentials out of diagnostic formatting.
+func (Config) String() string     { return "server.Config{redacted}" }
+func (c Config) GoString() string { return c.String() }
 
 // getenv — источник окружения: интерфейс для тестов.
 type getenv func(string) string
@@ -124,6 +130,7 @@ func LoadConfig(get getenv) (Config, error) {
 		WorkerPoolImage:       envGet(get, "WORKER_POOL_IMAGE"),
 		RegistryURL:           envGet(get, "BROOD_REGISTRY_URL"),
 		RegistryImageHost:     envGet(get, "BROOD_REGISTRY_IMAGE_HOST"),
+		CLIProxyAPIKey:        envGet(get, "CLIPROXY_API_KEY"),
 		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 	}
@@ -159,6 +166,11 @@ func (cfg Config) validateAdapters() error {
 		u, err := url.Parse(cfg.CLIProxyURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 			return &ConfigError{Setting: "CLIPROXY_URL", Detail: "must be an http(s) origin without credentials, path, query or fragment"}
+		}
+	}
+	for _, c := range cfg.CLIProxyAPIKey {
+		if c <= 32 || c >= 127 {
+			return &ConfigError{Setting: "CLIPROXY_API_KEY", Detail: "must contain only visible ASCII characters without spaces"}
 		}
 	}
 	if strings.ContainsAny(cfg.CLIProxyManagementKey, "\r\n") {
