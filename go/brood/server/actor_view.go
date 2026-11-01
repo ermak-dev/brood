@@ -21,6 +21,8 @@ const actorViewLimit = 4096
 
 type actorViewKey struct{}
 type actorView struct {
+	managedUID                                                                                    string
+	generation                                                                                    int64
 	token, session, userID, username, swarm, actor, owner, project, atespace, atespaceUID, origin string
 	expires                                                                                       time.Time
 }
@@ -57,7 +59,7 @@ func (s *Server) validActorView(v actorView) bool {
 		return false
 	}
 	allowed, err := s.app.Can(id, app.ActionManageSwarm, app.SwarmRes(v.swarm))
-	return err == nil && allowed && s.checkSwarmNamespace(ctx, sw) == nil
+	return err == nil && allowed && s.checkSwarmNamespace(ctx, sw) == nil && s.validManagedView(ctx, v)
 }
 
 func viewSegment(s string) bool {
@@ -126,6 +128,12 @@ func (s *Server) issueActorView(w http.ResponseWriter, r *http.Request) {
 	}
 	token := base64.RawURLEncoding.EncodeToString(random[:])
 	v := actorView{token: token, session: cookie.Value, userID: user.ID, username: user.Username, swarm: sw.ID, actor: actor, owner: sw.OwnerID, project: sw.ProjectID, atespace: sw.AtespaceName, atespaceUID: sw.AtespaceUID, origin: viewOrigin(r), expires: time.Now().Add(actorViewTTL)}
+	uid, generation, err := s.managedViewBinding(r.Context(), sw.ID, actor)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	v.managedUID, v.generation = uid, generation
 	s.views.mu.Lock()
 	for key, old := range s.views.tickets {
 		if !time.Now().Before(old.expires) {
@@ -191,6 +199,13 @@ func (s *Server) actorViewRequest(out, original *http.Request) {
 		out.Header.Set("Origin", v.origin)
 		out.Header.Del("Cookie")
 		out.Header.Del("Referer")
+	}
+	if _, _, ok := managedGeneration(out.URL.Host); ok {
+		out.Host = "127.0.0.1:8080"
+		out.Header.Set("Origin", "http://127.0.0.1:8080")
+		for _, name := range []string{"Ate-Target-Actor", proxy.HeaderActor, proxy.HeaderAtespace, proxy.HeaderActorTarget} {
+			out.Header.Del(name)
+		}
 	}
 }
 

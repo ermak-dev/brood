@@ -93,7 +93,7 @@ func (s *Server) pushTemplate(w http.ResponseWriter, r *http.Request, sw app.Swa
 		return
 	}
 	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "create-template", template: &template}
-	err = s.app.AdmitWorkload(user.ID, sw.ID, operation)
+	err = s.admitWorkload(user.ID, sw.ID, operation)
 	if err != nil {
 		var api *substrate.APIError
 		if !errors.As(err, &api) || api.Status != 409 {

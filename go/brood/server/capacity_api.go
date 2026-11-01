@@ -128,7 +128,7 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	var reservations []app.ActorReservation
 	if live {
-		reservations, err = nativeShardReservations(r.Context(), s.ateapi, swarms)
+		reservations, err = s.shardReservations(r.Context(), swarms)
 	}
 	if err == nil {
 		var used app.ShardUsage

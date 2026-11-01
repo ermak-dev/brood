@@ -203,6 +203,11 @@ func (s *Service) DeleteSwarm(userID, swarmID string) error {
 		// Повтор идемпотентен только для авторизованного вызывающего.
 		return nil
 	}
+	if guard, ok := s.store.(interface{ CheckSwarmDeletion(string) error }); ok {
+		if err := guard.CheckSwarmDeletion(sw.ID); err != nil {
+			return err
+		}
+	}
 	switch sw.State {
 	case StateActive, StateError:
 		sw.Retry = RetryDelete

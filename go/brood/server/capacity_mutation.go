@@ -8,6 +8,7 @@ import (
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
+	"brood.dev/go/brood/store"
 	"brood.dev/go/brood/substrate"
 	ateapi "go.ate.dev/substrate/api/ateapi/v1"
 	"google.golang.org/protobuf/proto"
@@ -39,6 +40,13 @@ func (o *nativeWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmis
 	if err := o.boundNamespace(); err != nil {
 		return plan, err
 	}
+	if o.action == "create-actor" || o.action == "update-actor" || o.action == "resume-actor" {
+		if _, err := o.server.managed.actorByName(o.context, o.swarm.ID, o.name); err == nil {
+			return plan, fmt.Errorf("%w: actor name belongs to managed provider", app.ErrConflict)
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return plan, err
+		}
+	}
 	capacity, err := o.server.gateway.ProjectCapacity(o.swarm.ProjectID)
 	if err != nil {
 		return plan, err
@@ -68,6 +76,11 @@ func (o *nativeWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmis
 		return plan, nil
 	}
 	if o.action == "create-template" {
+		if _, err := o.server.managed.templatePool(o.context, o.template.GetMetadata().GetName()); err == nil {
+			return plan, fmt.Errorf("%w: managed profile templates are read-only", app.ErrConflict)
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return plan, err
+		}
 		template = o.template
 		plan.Name = template.GetMetadata().GetName()
 		plan.WorkerSelector = maps.Clone(template.GetWorkerSelector().GetMatchLabels())
@@ -108,7 +121,7 @@ func (o *nativeWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmis
 	}
 	constrained := capacity.MaxActors != nil || capacity.MaxCPUMillicores != nil || capacity.MaxMemoryBytes != nil
 	if constrained && !plan.TemplateOnly {
-		plan.Reservations, err = nativeShardReservations(o.context, o.server.ateapi, swarms)
+		plan.Reservations, err = o.server.shardReservations(o.context, swarms)
 		if err != nil {
 			return plan, err
 		}

@@ -1,0 +1,308 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+
+	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/auth"
+	"brood.dev/go/brood/proxmox"
+	"brood.dev/go/brood/store"
+	"brood.dev/go/brood/substrate"
+	ateapi "go.ate.dev/substrate/api/ateapi/v1"
+)
+
+type managedWorkloadOperation struct {
+	server       *Server
+	context      context.Context
+	swarm        app.Swarm
+	pool         store.ManagedPool
+	name, action string
+	input        *ateapi.Actor
+	actor        store.ManagedActor
+	saved        store.ManagedActor
+}
+
+func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
+	out, err := nativeShardReservations(ctx, s.ateapi, swarms)
+	if err != nil {
+		return nil, err
+	}
+	for _, sw := range swarms {
+		if sw.State == app.StateDeleted {
+			continue
+		}
+		rows, err := s.store.ListManagedActors(ctx, sw.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range rows {
+			if a.Phase == "deleted" {
+				continue
+			}
+			if a.AtespaceUID != sw.AtespaceUID {
+				return nil, &shardInventoryError{cause: app.ErrConflict}
+			}
+			out = append(out, app.ActorReservation{SwarmID: sw.ID, Name: a.Name, CPUMillicores: a.Resources.CPUMillicores, MemoryBytes: a.Resources.MemoryBytes})
+		}
+	}
+	return out, nil
+}
+
+func (o *managedWorkloadOperation) authorize() error {
+	user, ok := auth.UserFromContext(o.context)
+	if !ok {
+		return app.ErrNotAllowed
+	}
+	allowed, err := o.server.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(o.swarm.ID))
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return app.ErrNotAllowed
+	}
+	return o.server.checkSwarmNamespace(o.context, o.swarm)
+}
+func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmission, error) {
+	plan := app.WorkloadAdmission{Name: o.name}
+	if err := o.authorize(); err != nil {
+		return plan, err
+	}
+	if o.action == "stop" || o.action == "delete" || o.action == "reset" {
+		plan.TemplateOnly = true
+		return plan, nil
+	}
+	if !o.server.managed.poolAvailable(o.pool) {
+		return plan, fmt.Errorf("%w: installed Proxmox runtime unavailable", app.ErrConflict)
+	}
+	if o.pool.State != "enabled" {
+		return plan, fmt.Errorf("%w: managed pool is draining", app.ErrConflict)
+	}
+	_, nativeErr := o.server.ateapi.GetActor(o.context, o.swarm.AtespaceName, o.name)
+	var api *substrate.APIError
+	if nativeErr == nil {
+		return plan, fmt.Errorf("%w: native actor name is already in use", app.ErrExists)
+	}
+	if !errors.As(nativeErr, &api) || api.Status != 404 {
+		return plan, nativeErr
+	}
+	_, nativeErr = o.server.ateapi.GetActorTemplate(o.context, o.swarm.AtespaceName, managedTemplatePrefix+o.pool.Name)
+	if nativeErr == nil {
+		return plan, fmt.Errorf("%w: native template conflicts with managed profile", app.ErrConflict)
+	}
+	if !errors.As(nativeErr, &api) || api.Status != 404 {
+		return plan, nativeErr
+	}
+	resources := o.actor.Resources
+	if o.action == "create" {
+		var err error
+		resources, err = managedActorResources(o.pool)
+		if err != nil {
+			return plan, err
+		}
+		plan.WorkerSelector = o.input.GetWorkerSelector().GetMatchLabels()
+	}
+	plan.CPUMillicores = resources.CPUMillicores
+	plan.MemoryBytes = resources.MemoryBytes
+	plan.Replace = o.action != "create"
+	var err error
+	plan.Reservations, err = o.server.shardReservations(o.context, swarms)
+	return plan, err
+}
+
+func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
+	if err := o.authorize(); err != nil {
+		return err
+	}
+	m := o.server.managed
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	if o.action == "create" || o.action == "start" || o.action == "reset" {
+		for key, value := range selector {
+			if o.pool.Labels[key] != value {
+				return fmt.Errorf("%w: managed pool does not match required worker selector", app.ErrInvalidWorkload)
+			}
+		}
+	}
+	client, err := m.client(o.pool)
+	if err != nil {
+		return err
+	}
+	var a store.ManagedActor
+	if o.action == "create" {
+		if m.hub == nil {
+			return fmt.Errorf("%w: guest relay unavailable", app.ErrConflict)
+		}
+		id, err := client.NextID(o.context)
+		if err != nil {
+			return err
+		}
+		resources, err := managedActorResources(o.pool)
+		if err != nil {
+			return err
+		}
+		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID()})
+		if err != nil {
+			return err
+		}
+	} else {
+		a, err = o.server.store.GetManagedActor(o.context, o.actor.UID)
+		if err != nil {
+			return err
+		}
+		if a.Revision != o.actor.Revision || a.AtespaceUID != o.swarm.AtespaceUID {
+			return store.ErrRevisionConflict
+		}
+		if o.action == "start" && a.Stage == "done" && a.Phase == "running" && a.Desired == "running" {
+			o.saved = a
+			return nil
+		}
+		if ((o.action == "stop" && a.Desired == "stopped") || (o.action == "delete" && a.Desired == "deleted")) && !(a.Stage == "done" && a.Phase == "error") {
+			o.saved = a
+			return nil
+		}
+		// Stop/start/reset require a reconciled task slot, not merely a terminal
+		// diagnostic phase. Delete may settle a known prior task before cleanup.
+		if a.Stage != "done" && (o.action != "delete" || a.UPID == "" || a.Stage == "delete" || a.Operation == "reset") {
+			return fmt.Errorf("%w: previous provider outcome is uncertain; allocation retained", app.ErrConflict)
+		}
+		if a.Stage != "done" && a.UPID != "" {
+			if taskErr := client.WaitTask(o.context, a.UPID); taskErr != nil {
+				if !errors.Is(taskErr, proxmox.ErrTaskFailed) {
+					return taskErr
+				}
+				a, err = m.resolveTaskFailure(o.context, client, a)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		observed, err := managedObservedState(o.context, client, a)
+		if err != nil {
+			return err
+		}
+		if o.action != "delete" && observed == "absent" {
+			return fmt.Errorf("%w: owned container is absent; delete the retained allocation before creating another", app.ErrConflict)
+		}
+		// Avoid publishing a transient running phase for a task-only start that
+		// is immediately being deleted. Both local transitions commit together,
+		// before submitting the new provider write.
+		err = o.server.store.WithTx(o.context, func(ctx context.Context) error {
+			var err error
+			if a.Stage != "done" {
+				a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+				if err != nil {
+					return err
+				}
+			}
+			// Завершённый start может ждать ttyd. Явное recovery диагностирует
+			// это состояние, а не объявляет гостя работающим без проверки.
+			if a.Stage == "done" && a.Phase == "provisioning" {
+				a, err = m.saveObservation(ctx, a, "error", "", managedReadinessError)
+				if err != nil {
+					return err
+				}
+			}
+			a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, store.NewID(), o.action)
+			return err
+		})
+		if err != nil {
+			if errors.Is(err, store.ErrPoolUnavailable) || errors.Is(err, store.ErrRevisionConflict) {
+				return err
+			}
+			return fmt.Errorf("%w: managed task must be reconciled before changing intent", app.ErrConflict)
+		}
+		if o.action == "stop" || o.action == "delete" || o.action == "reset" {
+			if m.hub != nil {
+				m.hub.Disconnect(a.UID, a.Incarnation)
+			}
+			m.verified.Delete(a.UID)
+			o.server.proxy.RecheckNow()
+		}
+		if o.action == "delete" && observed == "absent" {
+			// No stop/delete was submitted: prior task is terminal and the exact
+			// VMID was positively proven free. There is no task to await here.
+			a, err = o.server.store.ConfirmManagedActorStage(o.context, a.UID, a.Revision, a.OperationID, a.Stage, "absent")
+			if err == nil {
+				a, err = m.finishConfirmedCleanup(o.context, client, a)
+			}
+			o.saved = a
+			return err
+		}
+	}
+	a, err = m.launch(o.context, client, a)
+	o.saved = a
+	return err
+}
+
+func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool) {
+	// The generated profile is the entire execution definition. Native knobs are
+	// not an alternate route for OCI, mounts, egress overrides or arbitrary env.
+	if input.GetSourceTag() != nil || input.GetMetadata().GetUid() != "" || input.GetMetadata().GetVersion() != 0 || input.GetMetadata().GetCreateTime() != nil || input.GetMetadata().GetUpdateTime() != nil || input.GetMetadata().GetDeleteTime() != nil {
+		writeDetail(w, 400, "managed actors accept only name, approved actorTemplate and workerSelector")
+		return
+	}
+	op := &managedWorkloadOperation{server: s, context: r.Context(), swarm: sw, pool: pool, name: input.GetMetadata().GetName(), action: "create", input: input}
+	if err := s.admitWorkload(userID, sw.ID, op); err != nil {
+		managedAPIError(w, r, err)
+		return
+	}
+	writeJSON(w, 201, managedActorJSON(op.saved, pool, sw.AtespaceName))
+}
+
+func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, a store.ManagedActor) {
+	if a.AtespaceUID != sw.AtespaceUID {
+		writeDetail(w, 409, "managed actor namespace binding changed")
+		return
+	}
+	if _, err := s.ateapi.GetActor(r.Context(), sw.AtespaceName, a.Name); err == nil {
+		writeDetail(w, 409, "native actor conflicts with managed allocation")
+		return
+	} else {
+		var api *substrate.APIError
+		if !errors.As(err, &api) || api.Status != 404 {
+			apiError(w, r, err)
+			return
+		}
+	}
+	p, err := s.store.GetManagedPool(r.Context(), a.PoolUID)
+	if err != nil {
+		managedAPIError(w, r, err)
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, 200, managedActorJSON(a, p, sw.AtespaceName))
+		return
+	}
+	if r.Method == http.MethodPut {
+		writeDetail(w, 409, "managed profile definition is immutable")
+		return
+	}
+	action := "delete"
+	if r.Method == http.MethodPost {
+		var ok bool
+		action, ok = readAction(w, r, "resume", "stop", "reset", "suspend")
+		if !ok {
+			return
+		}
+		if action == "suspend" {
+			writeDetail(w, 409, "claude-proxmox does not support memory checkpoints; use stop to retain workspace")
+			return
+		}
+		if action == "resume" {
+			action = "start"
+		}
+	}
+	op := &managedWorkloadOperation{server: s, context: r.Context(), swarm: sw, pool: p, name: a.Name, action: action, actor: a}
+	if err := s.admitWorkload(userID, sw.ID, op); err != nil {
+		managedAPIError(w, r, err)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		w.WriteHeader(202)
+		return
+	}
+	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.AtespaceName))
+}
