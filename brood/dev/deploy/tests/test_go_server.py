@@ -116,14 +116,66 @@ class GoDeploymentTests(unittest.TestCase):
         without = self.capture_release({key: value for key, value in settings.items() if key != "CLIPROXY_API_KEY"})
         self.assertNotIn("CLIPROXY_API_KEY", next(o for o in without if o["metadata"]["name"] == "brood-go-env")["data"])
 
-    def capture_release(self, settings):
+    # FEATURE: Отдельный actor backend не заменяет установленный proxy панели.
+    def test_actor_model_source_keeps_panel_proxy_and_adds_scoped_egress(self):
+        values = {"CLIPROXY_URL": "http://cliproxy:8317", "CLIPROXY_MANAGEMENT_KEY": "control-secret",
+                  "BROOD_ACTOR_LLM_URL": "https://models.example.test:9443",
+                  "BROOD_ACTOR_LLM_API_KEY": "actor-client-secret",
+                  "BROOD_ACTOR_LLM_CA_PEM_B64": base64.b64encode(b"synthetic-trust").decode()}
+        resolver = Mock(return_value=[(2, 1, 6, "", ("192.168.50.8", 9443))])
+        with patch("ssl.SSLContext.load_verify_locations") as trust:
+            objects = self.capture_release(values, resolver=resolver)
+            trust.assert_called_once_with(cadata="synthetic-trust")
+        secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+        deployment = next(o for o in objects if o["kind"] == "Deployment")
+        env = {item["name"]: item for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+        for key, value in values.items():
+            self.assertIn(key, secret["data"])
+            self.assertEqual(base64.b64decode(secret["data"][key]).decode(), value)
+            self.assertNotIn(value, json.dumps(deployment))
+            self.assertEqual(env[key]["valueFrom"]["secretKeyRef"], {"name": "brood-go-env", "key": key})
+        policy = next(o for o in objects if o["kind"] == "NetworkPolicy" and o["metadata"]["name"] == "brood-go")
+        self.assertIn({"to": [{"ipBlock": {"cidr": "192.168.50.8/32"}}],
+                       "ports": [{"port": 9443, "protocol": "TCP"}]}, policy["spec"]["egress"])
+        self.assertTrue(any(o["metadata"]["name"] == "brood-go-cliproxy" for o in objects))
+        with self.assertRaisesRegex(RuntimeError, "BROOD_ACTOR_LLM_CA_PEM_B64"):
+            self.capture_release({**values, "BROOD_ACTOR_LLM_CA_PEM_B64": "%%%"}, resolver=resolver)
+        resolver.return_value = [(2, 1, 6, "", ("127.0.0.1", 9443))]
+        with patch("ssl.SSLContext.load_verify_locations"), self.assertRaisesRegex(RuntimeError, "BROOD_ACTOR_LLM_URL"):
+            self.capture_release(values, resolver=resolver)
+
+    def test_actor_source_rotation_optional_trust_and_disable(self):
+        values = {"BROOD_ACTOR_LLM_URL": "https://models.example.test",
+                  "BROOD_ACTOR_LLM_API_KEY": "first-key"}
+        resolver = Mock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.50.8", 443))])
+        before = self.capture_release(values, resolver=resolver)
+        after = self.capture_release({**values, "BROOD_ACTOR_LLM_API_KEY": "second-key"}, resolver=resolver)
+        checksums = []
+        for objects in (before, after):
+            deployment = next(o for o in objects if o["kind"] == "Deployment")
+            checksums.append(deployment["spec"]["template"]["metadata"]["annotations"]["brood.dev/server-env-sha256"])
+            env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+            self.assertNotIn("BROOD_ACTOR_LLM_CA_PEM_B64", {item["name"] for item in env})
+        self.assertNotEqual(*checksums)
+        disabled = self.capture_release({})
+        secret = next(o for o in disabled if o["metadata"]["name"] == "brood-go-env")
+        self.assertFalse(set(go_server.ACTOR_LLM_SETTINGS) & secret["data"].keys())
+        for change in ({"BROOD_ACTOR_LLM_URL": "http://models.example.test"},
+                       {"BROOD_ACTOR_LLM_API_KEY": ""}, {"BROOD_ACTOR_LLM_API_KEY": "invalid key"},
+                       {"BROOD_ACTOR_LLM_CA_PEM_B64": base64.b64encode(b"not a certificate").decode()}):
+            with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, "BROOD_ACTOR_LLM_"):
+                self.capture_release({**values, **change}, resolver=resolver)
+
+    def capture_release(self, settings, resolver=None):
         deploy = self.deploy(settings)
+        if resolver is not None:
+            deploy.resolver = resolver
         applied = []
 
         def output(*args):
             for key in ("BROOD_SESSION_SECRET", *go_server.PROXMOX_SETTINGS,
                         "BROOD_PUBLIC_ORIGIN", "BROOD_PROXMOX_RELAY_SECRET",
-                        "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY", "CLIPROXY_API_KEY"):
+                        "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY", "CLIPROXY_API_KEY", *go_server.ACTOR_LLM_SETTINGS):
                 value = settings.get(key)
                 if value:
                     self.assertNotIn(value, args)
