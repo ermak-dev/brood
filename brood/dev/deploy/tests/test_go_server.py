@@ -96,6 +96,26 @@ class GoDeploymentTests(unittest.TestCase):
         values.update(settings or {})
         return go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout")
 
+    # FEATURE: Ключ модели CLIProxyAPI доставляется только серверу.
+    # SPEC: Secret reference без значения в pod spec; ротация меняет checksum.
+    def test_model_client_key_is_server_only_and_rotates_checksum(self):
+        settings = {"CLIPROXY_URL": "http://cliproxy:8317",
+                    "CLIPROXY_MANAGEMENT_KEY": "synthetic-management",
+                    "CLIPROXY_API_KEY": "synthetic-model-key"}
+        def deployed(values):
+            objects = self.capture_release(values)
+            secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+            deployment = next(o for o in objects if o["kind"] == "Deployment")
+            env = {entry["name"]: entry for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+            self.assertNotIn(values["CLIPROXY_API_KEY"], json.dumps(deployment))
+            self.assertEqual(base64.b64decode(secret["data"]["CLIPROXY_API_KEY"]).decode(), values["CLIPROXY_API_KEY"])
+            self.assertEqual(env["CLIPROXY_API_KEY"]["valueFrom"]["secretKeyRef"],
+                             {"name": "brood-go-env", "key": "CLIPROXY_API_KEY"})
+            return deployment["spec"]["template"]["metadata"]["annotations"]["brood.dev/server-env-sha256"]
+        self.assertNotEqual(deployed(settings), deployed({**settings, "CLIPROXY_API_KEY": "rotated-model-key"}))
+        without = self.capture_release({key: value for key, value in settings.items() if key != "CLIPROXY_API_KEY"})
+        self.assertNotIn("CLIPROXY_API_KEY", next(o for o in without if o["metadata"]["name"] == "brood-go-env")["data"])
+
     def capture_release(self, settings):
         deploy = self.deploy(settings)
         applied = []
@@ -103,7 +123,7 @@ class GoDeploymentTests(unittest.TestCase):
         def output(*args):
             for key in ("BROOD_SESSION_SECRET", *go_server.PROXMOX_SETTINGS,
                         "BROOD_PUBLIC_ORIGIN", "BROOD_PROXMOX_RELAY_SECRET",
-                        "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY"):
+                        "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY", "CLIPROXY_API_KEY"):
                 value = settings.get(key)
                 if value:
                     self.assertNotIn(value, args)

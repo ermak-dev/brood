@@ -60,7 +60,8 @@ server/edge ресурсов до сборки и записи. Namespace дол
 | `BROOD_HTTPS_PORT`, `BROOD_HTTP_PORT` | опубликованные host ports, задаются при создании kind |
 | `BROOD_ADMIN_USERNAME`, `BROOD_ADMIN_PASSWORD` | initial admin и проверка доступа; пароль минимум 12 символов |
 | `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательные microvm и подготовленный lxc |
-| `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only key |
+| `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only management key |
+| `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |
 
 TLS: `secrets/tls.crt` и `secrets/tls.key`. Go и edge используют один
 сертификат; upstream SNI `brood` требует соответствующего SAN. Проверка

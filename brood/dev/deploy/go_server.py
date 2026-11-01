@@ -102,7 +102,8 @@ def registry_endpoint(raw):
     return {"url": f"http://{address}:5000", "ip": str(address)}
 
 
-def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False):
+def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False,
+              proxy_api_key=False):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -151,6 +152,9 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
     if proxy:
         container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": key}}} for key in ("CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY"))
+    if proxy_api_key:
+        container["env"].append({"name": "CLIPROXY_API_KEY", "valueFrom": {"secretKeyRef": {
+            "name": "brood-go-env", "key": "CLIPROXY_API_KEY"}}})
     if proxmox:
         container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": key}}} for key in PROXMOX_SETTINGS)
@@ -268,6 +272,13 @@ class Deploy:
             environment.update(runtime_env)
         pve_rules = proxmox_egress(endpoints, self.resolver)
         proxy_url = self.get("CLIPROXY_URL")
+        model_key = self.get("CLIPROXY_API_KEY")
+        if model_key:
+            if not proxy_url:
+                raise RuntimeError("CLIPROXY_URL is required with CLIPROXY_API_KEY")
+            if any(ord(char) <= 32 or ord(char) >= 127 for char in model_key):
+                raise RuntimeError("CLIPROXY_API_KEY must contain visible ASCII characters without spaces")
+            environment["CLIPROXY_API_KEY"] = model_key
         if proxy_url:
             proxy_key = self.get("CLIPROXY_MANAGEMENT_KEY")
             if not proxy_key:
@@ -314,7 +325,7 @@ class Deploy:
                 raise RuntimeError("Go image build returned invalid digest metadata")
             image = "localhost:5002/brood-go@" + digest
             objects = manifests(image, workers, proxy=bool(proxy_url), registry=registry,
-                                proxmox=all(key in environment for key in PROXMOX_SETTINGS),
+                                proxy_api_key=bool(model_key), proxmox=all(key in environment for key in PROXMOX_SETTINGS),
                                 proxmox_runtime=all(key in environment for key in PROXMOX_RUNTIME_SETTINGS))
             # data сохраняет владение apply ключами, включая их удаление при отключении.
             env_data = {key: base64.b64encode(value.encode("utf-8")).decode("ascii")

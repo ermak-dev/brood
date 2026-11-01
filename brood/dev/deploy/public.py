@@ -23,7 +23,8 @@ LEGACY = (("deployment", "django"), ("statefulset", "postgres"),
 
 def settings(get):
     names = ("BROOD_SESSION_SECRET", "BROOD_ADMIN_USERNAME", "BROOD_ADMIN_PASSWORD",
-             "BROOD_PUBLIC_HOST", "BROOD_HTTPS_PORT", "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY")
+             "BROOD_PUBLIC_HOST", "BROOD_HTTPS_PORT", "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY",
+             "CLIPROXY_API_KEY")
     values = {key: get(key) or "" for key in names}
     for key in names[:5]:
         if not values[key] or any(char in values[key] for char in "\r\n\0"):
