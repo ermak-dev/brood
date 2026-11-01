@@ -282,6 +282,57 @@
   }
 }
 
+/* Подписанные значения внутри одной ячейки: несколько второстепенных столбцов
+ * в одном, чтобы строка с действием влезала без прокрутки. Пары текут по
+ * ширине ячейки, в тесноте значение уходит под подпись, подпись переносится
+ * по словам; само значение не рвётся по дефису, длинное -- многоточием, как
+ * .mono, полное -- в title.
+ * На телефоне значение переносится целиком. Предел ширины не даёт пачке пар
+ * в одну строку забрать у соседних столбцов место, которое раздаёт таблица. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 14px;
+  max-width: 24em;
+  margin: 0;
+
+  > div {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  dt {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  dd {
+    min-width: 0;
+    max-width: 220px;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.factsStacked {
+  flex-direction: column;
+}
+
+@include mobile {
+  .facts dd {
+    max-width: none;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 /* ─── бейджи и чипы ────────────────────────────────────────────────── */
 
 .badge {

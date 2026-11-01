@@ -2756,7 +2756,7 @@
     "drain_message": "停止 {{name}} 的新分配？現有 actor 及其預留資源保持不變。",
     "enable_message": "重新允許 {{name}} 的新分配？不會自動恢復現有 actor。",
     "action_done": "資源池 {{name}} 已更新",
-    "runtime": "執行環境與分配狀態",
+    "connection": "連線",
     "capacity": "已預留 / 容量",
     "actors": "Actor 數量",
     "cpu": "CPU（毫核心）",

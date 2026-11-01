@@ -88,10 +88,11 @@ test('all six locales translate the connection block with matching keys and bool
   for (const locale of locales) {
     const strings = messages(locale).proxmox_connections;
     expect(strings).toBeDefined();
-    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'action_done', 'runtime', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining', 'reservations_hint'].sort());
+    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'action_done', 'connection', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining', 'reservations_hint'].sort());
     for (const value of Object.values(strings)) expect(typeof value === 'string' && value.length > 0).toBe(true);
     const markup = await connectionMarkup([connection], null, locale);
     expect(markup).toContain(strings.runtime_not_installed);
+    expect(markup).toContain(`>${strings.connection}</th>`);
     expect(markup).toContain(strings.yes);
     expect(await connectionMarkup([{ ...connection, credentialConfigured: false }], null, locale)).toContain(strings.no);
   }

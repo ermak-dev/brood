@@ -2729,7 +2729,7 @@
     "drain_message": "{{name}}의 새 할당을 중지할까요? 기존 actor와 예약된 리소스는 유지됩니다.",
     "enable_message": "{{name}}의 새 할당을 다시 허용할까요? 기존 actor는 자동으로 재개되지 않습니다.",
     "action_done": "풀 {{name}} 업데이트됨",
-    "runtime": "런타임 및 할당 상태",
+    "connection": "연결",
     "capacity": "예약 / 용량",
     "actors": "Actor 수",
     "cpu": "CPU (밀리코어)",

@@ -91,6 +91,55 @@ test('managed allocation is real reservation data, including zero and exact int6
   expect(unavailable).toContain('0 / 2');
 });
 
+// Строка подключения помещается на desktop без горизонтальной прокрутки:
+// пять второстепенных полей -- одна подписанная ячейка, учётные данные --
+// в состоянии. Ни одно значение не теряется, действие остаётся в строке.
+const text = (html = '') => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+const cells = (html: string) => Object.fromEntries([...html.matchAll(
+  /<td[^>]*data-label="([^"]*)"[^>]*>([\s\S]*?)<\/td>/g)].map(([, label, body]) => [label, body]));
+const facts = (html = '') => [...html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt><dd[^>]*>([\s\S]*?)<\/dd>/g)]
+  .map(([, term, value]) => [term, value]);
+// На телефоне ячейка -- сетка «подпись | значение»: второй корневой узел
+// уехал бы под подпись столбца, поэтому у значения ячейки один корень.
+const roots = (html: string) => {
+  let depth = 0;
+  let count = 0;
+  for (const [, close] of html.matchAll(/<(\/?)[a-z][^>]*>/g)) {
+    if (close) depth -= 1;
+    else if (depth++ === 0) count += 1;
+  }
+  return count;
+};
+const placed = { ...connection, resourcePool: 'brood-actors', storage: 'local-lvm', network: 'vmbr0' };
+
+test('a connection row keeps four labelled columns and its action without scrolling', async () => {
+  const html = await markup({ ...placed, managedPool: allocation });
+  const headers = [...html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map(([, label]) => text(label));
+  expect(headers).toEqual(['Name', 'Connection', 'State', 'Reserved / capacity', 'Actions']);
+  const row = html.slice(html.indexOf('<tbody>'));
+  expect(row.match(/<td/g)).toHaveLength(headers.length);
+  expect(text(row.slice(row.lastIndexOf('<td')))).toBe('Drain pool');
+  const cell = cells(html);
+  expect(Object.keys(cell)).toEqual(headers.slice(0, -1));
+  expect(facts(cell.Connection)).toEqual([['Endpoint', placed.endpoint], ['Node', 'pve'],
+    ['PVE resource pool', 'brood-actors'], ['Storage', 'local-lvm'], ['Network', 'vmbr0']]);
+  expect(text(cell.State)).toBe('Runtime configured Enabled Credential configured Yes');
+  expect(facts(cell['Reserved / capacity'])).toEqual([['Actors', '0 / 2'],
+    ['CPU (millicores)', '0 / 2000'], ['Memory (bytes)', '0 / 9007199254740993'],
+    ['Disk (bytes)', '0 / 2147483648']]);
+  for (const body of Object.values(cell)) expect(roots(body)).toBeLessThanOrEqual(1);
+});
+
+test('an unready connection shows missing runtime and credential in its state cell', async () => {
+  const html = await markup({ ...placed, runtimeAvailable: false, credentialConfigured: false });
+  const cell = cells(html);
+  expect(text(cell.State)).toBe(`${en.proxmox_connections.runtime_not_installed} Credential configured No`);
+  expect(cell['Reserved / capacity']).toBe('—');
+  expect(facts(cell.Connection)).toHaveLength(5);
+  for (const body of Object.values(cell)) expect(roots(body)).toBeLessThanOrEqual(1);
+  expect(html).not.toContain('<button');
+});
+
 test('server refuses activation visibly rather than synthesizing readiness', async () => {
   globalThis.fetch = (async () => Response.json({ detail: 'installed runtime unavailable' }, { status: 409 })) as typeof fetch;
   expect(typeof proxmoxPoolsApi.activate).toBe('function');
