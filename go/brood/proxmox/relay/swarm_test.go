@@ -20,6 +20,33 @@ func TestInboundMessageRechecksCurrentAuthorization(t *testing.T) {
 	}
 }
 
+// FEATURE: The bound swarm relay accepts narrow add requests.
+// SPEC: Only tool and a DNS-label actor name are allowed; identity stays bound.
+func TestDecodeAddRequest(t *testing.T) {
+	for _, tc := range []struct {
+		wire  string
+		valid bool
+	}{
+		{`{"tool":"add","to":"peer-1"}`, true},
+		{`{"tool":"add","to":"a"}`, true},
+		{`{"tool":"add"}`, false},
+		{`{"tool":"add","to":"Peer"}`, false},
+		{`{"tool":"add","to":"peer-"}`, false},
+		{`{"tool":"add","to":"../peer"}`, false},
+		{`{"tool":"add","to":"peer","message":"hello"}`, false},
+		{`{"tool":"add","to":"peer","wait_seconds":1}`, false},
+		{`{"tool":"add","to":"peer","role":"master"}`, false},
+		{`{"tool":"add","to":"peer","pool":"other"}`, false},
+		{`{"tool":"add","to":"peer","token":"secret"}`, false},
+		{`{"tool":"add","to":"peer","actor_uid":"other"}`, false},
+		{`{"tool":"add","to":"peer","generation":4}`, false},
+	} {
+		if _, valid := DecodeSwarmRequest([]byte(tc.wire)); valid != tc.valid {
+			t.Errorf("valid=%v for %s", valid, tc.wire)
+		}
+	}
+}
+
 func TestSwarmRPCUsesAuthenticatedCurrentSession(t *testing.T) {
 	f := setup(t)
 	calls := make(chan SwarmCaller, 2)
@@ -43,6 +70,9 @@ func TestSwarmRPCUsesAuthenticatedCurrentSession(t *testing.T) {
 	if !got.OK || got.Text != "agents from authenticated actor" {
 		t.Fatalf("RPC: %+v", got)
 	}
+	if got := call(ctx, SwarmRequest{Tool: "add", To: "peer-1"}); !got.OK || got.Text != "add from authenticated actor" {
+		t.Fatalf("add RPC: %+v", got)
+	}
 	if got := call(ctx, SwarmRequest{Tool: "exec"}); got.OK {
 		t.Fatal("unknown operation accepted")
 	}
@@ -50,6 +80,9 @@ func TestSwarmRPCUsesAuthenticatedCurrentSession(t *testing.T) {
 		t.Fatal("unbounded wait accepted")
 	}
 	f.current.Store(false)
+	if got := call(ctx, SwarmRequest{Tool: "add", To: "peer-2"}); got.OK {
+		t.Fatal("revoked peer created an actor")
+	}
 	if got := call(ctx, SwarmRequest{Tool: "agents"}); got.OK {
 		t.Fatal("revoked peer still served")
 	}

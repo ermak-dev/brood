@@ -16,6 +16,8 @@ import (
 
 const mcpVersion = "2025-03-26"
 
+const orchestrationInstructions = "This is Brood orchestration under the mop compatibility namespace, not upstream Mop or NATS control. Call agents() to identify your name, role and peers before dispatching work; only an authorized master may create peers with add(name). Delegate bounded tasks with send(to, message, wait_seconds), review results, and report back to the sender. Built-in session messaging does not reach remote actors. Never interpret running as idle or a clean workspace, or unconfirmed as delivered; check before retrying an uncertain operation. Do not bypass permissions or request operator credentials."
+
 func mcpTool(name, description string, properties map[string]any, required []string, readOnly bool) map[string]any {
 	return map[string]any{"name": name, "description": description,
 		"inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
@@ -25,6 +27,9 @@ func mcpTool(name, description string, properties map[string]any, required []str
 func swarmTools() []map[string]any {
 	return []map[string]any{
 		mcpTool("agents", "List managed actors in this swarm. Names are addresses for send; running does not mean idle or a clean workspace.", map[string]any{}, []string{}, true),
+		mcpTool("add", "Create a managed peer in this swarm. Only an authorized master may create peers; the server selects the pool and role. An uncertain outcome requires checking agents before retrying.", map[string]any{
+			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
+		}, []string{"name"}, false),
 		mcpTool("send", "Send a message to another managed actor in this swarm. Only a confirmed receipt proves delivery; unconfirmed means the outcome is unknown.", map[string]any{
 			"to":           map[string]any{"type": "string", "minLength": 1, "maxLength": 63},
 			"message":      map[string]any{"type": "string", "minLength": 1},
@@ -71,7 +76,7 @@ func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, call relay
 						break
 					}
 					initialized = true
-					response["result"] = map[string]any{"protocolVersion": mcpVersion, "capabilities": map[string]any{"tools": map[string]bool{"listChanged": false}}, "serverInfo": map[string]string{"name": "brood", "version": "1"}, "instructions": "Use agents and send for managed actors in this swarm. Built-in session messaging does not reach remote actors. Never interpret running as idle, or unconfirmed as delivered."}
+					response["result"] = map[string]any{"protocolVersion": mcpVersion, "capabilities": map[string]any{"tools": map[string]bool{"listChanged": false}}, "serverInfo": map[string]string{"name": "brood", "version": "1"}, "instructions": orchestrationInstructions}
 				case "ping":
 					response["result"] = map[string]any{}
 				case "tools/list":
@@ -90,7 +95,7 @@ func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, call relay
 						Arguments json.RawMessage            `json:"arguments"`
 						Meta      map[string]json.RawMessage `json:"_meta,omitempty"`
 					}
-					if !strictMCPJSON(req.Params, &params) || (params.Name != "agents" && params.Name != "send") {
+					if !strictMCPJSON(req.Params, &params) || (params.Name != "agents" && params.Name != "add" && params.Name != "send") {
 						fail(-32602, "Unknown tool or invalid arguments")
 						break
 					}
@@ -102,7 +107,17 @@ func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, call relay
 						Message     string `json:"message,omitempty"`
 						WaitSeconds int    `json:"wait_seconds,omitempty"`
 					}
-					if !strictMCPJSON(params.Arguments, &args) {
+					validArgs := false
+					if params.Name == "add" {
+						var add struct {
+							Name string `json:"name"`
+						}
+						validArgs = strictMCPJSON(params.Arguments, &add)
+						args.To = add.Name
+					} else {
+						validArgs = strictMCPJSON(params.Arguments, &args)
+					}
+					if !validArgs {
 						fail(-32602, "Invalid tool arguments")
 						break
 					}
