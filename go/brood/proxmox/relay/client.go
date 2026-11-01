@@ -32,17 +32,19 @@ type ClientConfig struct {
 	DialTarget func(context.Context) (net.Conn, error) `json:"-"`
 	// HandleMessage receives server-authorized swarm messages. It must honor
 	// cancellation and never dial actor-supplied socket paths as root.
-	HandleMessage func(context.Context, MessageRequest) MessageResponse `json:"-"`
+	HandleMessage  func(context.Context, MessageRequest) MessageResponse `json:"-"`
+	OnSwarmSession func(context.Context, SwarmCaller)                    `json:"-"`
 }
 
 func (ClientConfig) String() string     { return "relay.ClientConfig{redacted}" }
 func (c ClientConfig) GoString() string { return c.String() }
 
 type clientOptions struct {
-	ws      *websocket.Config
-	ssh     *ssh.ClientConfig
-	target  func(context.Context) (net.Conn, error)
-	message func(context.Context, MessageRequest) MessageResponse
+	ws             *websocket.Config
+	ssh            *ssh.ClientConfig
+	target         func(context.Context) (net.Conn, error)
+	message        func(context.Context, MessageRequest) MessageResponse
+	onSwarmSession func(context.Context, SwarmCaller)
 }
 
 func options(c ClientConfig) (*clientOptions, error) {
@@ -83,7 +85,7 @@ func options(c ClientConfig) (*clientOptions, error) {
 	}
 	wc.TlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: u.Hostname()}
 	wc.Header.Set("Authorization", "Bearer "+c.Token)
-	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget, c.HandleMessage}, nil
+	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget, c.HandleMessage, c.OnSwarmSession}, nil
 }
 
 // RunClient reconnects with bounded exponential backoff until ctx is canceled.
@@ -139,6 +141,9 @@ func runAttempt(ctx context.Context, o *clientOptions) bool {
 	go ssh.DiscardRequests(requests)
 	done := make(chan struct{})
 	go func() { conn.Wait(); cancelSession(); close(done) }()
+	if o.onSwarmSession != nil {
+		go o.onSwarmSession(session, swarmCaller(conn, session))
+	}
 	serveTargets(session, channels, o.target, o.message)
 	<-done
 	return true

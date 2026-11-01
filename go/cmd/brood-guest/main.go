@@ -35,9 +35,16 @@ type actorRuntime interface {
 	service
 	TerminalDialTarget() string
 }
+type swarmBroker interface {
+	service
+	ServeSession(context.Context, relay.SwarmCaller)
+}
+
 type dependencies struct {
 	actor   func() error
 	message func(context.Context) error
+	mcp     func(context.Context) error
+	broker  func(context.Context) (swarmBroker, error)
 	euid    func() int
 	network func(context.Context) (service, error)
 	start   func(context.Context, []string) (actorRuntime, error)
@@ -114,6 +121,9 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	if len(args) == 1 && args[0] == "--brood-guest-message" {
 		return d.message(ctx)
 	}
+	if len(args) == 1 && args[0] == "mcp" {
+		return d.mcp(ctx)
+	}
 	if len(args) != 0 {
 		return errors.New("brood-guest accepts only fixed actor or message helper flags")
 	}
@@ -135,6 +145,17 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	}
 	networkDone := make(chan error, 1)
 	go func() { networkDone <- network.Wait(); cancel() }()
+	if d.broker != nil {
+		broker, err := d.broker(ctx)
+		if err != nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest swarm broker initialization failed")
+		}
+		defer broker.Close()
+		c.relay.OnSwarmSession = broker.ServeSession
+		go func() { broker.Wait(); cancel() }()
+	}
 	runtime, err := d.start(ctx, c.hosts)
 	if err != nil {
 		cancel()
@@ -205,7 +226,7 @@ func cancellationOnly(err error) bool {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	d := dependencies{actor: guest.RunActor, message: runMessageHelper, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
+	d := dependencies{actor: guest.RunActor, message: runMessageHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
 	}, relay: relay.RunClient}
 	err := dispatch(ctx, os.Args[1:], func() []string {
