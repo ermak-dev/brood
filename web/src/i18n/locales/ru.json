@@ -2633,10 +2633,8 @@
   },
   "actors": {
     "provider": "Провайдер",
-    "native_provider": "Substrate",
     "profile": "Профиль",
     "pool": "Логический пул",
-    "pool_ctid": "Логический пул / CTID",
     "generation": "Поколение",
     "details": "Подробности",
     "details_title": "Подробности актора {{name}}",

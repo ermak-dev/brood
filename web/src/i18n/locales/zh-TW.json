@@ -2666,10 +2666,8 @@
   },
   "actors": {
     "provider": "提供方",
-    "native_provider": "Substrate",
     "profile": "設定檔",
     "pool": "邏輯池",
-    "pool_ctid": "邏輯池 / CTID",
     "generation": "代次",
     "details": "詳情",
     "details_title": "Actor {{name}} 詳情",

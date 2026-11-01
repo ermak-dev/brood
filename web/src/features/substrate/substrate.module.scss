@@ -333,6 +333,49 @@
   }
 }
 
+/* Акторы: колонка действий по ширине содержимого, а не 1%. Managed-строка
+ * (пять действий) переносит группу «детали/удаление» под lifecycle-группу,
+ * когда места мало, и стоит в одну строку на широком экране; native-строка
+ * не переносится и задаёт минимальную ширину колонки, как раньше. */
+.actorTable .cellActions {
+  width: auto;
+}
+
+.actorActions,
+.actorActionsWrap {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.actorActions {
+  flex-wrap: nowrap;
+}
+
+.actorActionsWrap {
+  flex-wrap: wrap;
+}
+
+.actorActionGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+@include mobile {
+  .actorActions,
+  .actorActionsWrap {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .actorActionGroup {
+    display: contents;
+  }
+}
+
 /* ─── бейджи и чипы ────────────────────────────────────────────────── */
 
 .badge {

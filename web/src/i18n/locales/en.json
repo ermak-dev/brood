@@ -2639,10 +2639,8 @@
   },
   "actors": {
     "provider": "Provider",
-    "native_provider": "Substrate",
     "profile": "Profile",
     "pool": "Logical pool",
-    "pool_ctid": "Logical pool / CTID",
     "generation": "Generation",
     "details": "Details",
     "details_title": "Actor {{name}} details",
