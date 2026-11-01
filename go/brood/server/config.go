@@ -86,6 +86,10 @@ type Config struct {
 	CLIProxyAPIKey string `json:"-"`
 	// CLIProxyCAPEM pins trust for an explicitly configured private proxy.
 	CLIProxyCAPEM []byte `json:"-"`
+	// ActorLLMURL optionally selects a separate backend without replacing panel routing.
+	ActorLLMURL    string
+	ActorLLMAPIKey string `json:"-"`
+	ActorLLMCAPEM  []byte `json:"-"`
 }
 
 // String and GoString keep server credentials out of diagnostic formatting.
@@ -135,6 +139,8 @@ func LoadConfig(get getenv) (Config, error) {
 		RegistryURL:           envGet(get, "BROOD_REGISTRY_URL"),
 		RegistryImageHost:     envGet(get, "BROOD_REGISTRY_IMAGE_HOST"),
 		CLIProxyAPIKey:        envGet(get, "CLIPROXY_API_KEY"),
+		ActorLLMURL:           envGet(get, "BROOD_ACTOR_LLM_URL"),
+		ActorLLMAPIKey:        envGet(get, "BROOD_ACTOR_LLM_API_KEY"),
 		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 	}
@@ -159,16 +165,35 @@ func LoadConfig(get getenv) (Config, error) {
 		return cfg, err
 	}
 	cfg.proxmox = registry
-	if encoded := envGet(get, "CLIPROXY_CA_PEM_B64"); encoded != "" {
-		cfg.CLIProxyCAPEM, err = base64.StdEncoding.Strict().DecodeString(encoded)
-		if err != nil || !x509.NewCertPool().AppendCertsFromPEM(cfg.CLIProxyCAPEM) {
-			return cfg, &ConfigError{Setting: "CLIPROXY_CA_PEM_B64", Detail: "must encode valid PEM trust certificates"}
+	for _, trust := range []struct {
+		setting string
+		value   *[]byte
+	}{
+		{"CLIPROXY_CA_PEM_B64", &cfg.CLIProxyCAPEM},
+		{"BROOD_ACTOR_LLM_CA_PEM_B64", &cfg.ActorLLMCAPEM},
+	} {
+		if encoded := envGet(get, trust.setting); encoded != "" {
+			*trust.value, err = base64.StdEncoding.Strict().DecodeString(encoded)
+			if err != nil || !x509.NewCertPool().AppendCertsFromPEM(*trust.value) {
+				return cfg, &ConfigError{Setting: trust.setting, Detail: "must encode valid PEM trust certificates"}
+			}
 		}
 	}
 	return cfg, cfg.validateAdapters()
 }
 
 func (cfg Config) validateAdapters() error {
+	if cfg.ActorLLMURL != "" || cfg.ActorLLMAPIKey != "" || len(cfg.ActorLLMCAPEM) > 0 {
+		if !proxmoxOrigin(cfg.ActorLLMURL) {
+			return &ConfigError{Setting: "BROOD_ACTOR_LLM_URL", Detail: "must be an explicit HTTPS origin"}
+		}
+		if !proxmoxHeaderValue(cfg.ActorLLMAPIKey) {
+			return &ConfigError{Setting: "BROOD_ACTOR_LLM_API_KEY", Detail: "must be a nonempty header-safe secret"}
+		}
+		if len(cfg.ActorLLMCAPEM) > 0 && !x509.NewCertPool().AppendCertsFromPEM(cfg.ActorLLMCAPEM) {
+			return &ConfigError{Setting: "BROOD_ACTOR_LLM_CA_PEM_B64", Detail: "must encode valid PEM trust certificates"}
+		}
+	}
 	if len(cfg.CLIProxyCAPEM) > 0 && !x509.NewCertPool().AppendCertsFromPEM(cfg.CLIProxyCAPEM) {
 		return &ConfigError{Setting: "CLIPROXY_CA_PEM_B64", Detail: "must encode valid PEM trust certificates"}
 	}
