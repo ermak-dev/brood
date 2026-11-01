@@ -50,12 +50,15 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		version = 3
-	} else if version != 3 && version != 4 && version != 5 && version != 6 {
+	} else if version != 3 && version != 4 && version != 5 && version != 6 && version != 7 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
 	expectedSchema := managedSchema
 	if version >= 4 {
 		expectedSchema = managedLifecycleSchema()
+	}
+	if version >= 7 {
+		expectedSchema = managedDelegationSchema()
 	}
 	if err := checkSchema(ctx, tx, expectedSchema); err != nil {
 		return err
@@ -101,7 +104,27 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 	if err := checkSchema(ctx, tx, managedConnectionsRuntimeSchema()); err != nil {
 		return err
 	}
-	return checkSchema(ctx, tx, managedLifecycleSchema())
+	if version <= 6 {
+		for _, column := range managedDelegationColumns {
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE managed_actors ADD COLUMN `+column); err != nil {
+				return fmt.Errorf("extend managed delegation: %w", err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=7`); err != nil {
+			return err
+		}
+	}
+	return checkSchema(ctx, tx, managedDelegationSchema())
+}
+
+var managedDelegationColumns = []string{
+	`role TEXT NOT NULL DEFAULT 'worker' CHECK (role IN ('worker', 'master'))`,
+	`delegator_id TEXT NOT NULL DEFAULT ''`,
+	`parent_uid TEXT NOT NULL DEFAULT ''`,
+}
+
+func managedDelegationSchema() string {
+	return strings.TrimSuffix(strings.TrimSpace(managedLifecycleSchema()), ");") + "," + strings.Join(managedDelegationColumns, ",") + ");"
 }
 
 func managedConnectionsRuntimeSchema() string {

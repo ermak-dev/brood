@@ -74,11 +74,17 @@ type ManagedPool struct {
 // All phases except deleted consume capacity. Deleted rows are retained for audit.
 // Error must be a sanitized public diagnostic; never pass raw provider responses.
 // OperationID is caller-generated and must be fresh for each new intent.
+// Role defaults to worker. A master retains its approving human's DelegatorID;
+// delegated workers retain the creating master's ParentUID for idempotent retries.
+// These bindings are immutable and never derived from names or guest environment.
 // Stage is create, start, stop, delete, or done. It fences task callbacks
 // independently of observed Phase. Migrated schema-3 rows start at reconcile:
 // callers must settle their existing task before new work, even if Phase looks
 // terminal. A legacy reset is refused because schema 3 rotated ownership early.
 type ManagedActor struct {
+	Role              string
+	DelegatorID       string
+	ParentUID         string
 	UID               string
 	Name              string
 	SwarmID           string
@@ -289,12 +295,12 @@ func managedFits(p ManagedPool, count int64, used, extra ManagedResources) bool 
 	return count <= p.MaxActors && used.CPUMillicores <= p.Resources.CPUMillicores && extra.CPUMillicores <= p.Resources.CPUMillicores-used.CPUMillicores && used.MemoryBytes <= p.Resources.MemoryBytes && extra.MemoryBytes <= p.Resources.MemoryBytes-used.MemoryBytes && used.DiskBytes <= p.Resources.DiskBytes && extra.DiskBytes <= p.Resources.DiskBytes-used.DiskBytes
 }
 
-const managedActorCols = `uid,name,swarm_id,atespace_uid,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at,stage`
+const managedActorCols = `uid,name,swarm_id,atespace_uid,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at,stage,role,delegator_id,parent_uid`
 
 func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error) {
 	var a ManagedActor
 	var template string
-	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage)
+	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage, &a.Role, &a.DelegatorID, &a.ParentUID)
 	if err == nil {
 		err = json.Unmarshal([]byte(template), &a.Template)
 	}
@@ -307,6 +313,12 @@ func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error)
 // The create intent must commit before the caller writes to PVE. When nested in
 // WithTx, callers must wait for the outer transaction to commit before any write.
 func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (ManagedActor, error) {
+	if a.Role == "" {
+		a.Role = "worker"
+	}
+	if (a.Role != "worker" && a.Role != "master") || (a.Role == "master" && (a.DelegatorID == "" || a.ParentUID != "")) || (a.Role == "worker" && a.DelegatorID != "") {
+		return ManagedActor{}, fmt.Errorf("invalid managed actor delegation")
+	}
 	if a.UID == "" || a.Name == "" || a.SwarmID == "" || a.AtespaceUID == "" || a.PoolUID == "" || a.OwnerNonce == "" || a.OperationID == "" || a.CTID <= 0 || a.Resources.CPUMillicores <= 0 || a.Resources.MemoryBytes <= 0 || a.Resources.DiskBytes <= 0 {
 		return ManagedActor{}, fmt.Errorf("managed actor identity, ownership, operation and positive resources are required")
 	}
@@ -347,7 +359,7 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		a.CreatedAt = nowRFC3339()
 		a.UpdatedAt = a.CreatedAt
 		a.DeletedAt = nil
-		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.AtespaceUID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt, a.Stage)
+		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.AtespaceUID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt, a.Stage, a.Role, a.DelegatorID, a.ParentUID)
 		result = a
 		return wrapUnique(err, "managed actor name or CTID")
 	})
