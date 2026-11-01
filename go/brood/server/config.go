@@ -6,6 +6,8 @@
 package server
 
 import (
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
@@ -82,6 +84,8 @@ type Config struct {
 	CLIProxyManagementKey string
 	// CLIProxyAPIKey is the server-only model credential (CLIPROXY_API_KEY).
 	CLIProxyAPIKey string `json:"-"`
+	// CLIProxyCAPEM pins trust for an explicitly configured private proxy.
+	CLIProxyCAPEM []byte `json:"-"`
 }
 
 // String and GoString keep server credentials out of diagnostic formatting.
@@ -155,10 +159,19 @@ func LoadConfig(get getenv) (Config, error) {
 		return cfg, err
 	}
 	cfg.proxmox = registry
+	if encoded := envGet(get, "CLIPROXY_CA_PEM_B64"); encoded != "" {
+		cfg.CLIProxyCAPEM, err = base64.StdEncoding.Strict().DecodeString(encoded)
+		if err != nil || !x509.NewCertPool().AppendCertsFromPEM(cfg.CLIProxyCAPEM) {
+			return cfg, &ConfigError{Setting: "CLIPROXY_CA_PEM_B64", Detail: "must encode valid PEM trust certificates"}
+		}
+	}
 	return cfg, cfg.validateAdapters()
 }
 
 func (cfg Config) validateAdapters() error {
+	if len(cfg.CLIProxyCAPEM) > 0 && !x509.NewCertPool().AppendCertsFromPEM(cfg.CLIProxyCAPEM) {
+		return &ConfigError{Setting: "CLIPROXY_CA_PEM_B64", Detail: "must encode valid PEM trust certificates"}
+	}
 	if err := cfg.validateRegistry(); err != nil {
 		return err
 	}

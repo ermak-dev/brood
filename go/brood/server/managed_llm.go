@@ -51,7 +51,7 @@ func managedLLMRoute(r *http.Request) (uid string, generation int64, upstream st
 
 func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 	target, _ := url.Parse(cfg.CLIProxyURL)
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := cliProxyTransport(cfg)
 	// Do not honor environment proxies: the only destination is the configured
 	// CLIProxy origin. Header timeout is finite without limiting SSE idle gaps.
 	transport.Proxy = nil

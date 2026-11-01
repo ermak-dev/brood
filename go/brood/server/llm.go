@@ -75,10 +75,15 @@ func llmProxy(cfg Config, management bool) http.Handler {
 	target, _ := url.Parse(cfg.CLIProxyURL)
 	target.Path = ""
 	proxy := &httputil.ReverseProxy{
+		Transport: cliProxyTransport(cfg),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			// Match the edge's Host behavior, including WebSocket Origin checks.
 			pr.Out.Host = pr.In.Host
+			// External TLS ingress may route by HTTP authority as well as SNI.
+			if target.Scheme == "https" {
+				pr.Out.Host = target.Host
+			}
 			for _, header := range []string{"Cookie", "X-Management-Key", "X-CSRFToken", "X-CSRF-Token"} {
 				pr.Out.Header.Del(header)
 			}

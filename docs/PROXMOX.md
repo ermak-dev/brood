@@ -220,7 +220,12 @@ managed-акторами того же роя. Native-акторы пока не
 Managed-доступ к CLIProxyAPI требует `CLIPROXY_URL` и отдельного серверного
 `CLIPROXY_API_KEY`. Это клиентский ключ прокси, не management key. Его значение
 остаётся только у сервера; root supervisor гостя использует свой scoped relay
-токен текущего UID/поколения:
+токен текущего UID/поколения. Для proxy с частной цепочкой TLS
+`CLIPROXY_CA_PEM_B64` задаёт доверенные PEM-сертификаты в base64: доверие
+проверяется явно, `InsecureSkipVerify` не используется. Для публичной цепочки
+переменная не нужна. Эти корни применяются только к CLIProxyAPI backend.
+
+Machine endpoints:
 
 - `GET /api/proxmox/llm/<uid>/<generation>/v1/models`;
 - `POST /api/proxmox/llm/<uid>/<generation>/v1/messages`;
