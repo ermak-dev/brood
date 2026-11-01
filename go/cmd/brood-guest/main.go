@@ -45,6 +45,7 @@ type dependencies struct {
 	message func(context.Context) error
 	mcp     func(context.Context) error
 	broker  func(context.Context) (swarmBroker, error)
+	model   func(context.Context, relay.ClientConfig) (service, error)
 	euid    func() int
 	network func(context.Context) (service, error)
 	start   func(context.Context, []string) (actorRuntime, error)
@@ -156,6 +157,16 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		c.relay.OnSwarmSession = broker.ServeSession
 		go func() { broker.Wait(); cancel() }()
 	}
+	if d.model != nil {
+		model, err := d.model(ctx, c.relay)
+		if err != nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest model gateway initialization failed")
+		}
+		defer boundedClose(model)
+		go func() { model.Wait(); cancel() }()
+	}
 	runtime, err := d.start(ctx, c.hosts)
 	if err != nil {
 		cancel()
@@ -226,7 +237,9 @@ func cancellationOnly(err error) bool {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	d := dependencies{actor: guest.RunActor, message: runMessageHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
+	d := dependencies{actor: guest.RunActor, message: runMessageHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+		return guest.StartModelGateway(ctx, cfg)
+	}, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
 	}, relay: relay.RunClient}
 	err := dispatch(ctx, os.Args[1:], func() []string {

@@ -53,8 +53,9 @@ func TestMessageHelperSpec(t *testing.T) {
 			t.Fatal("root secret in helper environment")
 		}
 	}
-	if !reflect.DeepEqual(s.Env, actorEnv()) {
-		t.Fatal("helper environment differs from actor")
+	wantEnv := []string{"HOME=/workspace/home", "PWD=/workspace/project", "USER=claude", "LOGNAME=claude", "PATH=/usr/local/bin:/usr/bin:/bin", "GOMAXPROCS=4"}
+	if !reflect.DeepEqual(s.Env, wantEnv) {
+		t.Fatal("helper environment contains settings beyond its fixed minimum")
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 func messageHelperSpec() ActorSpec {
 	s := actorSpec("/proc/self/exe")
 	s.Args = []string{"--brood-guest-message"}
+	s.Env = []string{"HOME=/workspace/home", "PWD=/workspace/project", "USER=claude", "LOGNAME=claude", "PATH=/usr/local/bin:/usr/bin:/bin", "GOMAXPROCS=4"}
 	return s
 }
 
