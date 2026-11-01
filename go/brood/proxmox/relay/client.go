@@ -30,15 +30,19 @@ type ClientConfig struct {
 	CAPEM      []byte `json:"-"`
 	HostKey    string
 	DialTarget func(context.Context) (net.Conn, error) `json:"-"`
+	// HandleMessage receives server-authorized swarm messages. It must honor
+	// cancellation and never dial actor-supplied socket paths as root.
+	HandleMessage func(context.Context, MessageRequest) MessageResponse `json:"-"`
 }
 
 func (ClientConfig) String() string     { return "relay.ClientConfig{redacted}" }
 func (c ClientConfig) GoString() string { return c.String() }
 
 type clientOptions struct {
-	ws     *websocket.Config
-	ssh    *ssh.ClientConfig
-	target func(context.Context) (net.Conn, error)
+	ws      *websocket.Config
+	ssh     *ssh.ClientConfig
+	target  func(context.Context) (net.Conn, error)
+	message func(context.Context, MessageRequest) MessageResponse
 }
 
 func options(c ClientConfig) (*clientOptions, error) {
@@ -79,7 +83,7 @@ func options(c ClientConfig) (*clientOptions, error) {
 	}
 	wc.TlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: u.Hostname()}
 	wc.Header.Set("Authorization", "Bearer "+c.Token)
-	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget}, nil
+	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget, c.HandleMessage}, nil
 }
 
 // RunClient reconnects with bounded exponential backoff until ctx is canceled.
@@ -135,15 +139,31 @@ func runAttempt(ctx context.Context, o *clientOptions) bool {
 	go ssh.DiscardRequests(requests)
 	done := make(chan struct{})
 	go func() { conn.Wait(); cancelSession(); close(done) }()
-	serveTargets(session, channels, o.target)
+	serveTargets(session, channels, o.target, o.message)
 	<-done
 	return true
 }
-func serveTargets(ctx context.Context, channels <-chan ssh.NewChannel, target func(context.Context) (net.Conn, error)) {
+func serveTargets(ctx context.Context, channels <-chan ssh.NewChannel, target func(context.Context) (net.Conn, error), message func(context.Context, MessageRequest) MessageResponse) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	slots := make(chan struct{}, MaxStreams)
+	messageSlots := make(chan struct{}, MaxMessagesInFlight)
 	for ch := range channels {
+		if ch.ChannelType() == messageChannel && message != nil {
+			select {
+			case messageSlots <- struct{}{}:
+			default:
+				ch.Reject(ssh.ResourceShortage, "message stream limit reached")
+				continue
+			}
+			wg.Add(1)
+			go func(ch ssh.NewChannel) {
+				defer wg.Done()
+				defer func() { <-messageSlots }()
+				serveGuestMessage(ctx, message, ch)
+			}(ch)
+			continue
+		}
 		if ch.ChannelType() != terminalChannel || len(ch.ExtraData()) != 0 {
 			ch.Reject(ssh.Prohibited, "channel not permitted")
 			continue
