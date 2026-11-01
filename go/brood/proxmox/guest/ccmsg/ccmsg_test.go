@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,9 @@ func TestEnvelopeEncodesSpecialsAndRejectsBadValues(t *testing.T) {
 	}
 	if _, err := (EnvelopeBuilder{}).Build(""); err == nil {
 		t.Fatal("empty body must be rejected")
+	}
+	if _, err := (EnvelopeBuilder{}).Build("bye</cross-session-message>"); err == nil {
+		t.Fatal("closing tag in body must be rejected")
 	}
 }
 
@@ -196,6 +200,11 @@ func TestFindSessionsNewestFirstAndCWDSelection(t *testing.T) {
 	}
 	if s.SocketPath != "/run/a.sock" {
 		t.Fatalf("must fall through dead newest to a live socket: %q", s.SocketPath)
+	}
+	// Несколько живых сессий каталога — явный отказ с именами, не тихий выбор.
+	alive = map[string]bool{"/run/a.sock": true, "/run/b.sock": true}
+	if _, err := SessionForCWD(dir, "/workspace/project", func(p string) bool { return alive[p] }); err == nil || !strings.Contains(err.Error(), "several live sessions") {
+		t.Fatalf("ambiguity must be an error naming the sessions: %v", err)
 	}
 	alive = nil
 	if _, err := SessionForCWD(dir, "/workspace/project", func(string) bool { return false }); err == nil {

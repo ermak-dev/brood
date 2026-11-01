@@ -54,7 +54,10 @@ func (m *managedProvider) swarmMessageRouter() relay.MessageRouter {
 		if deliver == nil {
 			return relay.MessageResponse{OK: false, Verdict: "recipient is not connected"}
 		}
-		dctx, dcancel := context.WithTimeout(ctx, time.Duration(req.WaitSec)*time.Second+15*time.Second)
+		// Контекст доставки выводится от Background: WaitSec до 300 с —
+		// обещание контракта, ребёнок 30-секундного роутерного контекста
+		// урезал бы его молча. Общий потолок остаётся конечным.
+		dctx, dcancel := context.WithTimeout(context.Background(), time.Duration(req.WaitSec)*time.Second+15*time.Second)
 		defer dcancel()
 		resp, err := deliver(dctx, to.UID, to.Incarnation, req)
 		if err != nil || !resp.OK {

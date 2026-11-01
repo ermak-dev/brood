@@ -55,6 +55,11 @@ func (e EnvelopeBuilder) Build(body string) (string, error) {
 	if body == "" {
 		return "", errors.New("message body must not be empty")
 	}
+	// Тело с закрывающим тегом сломает обратную сборку приёмника и молча
+	// уедет в held: отказываем при сборке, а не после доставки.
+	if strings.Contains(body, "</cross-session-message>") {
+		return "", errors.New("message body must not contain the envelope closing tag")
+	}
 	var attrs strings.Builder
 	if e.From != "" {
 		attrs.WriteString(fmt.Sprintf(" from=%q", percentEncode(e.From)))
@@ -272,10 +277,22 @@ func SessionForCWD(sessionsDir, cwd string, alive func(string) bool) (Session, e
 			mine = append(mine, s)
 		}
 	}
+	var live []Session
 	for _, s := range mine {
 		if alive(s.SocketPath) {
-			return s, nil
+			live = append(live, s)
 		}
+	}
+	if len(live) > 1 {
+		// Имена сессий не уникальны: молча взять первую — написать не тому.
+		names := make([]string, 0, len(live))
+		for _, s := range live {
+			names = append(names, fmt.Sprintf("%s[%d]", s.Name, s.PID))
+		}
+		return Session{}, fmt.Errorf("'%s' matches several live sessions: %s", cwd, strings.Join(names, ", "))
+	}
+	if len(live) == 1 {
+		return live[0], nil
 	}
 	if len(mine) == 0 {
 		return Session{}, fmt.Errorf("session not found for %s", cwd)
