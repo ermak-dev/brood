@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,68 @@ func TestServiceFailureNotifiesSupervisor(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("DNS failure hidden")
+	}
+}
+
+// chainRules возвращает выражения правил цепочки в порядке скрипта.
+func chainRules(script, chain string) []string {
+	prefix := "add rule inet brood_guest " + chain + " "
+	var rules []string
+	for line := range strings.Lines(script) {
+		if rule, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
+}
+
+// BUG: в непривилегированном CT актор не резолвил даже одобренные имена:
+// nslookup получал EPERM. В хуке output oifname остается исходным (eth0)
+// и после redirect на :5353, поэтому правила oifname "lo" не пропускают
+// перенаправленный DNS, и он упирается в финальный reject.
+// SPEC: до reject цепочка actor принимает перенаправленный (ct status dnat)
+// DNS только к локальному резолверу 127.0.0.1:5353 и [::1]:5353, UDP и TCP;
+// остальные правила цепочки не меняются.
+func TestActorAcceptsOnlyRedirectedDNS(t *testing.T) {
+	redirected := []string{
+		"ct status dnat ip daddr 127.0.0.1 udp dport 5353 accept",
+		"ct status dnat ip daddr 127.0.0.1 tcp dport 5353 accept",
+		"ct status dnat ip6 daddr ::1 udp dport 5353 accept",
+		"ct status dnat ip6 daddr ::1 tcp dport 5353 accept",
+	}
+	direct := []string{
+		`oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128, 5353 } accept`,
+		`oifname "lo" ip daddr 127.0.0.1 udp dport 5353 accept`,
+		`oifname "lo" ip6 daddr ::1 tcp dport 5353 accept`,
+		`oifname "lo" ip6 daddr ::1 udp dport 5353 accept`,
+		`oifname "lo" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport 8080 ct direction reply ct state established accept`,
+		"reject with icmpx type admin-prohibited",
+	}
+	script := nftRules()
+	actor := chainRules(script, "actor")
+	reject := slices.Index(actor, "reject with icmpx type admin-prohibited")
+	if reject != len(actor)-1 {
+		t.Fatalf("actor chain must end with its reject: %q", actor)
+	}
+	for _, rule := range redirected {
+		at := slices.Index(actor, rule)
+		if at < 0 || at > reject {
+			t.Errorf("missing before reject: %s", rule)
+		}
+		if at >= 0 && slices.Index(actor[at+1:], rule) >= 0 {
+			t.Errorf("duplicated: %s", rule)
+		}
+	}
+	rest := slices.DeleteFunc(slices.Clone(actor), func(rule string) bool { return slices.Contains(redirected, rule) })
+	if !slices.Equal(rest, direct) {
+		t.Errorf("direct actor rules changed:\n%q\nwant\n%q", rest, direct)
+	}
+	for line := range strings.Lines(script) {
+		line = strings.TrimSpace(line)
+		rule, inActor := strings.CutPrefix(line, "add rule inet brood_guest actor ")
+		if strings.Contains(line, "ct status") && (!inActor || !slices.Contains(redirected, rule)) {
+			t.Errorf("redirected traffic accepted beyond the local resolver: %s", line)
+		}
 	}
 }
 func TestMalformedProxyAuthority(t *testing.T) {

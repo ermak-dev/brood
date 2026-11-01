@@ -28,6 +28,10 @@ func applyRules(ctx context.Context, script string, command RuleCommand) error {
 	return nil
 }
 func nftRules() string {
+	// В хуке output oifname остается исходным маршрутом (eth0) и после
+	// redirect на :5353, поэтому перенаправленный DNS актора не проходит
+	// правила oifname "lo"; его пропускает только ct status dnat к локальному
+	// резолверу, прямой трафик к 5353 по-прежнему только через lo.
 	return `create table inet brood_guest
 add chain inet brood_guest dns { type nat hook output priority dstnat; policy accept; }
 add rule inet brood_guest dns meta skuid 1000 udp dport 53 redirect to :5353
@@ -37,6 +41,10 @@ add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128
 add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.1 udp dport 5353 accept
 add rule inet brood_guest actor oifname "lo" ip6 daddr ::1 tcp dport 5353 accept
 add rule inet brood_guest actor oifname "lo" ip6 daddr ::1 udp dport 5353 accept
+add rule inet brood_guest actor ct status dnat ip daddr 127.0.0.1 udp dport 5353 accept
+add rule inet brood_guest actor ct status dnat ip daddr 127.0.0.1 tcp dport 5353 accept
+add rule inet brood_guest actor ct status dnat ip6 daddr ::1 udp dport 5353 accept
+add rule inet brood_guest actor ct status dnat ip6 daddr ::1 tcp dport 5353 accept
 add rule inet brood_guest actor oifname "lo" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport 8080 ct direction reply ct state established accept
 add rule inet brood_guest actor reject with icmpx type admin-prohibited
 add chain inet brood_guest output { type filter hook output priority filter; policy accept; }
