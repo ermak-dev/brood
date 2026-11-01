@@ -155,6 +155,13 @@ func (m *managedProvider) poolJSON(ctx context.Context, p store.ManagedPool) (*m
 
 func (m *managedProvider) inventory(ctx context.Context) ([]proxmoxPoolDTO, error) {
 	items := m.registry.items()
+	// Подключения из панели (#118) встраиваются в тот же список: имя
+	// подключения — имя пула, runtime-поля активация добавит сама.
+	dbItems, err := m.connectionItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items = append(items, dbItems...)
 	positions := map[string]int{}
 	for i, item := range items {
 		positions[item.Name] = i

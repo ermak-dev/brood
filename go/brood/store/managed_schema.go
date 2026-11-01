@@ -50,11 +50,11 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		version = 3
-	} else if version != 3 && version != 4 {
+	} else if version != 3 && version != 4 && version != 5 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
 	expectedSchema := managedSchema
-	if version == 4 {
+	if version >= 4 {
 		expectedSchema = managedLifecycleSchema()
 	}
 	if err := checkSchema(ctx, tx, expectedSchema); err != nil {
@@ -80,5 +80,36 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			}
 		}
 	}
+	if version <= 4 {
+		for _, statement := range []string{
+			managedConnectionsSchema,
+			`PRAGMA user_version=5`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("extend managed connection catalog: %w", err)
+			}
+		}
+	}
+	if err := checkSchema(ctx, tx, managedConnectionsSchema); err != nil {
+		return err
+	}
 	return checkSchema(ctx, tx, managedLifecycleSchema())
 }
+
+// managedConnectionsSchema — каталог подключений Proxmox панели (#118).
+// Секрет хранится рядом с полями подключения, но читается только кодом
+// создания PVE-клиента.
+const managedConnectionsSchema = `CREATE TABLE managed_connections (
+	uid TEXT PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE,
+	endpoint TEXT NOT NULL,
+	token_id TEXT NOT NULL,
+	token_secret TEXT NOT NULL,
+	ca_pem TEXT NOT NULL,
+	node TEXT NOT NULL,
+	resource_pool TEXT NOT NULL,
+	storage TEXT NOT NULL,
+	network TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+)`
