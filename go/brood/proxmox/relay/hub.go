@@ -37,6 +37,7 @@ type Hub struct {
 	authorize func(string, int64, string) bool
 	// router опционален: nil — гость не может слать сообщения соседям.
 	router  MessageRouter
+	swarm   SwarmHandler
 	peers   map[identity]*peer
 	pending map[*socket]struct{}
 	slots   chan struct{}
@@ -197,8 +198,8 @@ func (h *Hub) accept(ws *socket, id identity, token string) {
 		}
 		h.mu.Unlock()
 	}()
-	go h.serveChannels(id, channels)
-	go ssh.DiscardRequests(requests)
+	go h.serveChannels(p, channels)
+	go h.serveSwarmRequests(p, requests)
 	done := make(chan struct{})
 	go func() { conn.Wait(); cancelPeer(); close(done) }()
 	ticker := time.NewTicker(revocationInterval)
@@ -227,7 +228,7 @@ func (h *Hub) SetMessageRouter(router MessageRouter) {
 // в роутер, остальное отвергается. Число одновременно обрабатываемых
 // сообщений на гостя ограничено: каждый канал держит горутину и запросы
 // к хранилищу до минуты, без предела это дешёвый DoS.
-func (h *Hub) serveChannels(id identity, channels <-chan ssh.NewChannel) {
+func (h *Hub) serveChannels(p *peer, channels <-chan ssh.NewChannel) {
 	slots := make(chan struct{}, MaxMessagesInFlight)
 	for c := range channels {
 		if c.ChannelType() != messageChannel {
@@ -237,7 +238,7 @@ func (h *Hub) serveChannels(id identity, channels <-chan ssh.NewChannel) {
 		h.mu.Lock()
 		router := h.router
 		h.mu.Unlock()
-		if router == nil {
+		if router == nil || !h.currentPeer(p) {
 			c.Reject(ssh.Prohibited, "channel not permitted")
 			continue
 		}
@@ -249,7 +250,7 @@ func (h *Hub) serveChannels(id identity, channels <-chan ssh.NewChannel) {
 		}
 		go func(c ssh.NewChannel) {
 			defer func() { <-slots }()
-			serveMessage(router, id.uid, c)
+			serveMessage(router, p.id.uid, c)
 		}(c)
 	}
 }

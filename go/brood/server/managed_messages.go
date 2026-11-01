@@ -25,6 +25,9 @@ func (m *managedProvider) enableSwarmMessages() {
 		m.deliverMessage = m.deliverViaHub
 	}
 	m.hub.SetMessageRouter(m.swarmMessageRouter())
+	if hub, ok := m.hub.(interface{ SetSwarmHandler(relay.SwarmHandler) }); ok {
+		hub.SetSwarmHandler(m.handleSwarmRequest)
+	}
 }
 
 // swarmMessageRouter возвращает роутер: отправитель уже авторизован хабом,
