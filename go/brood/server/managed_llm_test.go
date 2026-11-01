@@ -24,13 +24,20 @@ import (
 // and a separate fixed-origin reverse proxy; browser/public LLM gates unchanged.
 // RESULT: IMPLEMENTED — fake backend verifies authorization and HTTP isolation.
 // STATUS: DONE
-func managedLLMSetup(t *testing.T, backend, key string) (*substrateServer, *http.Client, string, string, string) {
+func managedLLMSetup(t *testing.T, backend, key string, ca ...[]byte) (*substrateServer, *http.Client, string, string, string) {
 	t.Helper()
 	cfg, err := loadProxmox(runtimeFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := newSubstrateServer(t, newFakeAteapi(), func(c *Config) { c.proxmox = cfg.proxmox; c.CLIProxyURL = backend; c.CLIProxyAPIKey = key })
+	ts := newSubstrateServer(t, newFakeAteapi(), func(c *Config) {
+		c.proxmox = cfg.proxmox
+		c.CLIProxyURL = backend
+		c.CLIProxyAPIKey = key
+		if len(ca) > 0 {
+			c.CLIProxyCAPEM = ca[0]
+		}
+	})
 	ts.srv.managed.stopReconcile()
 	pve := &managedFakePVE{server: ts.srv}
 	ts.srv.managed.newClient = func(proxmox.Config) (proxmoxAPI, error) { return pve, nil }
