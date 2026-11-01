@@ -74,6 +74,10 @@ type ManagedPool struct {
 // All phases except deleted consume capacity. Deleted rows are retained for audit.
 // Error must be a sanitized public diagnostic; never pass raw provider responses.
 // OperationID is caller-generated and must be fresh for each new intent.
+// Stage is create, start, stop, delete, or done. It fences task callbacks
+// independently of observed Phase. Migrated schema-3 rows start at reconcile:
+// callers must settle their existing task before new work, even if Phase looks
+// terminal. A legacy reset is refused because schema 3 rotated ownership early.
 type ManagedActor struct {
 	UID               string
 	Name              string
@@ -91,6 +95,7 @@ type ManagedActor struct {
 	OwnerNonce        string
 	OperationID       string
 	Operation         string
+	Stage             string
 	UPID              string
 	Error             string
 	Revision          int64
@@ -284,12 +289,12 @@ func managedFits(p ManagedPool, count int64, used, extra ManagedResources) bool 
 	return count <= p.MaxActors && used.CPUMillicores <= p.Resources.CPUMillicores && extra.CPUMillicores <= p.Resources.CPUMillicores-used.CPUMillicores && used.MemoryBytes <= p.Resources.MemoryBytes && extra.MemoryBytes <= p.Resources.MemoryBytes-used.MemoryBytes && used.DiskBytes <= p.Resources.DiskBytes && extra.DiskBytes <= p.Resources.DiskBytes-used.DiskBytes
 }
 
-const managedActorCols = `uid,name,swarm_id,atespace_uid,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at`
+const managedActorCols = `uid,name,swarm_id,atespace_uid,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at,stage`
 
 func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error) {
 	var a ManagedActor
 	var template string
-	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt)
+	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage)
 	if err == nil {
 		err = json.Unmarshal([]byte(template), &a.Template)
 	}
@@ -335,13 +340,14 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		a.Phase = "provisioning"
 		a.Desired = "running"
 		a.Operation = "create"
+		a.Stage = "create"
 		a.UPID = ""
 		a.Error = ""
 		a.Revision = 1
 		a.CreatedAt = nowRFC3339()
 		a.UpdatedAt = a.CreatedAt
 		a.DeletedAt = nil
-		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.AtespaceUID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt)
+		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.AtespaceUID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt, a.Stage)
 		result = a
 		return wrapUnique(err, "managed actor name or CTID")
 	})
@@ -392,7 +398,9 @@ func (s *Store) HasManagedActorsBySwarm(ctx context.Context, swarmID string) (bo
 }
 
 // UpdateManagedActor CAS-updates only observed Phase, UPID and sanitized Error.
-// It cannot release capacity, change ownership, or change operation intent.
+// It cannot release capacity, change ownership, or change operation intent/stage.
+// Phase is diagnostic, not task completion. Prefer BindManagedActorTask for UPID;
+// this compatibility path can bind only an active, previously unbound task slot.
 func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected int64) (ManagedActor, error) {
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -418,8 +426,8 @@ func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected
 		if a.Phase != "provisioning" && a.Phase != "running" && a.Phase != "stopped" && a.Phase != "stopping" && a.Phase != "error" && a.Phase != "deleting" {
 			return fmt.Errorf("invalid managed actor phase")
 		}
-		if old.UPID != "" && a.UPID != old.UPID {
-			return fmt.Errorf("managed operation UPID is already bound")
+		if (old.UPID != "" || old.Stage == "done" || old.Stage == "reconcile") && a.UPID != old.UPID {
+			return fmt.Errorf("managed task is already bound or requires stage reconciliation")
 		}
 		a.Revision = expected + 1
 		a.UpdatedAt = nowRFC3339()
@@ -433,7 +441,10 @@ func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected
 // BeginManagedActorOperation commits intent before any external mutation.
 // start/reset require an enabled pool; stop/delete remain legal while draining.
 // A matching current ID/kind is idempotent. Unknown outcomes must be reconciled
-// before beginning a different operation; delete is always available for cleanup.
+// before beginning any different operation, including cleanup. Observed Phase alone
+// does not reconcile a task: use ConfirmManagedActorStage or the explicit terminal
+// failure API first. Stage=done permits a reconciled error to begin fresh work.
+// Reset is destructive and retains old ownership until confirmed old absence.
 func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expected int64, operationID, operation string) (ManagedActor, error) {
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -457,6 +468,9 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 			result = a
 			return nil
 		}
+		if a.Stage != "done" {
+			return fmt.Errorf("managed operation task must be reconciled before replacement")
+		}
 		desired := ""
 		switch operation {
 		case "start", "reset":
@@ -468,11 +482,11 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 			if p.State != "enabled" {
 				return ErrPoolUnavailable
 			}
-			if a.Phase != "running" && a.Phase != "stopped" {
+			if a.Phase != "running" && a.Phase != "stopped" && a.Phase != "error" {
 				return fmt.Errorf("managed actor must be reconciled before start or reset")
 			}
 		case "stop":
-			if a.Phase != "running" && a.Phase != "stopped" {
+			if a.Phase != "running" && a.Phase != "stopped" && a.Phase != "error" {
 				return fmt.Errorf("managed actor must be reconciled before stop")
 			}
 			desired = "stopped"
@@ -481,8 +495,9 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 		default:
 			return fmt.Errorf("invalid managed actor operation")
 		}
-		if operation == "reset" {
-			a.Incarnation++
+		a.Stage = operation
+		if operation == "reset" || operation == "delete" {
+			a.Stage = "stop"
 		}
 		a.OperationID = operationID
 		a.Operation = operation
@@ -494,12 +509,12 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 		switch operation {
 		case "delete":
 			a.Phase = "deleting"
-		case "stop":
+		case "stop", "reset":
 			a.Phase = "stopping"
-		case "start", "reset":
+		case "start":
 			a.Phase = "provisioning"
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET operation_id=?,operation=?,desired=?,upid='',error='',revision=?,updated_at=?,incarnation=?,phase=? WHERE uid=?`, a.OperationID, a.Operation, a.Desired, a.Revision, a.UpdatedAt, a.Incarnation, a.Phase, uid)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET operation_id=?,operation=?,desired=?,upid='',error='',revision=?,updated_at=?,incarnation=?,phase=?,stage=? WHERE uid=?`, a.OperationID, a.Operation, a.Desired, a.Revision, a.UpdatedAt, a.Incarnation, a.Phase, a.Stage, uid)
 		result = a
 		return err
 	})
@@ -507,7 +522,9 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 }
 
 // ConfirmManagedActorDeleted releases capacity only after caller-confirmed PVE absence.
-// Caller must verify ownership and absence; this method performs no external calls.
+// Caller must verify owned CT absence AND terminal delete task reconciliation,
+// including unknown submissions. This method performs no external calls and
+// requires the completed stop stage; absence alone cannot bypass a pending stop.
 // OperationID and revision fence stale cleanup observations from newer operations.
 func (s *Store) ConfirmManagedActorDeleted(ctx context.Context, uid string, expected int64, operationID string) (ManagedActor, error) {
 	var result ManagedActor
@@ -526,14 +543,147 @@ func (s *Store) ConfirmManagedActorDeleted(ctx context.Context, uid string, expe
 			result = a
 			return nil
 		}
+		if a.Stage != "delete" {
+			return fmt.Errorf("managed stop stage must be confirmed before deletion")
+		}
 		a.Phase = "deleted"
+		a.Stage = "done"
 		a.Revision++
 		a.UpdatedAt = nowRFC3339()
 		a.DeletedAt = ptrManaged(a.UpdatedAt)
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET phase='deleted',revision=?,updated_at=?,deleted_at=? WHERE uid=?`, a.Revision, a.UpdatedAt, a.DeletedAt, uid)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET phase='deleted',stage='done',revision=?,updated_at=?,deleted_at=? WHERE uid=?`, a.Revision, a.UpdatedAt, a.DeletedAt, uid)
 		result = a
 		return err
 	})
 	return result, err
 }
+
+// BindManagedActorTask records a submitted task for exactly one operation stage.
+// Commit the intent before submission, then bind its UPID before polling. A lost
+// submission response must be reconciled externally, never blindly resubmitted.
+func (s *Store) BindManagedActorTask(ctx context.Context, uid string, expected int64, operationID, stage, upid string) (ManagedActor, error) {
+	return s.changeManagedStage(ctx, uid, expected, operationID, stage, func(a *ManagedActor) error {
+		if upid == "" || stage == "done" || stage == "reconcile" {
+			return fmt.Errorf("active managed task stage and nonempty UPID are required")
+		}
+		if a.UPID != "" && a.UPID != upid {
+			return fmt.Errorf("managed operation UPID is already bound")
+		}
+		a.UPID = upid
+		return nil
+	})
+}
+
+// ConfirmManagedActorStage records caller-confirmed terminal task reconciliation
+// AND owned CT state (running, stopped, or absent). Absence alone is insufficient
+// while a task may still create/start the CT. No external calls are made here.
+// The caller must reconcile an unknown submission even when UPID is empty.
+// Cleanup stop advances to delete with a fresh task slot; normal work becomes
+// done without discarding its task evidence. Phase updates alone never do this.
+func (s *Store) ConfirmManagedActorStage(ctx context.Context, uid string, expected int64, operationID, stage, observed string) (ManagedActor, error) {
+	return s.changeManagedStage(ctx, uid, expected, operationID, stage, func(a *ManagedActor) error {
+		if observed != "running" && observed != "stopped" && observed != "absent" {
+			return fmt.Errorf("confirmed managed CT state must be running, stopped, or absent")
+		}
+		if stage == "done" || stage == "delete" {
+			return fmt.Errorf("managed stage requires deletion or reset confirmation")
+		}
+		if stage == "reconcile" && a.Operation == "reset" {
+			return fmt.Errorf("legacy reset ownership requires manual reconciliation")
+		}
+		cleanup := (a.Operation == "delete" || a.Operation == "reset") && (stage == "stop" || stage == "reconcile")
+		if (stage == "stop" || (stage == "reconcile" && a.Operation == "stop")) && observed == "running" {
+			return fmt.Errorf("managed stop requires confirmed stopped or absent CT")
+		}
+		if cleanup {
+			if observed == "running" {
+				a.Stage = "stop"
+			} else {
+				a.Stage = "delete"
+			}
+			a.UPID = ""
+		} else {
+			a.Stage = "done"
+		}
+		a.Phase = observed
+		if observed == "absent" {
+			a.Phase = "error"
+		}
+		a.Error = ""
+		return nil
+	})
+}
+
+// ResolveManagedActorTaskFailure records caller-confirmed terminal task failure
+// AND an ownership-verified running/stopped CT or globally confirmed absence.
+// The caller must verify the exact bound UPID is terminal and failed; observed
+// state alone never proves this. Unknown outcomes and unbound submissions must
+// not use this API. No external calls are made here.
+// Revision, operation ID, stage and failed UPID fence the assertion. The slot
+// becomes done with diagnostic Phase=error, without claiming the target state
+// was achieved. Task/error evidence, intent, ownership and capacity are retained.
+// Retry requires a fresh operation ID; cleanup retries begin again at stop.
+func (s *Store) ResolveManagedActorTaskFailure(ctx context.Context, uid string, expected int64, operationID, stage, failedUPID, observed string) (ManagedActor, error) {
+	return s.changeManagedStage(ctx, uid, expected, operationID, stage, func(a *ManagedActor) error {
+		if stage != "create" && stage != "start" && stage != "stop" && stage != "delete" {
+			return fmt.Errorf("active managed task stage is required for failure resolution")
+		}
+		if failedUPID == "" || a.UPID != failedUPID {
+			return fmt.Errorf("failed managed task UPID must match the bound task")
+		}
+		if observed != "running" && observed != "stopped" && observed != "absent" {
+			return fmt.Errorf("confirmed managed CT state must be running, stopped, or absent")
+		}
+		a.Stage = "done"
+		a.Phase = "error"
+		return nil
+	})
+}
+
+// ConfirmManagedActorReset confirms the old owned CT is absent AND its delete
+// task is terminal, then atomically creates a fresh incarnation/create intent.
+// Reset destroys the workspace; stop/start retain it. UID, CTID, resource and
+// binding reservations are retained continuously, including while errors persist.
+// The caller supplies a fresh unpredictable owner nonce, different from the old.
+// Operation remains reset; Stage=create identifies its new create task slot.
+func (s *Store) ConfirmManagedActorReset(ctx context.Context, uid string, expected int64, operationID, freshNonce string) (ManagedActor, error) {
+	return s.changeManagedStage(ctx, uid, expected, operationID, "delete", func(a *ManagedActor) error {
+		if a.Operation != "reset" || a.Desired != "running" || freshNonce == "" || freshNonce == a.OwnerNonce {
+			return fmt.Errorf("managed reset intent and fresh ownership nonce are required")
+		}
+		a.Incarnation++
+		a.OwnerNonce = freshNonce
+		a.Stage = "create"
+		a.Phase = "provisioning"
+		a.UPID = ""
+		a.Error = ""
+		return nil
+	})
+}
+
+func (s *Store) changeManagedStage(ctx context.Context, uid string, expected int64, operationID, stage string, change func(*ManagedActor) error) (ManagedActor, error) {
+	var result ManagedActor
+	err := s.WithTx(ctx, func(ctx context.Context) error {
+		a, err := s.GetManagedActor(ctx, uid)
+		if err != nil {
+			return err
+		}
+		if a.Revision != expected {
+			return ErrRevisionConflict
+		}
+		if operationID == "" || a.OperationID != operationID || a.Stage != stage || a.Phase == "deleted" {
+			return fmt.Errorf("managed operation stage does not match confirmation")
+		}
+		if err := change(&a); err != nil {
+			return err
+		}
+		a.Revision++
+		a.UpdatedAt = nowRFC3339()
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET stage=?,phase=?,upid=?,error=?,incarnation=?,owner_nonce=?,revision=?,updated_at=? WHERE uid=?`, a.Stage, a.Phase, a.UPID, a.Error, a.Incarnation, a.OwnerNonce, a.Revision, a.UpdatedAt, uid)
+		result = a
+		return err
+	})
+	return result, err
+}
+
 func ptrManaged(value string) *string { return &value }
