@@ -147,7 +147,7 @@ func TestActorAcceptsOnlyRedirectedDNS(t *testing.T) {
 		"ct status dnat ip6 daddr ::1 tcp dport 5353 accept",
 	}
 	direct := []string{
-		`oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128, 5353 } accept`,
+		`oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128, 5353, 8317 } accept`,
 		`oifname "lo" ip daddr 127.0.0.1 udp dport 5353 accept`,
 		`oifname "lo" ip6 daddr ::1 tcp dport 5353 accept`,
 		`oifname "lo" ip6 daddr ::1 udp dport 5353 accept`,

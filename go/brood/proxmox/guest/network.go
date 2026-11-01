@@ -37,7 +37,7 @@ add chain inet brood_guest dns { type nat hook output priority dstnat; policy ac
 add rule inet brood_guest dns meta skuid 1000 udp dport 53 redirect to :5353
 add rule inet brood_guest dns meta skuid 1000 tcp dport 53 redirect to :5353
 add chain inet brood_guest actor
-add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128, 5353 } accept
+add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128, 5353, 8317 } accept
 add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.1 udp dport 5353 accept
 add rule inet brood_guest actor oifname "lo" ip6 daddr ::1 tcp dport 5353 accept
 add rule inet brood_guest actor oifname "lo" ip6 daddr ::1 udp dport 5353 accept
@@ -50,7 +50,7 @@ add rule inet brood_guest actor reject with icmpx type admin-prohibited
 add chain inet brood_guest output { type filter hook output priority filter; policy accept; }
 add rule inet brood_guest output meta skuid 1000 jump actor
 add chain inet brood_guest input { type filter hook input priority filter; policy accept; }
-add rule inet brood_guest input iifname != "lo" tcp dport { 3128, 5353, 8080 } reject with icmpx type admin-prohibited
+add rule inet brood_guest input iifname != "lo" tcp dport { 3128, 5353, 8080, 8317 } reject with icmpx type admin-prohibited
 add rule inet brood_guest input iifname != "lo" udp dport 5353 reject with icmpx type admin-prohibited
 `
 }
