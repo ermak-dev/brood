@@ -5,7 +5,7 @@ import styles from '../substrate.module.scss';
 interface StateBadgeProps {
   /** Short state ('running'), translated under `namespace`. */
   state: string;
-  namespace: 'actors.state' | 'workers.state';
+  namespace: 'actors.state' | 'actors.managed_state' | 'workers.state';
 }
 
 export function StateBadge({ state, namespace }: StateBadgeProps) {

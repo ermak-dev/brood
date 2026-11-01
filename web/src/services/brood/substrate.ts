@@ -32,15 +32,40 @@ export interface Atespace {
   metadata: Meta;
 }
 
+export interface ManagedCapabilities {
+  workspace: boolean;
+  terminal: boolean;
+  controlledNetwork: boolean;
+  docker: boolean;
+  kind: boolean;
+  memoryCheckpoint: boolean;
+}
+
+export interface ManagedProfileFields {
+  provider?: 'proxmox';
+  profile?: string;
+  capabilities?: ManagedCapabilities;
+}
+
 export interface ActorStatus {
   state?: string;
   assignedNode?: string;
   workerAssignment?: { worker?: ObjectRef; workerPod?: string; nodeName?: string };
   crash?: Record<string, unknown>;
   snapshots?: unknown[];
+  errorMessage?: string;
 }
 
-export interface Actor {
+export interface Actor extends ManagedProfileFields {
+  generation?: string;
+  phase?: 'provisioning' | 'running' | 'stopping' | 'stopped' | 'deleting' | 'error';
+  desired?: 'running' | 'stopped' | 'deleted';
+  placement?: { node: string; ctid?: number; pool: string };
+  templateDefinition?: {
+    profile: string;
+    digest: string;
+    resources: { cpuMillicores: string; memoryBytes: string; diskBytes: string };
+  };
   metadata: Meta;
   actorTemplate?: ObjectRef;
   workerSelector?: Selector;
@@ -78,10 +103,11 @@ export interface Limits {
   memoryBytes?: string;
 }
 
-export interface ActorTemplate {
+export interface ActorTemplate extends ManagedProfileFields {
   metadata: Meta;
+  readOnly?: boolean;
   workerSelector?: Selector;
-  containers: Container[];
+  containers?: Container[];
   volumes?: Volume[];
   resources?: { limits?: Limits };
   snapshotConfig?: {
@@ -156,6 +182,20 @@ export interface WorkerPool {
   [field: string]: unknown;
 }
 
+export interface ManagedProxmoxPool {
+  uid: string;
+  state: string;
+  version: string;
+  maxActors: string;
+  usedActors: string;
+  cpuMillicores: string;
+  usedCPUMillicores: string;
+  memoryBytes: string;
+  usedMemoryBytes: string;
+  diskBytes: string;
+  usedDiskBytes: string;
+}
+
 export interface ProxmoxPool {
   name: string;
   endpoint: string;
@@ -165,7 +205,8 @@ export interface ProxmoxPool {
   storage: string;
   network: string;
   credentialConfigured: boolean;
-  runtimeAvailable: false;
+  runtimeAvailable: boolean;
+  managedPool?: ManagedProxmoxPool;
 }
 
 export interface WorkerPoolDefaults {
@@ -188,7 +229,7 @@ export interface NativeIdentity {
   label: string;
 }
 
-export type ActorAction = 'suspend' | 'resume';
+export type ActorAction = 'suspend' | 'resume' | 'stop' | 'reset';
 
 const path = encodeURIComponent;
 const projectPath = (project: string) => `/api/swarms/${path(project)}`;
@@ -281,8 +322,15 @@ export const workerPoolsApi = {
     }),
 };
 
-// Подключения не являются WorkerPool: собственный envelope и никакой ёмкости.
+// Управляемые пулы не являются native WorkerPool. Runtime задаётся установкой,
+// ёмкость возвращается сервером строками без округления int64.
 export const proxmoxPoolsApi = {
+  activate: (name: string) =>
+    request<{ managedPool: ManagedProxmoxPool }>('POST', `/api/proxmox-pools/${path(name)}/activate`),
+  drain: (name: string) =>
+    request<{ managedPool: ManagedProxmoxPool }>('POST', `/api/proxmox-pools/${path(name)}/drain`),
+  enable: (name: string) =>
+    request<{ managedPool: ManagedProxmoxPool }>('POST', `/api/proxmox-pools/${path(name)}/enable`),
   list: async (): Promise<ProxmoxPool[]> => {
     const body = await request<{ items: ProxmoxPool[] }>('GET', '/api/proxmox-pools');
     if (!body || !Array.isArray(body.items)) {

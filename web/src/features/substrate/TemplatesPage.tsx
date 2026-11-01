@@ -15,6 +15,7 @@ import { SwarmSections } from './components/SwarmSections';
 import { DASH, formatCpu, formatDate, formatMemory, selectorText } from './format';
 import { useActions, useResource } from './hooks';
 import { TemplateEditor } from './TemplateEditor';
+import { ManagedProfile } from './components/ManagedProfile';
 import styles from './substrate.module.scss';
 
 /** brood: actor templates of the active project. ateapi keeps templates
@@ -43,7 +44,7 @@ export function TemplatesPage() {
 const fidelityOf = (tpl: ActorTemplate) =>
   (tpl.snapshotConfig?.preferredFidelity ?? '').replace('SNAPSHOT_FIDELITY_', '').toLowerCase();
 
-const imagesOf = (tpl: ActorTemplate) => tpl.containers.map((c) => c.image).filter(Boolean);
+const imagesOf = (tpl: ActorTemplate) => (tpl.containers ?? []).map((c) => c.image).filter(Boolean);
 
 function Templates({
   project,
@@ -81,6 +82,7 @@ function Templates({
     });
 
   const goldenText = (tpl: ActorTemplate) => {
+    if (tpl.provider === 'proxmox') return t('actors.suspend_unsupported');
     const golden = tpl.status?.goldenSnapshotStatus;
     if (tpl.snapshotConfig?.goldenSnapshotConfig?.mode === 'GOLDEN_SNAPSHOT_MODE_DISABLED') {
       return t('templates.golden_disabled');
@@ -105,6 +107,7 @@ function Templates({
       label: t('templates.image'),
       mono: true,
       render: (tpl) => {
+        if (tpl.provider === 'proxmox') return `Proxmox · ${tpl.profile ?? DASH}`;
         const images = imagesOf(tpl);
         return images.length
           ? `${images[0]}${images.length > 1 ? ` +${images.length - 1}` : ''}`
@@ -154,21 +157,22 @@ function Templates({
           actionsLabel={t('substrate.actions')}
           actions={
             canManage
-              ? (tpl) => (
-                  <>
-                    <Button variant="ghost" size="sm" onClick={() => openEditor(tpl)}>
-                      {t('templates.duplicate')}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className={styles.dangerText}
-                      onClick={() => remove(tpl)}
-                    >
-                      {t('substrate.delete')}
-                    </Button>
-                  </>
-                )
+              ? (tpl) =>
+                  tpl.readOnly || tpl.provider === 'proxmox' ? null : (
+                    <>
+                      <Button variant="ghost" size="sm" onClick={() => openEditor(tpl)}>
+                        {t('templates.duplicate')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={styles.dangerText}
+                        onClick={() => remove(tpl)}
+                      >
+                        {t('substrate.delete')}
+                      </Button>
+                    </>
+                  )
               : undefined
           }
         />
@@ -191,7 +195,9 @@ function Templates({
         description={t('templates.immutable_hint')}
         extra={
           viewing &&
-          canManage && (
+          canManage &&
+          !viewing.readOnly &&
+          viewing.provider !== 'proxmox' && (
             <Button variant="secondary" onClick={() => openEditor(viewing)}>
               {t('templates.duplicate')}
             </Button>
@@ -201,8 +207,9 @@ function Templates({
         {viewing && (
           <div className={styles.form}>
             <Section title={t('templates.summary')}>
+              {viewing.provider === 'proxmox' && <ManagedProfile entity={viewing} />}
               <dl className={styles.details}>
-                {viewing.containers.map((c) => (
+                {(viewing.containers ?? []).map((c) => (
                   <ContainerSummary key={c.name} name={c.name} image={c.image} />
                 ))}
                 <dt>{t('templates.resources')}</dt>

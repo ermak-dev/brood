@@ -88,7 +88,7 @@ export function TemplateEditor({ project, source, open, onClose, onSubmit }: Tem
   const current = mode === 'json' ? null : draft;
   const nameValid = isShortName(draft.metadata.name);
   const containersValid =
-    draft.containers.length > 0 && draft.containers.every((c) => c.name.trim() && c.image.trim());
+    (draft.containers?.length ?? 0) > 0 && draft.containers!.every((c) => c.name.trim() && c.image.trim());
   const valid = mode === 'json' ? json.trim() !== '' : nameValid && containersValid;
   const dirty = mode === 'json' ? json !== asJson(initial) : asJson(draft) !== asJson(initial);
 
@@ -168,21 +168,21 @@ export function TemplateEditor({ project, source, open, onClose, onSubmit }: Tem
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => patch((d) => d.containers.push({ name: '', image: '' }))}
+                  onClick={() => patch((d) => d.containers!.push({ name: '', image: '' }))}
                 >
                   {t('templates.add_container')}
                 </Button>
               }
             >
-              {current.containers.map((container, index) => (
+              {current.containers!.map((container, index) => (
                 <ContainerCard
                   key={`${revision}-${index}`}
                   index={index}
                   container={container}
-                  removable={current.containers.length > 1}
-                  onChange={(change) => patch((d) => change(d.containers[index]))}
+                  removable={current.containers!.length > 1}
+                  onChange={(change) => patch((d) => change(d.containers![index]))}
                   onRemove={() => {
-                    patch((d) => d.containers.splice(index, 1));
+                    patch((d) => d.containers!.splice(index, 1));
                     setRevision((r) => r + 1);
                   }}
                 />

@@ -13,11 +13,13 @@ import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
 import { SwarmSections } from './components/SwarmSections';
 import { StateBadge } from './components/StateBadge';
-import { DASH, formatDate, shortState } from './format';
+import { DASH, formatDate } from './format';
+import { actorState, canViewActorDetails, deleteConfirmation, resetConfirmation } from './actorLifecycle';
+import { ActorLifecycleActions } from './components/ActorLifecycleActions';
 import { useActions, useResource } from './hooks';
 import styles from './substrate.module.scss';
 
-const stateOf = (actor: Actor) => shortState(actor.status?.state, 'ACTOR_STATE_');
+const stateOf = actorState;
 
 /** Update with the preconditions of the actor as it is now: ateapi bumps the
  * version on every write, the controller's state changes included, so the
@@ -70,7 +72,7 @@ async function loadActors(project: string) {
     templatesApi.list(project),
   ]);
   const golden = new Map(templates.map((tpl) => [tpl.metadata.uid ?? '', tpl.metadata.name]));
-  return { actors, templates: templates.map((tpl) => tpl.metadata.name), golden };
+  return { actors, templates, golden };
 }
 
 function Actors({
@@ -98,32 +100,28 @@ function Actors({
 
   const [actionFailure, setActionFailure] = useState<{ name: string; error: unknown } | null>(null);
   const [acting, setActing] = useState(false);
-  const act = async (actor: Actor, action: ActorAction) => {
-    if (acting) return;
+  const mutate = async (actor: Actor, action: ActorAction) => {
     setActing(true);
     setActionFailure(null);
     try {
-      await run(async () => {
-        try {
-          return await actorsApi.act(project, actor.metadata.name, action);
-        } catch (error) {
-          setActionFailure({ name: actor.metadata.name, error });
-          throw error;
-        }
-      }, t(`actors.${action}_done`, { name: actor.metadata.name }));
+      return await actorsApi.act(project, actor.metadata.name, action);
+    } catch (error) {
+      setActionFailure({ name: actor.metadata.name, error });
+      throw error;
     } finally {
       setActing(false);
     }
   };
+  const act = (actor: Actor, action: ActorAction) => {
+    if (acting) return;
+    return run(
+      () => mutate(actor, action),
+      t(`actors.${action}_done`, { name: actor.metadata.name })
+    );
+  };
 
   const remove = (actor: Actor) =>
-    confirm({
-      title: t('actors.delete_title'),
-      message: t('actors.delete_message', { name: actor.metadata.name }),
-      confirmText: t('substrate.delete'),
-      success: t('actors.deleted', { name: actor.metadata.name }),
-      run: () => actorsApi.remove(project, actor.metadata.name),
-    });
+    confirm(deleteConfirmation(actor, t, () => actorsApi.remove(project, actor.metadata.name)));
 
   const columns: Column<Actor>[] = [
     {
@@ -144,7 +142,12 @@ function Actors({
     {
       key: 'state',
       label: t('substrate.state'),
-      render: (a) => <StateBadge state={stateOf(a)} namespace="actors.state" />,
+      render: (a) => (
+        <StateBadge
+          state={stateOf(a)}
+          namespace={a.provider === 'proxmox' ? 'actors.managed_state' : 'actors.state'}
+        />
+      ),
     },
     {
       key: 'template',
@@ -156,7 +159,23 @@ function Actors({
       key: 'node',
       label: t('actors.node'),
       hideOnMobile: true,
-      render: (a) => a.status?.assignedNode || a.status?.workerAssignment?.nodeName || DASH,
+      render: (a) =>
+        a.provider === 'proxmox'
+          ? a.placement?.node || DASH
+          : a.status?.assignedNode || a.status?.workerAssignment?.nodeName || DASH,
+    },
+    {
+      key: 'provider',
+      label: t('actors.provider'),
+      render: (a) => (a.provider === 'proxmox' ? 'Proxmox' : t('actors.native_provider')),
+    },
+    {
+      key: 'placement',
+      label: t('actors.pool_ctid'),
+      render: (a) =>
+        a.provider === 'proxmox'
+          ? `${a.placement?.pool || DASH} / ${a.placement?.ctid ?? DASH}`
+          : DASH,
     },
     {
       key: 'updated',
@@ -178,6 +197,7 @@ function Actors({
         meta={[
           data && t('actors.meta_count', { count: data.length }),
           data && count('running') > 0 && t('actors.meta_running', { count: count('running') }),
+          data && count('stopped') > 0 && t('actors.meta_stopped', { count: count('stopped') }),
           data &&
             count('suspended') > 0 &&
             t('actors.meta_suspended', { count: count('suspended') }),
@@ -208,38 +228,37 @@ function Actors({
           onRowClick={canManage ? (a) => !goldenOf(a) && openEditor(a) : undefined}
           actionsLabel={t('substrate.actions')}
           actions={
-            canManage
+            canManage || data.some((a) => a.provider === 'proxmox')
               ? (a) =>
                   goldenOf(a) ? null : (
                     <>
-                      <a
-                        href={actorsApi.terminal(project, a.metadata.name)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {t('access.terminal')}
-                      </a>
-                      {stateOf(a) === 'running' && (
-                        <Button variant="ghost" size="sm" disabled={acting} onClick={() => void act(a, 'suspend')}>
-                          {t('actors.suspend')}
+                      {canManage && (
+                        <ActorLifecycleActions
+                          actor={a}
+                          swarm={project}
+                          disabled={acting}
+                          onAction={(action) =>
+                            action === 'reset'
+                              ? confirm(resetConfirmation(a, t, () => mutate(a, 'reset')))
+                              : void act(a, action)
+                          }
+                        />
+                      )}
+                      {canViewActorDetails(canManage, a) && (
+                        <Button variant="ghost" size="sm" onClick={() => openEditor(a)}>
+                          {t(a.provider === 'proxmox' ? 'actors.details' : 'substrate.edit')}
                         </Button>
                       )}
-                      {stateOf(a) === 'suspended' && (
-                        <Button variant="ghost" size="sm" disabled={acting} onClick={() => void act(a, 'resume')}>
-                          {t('actors.resume')}
+                      {canManage && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={styles.dangerText}
+                          onClick={() => remove(a)}
+                        >
+                          {t('substrate.delete')}
                         </Button>
                       )}
-                      <Button variant="ghost" size="sm" onClick={() => openEditor(a)}>
-                        {t('substrate.edit')}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={styles.dangerText}
-                        onClick={() => remove(a)}
-                      >
-                        {t('substrate.delete')}
-                      </Button>
                     </>
                   )
               : undefined
@@ -255,7 +274,7 @@ function Actors({
         </div>
       )}
 
-      {canManage && (
+      {canViewActorDetails(canManage, editor.actor) && (
         <ActorEditor
           key={editor.session}
           project={project}
@@ -264,6 +283,7 @@ function Actors({
           open={editor.open}
           onClose={closeEditor}
           onSubmit={async (actor) => {
+            if (!canManage) return false;
             const name = actor.metadata.name;
             const ok = await run(
               () => (editor.actor ? updateFresh(project, actor) : actorsApi.create(project, actor)),
