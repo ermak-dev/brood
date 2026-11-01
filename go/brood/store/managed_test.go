@@ -254,7 +254,7 @@ func TestManagedSchemaUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			var v int
-			if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != 4 {
+			if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != 5 {
 				t.Fatalf("version=%d err=%v", v, err)
 			}
 			user, err := st.GetUser(ctx, "u1")
@@ -369,5 +369,38 @@ func TestLookupManagedActorByName(t *testing.T) {
 	}
 	if _, err := s.LookupManagedActor(ctx, "one", "ghost"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown name must not resolve: %v", err)
+	}
+}
+
+// FEATURE: Каталог подключений Proxmox, создаётся из панели (#118).
+// SPEC: подключение хранит публичные поля и write-only секрет токена;
+// секрет не читается обратно; миграция v4->v5 сохраняет данные.
+func TestManagedConnectionCatalog(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	managedFixture(t, s)
+	c, err := s.CreateManagedConnection(ctx, ManagedConnection{Name: "pve-main", Endpoint: "https://pve.invalid:8006", TokenID: "op@pve!brood", TokenSecret: "secret-one", CAPEM: "-----BEGIN CERTIFICATE-----", Node: "n", ResourcePool: "r", Storage: "s", Network: "vmbr0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.UID == "" || c.CreatedAt == "" {
+		t.Fatalf("connection: %+v", c)
+	}
+	// Список не возвращает секрет.
+	list, err := s.ListManagedConnections(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].TokenSecret != "" {
+		t.Fatalf("list leaked or lost the secret: %+v", list)
+	}
+	if _, err := s.CreateManagedConnection(ctx, ManagedConnection{Name: "pve-main", Endpoint: "https://x.invalid", TokenID: "a@b!c", TokenSecret: "s", Node: "n", ResourcePool: "r", Storage: "s", Network: "v"}); err == nil {
+		t.Fatal("duplicate connection name must be refused")
+	}
+	if err := s.DeleteManagedConnection(ctx, c.UID); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = s.ListManagedConnections(ctx); len(list) != 0 {
+		t.Fatalf("delete: %+v", list)
 	}
 }
