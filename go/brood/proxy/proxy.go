@@ -128,6 +128,9 @@ type Audit func(event AuditEvent)
 
 // Config — зависимости и настройки прокси.
 type Config struct {
+	// DialContext optionally routes plain HTTP and upgrades to a managed provider.
+	// HTTPS always retains the native router's verified TLS transport.
+	DialContext func(context.Context, string, string) (net.Conn, error)
 	// RequestHook applies server-controlled policy after outbound sanitization.
 	RequestHook func(out, original *http.Request)
 	// ResponseHook applies server-controlled policy before any headers are sent.
@@ -136,6 +139,8 @@ type Config struct {
 	RouterTLS *TLSFiles
 	// Revalidate checks the original session on long-lived requests.
 	Revalidate func(*http.Request) bool
+	// UpstreamValid fences the resolved provider incarnation on long-lived requests.
+	UpstreamValid func(*url.URL) bool
 	// Swarms — чтение роёв по ID.
 	Swarms SwarmLookup
 	// Authorize — гейт прав до соединения.
@@ -230,7 +235,7 @@ func New(cfg Config) *Proxy {
 func (p *Proxy) transport() http.RoundTripper {
 	p.once.Do(func() {
 		p.rt = &http.Transport{
-			DialContext:    (&net.Dialer{Timeout: p.cfg.DialTimeout, KeepAlive: 30 * time.Second}).DialContext,
+			DialContext:    p.dialContext,
 			DialTLSContext: p.dialTLS,
 			// Projected identity rotation must affect the next request, not
 			// wait for a pooled TLS connection to expire.
@@ -243,6 +248,36 @@ func (p *Proxy) transport() http.RoundTripper {
 		}
 	})
 	return p.rt
+}
+
+type providerConn struct {
+	net.Conn
+	cancel context.CancelFunc
+}
+
+func (c *providerConn) Close() error { c.cancel(); return c.Conn.Close() }
+
+func (p *Proxy) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if p.cfg.DialContext == nil {
+		return (&net.Dialer{Timeout: p.cfg.DialTimeout, KeepAlive: 30 * time.Second}).DialContext(ctx, network, address)
+	}
+	// Relay Dial binds context to the returned stream, not just opening.
+	// Disarm the opening timer on success and release context on Close.
+	lifetime, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(p.cfg.DialTimeout, cancel)
+	conn, err := p.cfg.DialContext(lifetime, network, address)
+	stopped := timer.Stop()
+	if err != nil || !stopped || lifetime.Err() != nil {
+		cancel()
+		if conn != nil {
+			conn.Close()
+		}
+		if err != nil {
+			return nil, err
+		}
+		return nil, context.DeadlineExceeded
+	}
+	return &providerConn{Conn: conn, cancel: cancel}, nil
 }
 
 // Close terminates active requests and idle upstream connections.
@@ -335,6 +370,16 @@ func (p *Proxy) sessionCheck(r *http.Request) func() bool {
 		return nil
 	}
 	return func() bool { return p.cfg.Revalidate(r) }
+}
+
+func (p *Proxy) targetCheck(r *http.Request, base *url.URL) func() bool {
+	session := p.sessionCheck(r)
+	if session == nil && p.cfg.UpstreamValid == nil {
+		return nil
+	}
+	return func() bool {
+		return (session == nil || session()) && (p.cfg.UpstreamValid == nil || p.cfg.UpstreamValid(base))
+	}
 }
 
 func (p *Proxy) track(lc *liveConn) {
@@ -565,7 +610,7 @@ func filterCookies(header string) string {
 // с таймаутами, копия заголовков ответа без hop-by-hop.
 func (p *Proxy) servePlain(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, actor string, base *url.URL) {
 	ctx, cancel := context.WithCancel(r.Context())
-	lc := &liveConn{user: user, swarm: sw, actor: actor, cancel: cancel, valid: p.sessionCheck(r)}
+	lc := &liveConn{user: user, swarm: sw, actor: actor, cancel: cancel, valid: p.targetCheck(r, base)}
 	p.track(lc)
 	defer p.untrack(lc)
 	r.Body = http.MaxBytesReader(w, r.Body, p.cfg.MaxBodyBytes)
@@ -637,19 +682,18 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 	upReq.Header.Set(headerConnection, "Upgrade")
 	upReq.Header.Set(headerUpgrade, r.Header.Get(headerUpgrade))
 
-	dialer := &net.Dialer{Timeout: p.cfg.DialTimeout}
 	var serverConn net.Conn
 	if target.Scheme == "https" {
 		serverConn, err = p.dialTLS(r.Context(), "tcp", target.Host)
 	} else {
-		serverConn, err = dialer.DialContext(r.Context(), "tcp", target.Host)
+		serverConn, err = p.dialContext(r.Context(), "tcp", target.Host)
 	}
 	if err != nil {
 		writeRawResponse(clientBuf, http.StatusBadGateway, "actor upstream is unavailable")
 		return
 	}
 	defer serverConn.Close()
-	lc := &liveConn{user: user, swarm: sw, actor: actor, client: clientConn, server: serverConn, valid: p.sessionCheck(r)}
+	lc := &liveConn{user: user, swarm: sw, actor: actor, client: clientConn, server: serverConn, valid: p.targetCheck(r, base)}
 	p.track(lc)
 	defer p.untrack(lc)
 	_ = serverConn.SetDeadline(time.Now().Add(p.cfg.ResponseHeaderTimeout))

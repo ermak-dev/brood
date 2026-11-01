@@ -14,6 +14,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"brood.dev/go/brood/store"
 )
 
 const (
@@ -24,24 +26,33 @@ const (
 // proxmoxRegistry holds installation-local configuration, not native WorkerPool state.
 // Credentials and trust material stay out of exported Config fields and API DTOs.
 type proxmoxRegistry struct {
-	pools  map[string]proxmoxPool
-	tokens map[string]string
+	pools                     map[string]proxmoxPool
+	tokens                    map[string]string
+	publicOrigin, relaySecret string
 }
 
 type proxmoxPool struct {
 	endpoint, tokenID, node, resourcePool, storage, network, credentialRef, caPEM string
+	runtime                                                                       *proxmoxRuntimeConfig
+}
+
+type proxmoxRuntimeConfig struct {
+	template, digest           string
+	actors, diskGiB            int64
+	cpuMillicores, memoryBytes int64
 }
 
 type proxmoxPoolDTO struct {
-	Name                 string `json:"name"`
-	Endpoint             string `json:"endpoint"`
-	TokenID              string `json:"tokenID"`
-	Node                 string `json:"node"`
-	ResourcePool         string `json:"resourcePool"`
-	Storage              string `json:"storage"`
-	Network              string `json:"network"`
-	CredentialConfigured bool   `json:"credentialConfigured"`
-	RuntimeAvailable     bool   `json:"runtimeAvailable"`
+	Name                 string           `json:"name"`
+	Endpoint             string           `json:"endpoint"`
+	TokenID              string           `json:"tokenID"`
+	Node                 string           `json:"node"`
+	ResourcePool         string           `json:"resourcePool"`
+	Storage              string           `json:"storage"`
+	Network              string           `json:"network"`
+	CredentialConfigured bool             `json:"credentialConfigured"`
+	RuntimeAvailable     bool             `json:"runtimeAvailable"`
+	ManagedPool          *managedPoolJSON `json:"managedPool,omitempty"`
 }
 
 func loadProxmoxRegistry(get getenv) (*proxmoxRegistry, error) {
@@ -63,7 +74,13 @@ func loadProxmoxRegistry(get getenv) (*proxmoxRegistry, error) {
 	if err != nil {
 		return nil, proxmoxConfigError(proxmoxTokensSetting, "must be a JSON object with unique keys")
 	}
-	registry := &proxmoxRegistry{pools: make(map[string]proxmoxPool), tokens: make(map[string]string)}
+	registry := &proxmoxRegistry{pools: make(map[string]proxmoxPool), tokens: make(map[string]string), publicOrigin: envGet(get, "BROOD_PUBLIC_ORIGIN"), relaySecret: envGet(get, "BROOD_PROXMOX_RELAY_SECRET")}
+	if registry.publicOrigin != "" && !proxmoxOrigin(registry.publicOrigin) {
+		return nil, proxmoxConfigError("BROOD_PUBLIC_ORIGIN", "must be an HTTPS origin")
+	}
+	if registry.relaySecret != "" && len(registry.relaySecret) < 32 {
+		return nil, proxmoxConfigError("BROOD_PROXMOX_RELAY_SECRET", "must contain at least 32 bytes")
+	}
 	for ref, raw := range tokens {
 		var secret string
 		if !proxmoxText(ref) || json.Unmarshal(raw, &secret) != nil || !proxmoxHeaderValue(secret) {
@@ -78,6 +95,9 @@ func loadProxmoxRegistry(get getenv) (*proxmoxRegistry, error) {
 		pool, err := parseProxmoxPool(raw)
 		if err != nil {
 			return nil, err
+		}
+		if pool.runtime != nil && (len(name) > 48 || !regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`).MatchString(name)) {
+			return nil, proxmoxConfigError(proxmoxPoolsSetting, "runtime pool names must be lowercase DNS labels of at most 48 characters")
 		}
 		if registry.tokens[pool.credentialRef] == "" {
 			return nil, proxmoxConfigError(proxmoxTokensSetting, "credentialRef must reference a configured secret")
@@ -138,7 +158,7 @@ func parseProxmoxPool(raw json.RawMessage) (proxmoxPool, error) {
 	}
 	known := map[string]*string{"endpoint": &pool.endpoint, "tokenID": &pool.tokenID, "node": &pool.node, "resourcePool": &pool.resourcePool, "storage": &pool.storage, "network": &pool.network, "credentialRef": &pool.credentialRef, "caPEM": &pool.caPEM}
 	for field := range fields {
-		if _, ok := known[field]; !ok {
+		if _, ok := known[field]; !ok && field != "template" && field != "templateDigest" && field != "capacity" {
 			return pool, proxmoxConfigError(proxmoxPoolsSetting, "pool contains an unknown field")
 		}
 	}
@@ -160,7 +180,59 @@ func parseProxmoxPool(raw json.RawMessage) (proxmoxPool, error) {
 	if !proxmoxCA(pool.caPEM) {
 		return pool, proxmoxConfigError(proxmoxPoolsSetting, "caPEM must contain only valid CA certificates in PEM format")
 	}
+	runtime, err := parseProxmoxRuntime(fields)
+	if err != nil {
+		return pool, err
+	}
+	pool.runtime = runtime
 	return pool, nil
+}
+
+func parseProxmoxRuntime(fields map[string]json.RawMessage) (*proxmoxRuntimeConfig, error) {
+	_, template := fields["template"]
+	_, digest := fields["templateDigest"]
+	_, capacity := fields["capacity"]
+	if !template && !digest && !capacity {
+		return nil, nil
+	}
+	bad := func() (*proxmoxRuntimeConfig, error) {
+		return nil, proxmoxConfigError(proxmoxPoolsSetting, "runtime requires an explicit vztmpl URI, sha256 templateDigest and positive capacity actors, decimal-string cpuMillicores/memoryBytes and diskGiB")
+	}
+	if !template || !digest || !capacity {
+		return bad()
+	}
+	r := &proxmoxRuntimeConfig{}
+	if json.Unmarshal(fields["template"], &r.template) != nil || !regexp.MustCompile(`^[A-Za-z0-9_-]+:vztmpl/brood-claude-proxmox-[A-Za-z0-9][A-Za-z0-9._-]*$`).MatchString(r.template) {
+		return bad()
+	}
+	if json.Unmarshal(fields["templateDigest"], &r.digest) != nil || !regexp.MustCompile(`^sha256:[a-f0-9]{64}$`).MatchString(r.digest) {
+		return bad()
+	}
+	values, err := proxmoxObject(string(fields["capacity"]))
+	if err != nil || len(values) != 4 {
+		return bad()
+	}
+	if json.Unmarshal(values["actors"], &r.actors) != nil || r.actors <= 0 || json.Unmarshal(values["diskGiB"], &r.diskGiB) != nil || r.diskGiB <= 0 {
+		return bad()
+	}
+	for key, target := range map[string]*int64{"cpuMillicores": &r.cpuMillicores, "memoryBytes": &r.memoryBytes} {
+		var text string
+		if json.Unmarshal(values[key], &text) != nil || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(text) {
+			return bad()
+		}
+		n, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			return bad()
+		}
+		*target = n
+	}
+	if r.diskGiB > int64(^uint64(0)>>1)/gib || strings.Contains(r.template, "..") {
+		return bad()
+	}
+	if _, err := managedActorResources(store.ManagedPool{MaxActors: r.actors, Resources: store.ManagedResources{CPUMillicores: r.cpuMillicores, MemoryBytes: r.memoryBytes, DiskBytes: r.diskGiB * gib}}); err != nil {
+		return bad()
+	}
+	return r, nil
 }
 
 func proxmoxText(value string) bool {
@@ -235,7 +307,7 @@ func (registry *proxmoxRegistry) items() []proxmoxPoolDTO {
 	sort.Strings(names)
 	for _, name := range names {
 		pool := registry.pools[name]
-		items = append(items, proxmoxPoolDTO{Name: name, Endpoint: pool.endpoint, TokenID: pool.tokenID, Node: pool.node, ResourcePool: pool.resourcePool, Storage: pool.storage, Network: pool.network, CredentialConfigured: registry.tokens[pool.credentialRef] != ""})
+		items = append(items, proxmoxPoolDTO{Name: name, Endpoint: pool.endpoint, TokenID: pool.tokenID, Node: pool.node, ResourcePool: pool.resourcePool, Storage: pool.storage, Network: pool.network, CredentialConfigured: registry.tokens[pool.credentialRef] != "", RuntimeAvailable: pool.runtime != nil && registry.publicOrigin != "" && len(registry.relaySecret) >= 32})
 	}
 	return items
 }
@@ -250,6 +322,21 @@ func (s *Server) mountProxmoxPools(registry *proxmoxRegistry) {
 			writeDetail(w, http.StatusForbidden, "administrator access required")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": registry.items()})
+		items, err := s.managed.inventory(r.Context())
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	})
+	for _, action := range []string{"activate", "drain", "enable"} {
+		s.mux.HandleFunc("POST /api/proxmox-pools/{name}/"+action, func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("action", action)
+			s.handleManagedPool(w, r)
+		})
+	}
+	s.mux.HandleFunc("DELETE /api/proxmox-pools/{name}", func(w http.ResponseWriter, r *http.Request) {
+		r.SetPathValue("action", "delete")
+		s.handleManagedPool(w, r)
 	})
 }

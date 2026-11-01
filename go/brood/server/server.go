@@ -36,6 +36,7 @@ type Options struct {
 // Server — собранный сервер: зависимости и маршруты без запуска сети.
 type Server struct {
 	store     *store.Store
+	managed   *managedProvider
 	catalog   *Catalog
 	gateway   *Gateway
 	app       *app.Service
@@ -85,6 +86,11 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		return nil, err
 	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}}
+	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
+	if err := srv.managed.initialize(cfg); err != nil {
+		catalog.Close()
+		return nil, err
+	}
 
 	// Substrate: клиент нужен и провижинеру, и actor API. Пробы при
 	// сборке нет: grpc.NewClient подключается первым RPC, недоступность
@@ -135,7 +141,9 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		CurrentUser:     srv.actorViewUser,
 		RequestHook:     srv.actorViewRequest,
 		ResponseHook:    srv.actorViewResponse,
-		Upstream:        NewSubstrateResolver(srv.ateapi, cfg.AtenetRouter),
+		Upstream:        &managedResolver{server: srv, native: NewSubstrateResolver(srv.ateapi, cfg.AtenetRouter)},
+		DialContext:     srv.managed.dial,
+		UpstreamValid:   srv.managed.validTarget,
 		Revalidate:      srv.validProxySession,
 		RouterTLS:       &proxy.TLSFiles{CertFile: cfg.AtenetCert, KeyFile: cfg.AtenetKey, CAFile: cfg.AtenetCA, ServerName: cfg.AtenetServerName},
 	})
@@ -147,6 +155,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)
+	srv.managed.start(proxyCtx)
 	return srv, nil
 }
 
@@ -174,6 +183,7 @@ func (s *Server) Close() error {
 		s.cancel()
 	}
 	s.proxy.Close()
+	s.managed.close()
 	var errs []error
 	if s.ateapi != nil {
 		s.ateapi.Close()
@@ -187,6 +197,10 @@ func (s *Server) Close() error {
 func (s *Server) Handler() http.Handler {
 	browser := s.actorViewHandler(s.browserProtection())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicGuestPath(r.URL.Path) {
+			s.guestRoute(w, r)
+			return
+		}
 		if publicLLMPath(r.URL.Path) {
 			// Native clients authenticate with their own backend bearer key,
 			// not browser sessions or CSRF. Never parse their session cookies.

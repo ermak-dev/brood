@@ -87,7 +87,7 @@ func apiError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, app.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, app.ErrExists), errors.Is(err, app.ErrConflict),
-		errors.Is(err, app.ErrState), errors.Is(err, store.ErrProjectHasSwarms), isMemberExists(err):
+		errors.Is(err, app.ErrState), errors.Is(err, app.ErrSwarmNotEmpty), errors.Is(err, store.ErrProjectHasSwarms), isMemberExists(err):
 		status = http.StatusConflict
 	default:
 		var apiErr *substrate.APIError

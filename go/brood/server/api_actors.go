@@ -8,6 +8,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -265,7 +266,16 @@ func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
 		if !s.nativeReadBound(w, r, sw) {
 			return
 		}
-		writeList(w, actors)
+		names := make(map[string]bool, len(actors))
+		for _, a := range actors {
+			names[a.GetMetadata().GetName()] = true
+		}
+		managed, err := s.managed.actorsJSON(r.Context(), sw, names)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		writeManagedList(w, actors, managed)
 		return
 	}
 	var actor ateapi.Actor
@@ -281,9 +291,16 @@ func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if pool, err := s.managed.templatePool(r.Context(), actor.GetActorTemplate().GetName()); err == nil {
+		s.createManagedActor(w, r, user.ID, sw, &actor, pool)
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		apiError(w, r, err)
+		return
+	}
 	scoped(&actor, sw.AtespaceName)
 	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "create-actor", actor: &actor, name: name}
-	if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
+	if err := s.admitWorkload(user.ID, sw.ID, operation); err != nil {
 		apiError(w, r, err)
 		return
 	}
@@ -303,6 +320,20 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
+	sw, allowed := s.swarmFor(w, r, user)
+	if !allowed {
+		return
+	}
+	if a, err := s.managed.actorByName(r.Context(), sw.ID, name); err == nil {
+		if !s.nativeReadBound(w, r, sw) {
+			return
+		}
+		s.handleManagedActor(w, r, user.ID, sw, a)
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		apiError(w, r, err)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		sw, ok := s.swarmFor(w, r, user)
@@ -330,7 +361,7 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 		scoped(&actor, sw.AtespaceName)
 		actor.GetMetadata().Name = name
 		operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "update-actor", actor: &actor, name: name}
-		if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
+		if err := s.admitWorkload(user.ID, sw.ID, operation); err != nil {
 			apiError(w, r, err)
 			return
 		}
@@ -353,7 +384,7 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "resume-actor", name: name}
-			err = s.app.AdmitWorkload(user.ID, sw.ID, operation)
+			err = s.admitWorkload(user.ID, sw.ID, operation)
 			actor = operation.savedActor
 		}
 		if err != nil {
@@ -411,7 +442,16 @@ func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
 		if !s.nativeReadBound(w, r, sw) {
 			return
 		}
-		writeList(w, templates)
+		names := make(map[string]bool, len(templates))
+		for _, t := range templates {
+			names[t.GetMetadata().GetName()] = true
+		}
+		managed, err := s.managedTemplates(r.Context(), sw.AtespaceName, names)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		writeManagedList(w, templates, managed)
 		return
 	}
 	var template ateapi.ActorTemplate
@@ -428,7 +468,7 @@ func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 	scoped(&template, sw.AtespaceName)
 	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "create-template", template: &template}
-	if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
+	if err := s.admitWorkload(user.ID, sw.ID, operation); err != nil {
 		apiError(w, r, err)
 		return
 	}
@@ -450,6 +490,30 @@ func (s *Server) handleSwarmTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if pool, err := s.managed.templatePool(r.Context(), name); err == nil {
+		if r.Method != http.MethodGet {
+			writeDetail(w, 409, "managed profile templates are read-only")
+			return
+		}
+		_, nativeErr := client.GetActorTemplate(r.Context(), sw.AtespaceName, name)
+		if nativeErr == nil {
+			writeDetail(w, 409, "native template conflicts with managed profile")
+			return
+		}
+		var api *substrate.APIError
+		if !errors.As(nativeErr, &api) || api.Status != 404 {
+			apiError(w, r, nativeErr)
+			return
+		}
+		if !s.nativeReadBound(w, r, sw) {
+			return
+		}
+		writeJSON(w, 200, managedTemplateJSON(pool, sw.AtespaceName))
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		apiError(w, r, err)
+		return
+	}
 	if r.Method == http.MethodGet {
 		template, err := client.GetActorTemplate(r.Context(), sw.AtespaceName, name)
 		if err != nil {
@@ -463,7 +527,7 @@ func (s *Server) handleSwarmTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operation := &nativeWorkloadOperation{server: s, context: r.Context(), swarm: sw, action: "delete-template", name: name}
-	if err := s.app.AdmitWorkload(user.ID, sw.ID, operation); err != nil {
+	if err := s.admitWorkload(user.ID, sw.ID, operation); err != nil {
 		apiError(w, r, err)
 		return
 	}
