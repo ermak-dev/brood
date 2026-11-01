@@ -31,7 +31,7 @@ func actorEnv() []string {
 	return []string{"HOME=/workspace/home", "PWD=/workspace/project", "USER=claude", "LOGNAME=claude", "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "GOTOOLCHAIN=local", "GOMAXPROCS=4", "GOFLAGS=-p=2", "DISABLE_AUTOUPDATER=1", "TERM=xterm-256color", "LANG=C.UTF-8", "HTTP_PROXY=http://127.0.0.1:3128", "HTTPS_PROXY=http://127.0.0.1:3128", "http_proxy=http://127.0.0.1:3128", "https_proxy=http://127.0.0.1:3128", "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost", "ANTHROPIC_BASE_URL=http://127.0.0.1:8317", "ANTHROPIC_AUTH_TOKEN=brood-local", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1"}
 }
 func actorArgs() []string {
-	return []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "claude", "--mcp-config", `{"mcpServers":{"brood":{"command":"/usr/local/bin/brood-guest","args":["mcp"]}}}`}
+	return []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "claude", "--mcp-config", `{"mcpServers":{"mop":{"command":"/usr/local/bin/brood-guest","args":["mcp"]}}}`}
 }
 
 // RunActor is the dedicated --brood-guest-actor dispatch target. The parent must

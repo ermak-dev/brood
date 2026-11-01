@@ -30,7 +30,10 @@ func TestClaudeReceivesAdditiveCredentialFreeMCPConfig(t *testing.T) {
 	if json.Unmarshal([]byte(value), &config) != nil {
 		t.Fatal("invalid MCP config")
 	}
-	server := config.MCPServers["brood"]
+	server := config.MCPServers["mop"]
+	if len(config.MCPServers) != 1 {
+		t.Fatalf("unexpected MCP namespaces: %v", config.MCPServers)
+	}
 	if server.Command != "/usr/local/bin/brood-guest" || len(server.Args) != 1 || server.Args[0] != "mcp" {
 		t.Fatalf("server: %+v", server)
 	}

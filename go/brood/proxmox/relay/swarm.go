@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 )
 
 const swarmRPC = "brood-swarm-rpc-v1"
+
+var swarmActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
 // SwarmRequest contains no sender identity, credentials, address or command.
 type SwarmRequest struct {
@@ -35,6 +38,9 @@ func validSwarmRequest(r SwarmRequest) bool {
 	}
 	if r.Tool == "agents" {
 		return r.To == "" && r.Message == "" && r.WaitSeconds == 0
+	}
+	if r.Tool == "add" {
+		return len(r.To) <= 63 && swarmActorName.MatchString(r.To) && r.Message == "" && r.WaitSeconds == 0
 	}
 	return r.Tool == "send" && len(r.To) > 0 && len(r.To) <= 63 && !strings.ContainsAny(r.To, "\x00\r\n") && strings.TrimSpace(r.Message) != "" && len(r.Message) < MaxMessageBytes
 }
