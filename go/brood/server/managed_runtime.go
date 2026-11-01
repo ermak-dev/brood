@@ -54,6 +54,54 @@ type managedRuntime struct {
 	workers   sync.WaitGroup
 	verified  sync.Map // actor UID -> incarnation verified by this server process
 	readiness sync.Map // UID актора -> ожидание readiness текущей операции start
+	// Швы прохода reconcile: nil и 0 значат time.Now и managedPassTimeout.
+	now         func() time.Time
+	passTimeout time.Duration
+}
+
+// managedPassTimeout — срок одного прохода reconcile для одного актора.
+// Задача PVE может идти дольше: OCI vzcreate на живом стенде шёл 34 с.
+const managedPassTimeout = 20 * time.Second
+
+// managedTaskPendingLimit — сколько идущая задача ждёт без диагностики.
+// Отсчёт от UpdatedAt актора: привязка UPID его обновляет.
+const managedTaskPendingLimit = 15 * time.Minute
+
+const managedTaskPendingError = "Proxmox task has not finished; allocation retained"
+
+// errManagedTaskPending — задача ещё идёт; истёк только срок прохода.
+var errManagedTaskPending = errors.New("managed Proxmox task is still running")
+
+func (m *managedRuntime) clock() time.Time {
+	if m.now == nil {
+		return time.Now()
+	}
+	return m.now()
+}
+
+func (m *managedRuntime) actorPassTimeout() time.Duration {
+	if m.passTimeout <= 0 {
+		return managedPassTimeout
+	}
+	return m.passTimeout
+}
+
+// managedTaskPending отличает идущую задачу от исхода: WaitTask прервал только
+// истёкший срок этого прохода. Таймаут HTTP-клиента, отмена, сбой сети и отказ
+// PVE не делают задачу «ещё идущей».
+func managedTaskPending(ctx context.Context, err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+// pendingQuiet сообщает, что идущую задачу пока не показывают ошибкой: предел
+// ожидания не истёк или диагностика уже записана. Нечитаемая отметка времени
+// не продлевает ожидание.
+func (m *managedRuntime) pendingQuiet(a store.ManagedActor) bool {
+	if a.Phase == "error" && a.Error == managedTaskPendingError {
+		return true
+	}
+	since, err := time.Parse(time.RFC3339Nano, a.UpdatedAt)
+	return err == nil && m.clock().Sub(since) < managedTaskPendingLimit
 }
 
 func (m *managedProvider) initialize(cfg Config) error {
@@ -197,6 +245,8 @@ func managedProviderError(err error) string {
 		return "Proxmox permission denied; allocation retained"
 	case errors.Is(err, proxmox.ErrTaskFailed):
 		return "Proxmox task failed; allocation retained"
+	case errors.Is(err, errManagedTaskPending):
+		return managedTaskPendingError
 	case errors.Is(err, proxmox.ErrUncertain):
 		return "Proxmox operation outcome is uncertain; recorded CTID and reservation retained"
 	default:
@@ -262,15 +312,22 @@ func (m *managedProvider) reconcileOnce(parent context.Context) {
 		if a.Phase == "deleted" {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(parent, 20*time.Second)
+		ctx, cancel := context.WithTimeout(parent, m.actorPassTimeout())
 		_, err = m.reconcileActor(ctx, a)
 		cancel()
-		if err != nil && parent.Err() == nil {
-			current, getErr := m.server.store.GetManagedActor(parent, a.UID)
-			if getErr == nil && current.Revision == a.Revision && current.Phase != "deleted" {
-				m.saveObservation(parent, current, "error", "", managedProviderError(err))
-			}
+		if err == nil || parent.Err() != nil {
+			continue
 		}
+		current, getErr := m.server.store.GetManagedActor(parent, a.UID)
+		if getErr != nil || current.Revision != a.Revision || current.Phase == "deleted" {
+			continue
+		}
+		// Идущая задача — не исход: стадия, UPID и ревизия остаются,
+		// следующий проход продолжит ждать тот же UPID.
+		if errors.Is(err, errManagedTaskPending) && m.pendingQuiet(current) {
+			continue
+		}
+		m.saveObservation(parent, current, "error", "", managedProviderError(err))
 	}
 }
 
@@ -317,6 +374,11 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		if err := client.WaitTask(ctx, a.UPID); err != nil {
 			if errors.Is(err, proxmox.ErrTaskFailed) {
 				return m.resolveTaskFailure(ctx, client, a)
+			}
+			// Срок прохода короче долгих задач PVE: это ожидание, а не отказ.
+			// Ни повторной записи, ни замены UPID.
+			if managedTaskPending(ctx, err) {
+				return a, errManagedTaskPending
 			}
 			return a, err
 		}
