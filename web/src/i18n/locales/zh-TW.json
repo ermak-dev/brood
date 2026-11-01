@@ -48,7 +48,11 @@
     "swarm_access": "群組存取權限",
     "swarm_access_hint": "必須是專案成員。擁有者管理權限，編輯者管理工作負載，檢視者只能讀取。管理員可以管理所有群組。",
     "confirm_swarm_member": "將 {{name}} 移出此群組？專案成員資格將保留。",
-    "swarm_roles": { "owner": "擁有者", "editor": "編輯者", "viewer": "檢視者" },
+    "swarm_roles": {
+      "owner": "擁有者",
+      "editor": "編輯者",
+      "viewer": "檢視者"
+    },
     "substrate_policy": "Substrate 原則",
     "native_policy_hint": "僅用於基礎設施身分。本機使用者透過專案成員關係取得存取權限，而非這些繫結。",
     "no_identities": "沒有已知的基礎設施身分。",
@@ -2563,7 +2567,6 @@
     "replace_message": "worker {{name}} 將被刪除，資源池會建立替代節點。為保護 actor，僅允許替換未配置資源的節點。此操作不會自動啟動 actor。",
     "replaced": "已請求替換 worker。請重新整理清單以查看就緒的節點。",
     "drained_hint": "已退出服務的節點：{{count}}。它們不接收 actor，也不會自行恢復。選擇「恢復容量」以替換未配置資源的節點。",
-
     "title": "工作節點",
     "meta_count": "節點：{{count}}",
     "meta_active": "活躍：{{count}}",
@@ -2668,7 +2671,6 @@
     "provider": "提供方",
     "profile": "設定檔",
     "pool": "邏輯池",
-    "generation": "代次",
     "details": "詳情",
     "details_title": "Actor {{name}} 詳情",
     "meta_stopped": "已停止：{{count}}",
@@ -2741,9 +2743,6 @@
     "resource_pool": "PVE 資源池",
     "storage": "儲存空間",
     "network": "網路",
-    "credential_configured": "憑證已設定",
-    "yes": "是",
-    "no": "否",
     "runtime_not_installed": "執行環境未安裝或安裝設定無法使用。無法進行新分配。",
     "load_failed": "無法載入 Proxmox 連線",
     "runtime_available": "執行環境已設定",
@@ -2757,13 +2756,12 @@
     "connection": "連線",
     "capacity": "已預留 / 容量",
     "actors": "Actor 數量",
-    "cpu": "CPU（毫核心）",
-    "memory": "記憶體（位元組）",
-    "disk": "磁碟（位元組）",
-    "profile_hint": "Proxmox 受管設定：工作區、終端和受控網路。不支援 Docker、kind 或記憶體檢查點。執行環境設定不保證程序就緒。",
+    "cpu": "CPU",
+    "memory": "記憶體",
+    "disk": "磁碟",
+    "profile_hint": "Proxmox 資源池按 actor 預留容量，與原生 worker 集區相互獨立。",
     "state_enabled": "已啟用",
-    "state_draining": "已停止新分配",
-    "reservations_hint": "預留不代表即時使用量。暫停的 actor 和清理結果不確定的資源仍占用容量。這些資源池與原生 WorkerPool 分開。"
+    "state_draining": "已停止新分配"
   },
   "worker_pools": {
     "not_installed": "受支援但此處不提供，因為本安裝未為其宣告 worker 映像：{{classes}}。",

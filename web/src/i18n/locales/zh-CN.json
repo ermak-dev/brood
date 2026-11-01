@@ -48,7 +48,11 @@
     "swarm_access": "群组访问权限",
     "swarm_access_hint": "必须是项目成员。所有者管理权限，编辑者管理工作负载，查看者只能读取。管理员可以管理所有群组。",
     "confirm_swarm_member": "将 {{name}} 移出此群组？项目成员资格将保留。",
-    "swarm_roles": { "owner": "所有者", "editor": "编辑者", "viewer": "查看者" },
+    "swarm_roles": {
+      "owner": "所有者",
+      "editor": "编辑者",
+      "viewer": "查看者"
+    },
     "substrate_policy": "Substrate 策略",
     "native_policy_hint": "仅用于基础设施身份。本地用户通过项目成员关系获得访问权限，而非这些绑定。",
     "no_identities": "没有已知的基础设施身份。",
@@ -2535,7 +2539,6 @@
     "replace_message": "worker {{name}} 将被删除，资源池会创建替代节点。为保护 actor，仅允许替换未分配资源的节点。此操作不会自动启动 actor。",
     "replaced": "已请求替换 worker。请刷新列表以查看就绪的节点。",
     "drained_hint": "已退出服务的节点：{{count}}。它们不接收 actor，也不会自行恢复。选择“恢复容量”以替换未分配资源的节点。",
-
     "title": "工作节点",
     "meta_count": "节点：{{count}}",
     "meta_active": "活跃：{{count}}",
@@ -2640,7 +2643,6 @@
     "provider": "提供方",
     "profile": "配置档案",
     "pool": "逻辑池",
-    "generation": "代次",
     "details": "详情",
     "details_title": "Actor {{name}} 详情",
     "meta_stopped": "已停止：{{count}}",
@@ -2713,9 +2715,6 @@
     "resource_pool": "PVE 资源池",
     "storage": "存储",
     "network": "网络",
-    "credential_configured": "凭据已配置",
-    "yes": "是",
-    "no": "否",
     "runtime_not_installed": "运行时未安装或安装配置不可用。无法进行新分配。",
     "load_failed": "无法加载 Proxmox 连接",
     "runtime_available": "运行时已配置",
@@ -2729,13 +2728,12 @@
     "connection": "连接",
     "capacity": "已预留 / 容量",
     "actors": "Actor 数量",
-    "cpu": "CPU（毫核）",
-    "memory": "内存（字节）",
-    "disk": "磁盘（字节）",
-    "profile_hint": "Proxmox 托管配置：工作区、终端和受控网络。不支持 Docker、kind 或内存检查点。运行时配置不保证进程就绪。",
+    "cpu": "CPU",
+    "memory": "内存",
+    "disk": "磁盘",
+    "profile_hint": "Proxmox 资源池按 actor 预留容量，与原生 worker 池相互独立。",
     "state_enabled": "已启用",
-    "state_draining": "已停止新分配",
-    "reservations_hint": "预留不代表实时使用量。暂停的 actor 和清理结果不确定的资源仍占用容量。这些资源池与原生 WorkerPool 分开。"
+    "state_draining": "已停止新分配"
   },
   "worker_pools": {
     "not_installed": "受支持但此处不提供，因为本安装未为其声明 worker 镜像：{{classes}}。",
