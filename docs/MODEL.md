@@ -30,7 +30,8 @@ Broodfile / bro build / bro push
 
 ## Прикладные сущности
 
-Схема версии 2: `schema.sql`, `swarm_members.sql`, `project_capacity.sql` в
+Схема версии 4: `schema.sql`, `swarm_members.sql`, `project_capacity.sql`,
+`managed.sql` и stage управляемых операций в
 `go/brood/store`. Известные старые схемы обновляются транзакционно;
 повреждённая или неизвестная версия не восстанавливается догадками.
 
@@ -112,8 +113,8 @@ HTTP передаёт nullable пределы и расход десятичны
 Пересекающиеся selectors могут использовать общие воркеры; квота не гарантирует
 наличие физической ёмкости или поддержку runtime на выбранном воркере.
 
-Расход вычисляется из существующих строк роёв и native inventory, второго
-счётчика в БД нет. Учитываются все неудалённые состояния роя, suspended actors
+Расход вычисляется из строк роёв, native inventory и неудалённых managed
+allocations, второго счётчика в БД нет. Учитываются все неудалённые состояния роя, suspended actors
 и ожидающие golden actors. Pending golden и появившийся native golden не
 считаются дважды. Публикация шаблона с golden disabled не занимает actor slot.
 Неизвестные namespace UID, шаблоны или ресурсы не превращаются в нулевой расход:
@@ -176,6 +177,59 @@ Native `access policy` регулирует identity кластера, а не �
 не означает raw atespace: API работает с ID роя brood, сервер определяет
 native namespace сам. Декларация project в Broodfile — контекст сборки, не
 идентификатор шарда или atespace.
+
+## Управляемый провайдер Proxmox
+
+`claude-proxmox` — отдельный ограниченный профиль brood, а не native Worker
+Substrate. `managed_pools` и `managed_actors` хранят собственный inventory:
+UID пула и актора, неизменяемый снимок шаблона и ресурсов, CTID, поколение,
+nonce владения, желаемое состояние, намерение операции, его stage, UPID и
+revision. Подробности жизненного цикла — [PROXMOX.md](PROXMOX.md).
+Неудалённые stopped/error allocations продолжают занимать ёмкость. Общие
+пределы проекта и обязательный selector применяются к обоим провайдерам;
+резервирование физической ёмкости managed-пула атомарно между проектами.
+
+Рой по-прежнему связан с native atespace сохранённым UID. Managed-провайдер
+не заменяет эту связь, ACL, native API или существующие полные профили.
+Виртуальный read-only шаблон `claude-proxmox-<pool>` появляется в списках
+без записи в Substrate. Коллизия с native шаблоном или актором вызывает
+отказ, а не выбор провайдера по пользовательской метке. Actor API сохраняет
+`results`, camelCase и десятичные строки int64; managed-записи явно содержат
+`provider`, `placement` (node/ctid/pool), `phase`, `desired`, поколение и
+capabilities, без вымышленного `workerAssignment`.
+
+Активация пула — явный admin-запрос, не побочный эффект GET. Установка
+задаёт весь блок `template`, `templateDigest`, `capacity` в
+`BROOD_PROXMOX_POOLS`, отдельные `BROOD_PUBLIC_ORIGIN` и
+`BROOD_PROXMOX_RELAY_SECRET`. Ёмкость пула — общая; immutable профиль
+резервирует равные доли, округлённые вниз до целого ядра, MiB и GiB.
+Конфигурации соединений без runtime-блока остаются доступными для чтения.
+API не выдаёт ключи, CA, credential references, guest tokens или nonce.
+Draining запрещает новые размещения, сохраняя остановку и очистку;
+удаление пула или роя отказывает при оставшихся managed allocations.
+
+Контейнер непривилегированный, актор работает не от root; workspace
+сохраняется при stop/resume. В образе доверенный root supervisor отвечает
+за PTY и fail-closed контролируемую сеть. Docker, kind, произвольные OCI,
+mount/env/publish и memory checkpoint этим профилем не поддерживаются.
+Suspend возвращает 409 до эффектов; существующие native профили не урезаются.
+
+До PVE-записи фиксируется durable intent. Неопределённый create сохраняет
+исходный CTID и резервирование: новый CT вслепую не создаётся. Мутации
+проверяют полный marker pool UID + actor UID + generation + nonce,
+принадлежность ресурсному пулу и допустимую конфигурацию CT. PVE не даёт
+атомарного ownership precondition для power/delete: оператор не должен
+подменять активный CT между проверкой и запросом. Остановка сервера
+закрывает транспорт, но не останавливает акторов; restart сверяет durable
+inventory и не повторяет уже отправленное исполнение.
+
+`running` требует успешной PVE task, аутентифицированного relay и HTTP-пробы
+фиксированного ttyd. Guest WSS-маршрут вне cookie/CSRF middleware принимает
+только scoped HMAC-токен текущего UID и поколения; installation relay key,
+PVE/session credentials в CT не передаются. Relay разрешает только terminal
+channel, не произвольный forwarding. Actor-view сохраняет session/ACL/CSP
+и native UID-проверки, дополнительно связывая ticket с managed UID и
+поколением; отзыв прав, stop/delete/reset закрывают браузерные потоки.
 
 ## Интерфейс и границы
 
