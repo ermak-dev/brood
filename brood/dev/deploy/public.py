@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from brood.common import config
 from brood.dev.deploy import edge
-from brood.dev.deploy.go_server import Deploy as GoDeploy
+from brood.dev.deploy.go_server import Deploy as GoDeploy, actor_model_environment
 from brood.dev.deploy.infrastructure import Infrastructure
 from brood.dev.substrate import local
 
@@ -46,6 +46,7 @@ def settings(get):
             raise RuntimeError("public deployment supports the installed CLIPROXY_URL service on port 8317")
         if not values["CLIPROXY_MANAGEMENT_KEY"]:
             raise RuntimeError("CLIPROXY_MANAGEMENT_KEY is required with CLIPROXY_URL")
+    values.update(actor_model_environment(get))
     return values
 
 

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import socket
+import ssl
 from urllib.parse import urlsplit
 import tempfile
 import uuid
@@ -19,6 +20,25 @@ from brood.dev.substrate import local
 OWNER = {"app.kubernetes.io/managed-by": "brood-go"}
 PROXMOX_SETTINGS = ("BROOD_PROXMOX_POOLS", "BROOD_PROXMOX_TOKENS")
 PROXMOX_RUNTIME_SETTINGS = ("BROOD_PUBLIC_ORIGIN", "BROOD_PROXMOX_RELAY_SECRET")
+ACTOR_LLM_SETTINGS = ("BROOD_ACTOR_LLM_URL", "BROOD_ACTOR_LLM_API_KEY", "BROOD_ACTOR_LLM_CA_PEM_B64")
+
+
+def actor_model_environment(get):
+    values = {key: get(key) or "" for key in ACTOR_LLM_SETTINGS}
+    if not any(values.values()):
+        return {}
+    https_origin(values["BROOD_ACTOR_LLM_URL"], "BROOD_ACTOR_LLM_URL")
+    key = values["BROOD_ACTOR_LLM_API_KEY"]
+    if not key or any(ord(char) <= 32 or ord(char) >= 127 for char in key):
+        raise RuntimeError("BROOD_ACTOR_LLM_API_KEY must contain visible ASCII characters without spaces")
+    ca = values["BROOD_ACTOR_LLM_CA_PEM_B64"]
+    if ca:
+        try:
+            pem = base64.b64decode(ca, validate=True).decode("ascii")
+            ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=pem)
+        except (ValueError, UnicodeError, ssl.SSLError):
+            raise RuntimeError("BROOD_ACTOR_LLM_CA_PEM_B64 must contain base64-encoded PEM certificates") from None
+    return {key: value for key, value in values.items() if value}
 
 
 def https_origin(raw, setting):
@@ -58,10 +78,10 @@ def proxmox_runtime_endpoints(raw):
     return endpoints
 
 
-def proxmox_egress(endpoints, resolver):
+def proxmox_egress(endpoints, resolver, setting="BROOD_PROXMOX_POOLS"):
     rules = set()
     for endpoint in sorted(endpoints):
-        host, port = https_origin(endpoint, "BROOD_PROXMOX_POOLS")
+        host, port = https_origin(endpoint, setting)
         try:
             answers = resolver(host, port, type=socket.SOCK_STREAM)
             if not answers:
@@ -75,7 +95,7 @@ def proxmox_egress(endpoints, resolver):
                     raise ValueError
                 rules.add((str(checked) + f"/{checked.max_prefixlen}", port))
         except (OSError, ValueError, TypeError, IndexError):
-            raise RuntimeError("BROOD_PROXMOX_POOLS endpoint resolution failed or returned an unsafe address") from None
+            raise RuntimeError(f"{setting} endpoint resolution failed or returned an unsafe address") from None
     return [{"to": [{"ipBlock": {"cidr": cidr}}], "ports": [{"port": port, "protocol": "TCP"}]}
             for cidr, port in sorted(rules)]
 
@@ -103,7 +123,7 @@ def registry_endpoint(raw):
 
 
 def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False,
-              proxy_api_key=False):
+              proxy_api_key=False, actor_llm_settings=()):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -155,6 +175,8 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
     if proxy_api_key:
         container["env"].append({"name": "CLIPROXY_API_KEY", "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": "CLIPROXY_API_KEY"}}})
+    container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
+        "name": "brood-go-env", "key": key}}} for key in ACTOR_LLM_SETTINGS if key in actor_llm_settings)
     if proxmox:
         container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": key}}} for key in PROXMOX_SETTINGS)
@@ -271,6 +293,10 @@ class Deploy:
                 raise RuntimeError("BROOD_PROXMOX_RELAY_SECRET needs at least 32 bytes and must differ from BROOD_SESSION_SECRET")
             environment.update(runtime_env)
         pve_rules = proxmox_egress(endpoints, self.resolver)
+        actor_env = actor_model_environment(self.get)
+        environment.update(actor_env)
+        actor_rules = proxmox_egress({actor_env["BROOD_ACTOR_LLM_URL"]}, self.resolver,
+                                     "BROOD_ACTOR_LLM_URL") if actor_env else []
         proxy_url = self.get("CLIPROXY_URL")
         model_key = self.get("CLIPROXY_API_KEY")
         if model_key:
@@ -326,7 +352,8 @@ class Deploy:
             image = "localhost:5002/brood-go@" + digest
             objects = manifests(image, workers, proxy=bool(proxy_url), registry=registry,
                                 proxy_api_key=bool(model_key), proxmox=all(key in environment for key in PROXMOX_SETTINGS),
-                                proxmox_runtime=all(key in environment for key in PROXMOX_RUNTIME_SETTINGS))
+                                proxmox_runtime=all(key in environment for key in PROXMOX_RUNTIME_SETTINGS),
+                                actor_llm_settings=tuple(actor_env))
             # data сохраняет владение apply ключами, включая их удаление при отключении.
             env_data = {key: base64.b64encode(value.encode("utf-8")).decode("ascii")
                         for key, value in environment.items()}
@@ -334,7 +361,7 @@ class Deploy:
                 env_data, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
             deployment = next(obj for obj in objects if obj["kind"] == "Deployment")
             deployment["spec"]["template"]["metadata"]["annotations"] = {"brood.dev/server-env-sha256": checksum}
-            objects[-1]["spec"]["egress"].extend([*api_rules, *pve_rules])
+            objects[-1]["spec"]["egress"].extend([*api_rules, *pve_rules, *actor_rules])
             if proxy_url:
                 objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
                     "metadata": {"name": "brood-go-cliproxy", "namespace": "brood", "labels": OWNER.copy()},

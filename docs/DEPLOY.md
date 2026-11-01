@@ -63,6 +63,20 @@ server/edge ресурсов до сборки и записи. Namespace дол
 | `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only management key |
 | `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |
 
+Для отдельного backend managed-акторов задаются `BROOD_ACTOR_LLM_URL`
+(строгий HTTPS origin) и `BROOD_ACTOR_LLM_API_KEY`. Необязательная
+`BROOD_ACTOR_LLM_CA_PEM_B64` содержит base64 PEM доверенного CA; без неё
+используются системные корни. Неполная конфигурация, некорректный CA или
+небезопасный результат DNS отвергаются до сборки и записи.
+
+Эти настройки передаются только через server Secret и `secretKeyRef`.
+NetworkPolicy разрешает только найденные IP и точный TCP-порт backend;
+смена DNS требует повторной выкладки. Ротация ключа меняет checksum pod
+и вызывает rollout. Отсутствующие настройки удаляются из управляемых
+ключей Secret и env. Установленные `CLIPROXY_URL`, management key, аккаунты
+и список API-ключей proxy панели не заменяются. Гость получает только
+локальный gateway, не upstream key или CA.
+
 TLS: `secrets/tls.crt` и `secrets/tls.key`. Go и edge используют один
 сертификат; upstream SNI `brood` требует соответствующего SAN. Проверка
 public endpoint использует точный certificate и loopback resolve, не
