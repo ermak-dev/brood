@@ -253,10 +253,11 @@ func (c *Client) requestData(ctx context.Context, method, path string, form url.
 		return fmt.Errorf("PVE HTTP status %d", resp.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	// A body can end cleanly but truncated after cancellation; never parse it.
+	if ctx.Err() != nil {
+		return fmt.Errorf("PVE response canceled: %w", ctx.Err())
+	}
 	if err != nil {
-		if ctx.Err() != nil {
-			return fmt.Errorf("PVE response canceled: %w", ctx.Err())
-		}
 		return errors.New("PVE response read failed")
 	}
 	if len(raw) > maxBody {
