@@ -87,8 +87,12 @@ test('all six locales translate the connection block with matching keys and bool
   for (const locale of locales) {
     const strings = messages(locale).proxmox_connections;
     expect(strings).toBeDefined();
-    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'action_done', 'connection', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining'].sort());
-    for (const value of Object.values(strings)) expect(typeof value === 'string' && value.length > 0).toBe(true);
+    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'action_done', 'connection', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining', 'add', 'form_title', 'form_hint', 'form_section', 'create', 'created', 'duplicate_name', 'secret_note', 'ca_hint', 'fields', 'placement_section', 'runtime_section', 'runtime_hint', 'validation'].sort());
+    for (const [key, value] of Object.entries(strings)) if (key !== 'fields' && key !== 'validation') expect(typeof value === 'string' && value.length > 0).toBe(true);
+    for (const group of ['fields', 'validation']) {
+      expect(Object.keys(strings[group]).sort()).toEqual(Object.keys(messages('en').proxmox_connections[group]).sort());
+      for (const value of Object.values(strings[group])) expect(typeof value === 'string' && value.length > 0).toBe(true);
+    }
     const markup = await connectionMarkup([connection], null, locale);
     expect(markup).toContain(strings.runtime_not_installed);
     expect(markup).toContain(`>${strings.connection}</th>`);

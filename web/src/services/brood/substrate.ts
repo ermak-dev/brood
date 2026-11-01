@@ -340,6 +340,27 @@ export const proxmoxPoolsApi = {
   },
 };
 
+/** Подключение, созданное из панели: секрет уходит один раз и не возвращается. */
+export interface ProxmoxConnectionDraft {
+  name: string;
+  endpoint: string;
+  tokenID: string;
+  tokenSecret: string;
+  caPEM: string;
+  node: string;
+  resourcePool: string;
+  storage: string;
+  network: string;
+  template?: string;
+  templateDigest?: string;
+  capacity?: { actors: number; cpuMillicores: string; memoryBytes: string; diskGiB: number };
+}
+
+export const proxmoxConnectionsApi = {
+  create: (draft: ProxmoxConnectionDraft) =>
+    request<Record<string, unknown>>('POST', '/api/proxmox-connections', draft),
+};
+
 export const policyApi = {
   identities: () => request<NativeIdentity[]>('GET', '/api/identities'),
   get: (project: string) => request<AccessPolicy>('GET', policyPath(project)),
