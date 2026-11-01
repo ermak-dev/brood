@@ -2729,7 +2729,7 @@
     "drain_message": "Stop new allocations in {{name}}? Existing actors and their reservations remain.",
     "enable_message": "Allow new allocations in {{name}} again? This does not resume existing actors.",
     "action_done": "Pool {{name}} updated",
-    "runtime": "Runtime and allocation state",
+    "connection": "Connection",
     "capacity": "Reserved / capacity",
     "actors": "Actors",
     "cpu": "CPU (millicores)",

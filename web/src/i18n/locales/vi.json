@@ -2735,7 +2735,7 @@
     "drain_message": "Ngừng phân bổ mới trong {{name}}? Actor hiện có và tài nguyên đã đặt trước vẫn được giữ lại.",
     "enable_message": "Cho phép phân bổ mới trong {{name}}? Actor hiện có không tự tiếp tục chạy.",
     "action_done": "Đã cập nhật nhóm {{name}}",
-    "runtime": "Môi trường chạy và trạng thái phân bổ",
+    "connection": "Kết nối",
     "capacity": "Đã đặt trước / dung lượng",
     "actors": "Actor",
     "cpu": "CPU (millicore)",

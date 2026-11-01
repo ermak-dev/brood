@@ -102,6 +102,18 @@ export function WorkerPoolsPage() {
   );
 }
 
+/** Подписанные значения одной ячейки. Значение не рвётся по дефису, длинное --
+ * многоточием с полным текстом в title; stacked -- по одному на строку. */
+function Facts({ items, stacked }: { items: Array<[string, string]>; stacked?: boolean }) {
+  return (
+    <dl className={stacked ? `${styles.facts} ${styles.factsStacked}` : styles.facts}>
+      {items.map(([term, value]) => (
+        <div key={term}><dt>{term}</dt><dd title={value}>{value}</dd></div>
+      ))}
+    </dl>
+  );
+}
+
 interface ProxmoxConnectionsProps {
   items: ProxmoxPool[] | null;
   error: string | null;
@@ -135,32 +147,37 @@ export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnections
     },
   });
   if (!error && !items?.length) return null;
+  // Столбцов столько, чтобы действие строки было видно без прокрутки:
+  // поля подключения -- одна подписанная ячейка, учётные данные -- в состоянии.
+  // У значения ячейки один корень: на телефоне ячейка -- сетка «подпись | значение».
   const columns: Column<ProxmoxPool>[] = [
     { key: 'name', label: t('substrate.name'), primary: true, render: (pool) => pool.name },
-    { key: 'endpoint', label: t('proxmox_connections.endpoint'), render: (pool) => pool.endpoint },
-    { key: 'node', label: t('proxmox_connections.node'), render: (pool) => pool.node },
-    { key: 'resourcePool', label: t('proxmox_connections.resource_pool'), render: (pool) => pool.resourcePool },
-    { key: 'storage', label: t('proxmox_connections.storage'), render: (pool) => pool.storage },
-    { key: 'network', label: t('proxmox_connections.network'), render: (pool) => pool.network },
-    { key: 'credential', label: t('proxmox_connections.credential_configured'), render: (pool) =>
-      t(pool.credentialConfigured ? 'proxmox_connections.yes' : 'proxmox_connections.no') },
-    { key: 'runtime', label: t('proxmox_connections.runtime'), render: (pool) => (
-      <>
+    { key: 'connection', label: t('proxmox_connections.connection'), render: (pool) => <Facts items={[
+      [t('proxmox_connections.endpoint'), pool.endpoint],
+      [t('proxmox_connections.node'), pool.node],
+      [t('proxmox_connections.resource_pool'), pool.resourcePool],
+      [t('proxmox_connections.storage'), pool.storage],
+      [t('proxmox_connections.network'), pool.network],
+    ]} /> },
+    { key: 'state', label: t('substrate.state'), render: (pool) => (
+      <div>
         <div>{t(pool.runtimeAvailable ? 'proxmox_connections.runtime_available' : 'proxmox_connections.runtime_not_installed')}</div>
         {pool.managedPool && <div>{pool.managedPool.state === 'enabled'
           ? t('proxmox_connections.state_enabled') : pool.managedPool.state === 'draining'
             ? t('proxmox_connections.state_draining') : pool.managedPool.state}</div>}
-      </>
+        <Facts items={[[t('proxmox_connections.credential_configured'),
+          t(pool.credentialConfigured ? 'proxmox_connections.yes' : 'proxmox_connections.no')]]} />
+      </div>
     ) },
     { key: 'capacity', label: t('proxmox_connections.capacity'), render: (pool) => {
       const managed = pool.managedPool;
       if (!managed) return DASH;
-      return <>
-        <div>{t('proxmox_connections.actors')}: {managed.usedActors} / {managed.maxActors}</div>
-        <div>{t('proxmox_connections.cpu')}: {managed.usedCPUMillicores} / {managed.cpuMillicores}</div>
-        <div>{t('proxmox_connections.memory')}: {managed.usedMemoryBytes} / {managed.memoryBytes}</div>
-        <div>{t('proxmox_connections.disk')}: {managed.usedDiskBytes} / {managed.diskBytes}</div>
-      </>;
+      return <Facts stacked items={[
+        [t('proxmox_connections.actors'), `${managed.usedActors} / ${managed.maxActors}`],
+        [t('proxmox_connections.cpu'), `${managed.usedCPUMillicores} / ${managed.cpuMillicores}`],
+        [t('proxmox_connections.memory'), `${managed.usedMemoryBytes} / ${managed.memoryBytes}`],
+        [t('proxmox_connections.disk'), `${managed.usedDiskBytes} / ${managed.diskBytes}`],
+      ]} />;
     } },
   ];
   return (
