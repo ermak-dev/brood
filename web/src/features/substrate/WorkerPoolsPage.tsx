@@ -13,7 +13,7 @@ import { EntityTable, type Column } from './components/EntityTable';
 import { Field, Section } from './components/form';
 import { KeyValueEditor } from './components/KeyValueEditor';
 import { PageHeader } from './components/PageHeader';
-import { DASH, fromPairs, toPairs, type Pair } from './format';
+import { DASH, formatCpu, formatMemory, fromPairs, toPairs, type Pair } from './format';
 import { useActions, useResource } from './hooks';
 import { missingSandboxClasses, newPoolDraft, poolDraft, poolPayload, validatePoolDraft, workerPoolImages, type PoolDraft } from './workerPoolDraft';
 import styles from './substrate.module.scss';
@@ -165,18 +165,17 @@ export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnections
         {pool.managedPool && <div>{pool.managedPool.state === 'enabled'
           ? t('proxmox_connections.state_enabled') : pool.managedPool.state === 'draining'
             ? t('proxmox_connections.state_draining') : pool.managedPool.state}</div>}
-        <Facts items={[[t('proxmox_connections.credential_configured'),
-          t(pool.credentialConfigured ? 'proxmox_connections.yes' : 'proxmox_connections.no')]]} />
       </div>
     ) },
     { key: 'capacity', label: t('proxmox_connections.capacity'), render: (pool) => {
       const managed = pool.managedPool;
       if (!managed) return DASH;
+      // Человек видит единицы (CPU/GiB), а не сырые int64 строки резервирования.
       return <Facts stacked items={[
         [t('proxmox_connections.actors'), `${managed.usedActors} / ${managed.maxActors}`],
-        [t('proxmox_connections.cpu'), `${managed.usedCPUMillicores} / ${managed.cpuMillicores}`],
-        [t('proxmox_connections.memory'), `${managed.usedMemoryBytes} / ${managed.memoryBytes}`],
-        [t('proxmox_connections.disk'), `${managed.usedDiskBytes} / ${managed.diskBytes}`],
+        [t('proxmox_connections.cpu'), `${formatCpu(managed.usedCPUMillicores)} / ${formatCpu(managed.cpuMillicores)}`],
+        [t('proxmox_connections.memory'), `${formatMemory(managed.usedMemoryBytes)} / ${formatMemory(managed.memoryBytes)}`],
+        [t('proxmox_connections.disk'), `${formatMemory(managed.usedDiskBytes)} / ${formatMemory(managed.diskBytes)}`],
       ]} />;
     } },
   ];
@@ -190,10 +189,9 @@ export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnections
         </div>
       ) : (
         <>
-          {items?.some((pool) => pool.runtimeAvailable || pool.managedPool) && <>
+          {items?.some((pool) => pool.runtimeAvailable || pool.managedPool) &&
             <p className={styles.sectionHint}>{t('proxmox_connections.profile_hint')}</p>
-            <p className={styles.sectionHint}>{t('proxmox_connections.reservations_hint')}</p>
-          </>}
+          }
           {actionError && <p className={styles.fieldError} role="alert">{actionError}</p>}
           <EntityTable columns={columns} rows={items ?? []} rowKey={(pool) => pool.name}
             actionsLabel={t('substrate.actions')}

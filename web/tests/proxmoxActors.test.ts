@@ -172,7 +172,7 @@ test('managed deletion warns permanent workspace loss before submitting, native 
   }
 });
 
-test('managed details show real placement, limitations and exact generation without native worker fiction', async () => {
+test('managed details show real placement and limitations without service counters', async () => {
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
   const html = renderToStaticMarkup(
@@ -183,7 +183,6 @@ test('managed details show real placement, limitations and exact generation with
     '105',
     'pve-a',
     'limited',
-    '9007199254740995',
     'Docker',
     'kind',
     'memory checkpoint',
@@ -191,6 +190,9 @@ test('managed details show real placement, limitations and exact generation with
   ]) {
     expect(html).toContain(text);
   }
+  // The incarnation counter is an internal reconciliation detail, not user data.
+  expect(html).not.toContain('9007199254740995');
+  expect(html).not.toContain('Generation');
   expect(html).not.toContain('Worker');
 });
 
@@ -257,7 +259,6 @@ test('managed lifecycle and destructive confirmation are translated in all six l
     'provider',
     'profile',
     'pool',
-    'generation',
     'details',
     'details_title',
     'meta_stopped',

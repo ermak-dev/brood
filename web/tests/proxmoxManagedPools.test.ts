@@ -77,8 +77,10 @@ test('managed allocation is real reservation data, including zero and exact int6
   expect(active).toContain('Drain pool');
   expect(active).not.toContain('Enable pool');
   expect(active).toContain('0 / 2');
-  expect(active).toContain('0 / 9007199254740993');
+  // Service values are hidden: capacity is human units, never raw int64 bytes.
+  expect(active).not.toContain('9007199254740993');
   expect(active).not.toContain('9007199254740992');
+  expect(active).not.toContain('Credential configured');
   expect(active).not.toContain('Activate pool');
   expect(active).not.toContain('Runtime not installed');
   const draining = await markup({ ...connection, managedPool: { ...allocation, state: 'draining' } });
@@ -123,17 +125,19 @@ test('a connection row keeps four labelled columns and its action without scroll
   expect(Object.keys(cell)).toEqual(headers.slice(0, -1));
   expect(facts(cell.Connection)).toEqual([['Endpoint', placed.endpoint], ['Node', 'pve'],
     ['PVE resource pool', 'brood-actors'], ['Storage', 'local-lvm'], ['Network', 'vmbr0']]);
-  expect(text(cell.State)).toBe('Runtime configured Enabled Credential configured Yes');
+  expect(text(cell.State)).toBe('Runtime configured Enabled');
+  // Число и единица не рвутся по строкам: в значении неразрывный пробел (U+00A0).
+  const nb = ' ';
   expect(facts(cell['Reserved / capacity'])).toEqual([['Actors', '0 / 2'],
-    ['CPU (millicores)', '0 / 2000'], ['Memory (bytes)', '0 / 9007199254740993'],
-    ['Disk (bytes)', '0 / 2147483648']]);
+    ['CPU', `0${nb}CPU / 2${nb}CPU`], ['Memory', `0${nb}MiB / 8388608${nb}GiB`],
+    ['Disk', `0${nb}MiB / 2${nb}GiB`]]);
   for (const body of Object.values(cell)) expect(roots(body)).toBeLessThanOrEqual(1);
 });
 
 test('an unready connection shows missing runtime and credential in its state cell', async () => {
   const html = await markup({ ...placed, runtimeAvailable: false, credentialConfigured: false });
   const cell = cells(html);
-  expect(text(cell.State)).toBe(`${en.proxmox_connections.runtime_not_installed} Credential configured No`);
+  expect(text(cell.State)).toBe(en.proxmox_connections.runtime_not_installed);
   expect(cell['Reserved / capacity']).toBe('—');
   expect(facts(cell.Connection)).toHaveLength(5);
   for (const body of Object.values(cell)) expect(roots(body)).toBeLessThanOrEqual(1);

@@ -22,8 +22,6 @@ export function ManagedProfile({ entity }: { entity: Actor | ActorTemplate }) {
             <dd>{actor.placement?.node || DASH}</dd>
             <dt>{t('actors.pool')}</dt>
             <dd>{actor.placement?.pool || DASH}</dd>
-            <dt>{t('actors.generation')}</dt>
-            <dd>{actor.generation || DASH}</dd>
           </>
         )}
       </dl>

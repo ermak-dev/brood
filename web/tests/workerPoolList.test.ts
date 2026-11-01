@@ -64,12 +64,11 @@ test('connection block is read-only, reports configuration not readiness, and om
   const withUnexpectedSecret = { ...connection, tokenSecret: 'SYNTHETIC_SECRET_SENTINEL' };
   const markup = await connectionMarkup([withUnexpectedSecret]);
   for (const value of [connection.name, connection.endpoint, connection.node, connection.resourcePool,
-    connection.storage, connection.network, 'Credential configured', 'Yes', 'Runtime not installed']) {
+    connection.storage, connection.network, 'Runtime not installed']) {
     expect(markup).toContain(value);
   }
   for (const forbidden of ['SYNTHETIC_SECRET_SENTINEL', connection.tokenID, '<input', '<button',
-    'tabindex=', 'Ready', 'replicas']) expect(markup).not.toContain(forbidden);
-  expect(await connectionMarkup([{ ...connection, credentialConfigured: false }])).toContain('No');
+    'tabindex=', 'Ready', 'replicas', 'Credential configured']) expect(markup).not.toContain(forbidden);
 });
 
 test('empty and loading connections add no clutter; failure is concise and scoped', async () => {
@@ -84,17 +83,15 @@ test('empty and loading connections add no clutter; failure is concise and scope
 
 test('all six locales translate the connection block with matching keys and booleans', async () => {
   const keys = ['title', 'endpoint', 'node', 'resource_pool', 'storage', 'network',
-    'credential_configured', 'yes', 'no', 'runtime_not_installed', 'load_failed'];
+    'runtime_not_installed', 'load_failed'];
   for (const locale of locales) {
     const strings = messages(locale).proxmox_connections;
     expect(strings).toBeDefined();
-    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'action_done', 'connection', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining', 'reservations_hint'].sort());
+    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'action_done', 'connection', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining'].sort());
     for (const value of Object.values(strings)) expect(typeof value === 'string' && value.length > 0).toBe(true);
     const markup = await connectionMarkup([connection], null, locale);
     expect(markup).toContain(strings.runtime_not_installed);
     expect(markup).toContain(`>${strings.connection}</th>`);
-    expect(markup).toContain(strings.yes);
-    expect(await connectionMarkup([{ ...connection, credentialConfigured: false }], null, locale)).toContain(strings.no);
   }
 });
 

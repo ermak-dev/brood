@@ -150,8 +150,6 @@ export function ActorEditor({
               )}
               <dt>{t('substrate.updated')}</dt>
               <dd>{formatDate(actor.metadata.updateTime, i18n.language)}</dd>
-              <dt>UID</dt>
-              <dd className={styles.mono}>{actor.metadata.uid}</dd>
             </dl>
             {managed && <ManagedProfile entity={actor} />}
             {actor.status?.crash && (
