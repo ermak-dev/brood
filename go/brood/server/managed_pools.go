@@ -30,10 +30,12 @@ const mib int64 = 1 << 20
 // lifecycle serializes provider operations and reconciliation within this process.
 type managedProvider struct {
 	managedRuntime
-	server    *Server
-	registry  *proxmoxRegistry
-	admission sync.Mutex
-	lifecycle sync.Mutex
+	server   *Server
+	registry *proxmoxRegistry
+	// deliverMessage доставляет запрос адресату; обёртка для тестов.
+	deliverMessage messageDeliverer
+	admission      sync.Mutex
+	lifecycle      sync.Mutex
 }
 
 type managedPoolJSON struct {
