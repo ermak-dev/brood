@@ -230,6 +230,14 @@ Managed-доступ к CLIProxyAPI требует `CLIPROXY_URL` и отдел�
 проверяется явно, `InsecureSkipVerify` не используется. Для публичной цепочки
 переменная не нужна. Эти корни применяются только к CLIProxyAPI backend.
 
+Если акторы должны использовать другой proxy (например, существующий сервер
+mop), задаются `BROOD_ACTOR_LLM_URL`, `BROOD_ACTOR_LLM_API_KEY` и, для частной
+TLS-цепочки, `BROOD_ACTOR_LLM_CA_PEM_B64`. Origin обязан быть HTTPS, ключ —
+явным и непустым. Эта настройка применяется только к managed-маршрутам:
+`CLIPROXY_URL`, public `/v1/` и management-панель остаются на прежнем backend.
+Без override используются общие настройки CLIProxyAPI выше. Accounts,
+OAuth-файлы и список ключей чужой установки автоматически не переносятся.
+
 Machine endpoints:
 
 - `GET /api/proxmox/llm/<uid>/<generation>/v1/models`;

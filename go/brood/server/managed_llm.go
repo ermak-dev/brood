@@ -50,6 +50,9 @@ func managedLLMRoute(r *http.Request) (uid string, generation int64, upstream st
 }
 
 func (s *Server) managedLLMHandler(cfg Config) http.Handler {
+	if cfg.ActorLLMURL != "" {
+		cfg.CLIProxyURL, cfg.CLIProxyAPIKey, cfg.CLIProxyCAPEM = cfg.ActorLLMURL, cfg.ActorLLMAPIKey, cfg.ActorLLMCAPEM
+	}
 	target, _ := url.Parse(cfg.CLIProxyURL)
 	transport := cliProxyTransport(cfg)
 	// Do not honor environment proxies: the only destination is the configured
