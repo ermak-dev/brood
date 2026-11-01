@@ -98,9 +98,9 @@ func (m *managedProvider) configuredPool(name string) (store.ManagedPool, error)
 	if m.registry == nil {
 		return store.ManagedPool{}, fmt.Errorf("%w: Proxmox runtime is not configured", app.ErrConflict)
 	}
-	cfg, ok := m.registry.pools[name]
-	if !ok {
-		return store.ManagedPool{}, app.ErrNotFound
+	cfg, err := m.configuredConnection(context.Background(), name)
+	if err != nil {
+		return store.ManagedPool{}, err
 	}
 	if cfg.runtime == nil || m.registry.publicOrigin == "" || len(m.registry.relaySecret) < 32 {
 		return store.ManagedPool{}, fmt.Errorf("%w: runtime requires installed template/capacity, BROOD_PUBLIC_ORIGIN and BROOD_PROXMOX_RELAY_SECRET", app.ErrConflict)
@@ -155,8 +155,7 @@ func (m *managedProvider) poolJSON(ctx context.Context, p store.ManagedPool) (*m
 
 func (m *managedProvider) inventory(ctx context.Context) ([]proxmoxPoolDTO, error) {
 	items := m.registry.items()
-	// Подключения из панели (#118) встраиваются в тот же список: имя
-	// подключения — имя пула, runtime-поля активация добавит сама.
+	// Подключения панели и env используют один инвентарь и путь активации.
 	dbItems, err := m.connectionItems(ctx)
 	if err != nil {
 		return nil, err

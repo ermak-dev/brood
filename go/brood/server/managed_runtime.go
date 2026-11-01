@@ -107,6 +107,17 @@ func (m *managedRuntime) pendingQuiet(a store.ManagedActor) bool {
 }
 
 func (m *managedProvider) initialize(cfg Config) error {
+	rows, err := m.server.store.ListManagedConnections(context.Background())
+	if err != nil {
+		return errors.New("managed connections unavailable")
+	}
+	for _, c := range rows {
+		if m.registry != nil {
+			if _, exists := m.registry.pools[c.Name]; exists {
+				return errors.New("managed connection name conflicts with environment configuration")
+			}
+		}
+	}
 	m.clients = map[string]proxmoxAPI{}
 	m.newClient = func(c proxmox.Config) (proxmoxAPI, error) { return proxmox.NewClient(c) }
 	if m.registry == nil || len(m.registry.relaySecret) < 32 {
@@ -196,9 +207,19 @@ func (m *managedProvider) client(p store.ManagedPool) (proxmoxAPI, error) {
 	if client := m.clients[p.UID]; client != nil {
 		return client, nil
 	}
-	cfg := m.registry.pools[p.Connection]
+	cfg, err := m.configuredConnection(context.Background(), p.Connection)
+	if err != nil {
+		return nil, err
+	}
+	secret := m.registry.tokens[cfg.credentialRef]
+	if cfg.credentialRef == "" {
+		secret, err = m.server.store.ManagedConnectionSecret(context.Background(), p.Connection)
+		if err != nil {
+			return nil, fmt.Errorf("%w: managed credential unavailable", app.ErrConflict)
+		}
+	}
 	templateStorage, _, _ := strings.Cut(p.Template.URI, ":vztmpl/")
-	client, err := m.newClient(proxmox.Config{Endpoint: cfg.endpoint, TokenID: cfg.tokenID, TokenSecret: m.registry.tokens[cfg.credentialRef], CAPEM: cfg.caPEM, Node: cfg.node, ResourcePool: cfg.resourcePool, Storage: cfg.storage, Network: cfg.network, TemplateStorage: templateStorage, TemplatePrefix: "brood-claude-proxmox-"})
+	client, err := m.newClient(proxmox.Config{Endpoint: cfg.endpoint, TokenID: cfg.tokenID, TokenSecret: secret, CAPEM: cfg.caPEM, Node: cfg.node, ResourcePool: cfg.resourcePool, Storage: cfg.storage, Network: cfg.network, TemplateStorage: templateStorage, TemplatePrefix: "brood-claude-proxmox-"})
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid installed PVE client configuration", app.ErrConflict)
 	}

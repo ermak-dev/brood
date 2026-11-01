@@ -5,58 +5,82 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 
+	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/store"
 )
-
-// Админский API подключений Proxmox (#118): форма настройки пула пишет сюда
-// endpoint, tokenID, секрет, CA и координаты PVE. Секрет write-only: после
-// записи не возвращается ни при создании, ни списком; код создания PVE-клиента
-// читает его из стора отдельно.
 
 func (s *Server) mountProxmoxConnections() {
 	s.mux.HandleFunc("GET /api/proxmox-connections", s.adminProxmoxConnections(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.store.ListManagedConnections(r.Context())
 		if err != nil {
-			writeDetail(w, http.StatusInternalServerError, "managed connections unavailable")
+			writeDetail(w, 500, "managed connections unavailable")
 			return
 		}
 		items := make([]map[string]any, 0, len(rows))
 		for _, c := range rows {
 			items = append(items, connectionDTO(c))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		writeJSON(w, 200, map[string]any{"items": items})
 	}))
 	s.mux.HandleFunc("POST /api/proxmox-connections", s.adminProxmoxConnections(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Name, Endpoint, TokenID, TokenSecret, CAPEM, Node, ResourcePool, Storage, Network string
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-			writeDetail(w, http.StatusBadRequest, "invalid connection payload")
-			return
-		}
-		if err := validateProxmoxConnection(body.Name, body.Endpoint, body.TokenID, body.TokenSecret, body.CAPEM, body.Node, body.ResourcePool, body.Storage, body.Network); err != nil {
-			writeDetail(w, http.StatusUnprocessableEntity, err.Error())
-			return
-		}
-		c, err := s.store.CreateManagedConnection(r.Context(), store.ManagedConnection{
-			Name: body.Name, Endpoint: body.Endpoint, TokenID: body.TokenID, TokenSecret: body.TokenSecret,
-			CAPEM: body.CAPEM, Node: body.Node, ResourcePool: body.ResourcePool, Storage: body.Storage, Network: body.Network,
-		})
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		if err != nil {
-			writeDetail(w, http.StatusConflict, "connection name already exists")
+			writeDetail(w, 400, "invalid connection payload")
 			return
 		}
-		writeJSON(w, http.StatusCreated, connectionDTO(c))
+		fields, err := proxmoxObject(string(raw))
+		if err != nil {
+			writeDetail(w, 400, "invalid connection payload")
+			return
+		}
+		for key := range fields {
+			switch key {
+			case "name", "endpoint", "tokenID", "tokenSecret", "caPEM", "node", "resourcePool", "storage", "network", "template", "templateDigest", "capacity":
+			default:
+				writeDetail(w, 400, "invalid connection payload")
+				return
+			}
+		}
+		c, err := parseProxmoxConnection(fields)
+		if err != nil {
+			writeDetail(w, 422, err.Error())
+			return
+		}
+		// Общий admission lock сериализует активацию и удаление с созданием.
+		s.managed.admission.Lock()
+		defer s.managed.admission.Unlock()
+		if s.managed.registry != nil {
+			if _, exists := s.managed.registry.pools[c.Name]; exists {
+				writeDetail(w, 409, "connection name already exists in environment configuration")
+				return
+			}
+		}
+		c, err = s.store.CreateManagedConnection(r.Context(), c)
+		if err != nil {
+			writeDetail(w, 409, "connection name already exists or is invalid")
+			return
+		}
+		writeJSON(w, 201, connectionDTO(c))
 	}))
 	s.mux.HandleFunc("DELETE /api/proxmox-connections/{uid}", s.adminProxmoxConnections(func(w http.ResponseWriter, r *http.Request) {
+		s.managed.admission.Lock()
+		defer s.managed.admission.Unlock()
 		if err := s.store.DeleteManagedConnection(r.Context(), r.PathValue("uid")); err != nil {
-			writeDetail(w, http.StatusNotFound, "connection not found")
+			switch {
+			case errors.Is(err, store.ErrManagedChildren):
+				writeDetail(w, 409, "connection still has a managed pool or actors")
+			case errors.Is(err, store.ErrNotFound):
+				writeDetail(w, 404, "connection not found")
+			default:
+				writeDetail(w, 500, "managed connection deletion failed")
+			}
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(204)
 	}))
 }
 
@@ -67,62 +91,109 @@ func (s *Server) adminProxmoxConnections(next http.HandlerFunc) http.HandlerFunc
 			return
 		}
 		if !user.IsAdmin {
-			writeDetail(w, http.StatusForbidden, "administrator access required")
+			writeDetail(w, 403, "administrator access required")
 			return
 		}
 		if r.Method != http.MethodGet && r.Header.Get("Origin") == "" {
-			writeDetail(w, http.StatusForbidden, "same-origin request required")
+			writeDetail(w, 403, "same-origin request required")
 			return
 		}
 		next(w, r)
 	}
 }
 
-// validateProxmoxConnection применяет правила env-конфигурации к форме.
-func validateProxmoxConnection(name, endpoint, tokenID, tokenSecret, caPEM, node, resourcePool, storage, network string) error {
-	for field, value := range map[string]string{"name": name, "endpoint": endpoint, "tokenID": tokenID,
-		"tokenSecret": tokenSecret, "node": node, "resourcePool": resourcePool, "storage": storage, "network": network} {
-		if !proxmoxText(value) {
-			return errors.New(field + " must be a nonempty string without controls")
+func parseProxmoxConnection(fields map[string]json.RawMessage) (store.ManagedConnection, error) {
+	var c store.ManagedConnection
+	if json.Unmarshal(fields["name"], &c.Name) != nil || len(c.Name) > 63 || !regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`).MatchString(c.Name) {
+		return c, errors.New("name must be a lowercase DNS label of at most 63 characters")
+	}
+	if json.Unmarshal(fields["tokenSecret"], &c.TokenSecret) != nil || !proxmoxHeaderValue(c.TokenSecret) {
+		return c, errors.New("tokenSecret must be a header-safe secret")
+	}
+	delete(fields, "name")
+	delete(fields, "tokenSecret")
+	fields["credentialRef"] = json.RawMessage(`"form"`)
+	raw, _ := json.Marshal(fields)
+	cfg, err := parseProxmoxPool(raw)
+	if err != nil {
+		return c, err
+	}
+	if cfg.runtime != nil && len(c.Name) > 48 {
+		return c, errors.New("runtime pool names must be lowercase DNS labels of at most 48 characters")
+	}
+	runtime := make(map[string]json.RawMessage)
+	for _, key := range []string{"template", "templateDigest", "capacity"} {
+		if value, ok := fields[key]; ok {
+			runtime[key] = value
 		}
 	}
-	if !regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`).MatchString(name) || len(name) > 63 {
-		return errors.New("name must be a lowercase short name")
+	if len(runtime) != 0 {
+		data, _ := json.Marshal(runtime)
+		c.RuntimeJSON = string(data)
 	}
-	if !proxmoxOrigin(endpoint) {
-		return errors.New("endpoint must be an HTTPS origin with a valid port and no credentials, path, query or fragment")
-	}
-	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+![A-Za-z0-9_.-]+$`).MatchString(tokenID) {
-		return errors.New("tokenID must have user@realm!token format")
-	}
-	if !proxmoxHeaderValue(tokenSecret) {
-		return errors.New("tokenSecret must be a header-safe secret")
-	}
-	if !proxmoxCA(caPEM) {
-		return errors.New("caPEM must contain only valid CA certificates in PEM format")
-	}
-	return nil
+	c.Endpoint, c.TokenID, c.CAPEM = cfg.endpoint, cfg.tokenID, cfg.caPEM
+	c.Node, c.ResourcePool, c.Storage, c.Network = cfg.node, cfg.resourcePool, cfg.storage, cfg.network
+	return c, nil
 }
 
-// connectionDTO — публичная форма подключения: без секрета токена.
 func connectionDTO(c store.ManagedConnection) map[string]any {
-	return map[string]any{"uid": c.UID, "name": c.Name, "endpoint": c.Endpoint, "tokenID": c.TokenID,
-		"node": c.Node, "resourcePool": c.ResourcePool, "storage": c.Storage, "network": c.Network,
-		"credentialConfigured": true}
+	return map[string]any{"uid": c.UID, "name": c.Name, "endpoint": c.Endpoint, "tokenID": c.TokenID, "node": c.Node, "resourcePool": c.ResourcePool, "storage": c.Storage, "network": c.Network, "credentialConfigured": true}
 }
 
-// connectionItems — пулы подключений, созданных из панели: те же DTO,
-// что у env-настроенных, с признаком настроенного секрета.
+func connectionConfig(c store.ManagedConnection) (proxmoxPool, error) {
+	cfg := proxmoxPool{endpoint: c.Endpoint, tokenID: c.TokenID, caPEM: c.CAPEM, node: c.Node, resourcePool: c.ResourcePool, storage: c.Storage, network: c.Network}
+	if c.RuntimeJSON != "" {
+		fields, err := proxmoxObject(c.RuntimeJSON)
+		if err != nil {
+			return cfg, errors.New("stored runtime configuration is invalid")
+		}
+		cfg.runtime, err = parseProxmoxRuntime(fields)
+		if err != nil {
+			return cfg, errors.New("stored runtime configuration is invalid")
+		}
+	}
+	return cfg, nil
+}
+
+// configuredConnection читает БД на запрос, не изменяя immutable env registry.
+func (m *managedProvider) configuredConnection(ctx context.Context, name string) (proxmoxPool, error) {
+	var env proxmoxPool
+	var exists bool
+	if m.registry != nil {
+		env, exists = m.registry.pools[name]
+	}
+	rows, err := m.server.store.ListManagedConnections(ctx)
+	if err != nil {
+		return proxmoxPool{}, errors.New("managed connections unavailable")
+	}
+	for _, c := range rows {
+		if c.Name != name {
+			continue
+		}
+		if exists {
+			return proxmoxPool{}, fmt.Errorf("%w: connection name conflicts with environment configuration", app.ErrConflict)
+		}
+		return connectionConfig(c)
+	}
+	if exists {
+		return env, nil
+	}
+	return proxmoxPool{}, app.ErrNotFound
+}
+
 func (m *managedProvider) connectionItems(ctx context.Context) ([]proxmoxPoolDTO, error) {
 	rows, err := m.server.store.ListManagedConnections(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("managed connections unavailable: %w", err)
+		return nil, errors.New("managed connections unavailable")
 	}
 	items := make([]proxmoxPoolDTO, 0, len(rows))
 	for _, c := range rows {
-		items = append(items, proxmoxPoolDTO{Name: c.Name, Endpoint: c.Endpoint,
-			TokenID: c.TokenID, Node: c.Node, ResourcePool: c.ResourcePool,
-			Storage: c.Storage, Network: c.Network, CredentialConfigured: true})
+		cfg, err := m.configuredConnection(ctx, c.Name)
+		if err != nil {
+			return nil, err
+		}
+		available := cfg.runtime != nil && m.registry != nil && m.registry.publicOrigin != "" && len(m.registry.relaySecret) >= 32
+		items = append(items, proxmoxPoolDTO{Name: c.Name, Endpoint: c.Endpoint, TokenID: c.TokenID, Node: c.Node, ResourcePool: c.ResourcePool, Storage: c.Storage, Network: c.Network, CredentialConfigured: true, RuntimeAvailable: available})
 	}
 	return items, nil
 }
