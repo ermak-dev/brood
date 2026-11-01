@@ -23,12 +23,14 @@ import (
 	"time"
 
 	"brood.dev/go/brood/proxmox"
+	"brood.dev/go/brood/proxmox/relay"
 	"brood.dev/go/brood/store"
 )
 
 type managedFakePVE struct {
 	mu                              sync.Mutex
 	server                          *Server
+	nextIDs                         []int
 	spec                            proxmox.CTSpec
 	exists, running                 bool
 	creates, starts, stops, deletes int
@@ -47,7 +49,16 @@ type managedFakePVE struct {
 	deletedWhileRunning             bool
 }
 
-func (f *managedFakePVE) NextID(context.Context) (int, error) { return 105, nil }
+func (f *managedFakePVE) NextID(context.Context) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.nextIDs) > 0 {
+		id := f.nextIDs[0]
+		f.nextIDs = f.nextIDs[1:]
+		return id, nil
+	}
+	return 105, nil
+}
 func (f *managedFakePVE) Create(ctx context.Context, s proxmox.CTSpec) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -213,6 +224,13 @@ func (h *managedFakeRelay) Dial(ctx context.Context, uid string, g int64) (net.C
 }
 func (h *managedFakeRelay) Disconnect(string, int64) { h.mu.Lock(); h.disconnects++; h.mu.Unlock() }
 func (h *managedFakeRelay) Close() error             { return nil }
+
+// Канал сообщений роя фейку не нужен: роутер проверяется своим тестом
+// с подменённым deliverMessage, но интерфейс требует методов.
+func (h *managedFakeRelay) SetMessageRouter(relay.MessageRouter) {}
+func (h *managedFakeRelay) DialMessage(context.Context, string, int64, []byte) (net.Conn, error) {
+	return nil, errors.New("swarm messages are not wired in the fake relay")
+}
 
 func managedSetup(t *testing.T) (*substrateServer, *http.Client, *http.Client, string, *managedFakePVE, *managedFakeRelay) {
 	t.Helper()

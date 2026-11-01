@@ -41,6 +41,8 @@ type guestRelay interface {
 	HostKey() string
 	Connected(string, int64) bool
 	Dial(context.Context, string, int64) (net.Conn, error)
+	SetMessageRouter(relay.MessageRouter)
+	DialMessage(context.Context, string, int64, []byte) (net.Conn, error)
 	Disconnect(string, int64)
 	Close() error
 }
@@ -115,6 +117,7 @@ func (m *managedProvider) initialize(cfg Config) error {
 		return err
 	}
 	m.hub = hub
+	m.enableSwarmMessages()
 	if cfg.TLSCert != "" {
 		data, err := os.ReadFile(cfg.TLSCert)
 		if err != nil {

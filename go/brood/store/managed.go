@@ -687,3 +687,14 @@ func (s *Store) changeManagedStage(ctx context.Context, uid string, expected int
 }
 
 func ptrManaged(value string) *string { return &value }
+
+// LookupManagedActor resolves an actor by its name within one swarm for
+// swarm-scoped delivery. Deleted tombstones resolve to ErrNotFound.
+func (s *Store) LookupManagedActor(ctx context.Context, swarmID, name string) (ManagedActor, error) {
+	a, err := scanManagedActor(s.conn(ctx).QueryRowContext(ctx,
+		`SELECT `+managedActorCols+` FROM managed_actors WHERE swarm_id=? AND name=? AND phase<>'deleted'`, swarmID, name))
+	if err == sql.ErrNoRows {
+		return a, fmt.Errorf("%w: managed actor", ErrNotFound)
+	}
+	return a, err
+}

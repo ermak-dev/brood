@@ -35,10 +35,12 @@ type Hub struct {
 	mu        sync.Mutex
 	signer    ssh.Signer
 	authorize func(string, int64, string) bool
-	peers     map[identity]*peer
-	pending   map[*socket]struct{}
-	slots     chan struct{}
-	closed    bool
+	// router опционален: nil — гость не может слать сообщения соседям.
+	router  MessageRouter
+	peers   map[identity]*peer
+	pending map[*socket]struct{}
+	slots   chan struct{}
+	closed  bool
 }
 type identity struct {
 	uid        string
@@ -195,7 +197,7 @@ func (h *Hub) accept(ws *socket, id identity, token string) {
 		}
 		h.mu.Unlock()
 	}()
-	go rejectChannels(channels)
+	go h.serveChannels(id, channels)
 	go ssh.DiscardRequests(requests)
 	done := make(chan struct{})
 	go func() { conn.Wait(); cancelPeer(); close(done) }()
@@ -212,9 +214,31 @@ func (h *Hub) accept(ws *socket, id identity, token string) {
 		}
 	}
 }
-func rejectChannels(channels <-chan ssh.NewChannel) {
+
+// SetMessageRouter включает канал сообщений роя. Без роутера входящие
+// каналы гостя отвергаются, как прежде; вызывать до первого гостя.
+func (h *Hub) SetMessageRouter(router MessageRouter) {
+	h.mu.Lock()
+	h.router = router
+	h.mu.Unlock()
+}
+
+// serveChannels разбирает входящие каналы гостя: сообщения роя идут
+// в роутер, остальное отвергается.
+func (h *Hub) serveChannels(id identity, channels <-chan ssh.NewChannel) {
 	for c := range channels {
-		c.Reject(ssh.Prohibited, "channel not permitted")
+		if c.ChannelType() != messageChannel {
+			c.Reject(ssh.Prohibited, "channel not permitted")
+			continue
+		}
+		h.mu.Lock()
+		router := h.router
+		h.mu.Unlock()
+		if router == nil {
+			c.Reject(ssh.Prohibited, "channel not permitted")
+			continue
+		}
+		go serveMessage(router, id.uid, c)
 	}
 }
 

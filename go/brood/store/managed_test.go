@@ -342,3 +342,32 @@ func TestManagedMigrationRollback(t *testing.T) {
 		})
 	}
 }
+
+// FEATURE: Адресация актора по имени в рое для канала сообщений (#115).
+// SPEC: LookupManagedActor(swarmID, name) находит живой (не deleted) актёр
+// своего роя; чужой рой, чужое имя и tombstone — ErrNotFound.
+func TestLookupManagedActorByName(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	managedFixture(t, s)
+	if _, err := s.ReserveManagedActor(ctx, func() ManagedActor {
+		a := managedRequest("uid-a", "one", 101)
+		a.Name = "claude"
+		return a
+	}()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LookupManagedActor(ctx, "one", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UID != "uid-a" {
+		t.Fatalf("lookup: %+v", got)
+	}
+	if _, err := s.LookupManagedActor(ctx, "two", "claude"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign swarm must not resolve: %v", err)
+	}
+	if _, err := s.LookupManagedActor(ctx, "one", "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown name must not resolve: %v", err)
+	}
+}
