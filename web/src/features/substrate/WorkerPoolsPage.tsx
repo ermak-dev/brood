@@ -105,12 +105,35 @@ export function WorkerPoolsPage() {
 interface ProxmoxConnectionsProps {
   items: ProxmoxPool[] | null;
   error: string | null;
-  onRetry: () => void;
+  onRetry: () => void | Promise<void>;
 }
 
-/** Подключения видны даже при отказе Kubernetes; секреты и счётчики сюда не попадают. */
+/** Подключения и резервирования видны даже при отказе Kubernetes; секреты скрыты. */
 export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnectionsProps) {
   const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const reload = useCallback(async () => { await onRetry(); }, [onRetry]);
+  const { confirm } = useActions(reload);
+  type PoolAction = 'activate' | 'drain' | 'enable';
+  const act = (pool: ProxmoxPool, action: PoolAction) => confirm({
+    title: t(`proxmox_connections.${action}`),
+    message: t(`proxmox_connections.${action}_message`, { name: pool.name }),
+    confirmText: t(`proxmox_connections.${action}`),
+    success: t('proxmox_connections.action_done', { name: pool.name }),
+    run: async () => {
+      setBusy(true);
+      setActionError(null);
+      try {
+        return await proxmoxPoolsApi[action](pool.name);
+      } catch (error) {
+        setActionError(errorMessage(error));
+        throw error;
+      } finally {
+        setBusy(false);
+      }
+    },
+  });
   if (!error && !items?.length) return null;
   const columns: Column<ProxmoxPool>[] = [
     { key: 'name', label: t('substrate.name'), primary: true, render: (pool) => pool.name },
@@ -121,6 +144,24 @@ export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnections
     { key: 'network', label: t('proxmox_connections.network'), render: (pool) => pool.network },
     { key: 'credential', label: t('proxmox_connections.credential_configured'), render: (pool) =>
       t(pool.credentialConfigured ? 'proxmox_connections.yes' : 'proxmox_connections.no') },
+    { key: 'runtime', label: t('proxmox_connections.runtime'), render: (pool) => (
+      <>
+        <div>{t(pool.runtimeAvailable ? 'proxmox_connections.runtime_available' : 'proxmox_connections.runtime_not_installed')}</div>
+        {pool.managedPool && <div>{pool.managedPool.state === 'enabled'
+          ? t('proxmox_connections.state_enabled') : pool.managedPool.state === 'draining'
+            ? t('proxmox_connections.state_draining') : pool.managedPool.state}</div>}
+      </>
+    ) },
+    { key: 'capacity', label: t('proxmox_connections.capacity'), render: (pool) => {
+      const managed = pool.managedPool;
+      if (!managed) return DASH;
+      return <>
+        <div>{t('proxmox_connections.actors')}: {managed.usedActors} / {managed.maxActors}</div>
+        <div>{t('proxmox_connections.cpu')}: {managed.usedCPUMillicores} / {managed.cpuMillicores}</div>
+        <div>{t('proxmox_connections.memory')}: {managed.usedMemoryBytes} / {managed.memoryBytes}</div>
+        <div>{t('proxmox_connections.disk')}: {managed.usedDiskBytes} / {managed.diskBytes}</div>
+      </>;
+    } },
   ];
   return (
     <section className={styles.section} aria-label={t('proxmox_connections.title')}>
@@ -132,8 +173,21 @@ export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnections
         </div>
       ) : (
         <>
-          <p className={styles.sectionHint}>{t('proxmox_connections.runtime_not_installed')}</p>
-          <EntityTable columns={columns} rows={items ?? []} rowKey={(pool) => pool.name} />
+          {items?.some((pool) => pool.runtimeAvailable || pool.managedPool) && <>
+            <p className={styles.sectionHint}>{t('proxmox_connections.profile_hint')}</p>
+            <p className={styles.sectionHint}>{t('proxmox_connections.reservations_hint')}</p>
+          </>}
+          {actionError && <p className={styles.fieldError} role="alert">{actionError}</p>}
+          <EntityTable columns={columns} rows={items ?? []} rowKey={(pool) => pool.name}
+            actionsLabel={t('substrate.actions')}
+            actions={(pool) => {
+              const action = !pool.managedPool
+                ? (pool.runtimeAvailable ? 'activate' : null)
+                : pool.managedPool.state === 'enabled' ? 'drain'
+                  : pool.managedPool.state === 'draining' && pool.runtimeAvailable ? 'enable' : null;
+              return action && <Button variant="secondary" size="sm" disabled={busy}
+                onClick={() => act(pool, action)}>{t(`proxmox_connections.${action}`)}</Button>;
+            }} />
         </>
       )}
     </section>

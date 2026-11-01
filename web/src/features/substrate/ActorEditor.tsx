@@ -2,20 +2,22 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import type { Actor } from '@/services/brood/substrate';
+import type { Actor, ActorTemplate } from '@/services/brood/substrate';
+import { actorCreateDraft, actorState } from './actorLifecycle';
+import { ManagedProfile } from './components/ManagedProfile';
 import { EditorSheet } from './components/EditorSheet';
 import { Field, Section } from './components/form';
 import { KeyValueEditor } from './components/KeyValueEditor';
 import { StateBadge } from './components/StateBadge';
-import { clone, DASH, formatDate, fromPairs, isShortName, shortState, toPairs, type Pair } from './format';
+import { clone, DASH, formatDate, fromPairs, isShortName, toPairs, type Pair } from './format';
 import styles from './substrate.module.scss';
 
 interface ActorEditorProps {
   project: string;
   /** null -- create a new actor; otherwise edit this one. */
   actor: Actor | null;
-  /** The project's template names; null while the page is still loading. */
-  templates: string[] | null;
+  /** Шаблоны роя, включая виртуальные профили; null во время загрузки. */
+  templates: ActorTemplate[] | null;
   open: boolean;
   onClose: () => void;
   /** Resolves true once saved; on a refusal the form stays as typed. */
@@ -26,10 +28,18 @@ interface ActorEditorProps {
  * (only while the actor is suspended) and the worker selector; the update
  * replaces the whole object, so the edit is applied onto the actor as read and
  * the rest (sourceTag, metadata preconditions) goes back unchanged. */
-export function ActorEditor({ project, actor, templates, open, onClose, onSubmit }: ActorEditorProps) {
+export function ActorEditor({
+  project,
+  actor,
+  templates,
+  open,
+  onClose,
+  onSubmit,
+}: ActorEditorProps) {
   const { t, i18n } = useTranslation();
   const editing = actor !== null;
-  const state = shortState(actor?.status?.state, 'ACTOR_STATE_');
+  const managed = actor?.provider === 'proxmox';
+  const state = actor ? actorState(actor) : '';
   const templateLocked = editing && state !== 'suspended';
 
   const initial = useMemo(
@@ -47,8 +57,10 @@ export function ActorEditor({ project, actor, templates, open, onClose, onSubmit
   const [sourceTag, setSourceTag] = useState(initial.sourceTag);
   const [saving, setSaving] = useState(false);
 
+  const selectedTemplate = templates?.find((tpl) => tpl.metadata.name === template);
+  const managedTemplate = selectedTemplate?.provider === 'proxmox';
   const nameValid = editing || isShortName(name);
-  const valid = nameValid && template !== '';
+  const valid = nameValid && template !== '' && !managed && (editing || !!selectedTemplate);
   const dirty =
     name !== initial.name ||
     template !== initial.template ||
@@ -64,12 +76,7 @@ export function ActorEditor({ project, actor, templates, open, onClose, onSubmit
       next.workerSelector = selector;
       return next;
     }
-    return {
-      metadata: { name },
-      actorTemplate: { atespace: project, name: template },
-      workerSelector: selector,
-      sourceTag: sourceTag ? { atespace: project, name: sourceTag } : undefined,
-    };
+    return actorCreateDraft(project, name, selectedTemplate!, labels, sourceTag);
   };
 
   const save = async () => {
@@ -82,7 +89,12 @@ export function ActorEditor({ project, actor, templates, open, onClose, onSubmit
     }
   };
 
-  const templateOptions = (templates ?? []).map((value) => ({ value, label: value }));
+  const templateOptions = (templates ?? [])
+    .filter((tpl) => !editing || tpl.provider !== 'proxmox')
+    .map((tpl) => ({
+      value: tpl.metadata.name,
+      label: tpl.provider === 'proxmox' ? `${tpl.metadata.name} · Proxmox` : tpl.metadata.name,
+    }));
   if (template && !templateOptions.some((o) => o.value === template)) {
     templateOptions.unshift({ value: template, label: template });
   }
@@ -93,9 +105,13 @@ export function ActorEditor({ project, actor, templates, open, onClose, onSubmit
       onClose={onClose}
       size="lg"
       eyebrow={project}
-      title={editing ? t('actors.edit_title', { name: actor.metadata.name }) : t('actors.create_title')}
+      title={
+        editing
+          ? t(managed ? 'actors.details_title' : 'actors.edit_title', { name: actor.metadata.name })
+          : t('actors.create_title')
+      }
       description={editing ? undefined : t('actors.create_hint')}
-      onSave={() => void save()}
+      onSave={managed ? undefined : () => void save()}
       saveLabel={editing ? t('substrate.save') : t('substrate.create')}
       canSave={valid && (dirty || !editing)}
       saving={saving}
@@ -107,14 +123,25 @@ export function ActorEditor({ project, actor, templates, open, onClose, onSubmit
             <dl className={styles.details}>
               <dt>{t('substrate.state')}</dt>
               <dd>
-                <StateBadge state={state} namespace="actors.state" />
+                <StateBadge
+                  state={state}
+                  namespace={managed ? 'actors.managed_state' : 'actors.state'}
+                />
               </dd>
-              <dt>{t('actors.node')}</dt>
-              <dd>{actor.status?.assignedNode || actor.status?.workerAssignment?.nodeName || DASH}</dd>
-              <dt>{t('actors.worker')}</dt>
-              <dd className={styles.mono}>{actor.status?.workerAssignment?.worker?.name || DASH}</dd>
-              <dt>{t('actors.snapshots')}</dt>
-              <dd>{actor.status?.snapshots?.length ?? 0}</dd>
+              {!managed && (
+                <>
+                  <dt>{t('actors.node')}</dt>
+                  <dd>
+                    {actor.status?.assignedNode || actor.status?.workerAssignment?.nodeName || DASH}
+                  </dd>
+                  <dt>{t('actors.worker')}</dt>
+                  <dd className={styles.mono}>
+                    {actor.status?.workerAssignment?.worker?.name || DASH}
+                  </dd>
+                  <dt>{t('actors.snapshots')}</dt>
+                  <dd>{actor.status?.snapshots?.length ?? 0}</dd>
+                </>
+              )}
               {actor.sourceTag && (
                 <>
                   <dt>{t('actors.source_tag')}</dt>
@@ -126,69 +153,77 @@ export function ActorEditor({ project, actor, templates, open, onClose, onSubmit
               <dt>UID</dt>
               <dd className={styles.mono}>{actor.metadata.uid}</dd>
             </dl>
+            {managed && <ManagedProfile entity={actor} />}
             {actor.status?.crash && (
               <pre className={styles.code}>{JSON.stringify(actor.status.crash, null, 2)}</pre>
             )}
           </Section>
         )}
 
-        <Section title={t('actors.spec_section')}>
-          {!editing && (
-            <Input
-              name="actor-name"
-              label={t('substrate.name')}
-              value={name}
-              autoComplete="off"
-              placeholder="luna"
-              hint={t('substrate.name_hint')}
-              error={name && !nameValid ? t('substrate.name_invalid') : undefined}
-              onChange={(event) => setName(event.target.value.trim())}
-            />
-          )}
-          <Field
-            label={t('actors.template')}
-            hint={
-              templateLocked
-                ? t('actors.template_locked')
-                : templates?.length === 0
-                  ? t('actors.no_templates')
-                  : t('actors.template_hint')
-            }
-          >
-            {(id) => (
-              <Select
-                id={id}
-                value={template}
-                options={templateOptions}
-                placeholder={templates === null ? t('common.loading') : t('actors.template_pick')}
-                disabled={templateLocked || templates === null}
-                onChange={setTemplate}
-                fullWidth
-              />
-            )}
-          </Field>
-          {!editing && (
-            <Input
-              name="actor-source-tag"
-              label={t('actors.source_tag')}
-              value={sourceTag}
-              autoComplete="off"
-              hint={t('actors.source_tag_hint')}
-              onChange={(event) => setSourceTag(event.target.value.trim())}
-            />
-          )}
-        </Section>
+        {!managed && (
+          <>
+            <Section title={t('actors.spec_section')}>
+              {!editing && (
+                <Input
+                  name="actor-name"
+                  label={t('substrate.name')}
+                  value={name}
+                  autoComplete="off"
+                  placeholder="luna"
+                  hint={t('substrate.name_hint')}
+                  error={name && !nameValid ? t('substrate.name_invalid') : undefined}
+                  onChange={(event) => setName(event.target.value.trim())}
+                />
+              )}
+              <Field
+                label={t('actors.template')}
+                hint={
+                  templateLocked
+                    ? t('actors.template_locked')
+                    : templates?.length === 0
+                      ? t('actors.no_templates')
+                      : t('actors.template_hint')
+                }
+              >
+                {(id) => (
+                  <Select
+                    id={id}
+                    value={template}
+                    options={templateOptions}
+                    placeholder={
+                      templates === null ? t('common.loading') : t('actors.template_pick')
+                    }
+                    disabled={templateLocked || templates === null}
+                    onChange={setTemplate}
+                    fullWidth
+                  />
+                )}
+              </Field>
+              {!editing && !managedTemplate && (
+                <Input
+                  name="actor-source-tag"
+                  label={t('actors.source_tag')}
+                  value={sourceTag}
+                  autoComplete="off"
+                  hint={t('actors.source_tag_hint')}
+                  onChange={(event) => setSourceTag(event.target.value.trim())}
+                />
+              )}
+            </Section>
 
-        <Section title={t('substrate.placement')} hint={t('substrate.placement_hint')}>
-          <KeyValueEditor
-            key={actor?.metadata.uid ?? 'new'}
-            initial={toPairs(initial.labels)}
-            onChange={(pairs: Pair[]) => setLabels(fromPairs(pairs))}
-            keyPlaceholder={t('substrate.label_key')}
-            valuePlaceholder={t('substrate.label_value')}
-            addLabel={t('substrate.add_label')}
-          />
-        </Section>
+            {managedTemplate && <ManagedProfile entity={selectedTemplate!} />}
+            <Section title={t('substrate.placement')} hint={t('substrate.placement_hint')}>
+              <KeyValueEditor
+                key={actor?.metadata.uid ?? 'new'}
+                initial={toPairs(initial.labels)}
+                onChange={(pairs: Pair[]) => setLabels(fromPairs(pairs))}
+                keyPlaceholder={t('substrate.label_key')}
+                valuePlaceholder={t('substrate.label_value')}
+                addLabel={t('substrate.add_label')}
+              />
+            </Section>
+          </>
+        )}
       </div>
     </EditorSheet>
   );

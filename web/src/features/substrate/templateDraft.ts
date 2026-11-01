@@ -63,7 +63,7 @@ export function cleaned(draft: ActorTemplate): ActorTemplate {
   const out = clone(draft);
   delete out.status;
   out.metadata = { name: draft.metadata.name };
-  out.containers = out.containers.map((c) => {
+  out.containers = (out.containers ?? []).map((c) => {
     const next: Container = { ...c };
     if (next.env) next.env = next.env.filter((e) => e.name.trim());
     if (next.volumeMounts) next.volumeMounts = next.volumeMounts.filter((m) => m.name.trim());
