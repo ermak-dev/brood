@@ -244,6 +244,14 @@ Machine endpoints:
 - `POST /api/proxmox/llm/<uid>/<generation>/v1/messages`;
 - `POST /api/proxmox/llm/<uid>/<generation>/v1/messages/count_tokens`.
 
+Для pinned Claude Code 2.1.310 оба gateway допускают только канонический
+`limit=1..1000` у каталога и точный `beta=true` у messages/count_tokens.
+Остальные, повторные и percent-encoded query-параметры отвергаются;
+разрешённый query сохраняется до upstream. Проверка настоящим CLI в
+контейнере без сети включает catalog discovery, synthetic SSE и раскрытие
+`mcp__brood__agents`/`mcp__brood__send` через встроенный ToolSearch.
+Модельные ответы этой проверки фиксированные, реальный provider не вызывается.
+
 Сервер проверяет текущий start/running intent перед запросом, подставляет
 серверный ключ и направляет запрос только в настроенный CLIProxyAPI origin.
 Cookies, forwarded identity, management headers и guest Authorization upstream
