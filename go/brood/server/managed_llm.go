@@ -21,7 +21,7 @@ const managedLLMBodyLimit = 8 << 20
 func publicManagedLLMPath(path string) bool { return strings.HasPrefix(path, managedLLMPrefix) }
 
 func managedLLMRoute(r *http.Request) (uid string, generation int64, upstream string, ok bool) {
-	if r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.Fragment != "" || strings.Contains(r.URL.EscapedPath(), "%") {
+	if r.URL.RawPath != "" || r.URL.ForceQuery || r.URL.Fragment != "" || strings.Contains(r.URL.EscapedPath(), "%") {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, managedLLMPrefix), "/")
@@ -46,7 +46,25 @@ func managedLLMRoute(r *http.Request) (uid string, generation int64, upstream st
 	if operation != "models" && operation != "messages" && operation != "messages/count_tokens" {
 		return
 	}
+	if !managedLLMQuery(operation, r.URL.RawQuery) {
+		return
+	}
 	return uid, generation, "/v1/" + operation, true
+}
+
+func managedLLMQuery(operation, query string) bool {
+	if query == "" {
+		return true
+	}
+	if operation == "messages" || operation == "messages/count_tokens" {
+		return query == "beta=true"
+	}
+	limit, ok := strings.CutPrefix(query, "limit=")
+	if operation != "models" || !ok {
+		return false
+	}
+	n, err := strconv.Atoi(limit)
+	return err == nil && n >= 1 && n <= 1000 && strconv.Itoa(n) == limit
 }
 
 func (s *Server) managedLLMHandler(cfg Config) http.Handler {
@@ -68,7 +86,7 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 			pr.SetURL(target)
 			pr.Out.URL.Path = upstream
 			pr.Out.URL.RawPath = ""
-			pr.Out.URL.RawQuery = ""
+			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			pr.Out.URL.ForceQuery = false
 			pr.Out.Host = target.Host
 			// An allowlist also excludes future management/forwarding identity headers.
