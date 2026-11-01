@@ -2639,10 +2639,8 @@
   },
   "actors": {
     "provider": "제공자",
-    "native_provider": "Substrate",
     "profile": "프로필",
     "pool": "논리 풀",
-    "pool_ctid": "논리 풀 / CTID",
     "generation": "세대",
     "details": "상세 정보",
     "details_title": "Actor {{name}} 상세 정보",

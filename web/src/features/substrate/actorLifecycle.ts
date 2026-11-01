@@ -1,11 +1,26 @@
 import type { TFunction } from 'i18next';
 import type { Actor, ActorAction, ActorTemplate } from '@/services/brood/substrate';
-import { shortState } from './format';
+import { DASH, shortState } from './format';
 
 export function actorState(actor: Actor): string {
   return actor.provider === 'proxmox'
     ? (actor.phase ?? '')
     : shortState(actor.status?.state, 'ACTOR_STATE_');
+}
+
+// Одна ячейка вместо колонок провайдера и пула/CTID: managed-строка называет
+// реальный CT Proxmox, а не native-воркер; неизвестные части не показываются.
+// Неразрывные пробелы держат «CT 105» целым и не начинают строку с «·»:
+// на 1280px колонка узкая и текст переносится.
+export function actorPlacement(actor: Actor): string {
+  if (actor.provider !== 'proxmox') {
+    return actor.status?.assignedNode || actor.status?.workerAssignment?.nodeName || DASH;
+  }
+  const { node, ctid, pool } = actor.placement ?? {};
+  const where = ['Proxmox', node, ctid == null ? '' : `CT\u00a0${ctid}`]
+    .filter(Boolean)
+    .join('\u00a0· ');
+  return pool ? `${where} (${pool})` : where;
 }
 
 export function canViewActorDetails(canManage: boolean, actor: Actor | null): boolean {

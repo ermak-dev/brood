@@ -2638,10 +2638,8 @@
   },
   "actors": {
     "provider": "提供方",
-    "native_provider": "Substrate",
     "profile": "配置档案",
     "pool": "逻辑池",
-    "pool_ctid": "逻辑池 / CTID",
     "generation": "代次",
     "details": "详情",
     "details_title": "Actor {{name}} 详情",

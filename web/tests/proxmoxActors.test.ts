@@ -255,10 +255,8 @@ test('actions post only the exact managed intent and preserve server refusal rea
 test('managed lifecycle and destructive confirmation are translated in all six locales', () => {
   const keys = [
     'provider',
-    'native_provider',
     'profile',
     'pool',
-    'pool_ctid',
     'generation',
     'details',
     'details_title',

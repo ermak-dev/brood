@@ -2645,10 +2645,8 @@
   },
   "actors": {
     "provider": "Nhà cung cấp",
-    "native_provider": "Substrate",
     "profile": "Hồ sơ",
     "pool": "Pool logic",
-    "pool_ctid": "Pool logic / CTID",
     "generation": "Thế hệ",
     "details": "Chi tiết",
     "details_title": "Chi tiết actor {{name}}",
