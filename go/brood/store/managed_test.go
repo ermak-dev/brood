@@ -69,6 +69,7 @@ func TestManagedReservationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a = lifecycleConfirm(t, s, a, "running")
 	a, err = s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "stop-1", "stop")
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +83,7 @@ func TestManagedReservationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a = lifecycleConfirm(t, s, a, "stopped")
 	if _, err := s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "start-1", "start"); !errors.Is(err, ErrPoolUnavailable) {
 		t.Fatalf("draining start: %v", err)
 	}
@@ -100,6 +102,8 @@ func TestManagedReservationLifecycle(t *testing.T) {
 	if _, err := s.UpdateManagedActor(ctx, a, a.Revision); err == nil {
 		t.Fatal("unconfirmed delete accepted")
 	}
+	a.Phase = "deleting"
+	a = lifecycleConfirm(t, s, a, "stopped")
 	a, err = s.ConfirmManagedActorDeleted(ctx, a.UID, a.Revision, a.OperationID)
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +157,7 @@ func TestManagedCapacityAndUniqueness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	b = lifecycleConfirm(t, s, b, "running")
 	b, err = s.BeginManagedActorOperation(ctx, b.UID, b.Revision, "stop-b", "stop")
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +254,7 @@ func TestManagedSchemaUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			var v int
-			if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != 3 {
+			if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != 4 {
 				t.Fatalf("version=%d err=%v", v, err)
 			}
 			user, err := st.GetUser(ctx, "u1")

@@ -43,6 +43,7 @@ func TestManagedDeleteIntentCannotBeCanceledByObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a = lifecycleConfirm(t, s, a, "absent")
 	a, err = s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "delete-a", "delete")
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +75,7 @@ func TestManagedPendingIntentBlocksAnotherStart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			a = lifecycleConfirm(t, s, a, "stopped")
 			a, err = s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "intent", operation)
 			if err != nil {
 				t.Fatal(err)
@@ -133,12 +135,13 @@ func TestManagedDurableIntentAndFences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a = lifecycleConfirm(t, s, a, "stopped")
 	oldRevision := a.Revision
 	a, err = s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "reset-1", "reset")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Incarnation != 2 || a.UPID != "" || a.Error != "" || a.Desired != "running" {
+	if a.Incarnation != 1 || a.Stage != "stop" || a.OwnerNonce != "owner-a" || a.UPID != "" || a.Error != "" || a.Desired != "running" {
 		t.Fatalf("reset intent=%+v", a)
 	}
 	same, err := s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "reset-1", "reset")
@@ -253,6 +256,7 @@ func TestManagedClusterCollisionAndConfirmedReuse(t *testing.T) {
 	if err := s.DeleteProject(ctx, "one"); err == nil {
 		t.Fatal("project cascaded managed allocation")
 	}
+	a = lifecycleConfirm(t, s, a, "absent")
 	a, err = s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "delete-a", "delete")
 	if err != nil {
 		t.Fatal(err)
@@ -260,6 +264,7 @@ func TestManagedClusterCollisionAndConfirmedReuse(t *testing.T) {
 	if _, err := s.ConfirmManagedActorDeleted(ctx, a.UID, a.Revision, "wrong"); err == nil {
 		t.Fatal("unrelated cleanup released allocation")
 	}
+	a = lifecycleConfirm(t, s, a, "absent")
 	a, err = s.ConfirmManagedActorDeleted(ctx, a.UID, a.Revision, a.OperationID)
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +283,7 @@ func TestManagedClusterCollisionAndConfirmedReuse(t *testing.T) {
 	}
 }
 func TestManagedDamagedSchemaRefusedWithoutMutation(t *testing.T) {
-	for _, change := range []string{`DROP INDEX managed_actors_live_ctid`, `DROP TABLE managed_actors`, `DROP TRIGGER managed_swarm_delete_guard`, `PRAGMA user_version=4`} {
+	for _, change := range []string{`DROP INDEX managed_actors_live_ctid`, `DROP TABLE managed_actors`, `DROP TRIGGER managed_swarm_delete_guard`, `ALTER TABLE managed_actors DROP COLUMN stage`, `PRAGMA user_version=5`} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "db.sqlite3")
@@ -293,7 +298,7 @@ func TestManagedDamagedSchemaRefusedWithoutMutation(t *testing.T) {
 			s.Close()
 			if st, err := Open(ctx, path); err == nil {
 				st.Close()
-				t.Fatal("damaged version3 accepted")
+				t.Fatal("damaged lifecycle schema accepted")
 			} else if !strings.Contains(err.Error(), "incompatible database schema") {
 				t.Fatal(err)
 			}

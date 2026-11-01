@@ -23,6 +23,7 @@ func TestManagedStopPreservesUnresolvedIntent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			a = lifecycleConfirm(t, s, a, "running")
 			a, err = s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "pending-start", "start")
 			if err != nil {
 				t.Fatal(err)

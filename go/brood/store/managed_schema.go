@@ -5,10 +5,18 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"strings"
 )
 
 //go:embed managed.sql
 var managedSchema string
+
+// Schema 3 is retained verbatim to validate deployed databases before ALTER.
+const managedStageColumn = `stage TEXT NOT NULL DEFAULT 'reconcile' CHECK (stage IN ('reconcile', 'create', 'start', 'stop', 'delete', 'done'))`
+
+func managedLifecycleSchema() string {
+	return strings.TrimSuffix(strings.TrimSpace(managedSchema), ");") + "," + managedStageColumn + ");"
+}
 
 var managedConstraints = []struct{ name, kind, sql string }{
 	{"managed_pools_live_name", "index", `CREATE UNIQUE INDEX managed_pools_live_name ON managed_pools(name) WHERE state <> 'deleted'`},
@@ -41,10 +49,15 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=3`); err != nil {
 			return err
 		}
-	} else if version != 3 {
+		version = 3
+	} else if version != 3 && version != 4 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
-	if err := checkSchema(ctx, tx, managedSchema); err != nil {
+	expectedSchema := managedSchema
+	if version == 4 {
+		expectedSchema = managedLifecycleSchema()
+	}
+	if err := checkSchema(ctx, tx, expectedSchema); err != nil {
 		return err
 	}
 	for _, object := range managedConstraints {
@@ -56,5 +69,16 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			return fmt.Errorf("incompatible database schema: managed constraint %s differs", object.name)
 		}
 	}
-	return nil
+	if version == 3 {
+		for _, statement := range []string{
+			`ALTER TABLE managed_actors ADD COLUMN ` + managedStageColumn,
+			`UPDATE managed_actors SET stage='done' WHERE phase='deleted'`,
+			`PRAGMA user_version=4`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("extend managed lifecycle schema: %w", err)
+			}
+		}
+	}
+	return checkSchema(ctx, tx, managedLifecycleSchema())
 }
