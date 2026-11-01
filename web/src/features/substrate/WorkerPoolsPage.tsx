@@ -8,6 +8,8 @@ import { Select } from '@/components/ui/Select';
 import { BroodApiError, errorMessage } from '@/services/brood/http';
 import { proxmoxPoolsApi, workerPoolsApi, type ProxmoxPool, type WorkerPool } from '@/services/brood/substrate';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
+import { useAdministrator } from '@/features/access/shared';
+import { ConnectionForm } from './ConnectionForm';
 import { EditorSheet } from './components/EditorSheet';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Field, Section } from './components/form';
@@ -56,6 +58,7 @@ function PoolLabels({ pool }: { pool: WorkerPool }) {
 
 export function WorkerPoolsPage() {
   const { t } = useTranslation();
+  const administrator = useAdministrator();
   const { data, error, loading, refresh } = useResource(workerPoolsApi.list);
   const connections = useResource(proxmoxPoolsApi.list, { headerRefresh: false });
   useHeaderRefresh(connections.refresh);
@@ -96,7 +99,7 @@ export function WorkerPoolsPage() {
           )}
         />
       ) : <EmptyState title={t('worker_pools.empty')} description={t('worker_pools.empty_hint')} action={create} />}
-      <ProxmoxConnections items={connections.data} error={connections.error} onRetry={connections.refresh} />
+      <ProxmoxConnections items={connections.data} error={connections.error} onRetry={connections.refresh} canAdd={administrator} />
       {editing && <PoolEditor key={editing.name ?? ''} name={editing.name} onClose={() => setEditing(null)} refresh={refresh} />}
     </div>
   );
@@ -118,13 +121,16 @@ interface ProxmoxConnectionsProps {
   items: ProxmoxPool[] | null;
   error: string | null;
   onRetry: () => void | Promise<void>;
+  /** Форма настройки пула — администратору (#118); без права кнопки нет. */
+  canAdd?: boolean;
 }
 
 /** Подключения и резервирования видны даже при отказе Kubernetes; секреты скрыты. */
-export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnectionsProps) {
+export function ProxmoxConnections({ items, error, onRetry, canAdd }: ProxmoxConnectionsProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const reload = useCallback(async () => { await onRetry(); }, [onRetry]);
   const { confirm } = useActions(reload);
   type PoolAction = 'activate' | 'drain' | 'enable';
@@ -146,7 +152,7 @@ export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnections
       }
     },
   });
-  if (!error && !items?.length) return null;
+  if (!canAdd && !error && !items?.length) return null;
   // Столбцов столько, чтобы действие строки было видно без прокрутки:
   // поля подключения -- одна подписанная ячейка, учётные данные -- в состоянии.
   // У значения ячейки один корень: на телефоне ячейка -- сетка «подпись | значение».
@@ -181,7 +187,11 @@ export function ProxmoxConnections({ items, error, onRetry }: ProxmoxConnections
   ];
   return (
     <section className={styles.section} aria-label={t('proxmox_connections.title')}>
-      <h2 className={styles.sectionTitle}>{t('proxmox_connections.title')}</h2>
+      <div className={styles.sectionHead}>
+        <h2 className={styles.sectionTitle}>{t('proxmox_connections.title')}</h2>
+        {canAdd && <Button size="sm" onClick={() => setAdding(true)}>{t('proxmox_connections.add')}</Button>}
+      </div>
+      {adding && <ConnectionForm onClose={() => setAdding(false)} refresh={reload} />}
       {error ? (
         <div className={styles.toolbar}>
           <p className={styles.fieldError} role="alert">{t('proxmox_connections.load_failed')}</p>
