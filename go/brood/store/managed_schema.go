@@ -50,7 +50,7 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		version = 3
-	} else if version != 3 && version != 4 && version != 5 {
+	} else if version != 3 && version != 4 && version != 5 && version != 6 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
 	expectedSchema := managedSchema
@@ -90,10 +90,22 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			}
 		}
 	}
-	if err := checkSchema(ctx, tx, managedConnectionsSchema); err != nil {
+	if version <= 5 {
+		if err := checkSchema(ctx, tx, managedConnectionsSchema); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE managed_connections ADD COLUMN runtime_config TEXT NOT NULL DEFAULT ''; PRAGMA user_version=6`); err != nil {
+			return fmt.Errorf("extend managed connection runtime: %w", err)
+		}
+	}
+	if err := checkSchema(ctx, tx, managedConnectionsRuntimeSchema()); err != nil {
 		return err
 	}
 	return checkSchema(ctx, tx, managedLifecycleSchema())
+}
+
+func managedConnectionsRuntimeSchema() string {
+	return strings.TrimSuffix(strings.TrimSpace(managedConnectionsSchema), ")") + ",runtime_config TEXT NOT NULL DEFAULT '')"
 }
 
 // managedConnectionsSchema — каталог подключений Proxmox панели (#118).

@@ -58,7 +58,10 @@ type proxmoxPoolDTO struct {
 func loadProxmoxRegistry(get getenv) (*proxmoxRegistry, error) {
 	poolsJSON, tokensJSON := envGet(get, proxmoxPoolsSetting), envGet(get, proxmoxTokensSetting)
 	if poolsJSON == "" && tokensJSON == "" {
-		return nil, nil
+		if envGet(get, "BROOD_PUBLIC_ORIGIN") == "" && envGet(get, "BROOD_PROXMOX_RELAY_SECRET") == "" {
+			return nil, nil
+		}
+		poolsJSON, tokensJSON = "{}", "{}"
 	}
 	if poolsJSON == "" {
 		return nil, proxmoxConfigError(proxmoxPoolsSetting, "is required with BROOD_PROXMOX_TOKENS")
