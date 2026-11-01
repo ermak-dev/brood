@@ -16,6 +16,10 @@ const messageChannel = "brood-swarm-msg"
 // произвольный объём от гостя, а гость — от соседа через сервер.
 const MaxMessageBytes = 128 * 1024
 
+// MaxMessagesInFlight — предел одновременно обрабатываемых сообщений роя
+// на одного гостя: каждый канал держит горутину и запросы к хранилищу.
+const MaxMessagesInFlight = 8
+
 var errMessageTooLarge = errors.New("swarm message exceeds size limit")
 
 // MessageRequest — один запрос гостя к соседу по рою. Проверку адреса

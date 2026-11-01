@@ -224,8 +224,11 @@ func (h *Hub) SetMessageRouter(router MessageRouter) {
 }
 
 // serveChannels разбирает входящие каналы гостя: сообщения роя идут
-// в роутер, остальное отвергается.
+// в роутер, остальное отвергается. Число одновременно обрабатываемых
+// сообщений на гостя ограничено: каждый канал держит горутину и запросы
+// к хранилищу до минуты, без предела это дешёвый DoS.
 func (h *Hub) serveChannels(id identity, channels <-chan ssh.NewChannel) {
+	slots := make(chan struct{}, MaxMessagesInFlight)
 	for c := range channels {
 		if c.ChannelType() != messageChannel {
 			c.Reject(ssh.Prohibited, "channel not permitted")
@@ -238,7 +241,16 @@ func (h *Hub) serveChannels(id identity, channels <-chan ssh.NewChannel) {
 			c.Reject(ssh.Prohibited, "channel not permitted")
 			continue
 		}
-		go serveMessage(router, id.uid, c)
+		select {
+		case slots <- struct{}{}:
+		default:
+			c.Reject(ssh.ResourceShortage, "swarm message limit reached")
+			continue
+		}
+		go func(c ssh.NewChannel) {
+			defer func() { <-slots }()
+			serveMessage(router, id.uid, c)
+		}(c)
 	}
 }
 

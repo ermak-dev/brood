@@ -49,25 +49,48 @@ func serveMessage(router MessageRouter, fromUID string, ch ssh.NewChannel) {
 	_, _ = stream.Write(append(out, '\n'))
 }
 
-// readMessageResponse читает вердикт адресата из канала сообщений: один
-// JSON-объект с пределом размера и таймаутом на чтение.
+// readMessageResponse читает вердикт адресата из канала сообщений: JSON-объект
+// накапливается до перевода строки или EOF — SSH дробит большие записи на
+// пакеты, один Read их не собирает. Общий объём ограничен MaxMessageBytes.
 func readMessageResponse(r io.Reader) (MessageResponse, error) {
-	buf := make([]byte, MaxMessageBytes+1)
-	n, err := r.Read(buf)
-	if err != nil && n == 0 {
-		return MessageResponse{}, fmt.Errorf("swarm message verdict unreadable: %w", err)
-	}
-	if n > MaxMessageBytes {
-		return MessageResponse{}, errMessageTooLarge
+	acc := make([]byte, 0, 1024)
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			if len(acc)+n > MaxMessageBytes {
+				return MessageResponse{}, errMessageTooLarge
+			}
+			acc = append(acc, buf[:n]...)
+			if idx := lastIndexByte(acc, '\n'); idx >= 0 {
+				acc = acc[:idx]
+				break
+			}
+		}
+		if err != nil {
+			if len(acc) > 0 && (err == io.EOF || err == io.ErrUnexpectedEOF) {
+				break
+			}
+			return MessageResponse{}, fmt.Errorf("swarm message verdict unreadable: %w", err)
+		}
 	}
 	var resp MessageResponse
-	if err := json.Unmarshal(buf[:n], &resp); err != nil {
+	if err := json.Unmarshal(acc, &resp); err != nil {
 		return MessageResponse{}, errors.New("invalid swarm message verdict")
 	}
 	if resp.Verdict == "" {
 		return MessageResponse{}, errors.New("empty swarm message verdict")
 	}
 	return resp, nil
+}
+
+func lastIndexByte(b []byte, c byte) int {
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] == c {
+			return i
+		}
+	}
+	return -1
 }
 
 // ReadMessageResponse — экспортированная обёртка для сервера-роутера.
@@ -101,11 +124,16 @@ func (h *Hub) DialMessage(ctx context.Context, uid string, generation int64, fra
 		err error
 	}
 	out := make(chan result)
+	openCtx, openCancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	defer openCancel()
 	go func() {
 		ch, req, err := p.conn.OpenChannel(messageChannel, frame)
 		select {
 		case out <- result{ch, req, err}:
-		case <-ctx.Done():
+		case <-openCtx.Done():
+			// Открытие — короткая операция с собственным дедлайном:
+			// отмена доставки не рвёт SSH-соединение получателя, чьи
+			// терминалы и другие доставки здесь ни при чём.
 			if ch != nil {
 				ch.Close()
 			}
@@ -113,9 +141,8 @@ func (h *Hub) DialMessage(ctx context.Context, uid string, generation int64, fra
 		}
 	}()
 	select {
-	case <-ctx.Done():
-		p.conn.Close()
-		return nil, ctx.Err()
+	case <-openCtx.Done():
+		return nil, errUnavailable
 	case r := <-out:
 		if r.err != nil {
 			release()
