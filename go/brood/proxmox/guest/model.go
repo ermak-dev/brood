@@ -14,6 +14,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,7 +65,7 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 			pr.SetURL(target)
 			pr.Out.URL.Path = "/api/proxmox/llm/" + cfg.ActorUID + "/" + generation + pr.In.URL.Path
 			pr.Out.URL.RawPath = ""
-			pr.Out.URL.RawQuery = ""
+			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			pr.Out.Host = target.Host
 			pr.Out.Header = make(http.Header)
 			for _, key := range []string{"Accept", "Content-Type", "Anthropic-Version", "Anthropic-Beta"} {
@@ -85,7 +86,7 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 	}
 	slots := make(chan struct{}, 8)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != modelAddress || r.Header.Get("Origin") != "" || r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.User != nil {
+		if r.Host != modelAddress || r.Header.Get("Origin") != "" || r.URL.RawPath != "" || !modelQuery(r.URL.Path, r.URL.RawQuery) || r.URL.ForceQuery || r.URL.User != nil {
 			http.Error(w, "model request denied", 403)
 			return
 		}
@@ -127,6 +128,21 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 		r.Trailer = nil
 		proxy.ServeHTTP(w, r)
 	}), nil
+}
+
+func modelQuery(path, query string) bool {
+	if query == "" {
+		return true
+	}
+	if path == "/v1/messages" || path == "/v1/messages/count_tokens" {
+		return query == "beta=true"
+	}
+	limit, ok := strings.CutPrefix(query, "limit=")
+	if path != "/v1/models" || !ok {
+		return false
+	}
+	n, err := strconv.Atoi(limit)
+	return err == nil && n >= 1 && n <= 1000 && strconv.Itoa(n) == limit
 }
 
 // ModelGatewayService owns the supervisor's fixed-loopback model endpoint.
