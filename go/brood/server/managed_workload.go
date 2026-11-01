@@ -23,6 +23,9 @@ type managedWorkloadOperation struct {
 	input        *ateapi.Actor
 	actor        store.ManagedActor
 	saved        store.ManagedActor
+	userID       string
+	role         string
+	parent       *store.ManagedActor
 }
 
 func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
@@ -52,11 +55,26 @@ func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]a
 }
 
 func (o *managedWorkloadOperation) authorize() error {
-	user, ok := auth.UserFromContext(o.context)
-	if !ok {
-		return app.ErrNotAllowed
+	userID := o.userID
+	if userID == "" {
+		user, ok := auth.UserFromContext(o.context)
+		if !ok {
+			return app.ErrNotAllowed
+		}
+		userID = user.ID
 	}
-	allowed, err := o.server.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(o.swarm.ID))
+	if o.role == "master" {
+		u, err := o.server.store.GetUser(o.context, userID)
+		if err != nil || !u.IsAdmin || u.Disabled {
+			return app.ErrNotAllowed
+		}
+	}
+	if o.parent != nil {
+		if err := o.server.managed.authorizeMaster(o.context, *o.parent); err != nil {
+			return err
+		}
+	}
+	allowed, err := o.server.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(o.swarm.ID))
 	if err != nil {
 		return err
 	}
@@ -143,7 +161,17 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if err != nil {
 			return err
 		}
-		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID()})
+		if err := o.authorize(); err != nil {
+			return err
+		}
+		delegator, parentUID := "", ""
+		if o.role == "master" {
+			delegator = o.userID
+		}
+		if o.parent != nil {
+			parentUID = o.parent.UID
+		}
+		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID()})
 		if err != nil {
 			return err
 		}
@@ -237,19 +265,47 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 	return err
 }
 
-func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool) {
+func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, role string) {
 	// The generated profile is the entire execution definition. Native knobs are
 	// not an alternate route for OCI, mounts, egress overrides or arbitrary env.
 	if input.GetSourceTag() != nil || input.GetMetadata().GetUid() != "" || input.GetMetadata().GetVersion() != 0 || input.GetMetadata().GetCreateTime() != nil || input.GetMetadata().GetUpdateTime() != nil || input.GetMetadata().GetDeleteTime() != nil {
 		writeDetail(w, 400, "managed actors accept only name, approved actorTemplate and workerSelector")
 		return
 	}
-	op := &managedWorkloadOperation{server: s, context: r.Context(), swarm: sw, pool: pool, name: input.GetMetadata().GetName(), action: "create", input: input}
-	if err := s.admitWorkload(userID, sw.ID, op); err != nil {
+	a, err := s.createManaged(r.Context(), userID, sw, input, pool, role, nil)
+	if err != nil {
 		managedAPIError(w, r, err)
 		return
 	}
-	writeJSON(w, 201, managedActorJSON(op.saved, pool, sw.AtespaceName))
+	writeJSON(w, 201, managedActorJSON(a, pool, sw.AtespaceName))
+}
+
+// createManaged is shared by human creation and UID-bound delegated creation.
+// A delegated name retry returns its original reservation without provider writes.
+func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, role string, parent *store.ManagedActor) (store.ManagedActor, error) {
+	if role == "" {
+		role = "worker"
+	}
+	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: input.GetMetadata().GetName(), action: "create", input: input, role: role, parent: parent}
+	s.managed.admission.Lock()
+	defer s.managed.admission.Unlock()
+	if err := op.authorize(); err != nil {
+		return store.ManagedActor{}, err
+	}
+	if parent != nil {
+		a, err := s.store.LookupManagedActor(ctx, sw.ID, op.name)
+		if err == nil {
+			if a.ParentUID != parent.UID || a.PoolUID != pool.UID || a.Template != parent.Template || a.AtespaceUID != sw.AtespaceUID {
+				return store.ManagedActor{}, app.ErrExists
+			}
+			return a, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return store.ManagedActor{}, err
+		}
+	}
+	err := s.app.AdmitWorkload(userID, sw.ID, op)
+	return op.saved, err
 }
 
 func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, a store.ManagedActor) {

@@ -279,7 +279,8 @@ func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var actor ateapi.Actor
-	if !parseBody(w, r, &actor) {
+	role, parsed := parseActorCreation(w, r, &actor)
+	if !parsed {
 		return
 	}
 	name := actor.GetMetadata().GetName()
@@ -292,10 +293,14 @@ func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pool, err := s.managed.templatePool(r.Context(), actor.GetActorTemplate().GetName()); err == nil {
-		s.createManagedActor(w, r, user.ID, sw, &actor, pool)
+		s.createManagedActor(w, r, user.ID, sw, &actor, pool, role)
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		apiError(w, r, err)
+		return
+	}
+	if role != "" {
+		writeDetail(w, 400, "role is supported only for managed actors")
 		return
 	}
 	scoped(&actor, sw.AtespaceName)

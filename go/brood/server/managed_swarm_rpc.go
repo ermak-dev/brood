@@ -3,10 +3,57 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 
+	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/proxmox/relay"
+	"brood.dev/go/brood/store"
+	ateapi "go.ate.dev/substrate/api/ateapi/v1"
 )
+
+var managedActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+
+func managedAddRefusal(err error) string {
+	var capacity *app.CapacityExceededError
+	switch {
+	case errors.Is(err, app.ErrNotAllowed):
+		return "actor creation refused: master delegation is not authorized"
+	case errors.Is(err, app.ErrExists), store.IsUniqueViolation(err):
+		return "actor creation refused: actor name or allocation is already in use"
+	case errors.Is(err, store.ErrPoolCapacity), errors.As(err, &capacity):
+		return "actor creation refused: pool or project capacity exhausted"
+	case errors.Is(err, store.ErrPoolUnavailable):
+		return "actor creation refused: managed pool is not enabled"
+	case errors.Is(err, app.ErrInvalidWorkload):
+		return "actor creation refused: invalid workload or required worker selector"
+	case errors.Is(err, app.ErrConflict):
+		return "actor creation refused: managed runtime or namespace binding conflict"
+	default:
+		return "actor creation refused: managed resource or provider unavailable"
+	}
+}
+
+// authorizeMaster rechecks the durable UID/generation and its human approval.
+func (m *managedProvider) authorizeMaster(ctx context.Context, original store.ManagedActor) error {
+	a, err := m.server.store.GetManagedActor(ctx, original.UID)
+	if err != nil || a.Incarnation != original.Incarnation || a.Role != "master" || a.DelegatorID == "" || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
+		return app.ErrNotAllowed
+	}
+	u, err := m.server.store.GetUser(ctx, a.DelegatorID)
+	if err != nil || u.Disabled || !u.IsAdmin {
+		return app.ErrNotAllowed
+	}
+	allowed, err := m.server.app.Can(u.ID, app.ActionManageSwarm, app.SwarmRes(a.SwarmID))
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return app.ErrNotAllowed
+	}
+	return nil
+}
 
 func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, generation int64, req relay.SwarmRequest) relay.SwarmResponse {
 	refused := relay.SwarmResponse{Text: "swarm operation refused"}
@@ -19,6 +66,23 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 		return refused
 	}
 	switch req.Tool {
+	case "add":
+		if err := m.authorizeMaster(ctx, from); err != nil {
+			return relay.SwarmResponse{Text: "master delegation is not authorized"}
+		}
+		if len(req.To) > 63 || !managedActorName.MatchString(req.To) {
+			return relay.SwarmResponse{Text: "actor name must be a DNS label of at most 63 characters"}
+		}
+		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
+		if err != nil || pool.Template != from.Template || pool.SourceFingerprint != from.SourceFingerprint {
+			return refused
+		}
+		input := &ateapi.Actor{Metadata: &ateapi.ResourceMetadata{Name: req.To}, ActorTemplate: &ateapi.ObjectRef{Name: managedTemplatePrefix + pool.Name}}
+		a, err := m.server.createManaged(ctx, from.DelegatorID, toAppSwarm(swarm), input, pool, "worker", &from)
+		if err != nil && a.UID == "" {
+			return relay.SwarmResponse{Text: managedAddRefusal(err)}
+		}
+		return relay.SwarmResponse{OK: true, Text: fmt.Sprintf("actor %q reserved (uid %s); provisioning is asynchronous, not a readiness confirmation; current state: %s", a.Name, a.UID, a.Phase)}
 	case "agents":
 		actors, err := m.server.store.ListManagedActors(ctx, from.SwarmID)
 		if err != nil {
@@ -27,6 +91,7 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 		type actor struct {
 			Name  string `json:"name"`
 			State string `json:"state"`
+			Role  string `json:"role"`
 		}
 		roster := struct {
 			Self   string  `json:"self"`
@@ -35,7 +100,7 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 		}{Self: from.Name, Scope: "managed actors in this swarm", Actors: []actor{}}
 		for _, a := range actors {
 			if a.Phase != "deleted" {
-				roster.Actors = append(roster.Actors, actor{Name: a.Name, State: a.Phase})
+				roster.Actors = append(roster.Actors, actor{Name: a.Name, State: a.Phase, Role: a.Role})
 			}
 		}
 		data, err := json.Marshal(roster)
@@ -51,7 +116,7 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 		if m.hub == nil || !m.hub.Connected(to.UID, to.Incarnation) || m.deliverMessage == nil {
 			return relay.SwarmResponse{Text: "recipient is not connected"}
 		}
-		body := req.Message + fmt.Sprintf("\n\n[brood swarm] Reply to the sender using mcp__brood__send(to=%q, message=...). Use mcp__brood__agents for managed actors in this swarm; built-in SendMessage does not reach them.", from.Name)
+		body := req.Message + fmt.Sprintf("\n\n[brood swarm] Reply to the sender using mcp__mop__send(to=%q, message=...). Use mcp__mop__agents for managed actors in this swarm; built-in SendMessage does not reach them.", from.Name)
 		response, err := m.deliverMessage(ctx, to.UID, to.Incarnation, relay.MessageRequest{To: to.Name, From: from.Name, Body: body, WaitSec: req.WaitSeconds})
 		if err != nil {
 			return relay.SwarmResponse{Text: "recipient did not confirm delivery"}

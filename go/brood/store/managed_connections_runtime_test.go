@@ -51,6 +51,11 @@ func TestManagedConnectionV5Migration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for _, column := range []string{"role", "delegator_id", "parent_uid"} {
+		if _, err := db.Exec(`ALTER TABLE managed_actors DROP COLUMN ` + column); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := db.Exec(`INSERT INTO managed_connections VALUES ('c','legacy','https://pve.invalid','a@b!c','keep-secret','keep-ca','n','r','s','v','created','updated'); PRAGMA user_version=5`); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +66,7 @@ func TestManagedConnectionV5Migration(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version int
-		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 6 {
+		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 7 {
 			t.Fatalf("version=%d err=%v", version, err)
 		}
 		rows, err := s.ListManagedConnections(ctx)
