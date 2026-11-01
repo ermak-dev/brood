@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -192,7 +193,7 @@ func PeerToken(sockPath, sessionsDir string) (string, error) {
 		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(sessionsDir, name))
+		data, err := readSessionFile(filepath.Join(sessionsDir, name))
 		if err != nil {
 			continue
 		}
@@ -204,6 +205,24 @@ func PeerToken(sockPath, sessionsDir string) (string, error) {
 		}
 	}
 	return "", errors.New("peer token not found for socket")
+}
+
+func readSessionFile(path string) ([]byte, error) {
+	const limit = 128 * 1024
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > limit {
+		return nil, errors.New("invalid session file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if len(data) > limit {
+		return nil, errors.New("session file exceeds size limit")
+	}
+	return data, err
 }
 
 // Session — запись файла ~/.claude/sessions/<pid>.json, сколько нужно каналу.
@@ -228,7 +247,7 @@ func FindSessions(sessionsDir string) ([]Session, error) {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(sessionsDir, entry.Name()))
+		data, err := readSessionFile(filepath.Join(sessionsDir, entry.Name()))
 		if err != nil {
 			continue
 		}

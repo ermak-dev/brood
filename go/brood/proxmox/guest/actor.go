@@ -144,7 +144,7 @@ func (p *actorProcess) Close() error {
 	defer cancel()
 	return drainActorProcesses(ctx, sweepActorUID)
 }
-func launchActor(_ context.Context, spec ActorSpec) (Process, error) {
+func guestHelperCommand(spec ActorSpec) (*exec.Cmd, error) {
 	// Only the current trusted executable can implement the privilege gate.
 	self, err := os.Executable()
 	if err != nil {
@@ -170,6 +170,13 @@ func launchActor(_ context.Context, spec ActorSpec) (Process, error) {
 	cmd.Env = spec.Env
 	cmd.Dir = spec.Dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000, Groups: []uint32{}}, Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	return cmd, nil
+}
+func launchActor(_ context.Context, spec ActorSpec) (Process, error) {
+	cmd, err := guestHelperCommand(spec)
+	if err != nil {
+		return nil, err
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("actor helper start failed: %s", safeExecError(err))
 	}

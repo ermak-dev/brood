@@ -37,6 +37,7 @@ type actorRuntime interface {
 }
 type dependencies struct {
 	actor   func() error
+	message func(context.Context) error
 	euid    func() int
 	network func(context.Context) (service, error)
 	start   func(context.Context, []string) (actorRuntime, error)
@@ -94,7 +95,7 @@ func parseConfig(env []string) (config, error) {
 	} else if strings.HasSuffix(u.Host, ":") {
 		return c, errors.New("invalid guest relay port")
 	}
-	c.relay = relay.ClientConfig{URL: values["BROOD_GUEST_RELAY_URL"], ActorUID: values["BROOD_GUEST_ACTOR_UID"], Generation: generation, Token: values["BROOD_GUEST_RELAY_TOKEN"], HostKey: values["BROOD_GUEST_RELAY_HOST_KEY"], CAPEM: ca, DialTarget: terminalDial}
+	c.relay = relay.ClientConfig{URL: values["BROOD_GUEST_RELAY_URL"], ActorUID: values["BROOD_GUEST_ACTOR_UID"], Generation: generation, Token: values["BROOD_GUEST_RELAY_TOKEN"], HostKey: values["BROOD_GUEST_RELAY_HOST_KEY"], CAPEM: ca, DialTarget: terminalDial, HandleMessage: guest.DeliverMessage}
 	// Отменённый контекст проверяет реальный контракт relay без сетевого запроса.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -110,8 +111,11 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	if len(args) == 1 && args[0] == "--brood-guest-actor" {
 		return d.actor()
 	}
+	if len(args) == 1 && args[0] == "--brood-guest-message" {
+		return d.message(ctx)
+	}
 	if len(args) != 0 {
-		return errors.New("brood-guest accepts no arguments except --brood-guest-actor")
+		return errors.New("brood-guest accepts only fixed actor or message helper flags")
 	}
 	c, err := parseConfig(env())
 	if err != nil {
@@ -201,7 +205,7 @@ func cancellationOnly(err error) bool {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	d := dependencies{actor: guest.RunActor, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
+	d := dependencies{actor: guest.RunActor, message: runMessageHelper, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
 	}, relay: relay.RunClient}
 	err := dispatch(ctx, os.Args[1:], func() []string {
