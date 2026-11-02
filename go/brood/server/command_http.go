@@ -161,6 +161,9 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	})
 	result, err := s.executeOperatorCommand(commandContext, user.ID, scope, caller, inv)
 	if err != nil {
+		if result.Outcome == "unconfirmed" || result.Outcome == "unknown" {
+			w.Header().Set("X-Brood-Command-Outcome", "unconfirmed")
+		}
 		if errors.Is(err, app.ErrNotAllowed) || errors.Is(err, app.ErrNotFound) || errors.Is(err, app.ErrConflict) {
 			apiError(w, r, err)
 		} else {
