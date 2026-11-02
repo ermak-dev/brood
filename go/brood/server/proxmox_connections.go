@@ -66,6 +66,7 @@ func (s *Server) mountProxmoxConnections() {
 		}
 		writeJSON(w, 201, connectionDTO(c))
 	}))
+	s.mux.HandleFunc("POST /api/proxmox-connections/{uid}/clone", s.adminProxmoxConnections(s.cloneProxmoxConnection))
 	s.mux.HandleFunc("DELETE /api/proxmox-connections/{uid}", s.adminProxmoxConnections(func(w http.ResponseWriter, r *http.Request) {
 		s.managed.admission.Lock()
 		defer s.managed.admission.Unlock()
@@ -82,6 +83,101 @@ func (s *Server) mountProxmoxConnections() {
 		}
 		w.WriteHeader(204)
 	}))
+}
+
+func (s *Server) cloneProxmoxConnection(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeDetail(w, 400, "invalid clone payload")
+		return
+	}
+	fields, err := proxmoxObject(string(raw))
+	if err != nil {
+		writeDetail(w, 400, "invalid clone payload")
+		return
+	}
+	for key := range fields {
+		switch key {
+		case "name", "template", "templateDigest", "capacity":
+		default:
+			writeDetail(w, 400, "invalid clone payload")
+			return
+		}
+	}
+	for _, key := range []string{"name", "template", "templateDigest", "capacity"} {
+		if _, ok := fields[key]; !ok {
+			writeDetail(w, 422, "clone requires name, template, templateDigest and capacity")
+			return
+		}
+	}
+	// Тот же lock защищает UID источника от удаления и сериализует admission.
+	s.managed.admission.Lock()
+	defer s.managed.admission.Unlock()
+	rows, err := s.store.ListManagedConnections(r.Context())
+	if err != nil {
+		writeDetail(w, 500, "managed connections unavailable")
+		return
+	}
+	var source *store.ManagedConnection
+	for i := range rows {
+		if rows[i].UID == r.PathValue("uid") {
+			source = &rows[i]
+			break
+		}
+	}
+	if source == nil {
+		writeDetail(w, 404, "connection not found")
+		return
+	}
+	secret, err := s.store.ManagedConnectionSecret(r.Context(), source.Name)
+	if err != nil {
+		writeDetail(w, 500, "managed connection unavailable")
+		return
+	}
+	// Только сервер дополняет разрешённый ввод credential и областью источника.
+	for key, value := range map[string]string{
+		"endpoint": source.Endpoint, "tokenID": source.TokenID, "tokenSecret": secret,
+		"caPEM": source.CAPEM, "node": source.Node, "resourcePool": source.ResourcePool,
+		"storage": source.Storage, "network": source.Network,
+	} {
+		fields[key], _ = json.Marshal(value)
+	}
+	c, err := parseProxmoxConnection(fields)
+	if err != nil {
+		writeDetail(w, 422, err.Error())
+		return
+	}
+	if s.managed.registry != nil {
+		if _, exists := s.managed.registry.pools[c.Name]; exists {
+			writeDetail(w, 409, "connection name already exists in environment configuration")
+			return
+		}
+	}
+	// Middleware мог проверить сессию до ожидания тела или admission lock.
+	// Перед записью нужны действующая сессия и текущая роль из БД, не snapshot.
+	if !s.validProxySession(r) {
+		writeDetail(w, 401, "authentication required")
+		return
+	}
+	user, ok := currentUser(w, r)
+	if !ok {
+		return
+	}
+	current, err := s.store.GetUser(r.Context(), user.ID)
+	if err != nil || current.Disabled {
+		writeDetail(w, 401, "authentication required")
+		return
+	}
+	if !current.IsAdmin {
+		writeDetail(w, 403, "administrator access required")
+		return
+	}
+	c, err = s.store.CreateManagedConnection(r.Context(), c)
+	if err != nil {
+		writeDetail(w, 409, "connection name already exists or is invalid")
+		return
+	}
+	writeJSON(w, 201, connectionDTO(c))
 }
 
 func (s *Server) adminProxmoxConnections(next http.HandlerFunc) http.HandlerFunc {
