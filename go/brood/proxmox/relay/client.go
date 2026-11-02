@@ -34,6 +34,11 @@ type ClientConfig struct {
 	// cancellation and never dial actor-supplied socket paths as root.
 	HandleMessage  func(context.Context, MessageRequest) MessageResponse `json:"-"`
 	OnSwarmSession func(context.Context, SwarmCaller)                    `json:"-"`
+	// Session handles authenticated server session operations independently.
+	Session func(context.Context, SessionRequest) SessionResponse `json:"-"`
+	// SessionFactory overrides Session with fresh state for each authenticated
+	// connection. Its context is canceled on disconnect, including reconnects.
+	SessionFactory func(context.Context) func(context.Context, SessionRequest) SessionResponse `json:"-"`
 }
 
 func (ClientConfig) String() string     { return "relay.ClientConfig{redacted}" }
@@ -45,6 +50,8 @@ type clientOptions struct {
 	target         func(context.Context) (net.Conn, error)
 	message        func(context.Context, MessageRequest) MessageResponse
 	onSwarmSession func(context.Context, SwarmCaller)
+	session        func(context.Context, SessionRequest) SessionResponse
+	sessionFactory func(context.Context) func(context.Context, SessionRequest) SessionResponse
 }
 
 func options(c ClientConfig) (*clientOptions, error) {
@@ -85,7 +92,7 @@ func options(c ClientConfig) (*clientOptions, error) {
 	}
 	wc.TlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: u.Hostname()}
 	wc.Header.Set("Authorization", "Bearer "+c.Token)
-	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget, c.HandleMessage, c.OnSwarmSession}, nil
+	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget, c.HandleMessage, c.OnSwarmSession, c.Session, c.SessionFactory}, nil
 }
 
 // RunClient reconnects with bounded exponential backoff until ctx is canceled.
@@ -144,16 +151,35 @@ func runAttempt(ctx context.Context, o *clientOptions) bool {
 	if o.onSwarmSession != nil {
 		go o.onSwarmSession(session, swarmCaller(conn, session))
 	}
-	serveTargets(session, channels, o.target, o.message)
+	handler := o.session
+	if o.sessionFactory != nil {
+		handler = o.sessionFactory(session)
+	}
+	serveTargets(session, channels, o.target, o.message, handler)
 	<-done
 	return true
 }
-func serveTargets(ctx context.Context, channels <-chan ssh.NewChannel, target func(context.Context) (net.Conn, error), message func(context.Context, MessageRequest) MessageResponse) {
+func serveTargets(ctx context.Context, channels <-chan ssh.NewChannel, target func(context.Context) (net.Conn, error), message func(context.Context, MessageRequest) MessageResponse, session func(context.Context, SessionRequest) SessionResponse) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	slots := make(chan struct{}, MaxStreams)
 	messageSlots := make(chan struct{}, MaxMessagesInFlight)
 	for ch := range channels {
+		if ch.ChannelType() == sessionChannel && session != nil {
+			select {
+			case messageSlots <- struct{}{}:
+			default:
+				ch.Reject(ssh.ResourceShortage, "session stream limit reached")
+				continue
+			}
+			wg.Add(1)
+			go func(ch ssh.NewChannel) {
+				defer wg.Done()
+				defer func() { <-messageSlots }()
+				serveGuestSession(ctx, session, ch)
+			}(ch)
+			continue
+		}
 		if ch.ChannelType() == messageChannel && message != nil {
 			select {
 			case messageSlots <- struct{}{}:

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"brood.dev/go/brood/command"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -18,21 +19,75 @@ var swarmActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
 // SwarmRequest contains no sender identity, credentials, address or command.
 type SwarmRequest struct {
-	Tool        string `json:"tool"`
-	To          string `json:"to,omitempty"`
-	Message     string `json:"message,omitempty"`
-	WaitSeconds int    `json:"wait_seconds,omitempty"`
+	Tool        string          `json:"tool"`
+	To          string          `json:"to,omitempty"`
+	Message     string          `json:"message,omitempty"`
+	WaitSeconds int             `json:"wait_seconds,omitempty"`
+	Arguments   json.RawMessage `json:"arguments,omitempty"`
 }
 
 type SwarmResponse struct {
-	OK   bool   `json:"ok"`
-	Text string `json:"text"`
+	OK      bool            `json:"ok"`
+	Text    string          `json:"text"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	Outcome string          `json:"outcome,omitempty"`
+}
+
+// DecodeSwarmResponse validates the envelope independently of display text.
+// Legacy replies without an outcome still require nonempty text.
+func DecodeSwarmResponse(data []byte) (SwarmResponse, bool) {
+	if len(data) > MaxMessageBytes || !uniqueSwarmFields(data) {
+		return SwarmResponse{}, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return SwarmResponse{}, false
+	}
+	for name := range fields {
+		switch name {
+		case "ok", "text", "data", "outcome":
+		default:
+			return SwarmResponse{}, false
+		}
+	}
+	var envelope struct {
+		OK      *bool           `json:"ok"`
+		Text    *string         `json:"text"`
+		Data    json.RawMessage `json:"data"`
+		Outcome string          `json:"outcome"`
+	}
+	if json.Unmarshal(data, &envelope) != nil || envelope.OK == nil || envelope.Text == nil || bytes.Equal(bytes.TrimSpace(fields["outcome"]), []byte("null")) {
+		return SwarmResponse{}, false
+	}
+	response := SwarmResponse{OK: *envelope.OK, Text: *envelope.Text, Data: envelope.Data, Outcome: envelope.Outcome}
+	if response.Outcome == "" {
+		return response, response.Text != ""
+	}
+	if response.OK {
+		switch response.Outcome {
+		case "ok", "complete", "completed", "accepted", "confirmed", "not_retried", "submitted":
+		default:
+			return SwarmResponse{}, false
+		}
+	}
+	return response, true
 }
 
 type SwarmCaller func(context.Context, SwarmRequest) SwarmResponse
 type SwarmHandler func(context.Context, string, int64, SwarmRequest) SwarmResponse
 
 func validSwarmRequest(r SwarmRequest) bool {
+	if len(r.Arguments) != 0 {
+		if r.To != "" || r.Message != "" || r.WaitSeconds != 0 {
+			return false
+		}
+		spec, ok := command.Lookup(r.Tool)
+		if !ok || !spec.Guest {
+			return false
+		}
+		_, err := command.ParseTool(r.Tool, r.Arguments)
+		return err == nil
+	}
 	if r.WaitSeconds < 0 || r.WaitSeconds > 300 {
 		return false
 	}
@@ -46,7 +101,7 @@ func validSwarmRequest(r SwarmRequest) bool {
 }
 
 func DecodeSwarmRequest(data []byte) (SwarmRequest, bool) {
-	if len(data) > MaxMessageBytes {
+	if len(data) > MaxMessageBytes || !uniqueSwarmFields(data) {
 		return SwarmRequest{}, false
 	}
 	var r SwarmRequest
@@ -56,6 +111,47 @@ func DecodeSwarmRequest(data []byte) (SwarmRequest, bool) {
 		return r, false
 	}
 	return r, validSwarmRequest(r)
+}
+
+func uniqueSwarmFields(data []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(data))
+	open, err := d.Token()
+	if err != nil || open != json.Delim('{') {
+		return false
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		key, err := d.Token()
+		name, ok := key.(string)
+		if err != nil || !ok || seen[name] {
+			return false
+		}
+		seen[name] = true
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return false
+		}
+	}
+	_, err = d.Token()
+	return err == nil && d.Decode(new(any)) == io.EOF
+}
+
+// SwarmWaitSeconds extracts the bounded wait from an already validated request.
+func SwarmWaitSeconds(input SwarmRequest) int {
+	if len(input.Arguments) == 0 {
+		return input.WaitSeconds
+	}
+	var args struct {
+		WaitSeconds int `json:"wait_seconds"`
+		Wait        int `json:"wait"`
+	}
+	if json.Unmarshal(input.Arguments, &args) != nil {
+		return 0
+	}
+	if args.Wait > args.WaitSeconds {
+		return args.Wait
+	}
+	return args.WaitSeconds
 }
 
 func (h *Hub) SetSwarmHandler(handler SwarmHandler) {
@@ -84,7 +180,7 @@ func (h *Hub) serveSwarmRequests(p *peer, requests <-chan *ssh.Request) {
 			_ = req.Reply(false, nil)
 			continue
 		}
-		ctx, cancel := context.WithTimeout(p.ctx, time.Duration(input.WaitSeconds)*time.Second+15*time.Second)
+		ctx, cancel := context.WithTimeout(p.ctx, time.Duration(SwarmWaitSeconds(input))*time.Second+15*time.Second)
 		response := handler(ctx, p.id.uid, p.id.generation, input)
 		cancel()
 		if !h.currentPeer(p) {
@@ -120,8 +216,8 @@ func swarmCaller(conn ssh.Conn, session context.Context) SwarmCaller {
 		go func() {
 			defer func() { <-slots }()
 			ok, reply, err := conn.SendRequest(swarmRPC, true, data)
-			var response SwarmResponse
-			if err != nil || !ok || len(reply) > MaxMessageBytes || json.Unmarshal(reply, &response) != nil || response.Text == "" {
+			response, valid := DecodeSwarmResponse(reply)
+			if err != nil || !ok || !valid {
 				done <- failed
 				return
 			}

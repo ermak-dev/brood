@@ -8,9 +8,9 @@ import (
 	"regexp"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/relay"
 	"brood.dev/go/brood/store"
-	ateapi "go.ate.dev/substrate/api/ateapi/v1"
 )
 
 var managedActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
@@ -65,24 +65,22 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 	if err != nil || swarm.State != "active" || swarm.AtespaceUID == nil || *swarm.AtespaceUID != from.AtespaceUID {
 		return refused
 	}
-	switch req.Tool {
-	case "add":
-		if err := m.authorizeMaster(ctx, from); err != nil {
-			return relay.SwarmResponse{Text: "master delegation is not authorized"}
-		}
-		if len(req.To) > 63 || !managedActorName.MatchString(req.To) {
-			return relay.SwarmResponse{Text: "actor name must be a DNS label of at most 63 characters"}
-		}
-		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
-		if err != nil || pool.Template != from.Template || pool.SourceFingerprint != from.SourceFingerprint {
+	if len(req.Arguments) != 0 {
+		inv, err := command.ParseTool(req.Tool, req.Arguments)
+		spec, ok := command.Lookup(req.Tool)
+		if err != nil || !ok || !spec.Guest {
 			return refused
 		}
-		input := &ateapi.Actor{Metadata: &ateapi.ResourceMetadata{Name: req.To}, ActorTemplate: &ateapi.ObjectRef{Name: managedTemplatePrefix + pool.Name}}
-		a, err := m.server.createManaged(ctx, from.DelegatorID, toAppSwarm(swarm), input, pool, "worker", &from)
-		if err != nil && a.UID == "" {
-			return relay.SwarmResponse{Text: managedAddRefusal(err)}
+		return m.handleActorCommand(ctx, from, inv)
+	}
+	switch req.Tool {
+	case "add":
+		args, _ := json.Marshal(map[string]string{"name": req.To})
+		result, err := m.executeLifecycleCommand(ctx, from, command.Invocation{Name: "add", Arguments: args})
+		if err != nil {
+			return relay.SwarmResponse{Text: err.Error()}
 		}
-		return relay.SwarmResponse{OK: true, Text: fmt.Sprintf("actor %q reserved (uid %s); provisioning is asynchronous, not a readiness confirmation; current state: %s", a.Name, a.UID, a.Phase)}
+		return commandSwarmResponse(result)
 	case "agents":
 		actors, err := m.server.store.ListManagedActors(ctx, from.SwarmID)
 		if err != nil {
@@ -116,7 +114,7 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 		if m.hub == nil || !m.hub.Connected(to.UID, to.Incarnation) || m.deliverMessage == nil {
 			return relay.SwarmResponse{Text: "recipient is not connected"}
 		}
-		body := req.Message + fmt.Sprintf("\n\n[brood swarm] Reply to the sender using mcp__mop__send(to=%q, message=...). Use mcp__mop__agents for managed actors in this swarm; built-in SendMessage does not reach them.", from.Name)
+		body := req.Message + fmt.Sprintf("\n\n[brood swarm] Reply to the sender using mcp__brood__send(to=%q, message=...). Use mcp__brood__agents for managed actors in this swarm; built-in SendMessage does not reach them.", from.Name)
 		response, err := m.deliverMessage(ctx, to.UID, to.Incarnation, relay.MessageRequest{To: to.Name, From: from.Name, Body: body, WaitSec: req.WaitSeconds})
 		if err != nil {
 			return relay.SwarmResponse{Text: "recipient did not confirm delivery"}

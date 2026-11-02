@@ -50,7 +50,8 @@ type Server struct {
 	mux       *http.ServeMux
 	cancel    context.CancelFunc
 
-	managedLLM http.Handler
+	managedLLM  http.Handler
+	adminModels *adminModelClient
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -86,6 +87,10 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	catalog, err := OpenCatalog(cfg.DBPath)
 	if err != nil {
 		return nil, err
+	}
+	if err := st.RecoverActorOperations(ctx); err != nil {
+		catalog.Close()
+		return nil, errors.New("workspace operation recovery failed")
 	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}}
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
@@ -154,6 +159,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProxmoxPools(cfg.proxmox)
 	srv.mountProxmoxConnections()
 	srv.mountLLM(cfg)
+	srv.adminModels = newAdminModelClient(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
 	srv.mountPush(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
@@ -221,6 +227,7 @@ func (s *Server) Handler() http.Handler {
 
 // mount регистрирует маршруты сервера.
 func (s *Server) mount() {
+	s.mux.HandleFunc("POST /api/commands/{tool}", s.handleCommand)
 	// Проба готовности и панель — до аутентификации (mount в mux до
 	// middleware, но healthz обрабатывается здесь же, анонимно).
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)

@@ -43,6 +43,7 @@ type swarmBroker interface {
 type dependencies struct {
 	actor   func() error
 	message func(context.Context) error
+	session func(context.Context) error
 	mcp     func(context.Context) error
 	broker  func(context.Context) (swarmBroker, error)
 	model   func(context.Context, relay.ClientConfig) (service, error)
@@ -103,7 +104,7 @@ func parseConfig(env []string) (config, error) {
 	} else if strings.HasSuffix(u.Host, ":") {
 		return c, errors.New("invalid guest relay port")
 	}
-	c.relay = relay.ClientConfig{URL: values["BROOD_GUEST_RELAY_URL"], ActorUID: values["BROOD_GUEST_ACTOR_UID"], Generation: generation, Token: values["BROOD_GUEST_RELAY_TOKEN"], HostKey: values["BROOD_GUEST_RELAY_HOST_KEY"], CAPEM: ca, DialTarget: terminalDial, HandleMessage: guest.DeliverMessage}
+	c.relay = relay.ClientConfig{URL: values["BROOD_GUEST_RELAY_URL"], ActorUID: values["BROOD_GUEST_ACTOR_UID"], Generation: generation, Token: values["BROOD_GUEST_RELAY_TOKEN"], HostKey: values["BROOD_GUEST_RELAY_HOST_KEY"], CAPEM: ca, DialTarget: terminalDial, HandleMessage: guest.DeliverMessage, SessionFactory: guest.NewSessionHandler}
 	// Отменённый контекст проверяет реальный контракт relay без сетевого запроса.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -121,6 +122,9 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	}
 	if len(args) == 1 && args[0] == "--brood-guest-message" {
 		return d.message(ctx)
+	}
+	if len(args) == 1 && args[0] == "--brood-guest-session" {
+		return d.session(ctx)
 	}
 	if len(args) == 1 && args[0] == "mcp" {
 		return d.mcp(ctx)
@@ -237,7 +241,7 @@ func cancellationOnly(err error) bool {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	d := dependencies{actor: guest.RunActor, message: runMessageHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+	d := dependencies{actor: guest.RunActor, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 		return guest.StartModelGateway(ctx, cfg)
 	}, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})

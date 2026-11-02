@@ -214,6 +214,11 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if o.action != "delete" && observed == "absent" {
 			return fmt.Errorf("%w: owned container is absent; delete the retained allocation before creating another", app.ErrConflict)
 		}
+		// Пока провайдер отвечает, доступ человека или делегацию могут отозвать.
+		// Повторная проверка нужна перед записью намерения, не только до чтения.
+		if err := o.authorize(); err != nil {
+			return err
+		}
 		// Avoid publishing a transient running phase for a task-only start that
 		// is immediately being deleted. Both local transitions commit together,
 		// before submitting the new provider write.

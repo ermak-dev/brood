@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// FEATURE: Managed actors use the brood command adapter.
+// SPEC: Explicit guest mode, additive brood namespace, no supervisor binary.
 func TestClaudeReceivesAdditiveCredentialFreeMCPConfig(t *testing.T) {
 	args := actorArgs()
 	var value string
@@ -30,11 +32,11 @@ func TestClaudeReceivesAdditiveCredentialFreeMCPConfig(t *testing.T) {
 	if json.Unmarshal([]byte(value), &config) != nil {
 		t.Fatal("invalid MCP config")
 	}
-	server := config.MCPServers["mop"]
+	server := config.MCPServers["brood"]
 	if len(config.MCPServers) != 1 {
 		t.Fatalf("unexpected MCP namespaces: %v", config.MCPServers)
 	}
-	if server.Command != "/usr/local/bin/brood-guest" || len(server.Args) != 1 || server.Args[0] != "mcp" {
+	if server.Command != "/usr/local/bin/bro" || len(server.Args) != 2 || server.Args[0] != "--guest" || server.Args[1] != "mcp" {
 		t.Fatalf("server: %+v", server)
 	}
 }

@@ -6,15 +6,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
+	"brood.dev/go/brood/command"
+	"brood.dev/go/brood/mcp"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
-// FEATURE: Brood orchestration in the mop compatibility namespace.
-// SPEC: Expose agents/add/send; add accepts only a name and uses the bound relay.
-// IMPLEMENTATION: Register mop and map add(name) to the existing scoped request.
+// FEATURE: Brood orchestration through the shared command adapter.
+// SPEC: Preserve agents/add/send and forward extended catalog arguments.
+// IMPLEMENTATION: Share the MCP lifecycle and retain legacy scoped request mapping.
 // RESULT: IMPLEMENTED — strict arguments, name bounds and server refusals verified.
 // STATUS: DONE
 func TestMCPToolsUseOnlySwarmBroker(t *testing.T) {
@@ -50,11 +53,16 @@ func TestMCPToolsUseOnlySwarmBroker(t *testing.T) {
 		t.Fatalf("initialize: %v", init)
 	}
 	tools := responses[1]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 3 {
+	if len(tools) != len(mcp.GuestSpecs()) {
 		t.Fatalf("tools: %v", tools)
 	}
-	for i, name := range []string{"agents", "add", "send"} {
+	var add map[string]any
+	for i, spec := range mcp.GuestSpecs() {
+		name := spec.ToolName
 		tool := tools[i].(map[string]any)
+		if name == "add" {
+			add = tool
+		}
 		if tool["name"] != name {
 			t.Fatalf("tool %d: %v", i, tool)
 		}
@@ -62,7 +70,6 @@ func TestMCPToolsUseOnlySwarmBroker(t *testing.T) {
 			t.Fatalf("open schema: %v", tool)
 		}
 	}
-	add := tools[1].(map[string]any)
 	schema := add["inputSchema"].(map[string]any)
 	properties := schema["properties"].(map[string]any)
 	if len(properties) != 1 || properties["name"] == nil || schema["required"].([]any)[0] != "name" || add["annotations"].(map[string]any)["readOnlyHint"] != false {
@@ -108,7 +115,7 @@ func TestMCPAddContract(t *testing.T) {
 					Name string `json:"name"`
 				}
 				_ = json.Unmarshal([]byte(tc.args), &args)
-				if req != (relay.SwarmRequest{Tool: "add", To: args.Name}) {
+				if !reflect.DeepEqual(req, relay.SwarmRequest{Tool: "add", To: args.Name}) {
 					t.Fatalf("request: %+v", req)
 				}
 				if _, ok := ctx.Deadline(); !ok {
@@ -146,10 +153,32 @@ func TestMCPBroodInstructions(t *testing.T) {
 	if response.Result.ServerInfo.Name != "brood" {
 		t.Fatalf("serverInfo: %+v", response)
 	}
-	for _, text := range []string{"Brood", "mop", "not upstream Mop", "agents()", "role", "only an authorized master", "send", "unconfirmed"} {
+	for _, text := range []string{"Brood", "mcp__brood__send", "mcp__brood__agents", "not upstream Mop", "agents()", "role", "only an authorized master", "send", "unconfirmed"} {
 		if !strings.Contains(response.Result.Instructions, text) {
 			t.Errorf("instructions missing %q: %s", text, response.Result.Instructions)
 		}
+	}
+}
+
+// FEATURE: Guest MCP exposes the shared catalog rather than a local tool list.
+// SPEC: Every guest command is advertised in catalog order.
+func TestGuestCatalogHasExtendedTools(t *testing.T) {
+	invocation, err := command.ParseTool("session_history", json.RawMessage(`{"name":"peer"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := `{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n" + `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"session_history","arguments":{"name":"peer"}}}` + "\n"
+	var out bytes.Buffer
+	calls := 0
+	err = ServeMCP(context.Background(), strings.NewReader(input), &out, func(_ context.Context, request relay.SwarmRequest) relay.SwarmResponse {
+		calls++
+		if request.Tool != "session_history" || string(request.Arguments) != string(invocation.Arguments) || request.To != "" || request.Message != "" || request.WaitSeconds != 0 {
+			t.Fatalf("canonical request: %+v", request)
+		}
+		return relay.SwarmResponse{OK: true, Text: "fixture history"}
+	})
+	if err != nil || calls != 1 || !strings.Contains(out.String(), "fixture history") {
+		t.Fatalf("calls=%d output=%s err=%v", calls, &out, err)
 	}
 }
 

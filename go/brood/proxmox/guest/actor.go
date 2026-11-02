@@ -28,10 +28,10 @@ func actorSpec(executable string) ActorSpec {
 	return ActorSpec{Executable: executable, Args: []string{"--brood-guest-actor"}, Env: actorEnv(), Dir: "/workspace/project", UID: 1000, GID: 1000}
 }
 func actorEnv() []string {
-	return []string{"HOME=/workspace/home", "PWD=/workspace/project", "USER=claude", "LOGNAME=claude", "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "GOTOOLCHAIN=local", "GOMAXPROCS=4", "GOFLAGS=-p=2", "DISABLE_AUTOUPDATER=1", "TERM=xterm-256color", "LANG=C.UTF-8", "HTTP_PROXY=http://127.0.0.1:3128", "HTTPS_PROXY=http://127.0.0.1:3128", "http_proxy=http://127.0.0.1:3128", "https_proxy=http://127.0.0.1:3128", "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost", "ANTHROPIC_BASE_URL=http://127.0.0.1:8317", "ANTHROPIC_AUTH_TOKEN=brood-local", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1"}
+	return []string{"HOME=/workspace/home", "PWD=/workspace/project", "USER=claude", "LOGNAME=claude", "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "GOTOOLCHAIN=local", "GOMAXPROCS=4", "GOFLAGS=-p=2", "DISABLE_AUTOUPDATER=1", "TERM=xterm-256color", "LANG=C.UTF-8", "HTTP_PROXY=http://127.0.0.1:3128", "HTTPS_PROXY=http://127.0.0.1:3128", "http_proxy=http://127.0.0.1:3128", "https_proxy=http://127.0.0.1:3128", "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost", "ANTHROPIC_BASE_URL=http://127.0.0.1:8317", "ANTHROPIC_AUTH_TOKEN=brood-local", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1", "BROOD_EXECUTION_MODE=guest"}
 }
 func actorArgs() []string {
-	return []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "claude", "--mcp-config", `{"mcpServers":{"mop":{"command":"/usr/local/bin/brood-guest","args":["mcp"]}}}`}
+	return []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "claude", "--mcp-config", `{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}`}
 }
 
 // RunActor is the dedicated --brood-guest-actor dispatch target. The parent must
@@ -53,8 +53,8 @@ func RunActor() error {
 	if err := lockPrivileges(); err != nil {
 		return err
 	}
-	if err := os.Chdir("/workspace/project"); err != nil {
-		return errors.New("actor project directory unavailable")
+	if err := os.Chdir("/workspace/home"); err != nil {
+		return errors.New("actor home directory unavailable")
 	}
 	unix.Umask(0077)
 	return syscall.Exec("/usr/bin/ttyd", append([]string{"ttyd"}, actorArgs()...), actorEnv())
