@@ -158,6 +158,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mount()
 	srv.mountProxmoxPools(cfg.proxmox)
 	srv.mountProxmoxConnections()
+	srv.mountProjectSecrets()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
@@ -207,6 +208,10 @@ func (s *Server) Close() error {
 func (s *Server) Handler() http.Handler {
 	browser := s.actorViewHandler(s.browserProtection())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicProjectSecretPath(r.URL.Path) {
+			s.serveGuestProjectSecrets(w, r)
+			return
+		}
 		if publicManagedLLMPath(r.URL.Path) {
 			s.managedLLM.ServeHTTP(w, r)
 			return

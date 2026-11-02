@@ -28,6 +28,21 @@ type nativeWorkloadOperation struct {
 	savedTemplate   *ateapi.ActorTemplate
 }
 
+func (o *nativeWorkloadOperation) privateSecretsSupported() error {
+	starts := o.action == "create-actor" || o.action == "update-actor" || o.action == "resume-actor" || (o.action == "create-template" && goldenPending(o.template))
+	if !starts {
+		return nil
+	}
+	metadata, err := o.server.store.GetProjectSecretMetadata(o.context, o.swarm.ProjectID)
+	if err != nil {
+		return fmt.Errorf("%w: project secret policy is unavailable", app.ErrConflict)
+	}
+	if len(metadata.Files) > 0 || len(metadata.Vars) > 0 {
+		return fmt.Errorf("%w: native actors do not support private project-secret delivery", app.ErrConflict)
+	}
+	return nil
+}
+
 func (o *nativeWorkloadOperation) boundNamespace() error {
 	return checkNativeNamespace(o.context, o.server.ateapi, o.swarm)
 }
@@ -38,6 +53,9 @@ func (o *nativeWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmis
 		return plan, err
 	}
 	if err := o.boundNamespace(); err != nil {
+		return plan, err
+	}
+	if err := o.privateSecretsSupported(); err != nil {
 		return plan, err
 	}
 	if o.action == "create-actor" || o.action == "update-actor" || o.action == "resume-actor" {
@@ -180,6 +198,9 @@ func (o *nativeWorkloadOperation) Apply(labels map[string]string) error {
 	if err := o.authorizeWrite(); err != nil {
 		return err
 	}
+	if err := o.privateSecretsSupported(); err != nil {
+		return err
+	}
 	var err error
 	switch o.action {
 	case "create-actor":
@@ -198,6 +219,9 @@ func (o *nativeWorkloadOperation) Apply(labels map[string]string) error {
 			}
 		}
 		if err := o.authorizeWrite(); err != nil {
+			return err
+		}
+		if err := o.privateSecretsSupported(); err != nil {
 			return err
 		}
 		o.savedActor, err = o.server.ateapi.ResumeActor(o.context, o.swarm.AtespaceName, o.name)
