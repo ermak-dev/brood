@@ -20,6 +20,11 @@ import (
 const fixedWorkspace = "/workspace/project"
 const workspaceFileLimit = 100000
 
+// Переходы делят общий бюджет 15 s, меньший внешнего helper timeout 18 s.
+const workspaceStopTimeout = 4 * time.Second
+const workspaceStartTimeout = 8 * time.Second
+const workspacePollInterval = 100 * time.Millisecond
+
 type workspaceEngine struct {
 	root  string
 	git   func(context.Context, ...string) (string, error)
@@ -118,6 +123,10 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		if _, err = e.tmux(ctx, "kill-session", "-t", row[0]); err != nil {
 			return workspaceUnknown("session stop result is unknown")
 		}
+		// kill-session подтверждает команду, но не завершение дерева процессов.
+		if err = workspaceWait(ctx, workspaceStopTimeout, e.quiet); err != nil {
+			return workspaceUnknown("session stop is not yet confirmed; workspace is live or process inventory is unknown")
+		}
 		if req.Operation == "recycle" {
 			if err := e.clean(ctx); err != nil {
 				return workspaceUnknown("session stopped; " + err.Error())
@@ -137,8 +146,10 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		if _, err = e.tmux(ctx, workspaceLaunchArgs()...); err != nil {
 			return workspaceUnknown("session launch result is unknown")
 		}
-		current, err := e.prove(ctx)
-		if err != nil || current == before || ctx.Err() != nil {
+		if err = workspaceWait(ctx, workspaceStartTimeout, func(ctx context.Context) (bool, error) {
+			current, err := e.prove(ctx)
+			return err == nil && current != before, nil
+		}); err != nil {
 			return workspaceUnknown("new Claude session is not yet proven")
 		}
 		return success(map[string]any{"operation": req.Operation, "session": "restarted", "workspace_preserved": req.Operation == "restart", "ct": "unchanged"})
@@ -151,6 +162,35 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		return failure(err.Error())
 	}
 	return success(map[string]any{"operation": "wipe", "git": "clean", "clone_preserved": true, "ct": "unchanged"})
+}
+
+// workspaceWait polls evidence only, never effects. Inventory errors fail closed;
+// callers may treat absent session proof as pending, but never as success.
+func workspaceWait(parent context.Context, budget time.Duration, ready func(context.Context) (bool, error)) error {
+	ctx, cancel := context.WithTimeout(parent, budget)
+	defer cancel()
+	ticker := time.NewTicker(workspacePollInterval)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ok, err := ready(ctx)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 type workspaceEffectError struct{ text string }
@@ -354,7 +394,8 @@ func runWorkspaceTMUX(ctx context.Context, args ...string) (string, error) {
 		}
 		args = append(launch, args[1:]...)
 	}
-	return workspaceExec(ctx, fixedWorkspace, env, "/usr/bin/tmux", args...)
+	// Новый tmux server наследует cwd клиента; он не должен удерживать clone live.
+	return workspaceExec(ctx, "/workspace/home", env, "/usr/bin/tmux", args...)
 }
 
 // workspaceQuiet deliberately refuses any other process rooted in the clone,
