@@ -61,6 +61,9 @@ Substrate закреплён в `go.mod` на публичной версии
 - `proxy`: HTTP/WebSocket к акторам с проверкой и отзывом доступа.
 - `server`: сборка сервера, маршруты, встроенная панель.
 - `clientapi`: веб-сессия CLI, TLS, chunked push и защищённое сохранение credentials.
+- `command`: единые декларации, CLI/MCP-аргументы и канонические invocation.
+- `mcp`: stdio-адаптер над каталогом команд, без реализации операций.
+- `swarmclient`: credential-free клиент фиксированного гостевого broker для `bro --guest`.
 - `build`: текущий Broodfile, рабочие файлы, внешние Git/Docker buildx, локальный OCI-комплект.
 - `oci`: проверка digest/графа и потоковое чтение OCI-архива без распаковки.
 - `cmd/brood`, `cmd/bro`: сервер и клиент.

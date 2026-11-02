@@ -26,11 +26,24 @@ type command struct {
 
 func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic io.Writer) int {
 	c := command{in: in, out: out, diagnostic: diagnostic}
+	options, parseErr := parseExecution(args, os.Getenv("BROOD_EXECUTION_MODE"), os.Getenv("BROOD_SWARM"))
+	if parseErr != nil {
+		fmt.Fprintf(diagnostic, "bro: %v\n", parseErr)
+		return 1
+	}
+	args = options.args
 	if len(args) == 0 {
 		usage(diagnostic)
 		return 1
 	}
 	var err error
+	if options.guest {
+		switch args[0] {
+		case "login", "logout", "whoami", "projects", "push":
+			fmt.Fprintln(diagnostic, "operator command is unavailable in guest mode")
+			return 1
+		}
+	}
 	switch args[0] {
 	case "login", "logout", "whoami":
 		err = c.auth(ctx, args[0], args[1:])
@@ -51,7 +64,7 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 			usage(out)
 		}
 	default:
-		err = fmt.Errorf("unknown command %q", args[0])
+		err = c.catalogCommand(ctx, options)
 	}
 	if err == nil {
 		return 0
@@ -73,6 +86,11 @@ commands:
   projects list [server] [--ca FILE]  list accessible projects
   build [target] [options]       build current files into local OCI artifacts
   push [target] [options]        upload built images and template to the current server
+  mcp                           serve catalog tools over stdio
+  <catalog command>             execute a scoped orchestration command
+
+Orchestration scope: --swarm ID or BROOD_SWARM. Guest execution must be explicit:
+--guest or BROOD_EXECUTION_MODE=guest; broker failure never falls back to operator.
 
 Run bro <command> --help for command-specific options.
 
@@ -83,6 +101,7 @@ are stored per origin under $XDG_STATE_HOME/brood/sessions or ~/.local/state/bro
 cannot be disabled. Passwords are read without echo from a terminal, or as the
 second input line when stdin is a pipe. Passwords are never saved.
 `)
+	catalogUsage(w)
 }
 
 func parseServer(args []string) (server, caPath string, rest []string, err error) {
