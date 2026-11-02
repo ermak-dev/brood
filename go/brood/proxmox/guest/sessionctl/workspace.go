@@ -341,7 +341,7 @@ func workspaceTMUXID(s string, prefix byte) bool {
 }
 
 func workspaceLaunchArgs() []string {
-	return []string{"new-session", "-d", "-s", "claude", "-c", fixedWorkspace, "-e", "HOME=/workspace/home", "-e", "PWD=/workspace/project", "/usr/local/bin/claude", "--permission-mode", "default", "--mcp-config", `{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}`}
+	return []string{"new-session", "-d", "-s", "claude", "-c", fixedWorkspace, "-e", "HOME=/workspace/home", "-e", "PWD=/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app"}
 }
 func runWorkspaceTMUX(ctx context.Context, args ...string) (string, error) {
 	// Helper env задаёт root supervisor, не RPC. Передаём его также через -e:

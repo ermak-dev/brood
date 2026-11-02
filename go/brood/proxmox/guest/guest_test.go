@@ -256,7 +256,7 @@ func TestActorEnvironmentAndPayload(t *testing.T) {
 	if spec.UID != 1000 || spec.GID != 1000 || spec.Dir != "/workspace/project" || !reflect.DeepEqual(spec.Args, []string{"--brood-guest-actor"}) {
 		t.Fatalf("%+v", spec)
 	}
-	if !reflect.DeepEqual(actorArgs(), []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "claude", "--mcp-config", `{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}`}) {
+	if !reflect.DeepEqual(actorArgs(), []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app"}) {
 		t.Fatal(actorArgs())
 	}
 }
