@@ -269,7 +269,7 @@ class Deploy:
             raise RuntimeError("cannot read configured WORKER_POOL_IMAGES from Go deployment") from None
         return approved_images(raw)
 
-    def run(self):
+    def run(self, before_apply=None):
         secret = self.get("BROOD_SESSION_SECRET")
         if not secret or len(secret) < 32:
             raise RuntimeError("Go deployment needs BROOD_SESSION_SECRET of at least 32 characters in .env")
@@ -376,6 +376,8 @@ class Deploy:
             path = root / "release.json"
             path.touch(mode=0o600)
             path.write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
+            if before_apply is not None:
+                before_apply(image)
             code, _, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "apply", "-f", str(path))
             if code:
                 raise RuntimeError("Go deployment apply failed; public ingress was not changed")

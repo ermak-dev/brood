@@ -49,6 +49,68 @@ server/edge ресурсов до сборки и записи. Namespace дол
 `bin/brood deploy go` остаётся подготовкой только приватного Go endpoint,
 без public edge, bootstrap пользователя или очистки старых данных.
 
+## Существующая Go-установка
+
+`BROOD_DEPLOY_MODE=existing` — явный opt-in в приватном `.env` релиза.
+Без настройки действует прежний `initial`: bootstrap и обязательный login gate.
+Неизвестный режим — отказ. В `existing` admin username/password не требуются;
+пустой `BROOD_ADMIN_PASSWORD` допустим. Пароль soleadmin не сбрасывается,
+`brood-ci-check` не создаётся. Operator password/cookie не передаются в CI.
+Изменение protected `.env` выполняет оператор отдельно, не deploy-код.
+
+До записи требуются принадлежащие `brood-go` Deployment/Service/PVC и оба
+публичных edge-ресурса, bound PV с точным claim UID, единственный готовый
+server pod с цепочкой Pod → ReplicaSet → текущий Deployment. Отсутствие
+установки, чужой ресурс, незавершённый rollout или неподдерживаемый DB layout —
+отказ, не переход к initial install. Source path читается из явного
+`BROOD_DB_PATH` текущего Deployment и сверяется с runtime pod, data mount и PVC.
+Сейчас допускается штатный `/data/brood.db`: иной layout отвергается, поскольку
+новый rollout не должен переключаться на новую пустую БД.
+
+После сборки нового Go-образа, но **до первого apply сервера и миграции**, gate
+`brood/dev/deploy/existing_install.py` запускает одноразовый bounded Pod:
+
+- image — точный digest нового build `localhost:5002/brood-go@sha256:…`;
+- `/brood database snapshot --path /data/brood.db --output /data/.brood-snapshot-<random>.db`;
+- только существующий owned PVC, на node текущего server pod (node affinity),
+  без service-account token, Secret mounts, shell, host namespace и сети;
+- отдельная deny-all NetworkPolicy создаётся до Pod; non-root UID 65532,
+  read-only rootfs, dropped capabilities, seccomp, CPU/memory limits,
+  deadline 180 секунд и bounded wait;
+- helper обязан вернуть только JSON metadata: `schema_version`, `enabled_admins`,
+  `users`, `sha256`, `bytes`. Некорректный ответ или отсутствие enabled admin — отказ.
+
+Snapshot CLI использует согласованный SQLite backup с WAL, без миграции;
+это не копирование одного main DB файла. Результат 0600 остаётся на приватном
+PVC, не попадает в release archive, stdout или CI artifacts. В CI виден только
+путь и итог gate, не содержимое базы. Helper Pod и policy удаляются только со
+своими UID preconditions; policy сохраняется, если удаление Pod не подтверждено.
+При admission-изменении volumes, scheduling или security gate отказывает.
+Если helper невозможно безопасно запустить или snapshot не подтверждён,
+серверный rollout не начинается. Вручную пропустить backup нельзя.
+
+После готовности нового runtime проверяется exact image digest, затем новый
+одноразовый helper выполняет `/brood database inspect --path /data/brood.db`
+с read-only PVC mount. Сохраняются количество users и enabled admins, требуется
+`enabled_admins >= 1`. Это проверка metadata, **не доказательство входа** и не
+проверка пароля. В этом режиме нет вызовов bootstrap, login, createUser и нет
+legacy cleanup. TLS/hostname/healthz/React проверки остаются. Вывод разделяет
+`Rollout passed` и `operator-authenticated acceptance pending`. Оператор
+завершает acceptance своим приватным `bro whoami` и браузером вне CI.
+
+Ни ошибка inspect, ни провал TLS probe не восстанавливают production DB
+автоматически: новые внешние операции уже могли произойти. Возврат старого
+образа после миграции небезопасен. Старый rollback требует остановки записи и
+внешних операций, явного восстановления согласованного snapshot и отдельного
+решения оператора. Snapshot retention/удаление — также отдельная операция.
+
+Путь forced SSH не меняется: установленный `brood-deploy` вызывает
+`bin/brood deploy server --check` и `bin/brood deploy server` из нового дерева.
+Ни новый SSH action/key, ни runner, ни обход `deploy go` не нужны. Единственная
+интеграция в Go deployment — callback `before_apply(image)`, после build и всех
+preflight, перед apply. Поддержка `/brood database` должна находиться в новом
+образе; если её нет, existing mode откажет без server apply.
+
 ## Настройки
 
 Секреты задаются только приватным `.env` релиза, который передаёт CI.
@@ -58,7 +120,8 @@ server/edge ресурсов до сборки и записи. Namespace дол
 | `BROOD_SESSION_SECRET` | случайный ключ, минимум 32 символа |
 | `BROOD_PUBLIC_HOST` | DNS-имя публичного входа, присутствующее в TLS certificate |
 | `BROOD_HTTPS_PORT`, `BROOD_HTTP_PORT` | опубликованные host ports, задаются при создании kind |
-| `BROOD_ADMIN_USERNAME`, `BROOD_ADMIN_PASSWORD` | initial admin и проверка доступа; пароль минимум 12 символов |
+| `BROOD_DEPLOY_MODE` | `initial` по умолчанию; явный `existing` сохраняет текущую Go-БД без CI login |
+| `BROOD_ADMIN_USERNAME`, `BROOD_ADMIN_PASSWORD` | только initial admin и initial проверка доступа; пароль минимум 12 символов |
 | `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательные microvm и подготовленный lxc |
 | `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only management key |
 | `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |
@@ -82,9 +145,10 @@ TLS: `secrets/tls.crt` и `secrets/tls.key`. Go и edge используют о�
 public endpoint использует точный certificate и loopback resolve, не
 `curl -k` и не случайный DNS destination.
 
-После смены admin-пароля через UI нужно синхронно обновить deployment check
-credential в protected `.env`, иначе следующая auth-проверка закономерно
-откажет. Bootstrap не меняет пароль уже существующей учётной записи.
+В режиме `initial` после смены admin-пароля через UI прежний deployment check
+credential больше не работает и следующая auth-проверка откажет. Для уже
+работающей установки оператор может явно выбрать `existing`, не копируя свой
+пароль в CI. Bootstrap в initial не меняет пароль существующей учётной записи.
 Пароли, session cookies и provider config не печатаются в CI-логи.
 
 Историческое имя ServiceAccount `django` — точный доверенный принципал
