@@ -1,4 +1,4 @@
-"""Публичная Go-выкладка с новым администратором, без переноса старых данных."""
+"""Публичная Go-выкладка: initial bootstrap или явное сохранение текущей БД."""
 import json
 from pathlib import Path
 import re
@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from brood.common import config
 from brood.dev.deploy import edge
+from brood.dev.deploy.existing_install import ExistingInstall
 from brood.dev.deploy.go_server import Deploy as GoDeploy, actor_model_environment
 from brood.dev.deploy.infrastructure import Infrastructure
 from brood.dev.substrate import local
@@ -25,11 +26,19 @@ def settings(get):
     names = ("BROOD_SESSION_SECRET", "BROOD_ADMIN_USERNAME", "BROOD_ADMIN_PASSWORD",
              "BROOD_PUBLIC_HOST", "BROOD_HTTPS_PORT", "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY",
              "CLIPROXY_API_KEY")
+    mode = get("BROOD_DEPLOY_MODE") or "initial"
+    if mode not in {"initial", "existing"}:
+        raise RuntimeError("BROOD_DEPLOY_MODE must be initial or existing")
     values = {key: get(key) or "" for key in names}
-    for key in names[:5]:
+    values["BROOD_DEPLOY_MODE"] = mode
+    required = names[:5] if mode == "initial" else ("BROOD_SESSION_SECRET", "BROOD_PUBLIC_HOST")
+    for key in required:
         if not values[key] or any(char in values[key] for char in "\r\n\0"):
             raise RuntimeError(f"public Go deployment needs valid {key} in .env")
-    for key, minimum in (("BROOD_SESSION_SECRET", 32), ("BROOD_ADMIN_PASSWORD", 12)):
+    minimums = [("BROOD_SESSION_SECRET", 32)]
+    if mode == "initial":
+        minimums.append(("BROOD_ADMIN_PASSWORD", 12))
+    for key, minimum in minimums:
         if len(values[key]) < minimum:
             raise RuntimeError(f"{key} must contain at least {minimum} characters")
     if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", values["BROOD_PUBLIC_HOST"]):
@@ -98,6 +107,10 @@ class Deployment:
         infrastructure._namespace_is_ours()
         GoDeploy(self.cluster, get=self.get, project=self.project)._worker_images()
         infrastructure._api_egress()
+        if values["BROOD_DEPLOY_MODE"] == "existing":
+            ExistingInstall(self).check()
+            for kind, name in (("deployment", "edge"), ("service", "edge")):
+                ExistingInstall(self).owned(kind, name)
         old = {}
         for kind, name in (*LEGACY, ("deployment", "edge"), ("service", "edge")):
             obj = self.get_object(kind, name)
@@ -214,6 +227,16 @@ class Deployment:
     def run(self):
         values, before = self.check()
         image = self.build_edge()
+        if values.get("BROOD_DEPLOY_MODE") == "existing":
+            existing = ExistingInstall(self)
+            existing.state = existing.check()
+            server = GoDeploy(self.cluster, get=self.get, project=self.project).run(before_apply=existing.snapshot)
+            existing.inspect(server)
+            self.apply_edge(image, before)
+            self.probe(values, login=False)
+            return {"image": server, "edge": image, "host": values["BROOD_PUBLIC_HOST"],
+                    "admin_created": False, "snapshot": existing.snapshot_path,
+                    "acceptance": "operator-authenticated acceptance pending"}
         server = GoDeploy(self.cluster, get=self.get, project=self.project).run()
         created = self.bootstrap(values)
         self.apply_edge(image, before)

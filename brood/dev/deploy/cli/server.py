@@ -1,7 +1,9 @@
-"""brood deploy server: publish the Go server and bootstrap its administrator
+"""brood deploy server: publish the Go server with TLS
 
-Requires fresh Go settings and TLS files in the release. Existing actor
-infrastructure and worker pools are preserved. --check performs preflight only.
+Initial mode bootstraps an administrator and verifies login. Explicit
+BROOD_DEPLOY_MODE=existing snapshots the owned database without credentials;
+operator-authenticated acceptance remains pending. --check is read-only.
+Existing actor infrastructure and worker pools are preserved.
 """
 from brood.common import config
 from brood.dev.deploy.public import Deployment, settings
@@ -20,5 +22,9 @@ def main(argv):
     result = deployment.run()
     print(f"Go server deployed: {result['image']}")
     print(f"Public endpoint: https://{result['host']}")
-    print(f"Administrator ready: {result['admin']}")
+    if "acceptance" in result:
+        print(f"Rollout passed; {result['acceptance']}")
+        print(f"Private database snapshot retained on owned PVC: {result['snapshot']}")
+    else:
+        print(f"Administrator ready: {result['admin']}")
     return 0
