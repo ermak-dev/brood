@@ -43,9 +43,10 @@ RUN groupadd --gid 1000 actor \
     && useradd --uid 1000 --gid 1000 --home-dir /workspace/home --no-create-home --shell /bin/bash actor \
     && mkdir -p /workspace /opt/seeds
 COPY brood-guest /usr/local/bin/brood-guest
+COPY bro /usr/local/bin/bro
 COPY proxmox-guest-dhcp.sh /usr/local/libexec/proxmox-guest-dhcp.sh
 COPY seed/ /opt/seeds/
-RUN chmod 0755 /usr/local/bin/brood-guest /usr/local/libexec/proxmox-guest-dhcp.sh
+RUN chmod 0755 /usr/local/bin/brood-guest /usr/local/bin/bro /usr/local/libexec/proxmox-guest-dhcp.sh
 ARG SOURCE_COMMIT
 LABEL org.opencontainers.image.revision=${SOURCE_COMMIT}
 WORKDIR /workspace

@@ -50,13 +50,16 @@ RUN python3 -I -c 'import json; p=json.load(open("/tmp/pins.json")); print(p["GO
 ENV PATH=/usr/local/go/bin:${PATH} CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=local GOWORK=off
 WORKDIR /src
 COPY go/ ./
-RUN go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/brood-guest ./cmd/brood-guest
+RUN go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/brood-guest ./cmd/brood-guest \
+    && go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/bro ./cmd/bro
 FROM scratch
 COPY --from=compile /out/brood-guest /brood-guest
+COPY --from=compile /out/bro /bro
 DOCKERFILE
 docker buildx build --platform linux/amd64 --build-arg "PYTHON_IMAGE=$python_image" \
     --output "type=local,dest=$work/bin" "$work/source"
 cp "$work/bin/brood-guest" "$work/context/brood-guest"
+cp "$work/bin/bro" "$work/context/bro"
 if [[ $# == 2 ]]; then
     # Bundle содержит только снимок публичных tracked-файлов, без истории/remote/hooks.
     mkdir "$work/seed" "$work/git-home" "$work/git-template"

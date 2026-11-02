@@ -1,6 +1,11 @@
 """Контракты ограниченного образа Proxmox и безопасного build context."""
 # FEATURE: Ограниченный гостевой образ и OCI-архив из чистого git HEAD.
 # SPEC: Закреплённые инструменты, отсутствие секретов, отказ перезаписи и проверка DHCP.
+# FEATURE: #129: гостевой образ содержит Go-клиент bro рядом с доверенным supervisor.
+# SPEC: cmd/bro компилируется и извлекается через Docker; /usr/local/bin/bro исполняемый.
+# IMPLEMENTATION: клиент проходит существующий compile/export/context без смены entrypoint.
+# RESULT: IMPLEMENTED — оба бинарника упакованы; отсутствие bro останавливает публикацию.
+# STATUS: DONE
 import hashlib
 import json
 import os
@@ -48,6 +53,14 @@ class ProxmoxGuestImageTests(unittest.TestCase):
         self.assertNotIn("COPY go/", recipe)
         self.assertIn("DISABLE_AUTOUPDATER=1", recipe)
 
+    def test_recipe_installs_executable_bro_without_replacing_supervisor(self):
+        recipe = self.required(RECIPE).read_text()
+        self.assertIn("COPY bro /usr/local/bin/bro", recipe)
+        chmod = next(line for line in recipe.splitlines() if line.startswith("RUN chmod 0755"))
+        self.assertIn("/usr/local/bin/bro", chmod.split())
+        self.assertIn("/usr/local/bin/brood-guest", chmod.split())
+        self.assertIn('ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/brood-guest"]', recipe)
+
     def test_terminal_binary_matches_fixed_guest_runtime_path(self):
         recipe = self.required(RECIPE).read_text()
         self.assertIn("install -m 0755 /tmp/ttyd/build/ttyd /usr/bin/ttyd", recipe)
@@ -63,6 +76,8 @@ class ProxmoxGuestImageTests(unittest.TestCase):
             shutil.copyfile(original, target)
         (repo / "go/cmd/brood-guest").mkdir(parents=True)
         (repo / "go/cmd/brood-guest/main.go").write_text("package main\nfunc main() {}\n")
+        (repo / "go/cmd/bro").mkdir(parents=True)
+        (repo / "go/cmd/bro/main.go").write_text("package main\nfunc main() {}\n")
         (repo / "go/go.mod").write_text("module fixture\ngo 1.27.0\n")
         self.git(repo, "init", "--quiet")
         self.git(repo, "add", ".")
@@ -80,7 +95,11 @@ if [[ $1 == buildx && $2 == build ]]; then
         case "$arg" in
             type=local,dest=*)
                 out=${arg#type=local,dest=}
+                cp "$context/Dockerfile" "$COMPILE_RECIPE"
                 printf 'guest binary' > "$out/brood-guest"
+                if [[ ${OMIT_BRO:-0} != 1 ]]; then
+                    printf 'client binary' > "$out/bro"
+                fi
                 exit 0;;
             type=oci,dest=*) output=${arg#type=oci,dest=};;
         esac
@@ -96,6 +115,7 @@ exit 99
         capture.mkdir()
         env = dict(os.environ, PATH=f"{tools}:{os.environ['PATH']}",
                    CALLS=str(Path(directory) / "calls"), CAPTURE=str(capture),
+                   COMPILE_RECIPE=str(Path(directory) / "compile.Dockerfile"),
                    BUILDX_BUILDER="dedicated-builder")
         return repo, capture, env
 
@@ -117,7 +137,13 @@ exit 99
             result = self.build(repo, env, output, "--seed")
             self.assertEqual(result.returncode, 0, result.stderr)
             names = {str(p.relative_to(capture)) for p in capture.rglob("*") if p.is_file()}
-            self.assertEqual(names, {"Dockerfile", "brood-guest", "pins.json", "go-download.sh",
+            self.assertEqual((capture / "brood-guest").read_text(), "guest binary")
+            self.assertTrue((capture / "bro").is_file(), "Client artifact missing from guest context")
+            self.assertEqual((capture / "bro").read_text(), "client binary")
+            recipe = Path(env["COMPILE_RECIPE"]).read_text()
+            self.assertIn('go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/bro ./cmd/bro', recipe)
+            self.assertIn("COPY --from=compile /out/bro /bro", recipe)
+            self.assertEqual(names, {"Dockerfile", "bro", "brood-guest", "pins.json", "go-download.sh",
                                      "proxmox-guest-dhcp.sh", "seed/project.bundle"})
             for path in capture.rglob("*"):
                 if path.is_file():
@@ -173,6 +199,17 @@ exit 99
             result = self.build(repo, env, output)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(list(output.iterdir()), [])
+
+    def test_missing_client_artifact_never_builds_or_publishes_guest_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo, capture, env = self.fixture(directory)
+            env["OMIT_BRO"] = "1"
+            output = Path(directory) / "output"
+            result = self.build(repo, env, output)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(list(output.iterdir()), [])
+            self.assertEqual(list(capture.iterdir()), [])
+            self.assertNotIn("type=oci,dest=", Path(env["CALLS"]).read_text())
 
     def test_missing_guest_command_refuses_before_docker(self):
         with tempfile.TemporaryDirectory() as directory:

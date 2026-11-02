@@ -1,86 +1,224 @@
 # MCP
 
-## Инструменты актора
+## Один каталог команд
 
-Профиль `claude-proxmox` добавляет к запуску Claude Code сервер Brood под
-совместимым именем `mop`:
+Каждый инструмент — команда пользовательского Go-клиента `bro`, а не отдельная
+реализация внутри MCP. Пакет `go/brood/command` содержит декларации команд:
+путь CLI, имя инструмента, описание, аргументы, значения по умолчанию,
+ограничения и annotations. Например, `bro session history` соответствует
+`session_history`, `bro project limit` — `project_limit`.
 
-```json
-{"mcpServers":{"mop":{"command":"/usr/local/bin/brood-guest","args":["mcp"]}}}
-```
-
-Это дополнительный `--mcp-config`, не `--strict-mcp-config`: пользовательские
-MCP-настройки сохраняются. Процесс MCP работает от UID/GID 1000 и не читает
-bootstrap env supervisor. Python, NATS и новые Go-зависимости не требуются.
-
-Это реализация Brood, не upstream Mop и не управление NATS. `serverInfo.name`
-остаётся `brood`; namespace инструментов Claude Code — `mcp__mop__*`.
-Инструкции инициализации предлагают вызвать `agents()` для определения имени,
-роли и доступных соседей, делегировать ограниченные задачи через `send` и
-проверять результаты. Наличие инструментов не делает каждого актора мастером.
-
-- `agents()` возвращает собственное имя, роль и managed-акторов того же роя.
-  Состояние `running` не означает простой сессии или чистый git workspace.
-- `add(name)` запрашивает создание managed-соседа в том же рое. Инструмент
-  виден всем клиентам, но сервер разрешает создание только авторизованному
-  мастеру. Пул, credentials, identity и роль не принимаются от гостя.
-  Имя — 1–63 символа `[a-z0-9-]`, первый и последний — буква или цифра.
-  В relay передаются только `tool: "add"` и `to: name`, через тот же
-  аутентифицированный peer и поколение. Неопределённый исход требует
-  проверки `agents()` перед повтором, а не слепого повторного создания.
-- `send(to, message, wait_seconds=0)` адресует другого managed-актора по имени.
-  Максимальное ожидание простоя — 300 секунд. Имя отправителя задаёт сервер,
-  а не аргументы инструмента. Native-акторы этим каналом пока не охвачены.
-
-Запись сообщения не доказывает доставки. Только совпавшая квитанция даёт
-`delivered`. `submitted; delivery unconfirmed` требует проверки, а не слепого
-повтора: повтор может создать дубликат. Удержание или отказ Claude не обходятся
-сменой permission mode. Подробности приёмника — [PROXMOX.md](PROXMOX.md).
-
-## Граница полномочий
+`ParseCLI` и `ParseTool` возвращают один `Invocation`. CLI вызывает executor
+непосредственно; `bro mcp` строит `tools/list` из тех же деклараций и вызывает
+тот же executor. MCP не запускает командлеты подпроцессами, не разбирает
+терминальный вывод и не имеет собственной реализации операций.
 
 ```text
-Claude -> brood-guest mcp (UID 1000)
-       -> /run/brood/swarm.sock (root:1000, 0660, каталог root-owned)
-       -> supervisor -> текущий аутентифицированный SSH relay
-       -> сервер: identity и поколение -> тот же рой
-       -> relay получателя -> отдельный helper UID 1000 -> Claude inbox
+bro <command> ───────┐
+                    ├─ command.Invocation ─ executor ─ авторизованный сервис
+bro mcp ─ metadata ─┘
 ```
 
-Broker держит exclusive flock в root-owned каталоге: второй живой supervisor
-не забирает сокет первого. После аварии удаляется только root-owned socket,
-для которого одновременно получен lock и подтверждён `ECONNREFUSED`.
-Обычный файл, symlink и неизвестный исход проверки не удаляются.
+Схемы отвергают неизвестные и повторяющиеся поля, null, неправильные типы и
+выход за границы. Каноническое представление тоже ограничено по размеру.
+Metadata описывает возможности, но не выдаёт полномочий: сервер проверяет их
+при каждом вызове и повторно перед выдачей приватных результатов.
 
-Broker принимает только Linux peers UID 1000. Ни MCP-вызов, ни IPC-запрос не
-могут задать UID отправителя, credentials, URL, команду или путь сокета.
-После разрыва relay старый caller не используется; новое соединение заменяет
-его без накопления клиентов. Сервер повторно проверяет текущую peer identity
-и авторизацию до обработки запроса и до ответа. Перед новым входящим каналом
-сообщений тоже выполняется проверка, а не только периодический отзыв.
+## Два режима исполнения
 
-Транспорт: запросы JSON через SSH global request `brood-swarm-rpc-v1`, ответы
-не более 128 KiB. Не более восьми ожидающих запросов на гостевой caller и восьми
-IPC-клиентов. Исходящие сообщения используют существующий отдельный канал
-`brood-swarm-msg`; терминальные потоки не превращаются в shell/port-forward.
-Таймаут вызова оставляет исход неопределённым и сам по себе не отзывает гостя.
+Оператор использует сохранённую HTTPS-сессию `bro login`; TLS, Origin и CSRF
+обслуживает существующий `clientapi`. Рой выбирается глобальным `--swarm ID`
+или `BROOD_SWARM`. Команды установки — проекты, пулы, диагностика — работают
+также без выбранного роя. `bro diagnose` читает только локальные метаданные,
+не создаёт каталог состояния и не обращается к серверу.
 
-## Протокол stdio и проверки
+```sh
+bro --swarm SWARM_ID agents
+bro --swarm SWARM_ID tail worker --lines 40
+bro models
+bro node
+bro project limit --name brood --actors 3
+bro mcp
+```
 
-Поддерживается tools-only MCP `2025-03-26`: `initialize`,
-`notifications/initialized`, `ping`, `tools/list`, `tools/call`. Каждое сообщение
-— один JSON-RPC объект в строке; вход ограничен 128 KiB. Неизвестные методы,
-инструменты и аргументы отвергаются. Ошибки выполнения возвращаются текстом
-с `isError: true`; credentials в stdout/stderr не выводятся.
+Гость выбирает режим явно: `bro --guest ...` или
+`BROOD_EXECUTION_MODE=guest`. При ошибке broker нет отката на операторскую
+сессию. В гостевом режиме login/logout/whoami, проекты и push не используют
+операторский транспорт.
 
-Контракт проверен по спецификациям
-[Lifecycle](https://modelcontextprotocol.io/specification/2025-03-26/basic/lifecycle)
-и [Tools](https://modelcontextprotocol.io/specification/2025-03-26/server/tools).
-Основа доставки — `mop/session.py` и `docs/CHANNEL.md` на commit `e8f04f26`.
+Профиль `claude-proxmox` добавляет следующий сервер к Claude Code:
 
-Автоматические проверки используют реальные Unix sockets и два изолированных
-TLS/WebSocket/SSH guest connection, а Claude receipt заменяется фиксированным
-тестовым обработчиком. Отдельно проверены настоящий stdio-бинарник и
-root-to-UID1000 helper/broker в контейнере без сети. Это не платная модельная
-задача и не доказательство выкладки нового образа в PVE. Работающие пользовательские
-акторы не перезапускаются и не пересоздаются для этой проверки.
+```json
+{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}
+```
+
+Это дополнительный `--mcp-config`, не `--strict-mcp-config`. Пользовательские
+MCP-настройки сохраняются. Namespace инструментов — `mcp__brood__*`, имя
+сервера — `brood`. Python и NATS в госте не нужны. `brood-guest` остаётся
+доверенным supervisor, а гостевой образ дополнительно содержит `bro`.
+
+## Каталог и адаптация mop
+
+Источник сравнения — `~/mop` на commit `e8f04f26`: 25 инструментов.
+Перенос не подключает Brood к старой установке mop. Nomad job, узел,
+контейнер PVE, пул Brood и native Worker — разные сущности.
+
+| Команда bro | Инструмент | Контракт Brood |
+|---|---|---|
+| `agents` | `agents` | Managed-акторы выбранного роя; running не означает idle или чистый Git |
+| `send` | `send` | Сообщение и квитанция доставки, не ответ модели |
+| `dispatch` | `dispatch` | Явная аренда allocation с request ID; send/show/release |
+| `tail` | `tail` | Ограниченный снимок tmux-экрана |
+| `slash` | `slash` | Белый список команд в доказанную сессию |
+| `session history` | `session_history` | Приватная история с cursor и epoch |
+| `session terminal` | `session_terminal` | Приватное ro/rw подключение со снимками экрана и последовательностями |
+| `add` | `add` | Master создаёт worker в своём одобренном пуле и рое |
+| `delete` | `delete` | Асинхронное удаление CT и диска; требуется confirm |
+| `stop` | `stop` | Остановка managed CT с сохранением диска и квоты |
+| `restart` | `restart` | Перезапуск Claude внутри прежнего CT; требуется confirm |
+| `update` | `update` | Явный отказ: безопасное обновление immutable-профиля ещё не реализовано (#133) |
+| `recycle` | `recycle` | Очистка Git-клона и новая Claude-сессия в прежнем CT; требуется confirm |
+| `wipe` | `wipe` | Очистка тихого Git-workspace без удаления клона; требуется confirm |
+| `project add` | `project_add` | Создание проекта Brood с описанием, не Git checkout или сборка образа |
+| `project limit` | `project_limit` | Чтение или атомарное изменение только max_actors |
+| `landing` | `landing` | Advisory-токен интеграции проекта: show/take/give |
+| `node` | `node` | Inventory с явными provider и kind |
+| `node drain` | `node_drain` | Managed admission closure или native Worker drain, не обещание эвакуации |
+| `node up` | `node_up` | Только повторное включение managed-пула; native undrain отвергается |
+| `models` | `models` | Каталог установленного CLIProxyAPI без раскрытия ключа |
+| `profile` | `profile` | Подлинная идентичность, роль и область вызова |
+| `stat` | `stat` | Ограниченный transcript-backed usage выбранного актора; частичный результат отмечен |
+| `diagnose` | `diagnose` | Локальная диагностика оператора или собственные факты гостя |
+| `server diagnose` | `server_diagnose` | Удалённая redacted-диагностика runtime для администратора |
+
+`project_*`, `node*` и `server_diagnose` не объявляются в гостевом MCP.
+Просмотр своих сессий доступен worker; просмотр соседей и управляющие
+действия требуют действующей master-делегации. Наличие инструмента в
+`tools/list` не является разрешением его выполнить.
+
+Name-only `add` наследует одобренный пул именно от managed master. Оператор
+не может неявно выбрать пул через эту команду: создание с явным шаблоном
+остаётся в существующем API/панели. Native-акторы не изображаются managed
+акторами в этом канале. Управление занятой immutable-конфигурацией и полный
+workspace-preserving reboot CT — отдельные задачи #133 и #130.
+
+`restart` не меняет CTID, образ, PVE ownership и relay generation. Для него,
+`wipe` и `recycle` нужен проверенный Git-клон строго в `/workspace/project`.
+Неизвестный Git state, неподходящая конфигурация, symlink/gitdir вне корня,
+живые процессы и дополнительные tmux panes дают отказ до очистки. Эти
+команды не загружают произвольный origin, bootstrap или shell из аргументов.
+`wipe` требует остановленной Claude-сессии, а не выключенного CT. Для
+возобновления выключенного CT остаётся существующее действие resume API/панели.
+
+## Доставка и координация
+
+`send(to, message, wait_seconds=0)` адресует другого managed-актора того же
+роя. Отправителя задаёт сервер. Максимальное ожидание — 300 секунд; это
+ожидание квитанции/idle, а не текста ответа. Ответ актора — новый `send`.
+
+Только совпавшая квитанция подтверждает доставку. `submitted; delivery
+unconfirmed` не означает ни успех, ни гарантированную потерю. Повтор может
+создать дубликат. Idle не доказывает доставку или выполнение задания.
+Операторское сообщение помечается `operator:<username>` и не выдаётся за
+адрес актора; обратного операторского inbox в этой реализации нет.
+
+`dispatch` требует `to`, сообщение и `request_id`. Сервер сначала атомарно
+занимает allocation, затем отправляет задачу. Request ID связан с исходным
+текстом; повтор не отправляет его заново и не оживляет освобождённую аренду.
+Неизвестная доставка сохраняет аренду. Она не доказывает чистоту клона и не
+передаёт Git credentials человека.
+
+```sh
+bro --guest dispatch worker "Run the project tests" --request-id task-1
+bro --guest dispatch worker --request-id task-1 --action show
+bro --guest dispatch worker --request-id task-1 --action release
+bro --guest landing --action take --request-id integration-1
+bro --guest landing --action give --request-id integration-1
+```
+
+Аренды и landing хранятся в SQLite, связаны с UID/поколением, человеком и
+проектом/роем. У них нет автоматического force-steal или expiry. Перед
+остановкой/удалением/reset и очисткой workspace активную координацию нужно
+явно освободить. Администратор может выполнить точное восстановительное
+release/give по request ID; это не impersonation master и не новая отправка.
+Human-оператор не может выполнять dispatch send или landing take без
+managed actor identity.
+
+Workspace mutations атомарно занимают отдельную reservation в том же SQLite
+journal. Она исключает новый dispatch, landing и конфликтующий lifecycle на
+всё время RPC. Подтверждённое завершение освобождает reservation; неизвестный
+исход сохраняет её и сообщает operation ID. После exclusive restart сервера
+незаконченные reservation становятся unconfirmed, но не освобождаются.
+Администратор сначала проверяет workspace и затем может выполнить явный
+`dispatch --action release` с точным operation ID. Inflight reservation
+освобождать нельзя. Это восстановление разрешения на последующую работу,
+не доказательство того, что предыдущий эффект не произошёл.
+
+Landing — advisory-токен всего проекта, не разрешение GitLab merge/push.
+Проверка SQLite и внешнее RPC не являются одной распределённой транзакцией.
+Неизвестные исходы требуют сверки, а не автоматического повторения.
+
+## Приватная сессия
+
+Сервер разрешает target по имени только внутри роя, сохраняет UID и
+поколение и передаёт caller identity сам. Session RPC идёт по отдельному
+ограниченному SSH-каналу `brood-session-rpc-v1`, а не через произвольный exec,
+URL или actor-owned socket path.
+
+Root запускает фиксированный helper UID/GID 1000 с NoNewPrivs, очищенными
+capabilities и фиксированным окружением. Только helper открывает реестр и
+сокеты Claude. Он проверяет peer PID/UID, process-start identity, CWD,
+config home и связь с tmux pane. История читается из фиксированного корня
+без symlink traversal; неполная строка остаётся pending, слишком большая
+или неверная запись даёт notice. История ограничена 8 MiB prefix scan и
+явно сообщает partial/reset.
+
+`session_terminal` — screen-snapshot, не lossless PTY stream. `open` выдаёт
+случайный caller-bound `tid`; mode по умолчанию ro, writer один. Последующие
+операции используют возрастающий `seq`, начиная с 1. Последний одинаковый
+повтор возвращает прежнюю квитанцию без повторного ввода; изменённый payload
+с тем же seq отвергается. Неизвестная запись отключает writer. Cursor —
+непрозрачная строка снимка, `read --wait` ограничен 15 секундами, `data` —
+буквальный UTF-8 ввод до 4096 байт, не base64. `close` отсоединяет только
+подключение, не останавливает Claude/tmux. Disconnect уничтожает metadata.
+
+Максимум четыре подключения, idle TTL 60 секунд, writer TTL 30 секунд.
+Slash и workspace mutations используют тот же writer gate. Белый список
+slash: `/model`, `/clear`, `/compact`, `/rc`, `/status`, `Escape`; текст с
+управляющими символами или произвольными аргументами не превращается в shell.
+Ввод `/model` не является доказательством выбора конкретной модели.
+
+`stat` читает bounded project/subagent transcripts, дедуплицирует usage по
+message identity и не приписывает затраты человеку по имени актора. Это не
+вечный биллинг: удалённые transcripts недоступны, неполные сканы отмечаются.
+
+## Граница полномочий и протокол
+
+```text
+Claude -> bro --guest mcp (UID 1000)
+       -> /run/brood/swarm.sock (root:1000, 0660)
+       -> supervisor -> аутентифицированный relay
+       -> сервер: текущие identity/generation/swarm/delegation
+       -> relay получателя -> fixed helper UID 1000 -> Claude/tmux/transcripts
+```
+
+Broker проверяет SO_PEERCRED, держит exclusive lock в root-owned каталоге и
+не принимает credentials/UID/endpoint от модели. Старый caller после
+reconnect не используется. Legacy agents/add/send envelopes поддерживаются
+при переходе; canonical arguments с legacy полями не смешиваются. Запросы
+и ответы relay ограничены 128 KiB; одновременно не более восьми RPC/IPC.
+Машинные credentials остаются у root supervisor. Ключ CLIProxyAPI остаётся
+на сервере; helper использует тот же fixed-loopback gateway, что исходная
+Claude-сессия. ttyd живёт вне клона, tmux получает явный `-c /workspace/project`.
+
+MCP tools-only `2025-03-26`: initialize, notifications/initialized, ping,
+tools/list, tools/call. Ошибка возвращается с причиной и `isError: true`;
+неподтверждённый исход не становится успешным выполнением команды. CLI
+выходит ненулевым кодом при отказе/неопределённости. Долговечное принятие
+lifecycle intent не объявляется завершённой очисткой или readiness.
+
+Проверки используют временные SQLite/Git/transcript fixtures, настоящий
+stdio-бинарник, Unix sockets и изолированный TLS/WSS/SSH relay. Они не
+являются доказательством выкладки нового образа, живого PVE lifecycle или
+успешной платной модельной задачи. Пользовательские master/worker не
+перезапускаются для приёмки этой разработки.
