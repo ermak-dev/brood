@@ -156,14 +156,13 @@ func TestManagedPendingTaskEveryStageKeepsDurableState(t *testing.T) {
 
 	r, b, _ = ts.do(alice, "DELETE", path, ts.csrf(alice), nil)
 	expectStatus(t, "delete", r, b, 202)
-	m.reconcileOnce(context.Background())
 	expectManagedPending(t, ts, id, pve, "delete")
 	pve.setPending("delete-task", false)
 	m.reconcileOnce(context.Background())
 	if a := mustManagedActor(t, ts, id); a.Phase != "deleted" {
 		t.Fatalf("finished delete did not retire allocation: %+v", a)
 	}
-	if got := pve.writes(); got != [5]int{1, 1, 2, 1, 1} {
+	if got := pve.writes(); got != [5]int{1, 1, 1, 1, 1} {
 		t.Fatalf("pending tasks duplicated provider writes: creates, starts, stops, deletes, bootstraps = %v", got)
 	}
 }

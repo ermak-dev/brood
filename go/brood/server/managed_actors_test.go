@@ -669,7 +669,11 @@ func TestManagedTerminalFailureExplicitRetry(t *testing.T) {
 				r, b, _ = ts.do(alice, method, path+"/retry", ts.csrf(alice), body)
 				expectStatus(t, "explicit retry", r, b, map[bool]int{true: 202, false: 200}[action == "delete"])
 				retried := mustManagedActor(t, ts, id)
-				if retried.OperationID == before.OperationID || retried.Stage != "stop" || pve.stops != stops+1 {
+				if action == "delete" && stage == "delete" {
+					if retried.OperationID == before.OperationID || retried.Stage != "delete" || retried.UPID != "delete-task" || pve.stops != stops || pve.deletes != deletes+1 {
+						t.Fatal("explicit delete retry did not allocate a fresh delete slot for the owned stopped CT")
+					}
+				} else if retried.OperationID == before.OperationID || retried.Stage != "stop" || pve.stops != stops+1 {
 					t.Fatal("explicit retry did not allocate a fresh stop task slot")
 				}
 				if _, err := ts.srv.managed.reconcileActor(context.Background(), before); !errors.Is(err, store.ErrRevisionConflict) {
