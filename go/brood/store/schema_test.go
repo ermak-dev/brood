@@ -34,7 +34,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"managed_actors", "managed_connections", "managed_pools", "project_capacity", "project_members", "projects", "sessions", "swarm_members", "swarms", "users"}
+	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "project_capacity", "project_members", "projects", "sessions", "swarm_members", "swarms", "users"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}
