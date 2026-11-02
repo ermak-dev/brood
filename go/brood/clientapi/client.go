@@ -258,14 +258,21 @@ func (c *Client) ProjectsList(ctx context.Context) ([]Project, error) {
 // call выполняет запрос к API: подставляет cookie из хранилища, шлёт
 // X-CSRFToken на изменяющие запросы, обновляет хранилище из Set-Cookie.
 func (c *Client) call(ctx context.Context, method, path string, body []byte, out any) error {
+	return c.callWithTimeout(ctx, method, path, body, out, c.http.Timeout)
+}
+
+func (c *Client) callWithTimeout(ctx context.Context, method, path string, body []byte, out any, timeout time.Duration) error {
 	var rdr io.Reader
 	media := ""
 	if body != nil {
 		rdr = bytes.NewReader(body)
 		media = "application/json"
 	}
-	resp, err := c.request(ctx, method, path, rdr, int64(len(body)), media, c.http.Timeout)
+	resp, err := c.request(ctx, method, path, rdr, int64(len(body)), media, timeout)
 	if err != nil {
+		if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
+			return fmt.Errorf("command outcome is unconfirmed; check before retrying: %w", err)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -276,14 +283,17 @@ func (c *Client) call(ctx context.Context, method, path string, body []byte, out
 	}
 	// Отказ не меняет cookie. Диагностика сервера недоверенная и может
 	// содержать пароль или сессию, поэтому тело ошибки не включаем в отказ.
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
 		c.absorbCookies(resp)
 	}
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	if resp.StatusCode == http.StatusOK && out != nil {
+	if (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted) && out != nil {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+			if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
+				return fmt.Errorf("command outcome is unconfirmed; check before retrying: malformed response from %s: %w", c.origin, err)
+			}
 			return fmt.Errorf("malformed response from %s: %w", c.origin, err)
 		}
 		return nil
