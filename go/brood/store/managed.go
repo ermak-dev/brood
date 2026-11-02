@@ -480,6 +480,11 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 			result = a
 			return nil
 		}
+		if operation == "start" || operation == "stop" || operation == "delete" || operation == "reset" {
+			if err := s.guardActorCoordination(ctx, a.UID); err != nil {
+				return err
+			}
+		}
 		if a.Stage != "done" {
 			return fmt.Errorf("managed operation task must be reconciled before replacement")
 		}

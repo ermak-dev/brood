@@ -128,7 +128,7 @@ func TestProjectCapacityKnownSchemaUpgrade(t *testing.T) {
 			}
 			defer s.Close()
 			var current int
-			if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&current); err != nil || current != 7 {
+			if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&current); err != nil || current != 8 {
 				t.Fatalf("version=%d, %v", current, err)
 			}
 			var hash, data string
