@@ -298,14 +298,22 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 		}
 		return nil
 	}
+	var statusErr error
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized && method == "POST" && strings.HasSuffix(path, "/login"):
-		return fmt.Errorf("%w", ErrInvalidCredentials)
+		statusErr = fmt.Errorf("%w", ErrInvalidCredentials)
 	case resp.StatusCode == http.StatusUnauthorized:
-		return fmt.Errorf("%w", ErrSessionExpired)
+		statusErr = fmt.Errorf("%w", ErrSessionExpired)
 	default:
-		return fmt.Errorf("%s %s: server error (status %d): %s", method, path, resp.StatusCode, http.StatusText(resp.StatusCode))
+		statusErr = fmt.Errorf("%s %s: server error (status %d): %s", method, path, resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
+	if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
+		outcome := resp.Header.Get("X-Brood-Command-Outcome")
+		if outcome == "unconfirmed" || outcome == "unknown" {
+			return fmt.Errorf("command outcome is unconfirmed; check before retrying: %w", statusErr)
+		}
+	}
+	return statusErr
 }
 
 // absorbCookies переносит Set-Cookie в хранилище: пустое значение или
