@@ -39,7 +39,7 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 	var err error
 	if options.guest {
 		switch args[0] {
-		case "login", "logout", "whoami", "projects", "push":
+		case "login", "logout", "whoami", "projects", "push", "secret":
 			fmt.Fprintln(diagnostic, "operator command is unavailable in guest mode")
 			return 1
 		}
@@ -57,6 +57,8 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 		err = c.build(args[1:])
 	case "push":
 		err = c.push(ctx, args[1:])
+	case "secret":
+		err = c.secret(ctx, args[1:])
 	case "help", "-h", "--help":
 		if len(args) != 1 {
 			err = errors.New("help accepts no arguments")
