@@ -36,6 +36,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdServe(rest, stderr)
 	case "bootstrap-admin":
 		return cmdBootstrapAdmin(rest, stdin, stdout, stderr)
+	case "database":
+		return cmdDatabase(rest, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return 0
