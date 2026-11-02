@@ -239,6 +239,13 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 				}
 			}
 			a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, store.NewID(), o.action)
+			if err == nil && o.action == "delete" && observed == "stopped" {
+				// Эта stop-стадия создана в текущей транзакции и ещё не
+				// отправлена провайдеру. Владение и stopped уже проверены:
+				// фиксируем сразу delete, не повторяя vzstop. Для старой
+				// неизвестной отправки наблюдение stopped не доказывает исход.
+				a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+			}
 			return err
 		})
 		if err != nil {

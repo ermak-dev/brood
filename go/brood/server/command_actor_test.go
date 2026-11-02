@@ -265,8 +265,8 @@ func TestActorCommandMasterMutatesPeer(t *testing.T) {
 	if err != nil || after.Operation != "delete" || after.Desired != "deleted" {
 		t.Fatalf("peer delete intent: %+v %v", after, err)
 	}
-	if pve.deletes != 0 {
-		t.Fatal("delete skipped durable stop stage")
+	if after.Stage != "delete" || after.UPID != "delete-task" || pve.stops != 1 || pve.deletes != 1 {
+		t.Fatalf("stopped peer deletion repeated stop or skipped durable delete: %+v stops=%d deletes=%d", after, pve.stops, pve.deletes)
 	}
 }
 
