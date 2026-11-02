@@ -3,154 +3,46 @@
 package guest
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
-	"time"
 
+	"brood.dev/go/brood/command"
+	"brood.dev/go/brood/mcp"
 	"brood.dev/go/brood/proxmox/relay"
+	"brood.dev/go/brood/swarmclient"
 )
 
-const mcpVersion = "2025-03-26"
-
-const orchestrationInstructions = "This is Brood orchestration under the mop compatibility namespace, not upstream Mop or NATS control. Call agents() to identify your name, role and peers before dispatching work; only an authorized master may create peers with add(name). Delegate bounded tasks with send(to, message, wait_seconds), review results, and report back to the sender. Built-in session messaging does not reach remote actors. Never interpret running as idle or a clean workspace, or unconfirmed as delivered; check before retrying an uncertain operation. Do not bypass permissions or request operator credentials."
-
-func mcpTool(name, description string, properties map[string]any, required []string, readOnly bool) map[string]any {
-	return map[string]any{"name": name, "description": description,
-		"inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
-		"annotations": map[string]bool{"readOnlyHint": readOnly, "destructiveHint": false, "openWorldHint": false}}
-}
-
-func swarmTools() []map[string]any {
-	return []map[string]any{
-		mcpTool("agents", "List managed actors in this swarm. Names are addresses for send; running does not mean idle or a clean workspace.", map[string]any{}, []string{}, true),
-		mcpTool("add", "Create a managed peer in this swarm. Only an authorized master may create peers; the server selects the pool and role. An uncertain outcome requires checking agents before retrying.", map[string]any{
-			"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 63, "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"},
-		}, []string{"name"}, false),
-		mcpTool("send", "Send a message to another managed actor in this swarm. Only a confirmed receipt proves delivery; unconfirmed means the outcome is unknown.", map[string]any{
-			"to":           map[string]any{"type": "string", "minLength": 1, "maxLength": 63},
-			"message":      map[string]any{"type": "string", "minLength": 1},
-			"wait_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 300},
-		}, []string{"to", "message"}, false),
-	}
-}
-
-// ServeMCP implements the tools-only MCP stdio lifecycle with bounded frames.
-// The injected broker is the only authority; no tool can select an identity,
-// endpoint, executable, credential or socket path.
+// ServeMCP retains the supervisor entry point while sharing the standalone
+// catalog-backed MCP lifecycle. The supplied caller remains the only authority.
 func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, call relay.SwarmCaller) error {
-	scanner := bufio.NewScanner(input)
-	scanner.Buffer(make([]byte, 4096), relay.MaxMessageBytes)
-	enc := json.NewEncoder(output)
-	initialized, ready := false, false
-	for scanner.Scan() {
-		var req struct {
-			JSONRPC string          `json:"jsonrpc"`
-			ID      json.RawMessage `json:"id"`
-			Method  string          `json:"method"`
-			Params  json.RawMessage `json:"params"`
-		}
-		response := map[string]any{"jsonrpc": "2.0", "id": nil}
-		fail := func(code int, message string) { response["error"] = map[string]any{"code": code, "message": message} }
-		if json.Unmarshal(scanner.Bytes(), &req) != nil {
-			fail(-32700, "Parse error")
-		} else {
-			if len(req.ID) > 0 {
-				response["id"] = req.ID
-			}
-			if req.JSONRPC != "2.0" || req.Method == "" {
-				fail(-32600, "Invalid request")
-			} else if len(req.ID) == 0 {
-				if req.Method == "notifications/initialized" && initialized {
-					ready = true
-				}
-				continue
-			} else {
-				switch req.Method {
-				case "initialize":
-					if initialized {
-						fail(-32600, "Already initialized")
-						break
-					}
-					initialized = true
-					response["result"] = map[string]any{"protocolVersion": mcpVersion, "capabilities": map[string]any{"tools": map[string]bool{"listChanged": false}}, "serverInfo": map[string]string{"name": "brood", "version": "1"}, "instructions": orchestrationInstructions}
-				case "ping":
-					response["result"] = map[string]any{}
-				case "tools/list":
-					if !ready {
-						fail(-32002, "Server is not initialized")
-						break
-					}
-					response["result"] = map[string]any{"tools": swarmTools()}
-				case "tools/call":
-					if !ready {
-						fail(-32002, "Server is not initialized")
-						break
-					}
-					var params struct {
-						Name      string                     `json:"name"`
-						Arguments json.RawMessage            `json:"arguments"`
-						Meta      map[string]json.RawMessage `json:"_meta,omitempty"`
-					}
-					if !strictMCPJSON(req.Params, &params) || (params.Name != "agents" && params.Name != "add" && params.Name != "send") {
-						fail(-32602, "Unknown tool or invalid arguments")
-						break
-					}
-					if len(params.Arguments) == 0 {
-						params.Arguments = json.RawMessage(`{}`)
-					}
-					var args struct {
-						To          string `json:"to,omitempty"`
-						Message     string `json:"message,omitempty"`
-						WaitSeconds int    `json:"wait_seconds,omitempty"`
-					}
-					validArgs := false
-					if params.Name == "add" {
-						var add struct {
-							Name string `json:"name"`
-						}
-						validArgs = strictMCPJSON(params.Arguments, &add)
-						args.To = add.Name
-					} else {
-						validArgs = strictMCPJSON(params.Arguments, &args)
-					}
-					if !validArgs {
-						fail(-32602, "Invalid tool arguments")
-						break
-					}
-					wire, _ := json.Marshal(relay.SwarmRequest{Tool: params.Name, To: args.To, Message: args.Message, WaitSeconds: args.WaitSeconds})
-					request, valid := relay.DecodeSwarmRequest(wire)
-					if !valid {
-						fail(-32602, "Invalid tool arguments")
-						break
-					}
-					callCtx, cancel := context.WithTimeout(ctx, time.Duration(args.WaitSeconds)*time.Second+15*time.Second)
-					result := call(callCtx, request)
-					cancel()
-					response["result"] = map[string]any{"content": []map[string]string{{"type": "text", "text": result.Text}}, "isError": !result.OK}
-				default:
-					fail(-32601, "Method not found")
-				}
-			}
-		}
-		if err := enc.Encode(response); err != nil {
-			return errors.New("MCP output unavailable")
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-	}
-	if scanner.Err() != nil {
-		return errors.New("MCP input exceeds frame limit or is unavailable")
-	}
-	return nil
+	return mcp.Serve(ctx, input, output, relayExecutor{call: call}, mcp.GuestSpecs())
 }
 
-func strictMCPJSON(data []byte, target any) bool {
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	return d.Decode(target) == nil && d.Decode(new(any)) == io.EOF
+type relayExecutor struct{ call relay.SwarmCaller }
+
+func (e relayExecutor) Execute(ctx context.Context, invocation command.Invocation) (command.Result, error) {
+	request, err := swarmclient.NewRequest(invocation)
+	if err != nil {
+		return command.Result{}, err
+	}
+	if e.call == nil {
+		return command.Result{}, errors.New("swarm broker unavailable")
+	}
+	wireRequest, _ := json.Marshal(relay.SwarmRequest{Tool: request.Tool, Arguments: request.Arguments, To: request.To, Message: request.Message, WaitSeconds: request.WaitSeconds})
+	validated, valid := relay.DecodeSwarmRequest(wireRequest)
+	if !valid {
+		return command.Result{}, mcp.ErrInvalidArguments
+	}
+	result := e.call(ctx, validated)
+	// Preserve optional result fields added by the transport without coupling the
+	// compatibility wrapper to the supervisor implementation.
+	wire, _ := json.Marshal(result)
+	var converted command.Result
+	_ = json.Unmarshal(wire, &converted)
+	if !result.OK {
+		return converted, errors.New(result.Text)
+	}
+	return converted, nil
 }

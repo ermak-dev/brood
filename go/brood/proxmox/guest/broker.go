@@ -143,7 +143,7 @@ func (b *SwarmBroker) serveConn(c *net.UnixConn) {
 		session := b.session
 		b.mu.Unlock()
 		if session != nil && session.ctx.Err() == nil {
-			ctx, cancel := context.WithTimeout(b.ctx, time.Duration(req.WaitSeconds)*time.Second+15*time.Second)
+			ctx, cancel := context.WithTimeout(b.ctx, time.Duration(relay.SwarmWaitSeconds(req))*time.Second+15*time.Second)
 			response = session.call(ctx, req)
 			cancel()
 		}
@@ -176,7 +176,7 @@ func callSwarmBroker(ctx context.Context, path string, req relay.SwarmRequest) r
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	defer stop()
-	deadline := time.Now().Add(time.Duration(req.WaitSeconds)*time.Second + 15*time.Second)
+	deadline := time.Now().Add(time.Duration(relay.SwarmWaitSeconds(req))*time.Second + 15*time.Second)
 	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
 		deadline = end
 	}
@@ -185,8 +185,8 @@ func callSwarmBroker(ctx context.Context, path string, req relay.SwarmRequest) r
 		return failed
 	}
 	data, err = bufio.NewReader(io.LimitReader(c, relay.MaxMessageBytes+1)).ReadBytes('\n')
-	var response relay.SwarmResponse
-	if err != nil || len(data) > relay.MaxMessageBytes || json.Unmarshal(data, &response) != nil || response.Text == "" {
+	response, valid := relay.DecodeSwarmResponse(data)
+	if err != nil || !valid {
 		return failed
 	}
 	return response

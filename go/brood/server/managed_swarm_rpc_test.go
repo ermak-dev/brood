@@ -23,7 +23,7 @@ func TestManagedSwarmRPCDerivesSenderAndFencesGeneration(t *testing.T) {
 	called := false
 	ts.srv.managed.deliverMessage = func(_ context.Context, _ string, _ int64, request relay.MessageRequest) (relay.MessageResponse, error) {
 		called = true
-		if request.From != "sender" || request.To != "peer" || !strings.Contains(request.Body, "mcp__mop__send") || !strings.Contains(request.Body, "mcp__mop__agents") || strings.Contains(request.Body, "mcp__brood__") {
+		if request.From != "sender" || request.To != "peer" || !strings.Contains(request.Body, "mcp__brood__send") || !strings.Contains(request.Body, "mcp__brood__agents") || strings.Contains(request.Body, "mcp__mop__") {
 			t.Errorf("delivery request: %+v", request)
 		}
 		return relay.MessageResponse{OK: true, Verdict: "delivered"}, nil
