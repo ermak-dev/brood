@@ -59,6 +59,17 @@ func (b *sessionOutput) Write(p []byte) (int, error) {
 // NewSessionHandler creates private attachment state for one relay connection.
 // Cancellation discards metadata only; no tmux or Claude process is stopped.
 func NewSessionHandler(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
+	return NewSessionHandlerWithSecrets(connection, nil)
+}
+
+// NewSessionHandlerWithSecrets refreshes the root projection under the same
+// connection-owned mutation gate as restart/recycle, before stopping the session.
+// A refresh failure is a known no-session-effect failure, not an unknown delivery.
+func NewSessionHandlerWithSecrets(connection context.Context, refresh func(context.Context) error) func(context.Context, relay.SessionRequest) relay.SessionResponse {
+	return newSessionHandlerWithSecrets(connection, refresh, HandleSession)
+}
+
+func newSessionHandlerWithSecrets(connection context.Context, refresh func(context.Context) error, run func(context.Context, relay.SessionRequest) relay.SessionResponse) func(context.Context, relay.SessionRequest) relay.SessionResponse {
 	controller := NewTerminalController(func(ctx context.Context, step sessionctl.TerminalStep) relay.SessionResponse {
 		data, err := json.Marshal(step)
 		if err != nil {
@@ -77,9 +88,20 @@ func NewSessionHandler(connection context.Context) func(context.Context, relay.S
 		}
 		switch req.Operation {
 		case "slash", "wipe", "recycle", "restart":
-			return controller.Control(ctx, func() relay.SessionResponse { return HandleSession(ctx, req) })
+			return controller.Control(ctx, func() relay.SessionResponse {
+				if (req.Operation == "restart" || req.Operation == "recycle") && refresh != nil {
+					bound, cancel := context.WithCancel(ctx)
+					stop := context.AfterFunc(connection, cancel)
+					defer cancel()
+					defer stop()
+					if connection.Err() != nil || refresh(bound) != nil || bound.Err() != nil {
+						return terminalFailure("project secrets refresh failed; session unchanged")
+					}
+				}
+				return run(ctx, req)
+			})
 		default:
-			return HandleSession(ctx, req)
+			return run(ctx, req)
 		}
 	}
 }

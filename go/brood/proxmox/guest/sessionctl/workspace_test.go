@@ -195,7 +195,7 @@ func TestWorkspaceRestartAndRecycle(t *testing.T) {
 				t.Fatalf("tmux calls: %#v", calls)
 			}
 			launch := strings.Join(calls[2], " ")
-			if strings.Contains(launch, "bypass") || !strings.Contains(launch, `"brood"`) || !strings.Contains(launch, "/usr/local/bin/bro") || !strings.Contains(launch, "--guest") {
+			if strings.Contains(launch, "bypass") || !strings.Contains(launch, "/usr/local/bin/brood-guest --brood-guest-app") || strings.Contains(launch, "/usr/local/bin/claude") {
 				t.Fatalf("launch: %s", launch)
 			}
 			_, err := os.Stat(filepath.Join(e.root, "CLAUDE.md"))

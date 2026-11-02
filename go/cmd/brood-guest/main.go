@@ -41,6 +41,8 @@ type swarmBroker interface {
 }
 
 type dependencies struct {
+	app     func() error
+	secrets func(context.Context, relay.ClientConfig) error
 	actor   func() error
 	message func(context.Context) error
 	session func(context.Context) error
@@ -117,6 +119,9 @@ func terminalDial(ctx context.Context) (net.Conn, error) {
 	return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", "127.0.0.1:8080")
 }
 func dispatch(ctx context.Context, args []string, env func() []string, d dependencies) error {
+	if len(args) == 1 && args[0] == "--brood-guest-app" {
+		return d.app()
+	}
 	if len(args) == 1 && args[0] == "--brood-guest-actor" {
 		return d.actor()
 	}
@@ -150,6 +155,18 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	}
 	networkDone := make(chan error, 1)
 	go func() { networkDone <- network.Wait(); cancel() }()
+	if d.secrets != nil {
+		if err := d.secrets(ctx, c.relay); err != nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest project secrets initialization failed")
+		}
+		// Capture only the immutable bootstrap identity, never the relay socket.
+		cfg := c.relay
+		c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
+			return guest.NewSessionHandlerWithSecrets(connection, func(ctx context.Context) error { return d.secrets(ctx, cfg) })
+		}
+	}
 	if d.broker != nil {
 		broker, err := d.broker(ctx)
 		if err != nil {
@@ -241,7 +258,7 @@ func cancellationOnly(err error) bool {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	d := dependencies{actor: guest.RunActor, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+	d := dependencies{app: guest.RunProjectApp, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 		return guest.StartModelGateway(ctx, cfg)
 	}, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
