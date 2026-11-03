@@ -483,8 +483,11 @@ class Deploy:
         # не спрашивают о кэше, оба бинаря собирает её локальный go из pins.
         # cwd shell — checkout Substrate: сборка идёт с явным cwd релиза и
         # относительным пакетом, без флага -C (go на машине может быть старше).
-        for name, package in (("bro", "./cmd/brood"), ("brood-guest", "./cmd/brood-guest")):
+        # bro — клиент cmd/bro (cmd/brood — сервер). Статическая сборка под
+        # гостя не зависит от компилятора C и glibc машины деплоя.
+        for name, package in (("bro", "./cmd/bro"), ("brood-guest", "./cmd/brood-guest")):
             code, _, err = self.cluster.shell.output(
+                "env", "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64",
                 "go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w",
                 "-o", str(work / name), package, cwd=str(self.project / "go"))
             if code or not (work / name).is_file():
