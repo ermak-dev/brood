@@ -8,6 +8,7 @@ import (
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
+	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/proxmox"
 	"brood.dev/go/brood/store"
 	"brood.dev/go/brood/substrate"
@@ -26,6 +27,7 @@ type managedWorkloadOperation struct {
 	userID       string
 	role         string
 	parent       *store.ManagedActor
+	origin       string
 }
 
 func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
@@ -171,7 +173,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if o.parent != nil {
 			parentUID = o.parent.UID
 		}
-		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID()})
+		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
 		if err != nil {
 			return err
 		}
@@ -277,24 +279,25 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 	return err
 }
 
-func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, role string) {
+func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, creation actorCreation) {
 	// The generated profile is the entire execution definition. Native knobs are
 	// not an alternate route for OCI, mounts, egress overrides or arbitrary env.
 	if input.GetSourceTag() != nil || input.GetMetadata().GetUid() != "" || input.GetMetadata().GetVersion() != 0 || input.GetMetadata().GetCreateTime() != nil || input.GetMetadata().GetUpdateTime() != nil || input.GetMetadata().GetDeleteTime() != nil {
 		writeDetail(w, 400, "managed actors accept only name, approved actorTemplate and workerSelector")
 		return
 	}
-	a, err := s.createManaged(r.Context(), userID, sw, input, pool, role, nil)
+	a, err := s.createManaged(r.Context(), userID, sw, input, pool, creation.role, creation.origin, nil)
 	if err != nil {
 		managedAPIError(w, r, err)
 		return
 	}
-	writeJSON(w, 201, managedActorJSON(a, pool, sw.AtespaceName))
+	writeJSON(w, 201, managedActorJSON(a, pool, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin)))
 }
 
 // createManaged is shared by human creation and UID-bound delegated creation.
-// A delegated name retry returns its original reservation without provider writes.
-func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, role string, parent *store.ManagedActor) (store.ManagedActor, error) {
+// A delegated name retry returns its original reservation without provider writes;
+// a retry naming a different origin conflicts. Origin resolution precedes admission.
+func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, role, origin string, parent *store.ManagedActor) (store.ManagedActor, error) {
 	if role == "" {
 		role = "worker"
 	}
@@ -310,13 +313,27 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 			if a.ParentUID != parent.UID || a.PoolUID != pool.UID || a.Template != parent.Template || a.AtespaceUID != sw.AtespaceUID {
 				return store.ManagedActor{}, app.ErrExists
 			}
+			if origin != "" {
+				canonical, err := gitorigin.Canonical(origin)
+				if err != nil {
+					return store.ManagedActor{}, &originRefusal{detail: err.Error()}
+				}
+				if canonical != a.Origin {
+					return store.ManagedActor{}, app.ErrExists
+				}
+			}
 			return a, nil
 		}
 		if !errors.Is(err, store.ErrNotFound) {
 			return store.ManagedActor{}, err
 		}
 	}
-	err := s.app.AdmitWorkload(userID, sw.ID, op)
+	resolved, err := s.resolveActorOrigin(ctx, sw.ProjectID, origin, parent)
+	if err != nil {
+		return store.ManagedActor{}, err
+	}
+	op.origin = resolved
+	err = s.app.AdmitWorkload(userID, sw.ID, op)
 	return op.saved, err
 }
 
@@ -341,7 +358,12 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, 200, managedActorJSON(a, p, sw.AtespaceName))
+		mode, err := s.originMode(r.Context(), sw.ProjectID, a.Origin)
+		if err != nil {
+			managedAPIError(w, r, err)
+			return
+		}
+		writeJSON(w, 200, managedActorJSON(a, p, sw.AtespaceName, mode))
 		return
 	}
 	if r.Method == http.MethodPut {
@@ -372,5 +394,5 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		w.WriteHeader(202)
 		return
 	}
-	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.AtespaceName))
+	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin)))
 }

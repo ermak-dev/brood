@@ -330,9 +330,11 @@ func workspaceWalk(ctx context.Context, path string, metadata bool, depth int, f
 	}
 }
 
+// brood.origin — канонический origin, записанный первым клоном (#147); это
+// данные, а не исполняемая настройка Git.
 func workspaceConfigKey(key string) bool {
 	switch key {
-	case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode", "remote.origin.url", "remote.origin.fetch", "user.name", "user.email":
+	case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode", "remote.origin.url", "remote.origin.fetch", "user.name", "user.email", "brood.origin":
 		return true
 	}
 	return strings.HasPrefix(key, "branch.") && (strings.HasSuffix(key, ".remote") || strings.HasSuffix(key, ".merge"))
@@ -378,6 +380,24 @@ func workspaceTMUXID(s string, prefix byte) bool {
 		}
 	}
 	return true
+}
+
+// EnsureSession starts the fixed detached Claude session at guest boot unless
+// it exists. It never stops or replaces a session; ttyd attaches to it later.
+func EnsureSession(ctx context.Context) error { return ensureSession(ctx, runWorkspaceTMUX) }
+
+func ensureSession(ctx context.Context, tmux func(context.Context, ...string) (string, error)) error {
+	if _, err := tmux(ctx, "has-session", "-t", "=claude"); err == nil {
+		return nil
+	}
+	if _, err := tmux(ctx, workspaceLaunchArgs()...); err == nil {
+		return nil
+	}
+	// Терминал мог создать ту же сессию между двумя командами.
+	if _, err := tmux(ctx, "has-session", "-t", "=claude"); err == nil {
+		return nil
+	}
+	return errors.New("fixed Claude tmux session could not be started")
 }
 
 func workspaceLaunchArgs() []string {

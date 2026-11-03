@@ -1,5 +1,5 @@
 // FEATURE: Управляемые акторы Proxmox в существующем потоке создания.
-// SPEC: Явные phase/placement; stop/resume сохраняют workspace, reset уничтожает;
+// SPEC: Явные phase/placement; stop/start сохраняют workspace, reset уничтожает;
 // native protojson и decimal int64 не меняются, просмотр не запускает актор.
 // IMPLEMENTATION: Отдельные managed lifecycle и DTO, профиль в существующем редакторе.
 // RESULT: IMPLEMENTED — явные действия, подтверждение reset и совместимость native проверены.
@@ -27,6 +27,8 @@ import {
 } from '@/services/brood/substrate';
 import en from '../src/i18n/locales/en.json';
 import { ActorLifecycleActions } from '@/features/substrate/components/ActorLifecycleActions';
+import { ManagedActorActions } from '@/features/substrate/components/ManagedActorActions';
+import { managedActionPlan } from '@/features/substrate/actorActions';
 
 const capabilities = {
   workspace: true,
@@ -89,12 +91,29 @@ test('managed phase wins over the native enum projection, including transitions 
 });
 
 test('only explicit appropriate managed actions are offered, never memory suspend', () => {
-  expect(actorActions(actor)).toEqual(['resume', 'reset']);
-  expect(actorActions({ ...actor, phase: 'running' })).toEqual(['stop', 'reset']);
-  expect(actorActions({ ...actor, phase: 'error' })).toEqual(['resume', 'stop', 'reset']);
+  const enabled = (value: Actor) => {
+    const plan = managedActionPlan(value);
+    return [plan.primary, plan.stop, ...plan.groups.flatMap((group) => group.actions)]
+      .filter((state) => state.enabled)
+      .map((state) => state.id);
+  };
+  expect(enabled(actor)).toEqual(['start', 'reset', 'delete']);
+  expect(enabled({ ...actor, phase: 'running', desired: 'running' })).toEqual([
+    'terminal', 'stop', 'restart', 'recycle', 'wipe', 'reset', 'delete',
+  ]);
+  expect(enabled({ ...actor, phase: 'error' })).toEqual(['start', 'stop', 'reset', 'delete']);
   for (const phase of ['provisioning', 'stopping', 'deleting'] as const) {
-    expect(actorActions({ ...actor, phase })).toEqual([]);
+    expect(enabled({ ...actor, phase })).toEqual(['delete']);
   }
+  for (const phase of ['provisioning', 'running', 'stopping', 'stopped', 'deleting', 'error'] as const) {
+    const plan = managedActionPlan({ ...actor, phase });
+    const ids = [plan.primary, plan.stop, ...plan.groups.flatMap((group) => group.actions)].map(
+      (state) => state.id as string
+    );
+    expect(ids).not.toContain('suspend');
+  }
+  // Native lifecycle is unchanged; managed lifecycle lives in the plan only.
+  expect(actorActions(actor)).toEqual([]);
   expect(
     actorActions({ metadata: { name: 'native' }, status: { state: 'ACTOR_STATE_RUNNING' } })
   ).toEqual(['suspend']);
@@ -200,37 +219,71 @@ test('rendering lifecycle controls never starts actors and gates terminal and un
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
   const actions: string[] = [];
-  const markup = (value: Actor, disabled = false) =>
+  const managed = (value: Actor, pending?: 'restart') =>
+    renderToStaticMarkup(
+      createElement(
+        I18nextProvider,
+        { i18n },
+        createElement(ManagedActorActions, {
+          actor: value,
+          swarm: 'swarm/a',
+          canManage: true,
+          pending,
+          onAction: (action: string) => {
+            actions.push(action);
+          },
+          onDetails: () => actions.push('details'),
+        })
+      )
+    );
+  const enabledButtons = (html: string) =>
+    [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
+      .filter((match) => !/aria-disabled="true"|disabled=""/.test(match[1]))
+      .map((match) => match[2].replace(/<[^>]+>/g, '').trim());
+  const stopped = managed(actor);
+  expect(enabledButtons(stopped)).toEqual(['Start', 'Details', 'More']);
+  expect(stopped).not.toContain('Suspend');
+  expect(stopped).not.toContain('href=');
+  const running = managed({ ...actor, phase: 'running', desired: 'running' });
+  expect(enabledButtons(running)).toEqual(['Stop', 'Details', 'More']);
+  expect(running).not.toContain('>Start<');
+  expect(running).not.toContain('Suspend');
+  expect(running).toContain('href="/api/swarms/swarm%2Fa/proxy/actors/test/"');
+  expect(running).toContain('target="_blank"');
+  // A transition leaves nothing to press but details and the menu (delete).
+  expect(enabledButtons(managed({ ...actor, phase: 'stopping' }))).toEqual(['Details', 'More']);
+  expect(managed({ ...actor, phase: 'deleting', desired: 'deleted' })).not.toContain('href=');
+  const pending = managed({ ...actor, phase: 'running', desired: 'running' }, 'restart');
+  expect(pending).toContain('Restarting…');
+  expect(enabledButtons(pending)).toEqual(['Details']);
+  const native = renderToStaticMarkup(
+    createElement(
+      I18nextProvider,
+      { i18n },
+      createElement(ActorLifecycleActions, {
+        actor: { metadata: { name: 'native' }, status: { state: 'ACTOR_STATE_RUNNING' } },
+        swarm: 'swarm',
+        disabled: false,
+        onAction: (action: string) => actions.push(action),
+      })
+    )
+  );
+  expect(native).toContain('Suspend');
+  // Managed rows never render through the native component.
+  expect(
     renderToStaticMarkup(
       createElement(
         I18nextProvider,
         { i18n },
         createElement(ActorLifecycleActions, {
-          actor: value,
-          swarm: 'swarm/a',
-          disabled,
-          onAction: (action: string) => {
-            actions.push(action);
-          },
+          actor,
+          swarm: 'swarm',
+          disabled: false,
+          onAction: () => {},
         })
       )
-    );
-  const stopped = markup(actor);
-  expect(stopped).toContain('Resume');
-  expect(stopped).toContain('Reset workspace');
-  expect(stopped).not.toContain('Suspend');
-  expect(stopped).not.toContain('href=');
-  const running = markup({ ...actor, phase: 'running' });
-  expect(running).toContain('Stop');
-  expect(running).not.toContain('Resume');
-  expect(running).not.toContain('Suspend');
-  expect(running).toContain('/api/swarms/swarm%2Fa/proxy/actors/test/');
-  expect(markup({ ...actor, phase: 'stopping' })).not.toContain('<button');
-  expect(markup({ ...actor, phase: 'deleting' })).not.toContain('href=');
-  expect(markup(actor, true)).toContain('disabled');
-  expect(
-    markup({ metadata: { name: 'native' }, status: { state: 'ACTOR_STATE_RUNNING' } })
-  ).toContain('Suspend');
+    )
+  ).toBe('');
   expect(actions).toEqual([]);
 });
 

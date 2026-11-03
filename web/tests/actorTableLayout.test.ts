@@ -1,8 +1,9 @@
 // FEATURE: Таблица акторов вмещает действия рядом с managed-размещением (#108).
 // SPEC: Provider и логический пул/CTID — не отдельные колонки, а одна ячейка
 // размещения: native — узел, Proxmox — «Proxmox · узел · CT (пул)» без
-// выдуманного native-воркера. Все действия каждой строки остаются в строке;
-// пять managed-действий переносятся группами, native-строка — одной линией.
+// выдуманного native-воркера. Managed-строка: главное действие по состоянию и
+// Stop, затем детали и меню остальных (#151); группы переносятся, native-строка
+// — одной линией, как прежде.
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
@@ -84,12 +85,15 @@ async function table(rows: Actor[], canManage: boolean) {
       })
     )
   );
-  const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  // Скрытые описания (aria-describedby) — не видимый текст строки.
+  const visible = (html: string) => html.replace(/<span[^>]*hidden=""[^>]*>[\s\S]*?<\/span>/g, '');
+  const text = (html: string) =>
+    visible(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const heads = [...markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((m) => text(m[1]));
   const body = markup.slice(markup.indexOf('<tbody'));
   const lines = body.split('<tr').slice(1).map((row) => {
     const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
-    return { cells: cells.map(text), actions: cells.at(-1) ?? '' };
+    return { cells: cells.map(text), actions: visible(cells.at(-1) ?? '') };
   });
   return { heads, lines, markup, text };
 }
@@ -117,7 +121,7 @@ test('provider and pool/CTID fold into one placement column, all actions stay in
   expect(actions).toEqual([
     'Open terminal Suspend Edit Delete',
     'Open terminal Resume Edit Delete',
-    'Open terminal Stop Reset workspace Details Delete',
+    'Open terminal Stop Details More',
   ]);
   // Lifecycle и действия над объектом — две группы; Button несёт свой <span>,
   // поэтому кнопки и ссылки сначала сводятся к тексту.
@@ -128,10 +132,13 @@ test('provider and pool/CTID fold into one placement column, all actions stay in
     [...flatten(html).matchAll(/<span[^>]*>([\s\S]*?)<\/span>/g)].map((m) =>
       text(m[1])
     );
-  expect(groups(lines[2].actions)).toEqual([
-    'Open terminal Stop Reset workspace',
-    'Details Delete',
-  ]);
+  expect(groups(lines[2].actions)).toEqual(['Open terminal Stop', 'Details More']);
+  // The rarer and destructive managed actions live in the menu, not in the row.
+  for (const hidden of ['Recreate', 'Restart Claude', 'Clean working copy', 'Wipe']) {
+    expect(lines[2].actions).not.toContain(hidden);
+  }
+  expect(lines[2].actions).toContain('aria-haspopup="menu"');
+  expect(lines[2].actions).toContain('aria-label="More actions for claude"');
   expect(groups(lines[0].actions)).toEqual(['Open terminal Suspend', 'Edit Delete']);
 });
 

@@ -47,6 +47,8 @@ type managedFakePVE struct {
 	absenceChecks                   int
 	inspectStarted, inspectRelease  chan struct{}
 	deletedWhileRunning             bool
+	// envs — bootstrap env каждого Create и ConfigureBootstrap по порядку.
+	envs []proxmox.BootstrapEnv
 }
 
 func (f *managedFakePVE) NextID(context.Context) (int, error) {
@@ -64,6 +66,7 @@ func (f *managedFakePVE) Create(ctx context.Context, s proxmox.CTSpec) (string, 
 	defer f.mu.Unlock()
 	f.creates++
 	f.spec = s
+	f.envs = append(f.envs, s.Env)
 	f.exists = true
 	a, err := f.server.store.GetManagedActor(ctx, s.Owner.ActorUID)
 	if err != nil || a.CTID != s.VMID || a.Stage != "create" || (a.Operation != "create" && a.Operation != "reset") || a.UPID != "" || a.Incarnation != int64(s.Owner.Incarnation) || a.OwnerNonce != s.Owner.Nonce {
@@ -184,6 +187,7 @@ func (f *managedFakePVE) ConfigureBootstrap(ctx context.Context, ref proxmox.Own
 	}
 	f.bootstraps++
 	f.spec.Env = env
+	f.envs = append(f.envs, env)
 	f.mu.Unlock()
 	return f.bootstrapError
 }

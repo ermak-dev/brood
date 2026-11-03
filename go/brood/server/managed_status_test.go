@@ -12,7 +12,7 @@ import (
 // recognized native enum for old inventory readers and never implies a checkpoint.
 func TestManagedStatusUsesKnownNativeEnum(t *testing.T) {
 	for _, phase := range []string{"provisioning", "running", "stopping", "stopped", "deleting", "error"} {
-		item := managedActorJSON(store.ManagedActor{Phase: phase}, store.ManagedPool{}, "swarm")
+		item := managedActorJSON(store.ManagedActor{Phase: phase}, store.ManagedPool{}, "swarm", "")
 		state := item["status"].(map[string]any)["state"].(string)
 		if _, ok := ateapi.ActorState_value[state]; !ok {
 			t.Fatalf("phase %s invented native status %s", phase, state)

@@ -1,7 +1,7 @@
 package command_test
 
 // FEATURE: Shared command catalog for CLI and MCP adapters.
-// SPEC: Exactly 25 tools, generated schemas, strict bounded validation, canonical parity.
+// SPEC: Exactly 27 tools (21 guest-visible), generated schemas, strict bounded validation, canonical parity.
 // IMPLEMENTATION: Per-command declarations share schema generation and argument validation.
 // RESULT: IMPLEMENTED — catalog, rejection cases, defaults, and exact numeric parity pass.
 // STATUS: DONE
@@ -67,7 +67,7 @@ func TestCoordinationAndTerminalActions(t *testing.T) {
 }
 
 func TestCatalog(t *testing.T) {
-	names := strings.Fields("agents send dispatch tail slash session_history session_terminal add delete stop restart update recycle wipe project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose")
+	names := strings.Fields("agents send dispatch tail slash session_history session_terminal add delete stop start restart update recycle wipe reset project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose")
 	specs := command.Specs()
 	if len(specs) != len(names) {
 		t.Fatalf("got %d specs", len(specs))
@@ -119,6 +119,53 @@ func TestCatalog(t *testing.T) {
 	}
 }
 
+// FEATURE: Start and reset are catalog lifecycle commands (#149).
+// SPEC: start resumes a stopped actor and is not destructive; reset replaces the
+// container and workspace, is destructive and carries an explicit confirmation.
+// Both are guest-visible like stop/delete; neither is read-only.
+func TestStartResetMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		destructive bool
+		args        []string
+	}{{"start", false, []string{"name"}}, {"reset", true, []string{"name", "confirm"}}} {
+		s, ok := command.Lookup(tc.name)
+		if !ok {
+			t.Fatalf("%s is not declared", tc.name)
+		}
+		if s.ReadOnly || s.Destructive != tc.destructive || !s.Guest || !reflect.DeepEqual(s.Path, []string{tc.name}) {
+			t.Errorf("%s metadata: %+v", tc.name, s)
+		}
+		names := []string{}
+		for _, a := range s.Args {
+			names = append(names, a.Name)
+		}
+		if !reflect.DeepEqual(names, tc.args) {
+			t.Errorf("%s args: %v", tc.name, names)
+		}
+		schema := s.Schema()
+		if !reflect.DeepEqual(schema["required"], []string{"name"}) {
+			t.Errorf("%s required: %v", tc.name, schema["required"])
+		}
+		if tc.name == "reset" {
+			confirm := schema["properties"].(map[string]any)["confirm"].(map[string]any)
+			if confirm["type"] != "boolean" || confirm["default"] != false {
+				t.Errorf("reset confirm schema: %v", confirm)
+			}
+		}
+	}
+	all, guest := 0, 0
+	for _, s := range command.Specs() {
+		all++
+		if s.Guest {
+			guest++
+		}
+	}
+	if all != 27 || guest != 21 {
+		t.Fatalf("catalog=%d guest=%d; want 27 and 21", all, guest)
+	}
+}
+
 func TestParserParity(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -132,6 +179,9 @@ func TestParserParity(t *testing.T) {
 		{"session_history", []string{"session", "history", "worker"}, `{"name":"worker"}`, `{"cursor":"","limit":100,"name":"worker"}`},
 		{"session_terminal", []string{"session", "terminal", "worker", "read"}, `{"name":"worker","action":"read"}`, `{"action":"read","cols":100,"cursor":"","data":"","mode":"ro","name":"worker","rows":30,"seq":0,"tid":"","wait":0}`},
 		{"delete", []string{"delete", "worker", "--confirm"}, `{"name":"worker","confirm":true}`, `{"confirm":true,"name":"worker"}`},
+		{"start", []string{"start", "worker"}, `{"name":"worker"}`, `{"name":"worker"}`},
+		{"reset", []string{"reset", "worker", "--confirm"}, `{"name":"worker","confirm":true}`, `{"confirm":true,"name":"worker"}`},
+		{"reset", []string{"reset", "worker"}, `{"name":"worker"}`, `{"confirm":false,"name":"worker"}`},
 		{"project_add", []string{"project", "add", "demo"}, `{"name":"demo"}`, `{"description":"","name":"demo"}`},
 		{"project_limit", []string{"project", "limit", "--actors", "0"}, `{"actors":0}`, `{"actors":0,"name":""}`},
 		{"project_limit", []string{"project", "limit"}, `{}`, `{"name":""}`},
@@ -170,6 +220,8 @@ func TestRejectInvalidTool(t *testing.T) {
 		{"tail", `{"name":"w","lines":1.5}`, "lines"}, {"tail", `{"name":"w","lines":10001}`, "lines"},
 		{"tail", `{"name":"w","lines":0}`, "lines"}, {"tail", `{"name":"w","lines":1e1000}`, "lines"},
 		{"delete", `{"name":"w","confirm":"true"}`, "confirm"},
+		{"start", `{"name":"w","confirm":true}`, "unknown argument"}, {"start", `{}`, "name"},
+		{"reset", `{"name":"w","confirm":"true"}`, "confirm"}, {"reset", `{"confirm":true}`, "name"},
 		{"project_limit", `{"actors":-1}`, "actors"}, {"project_limit", `{"actors":0.5}`, "actors"},
 		{"session_terminal", `{"name":"w","action":"read","mode":"root"}`, "mode"},
 		{"agents", `{"x":{"x":{"x":1}}}`, "unknown"},

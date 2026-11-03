@@ -122,6 +122,38 @@ func TestServeRejectsInvalidAndUnavailableTools(t *testing.T) {
 	}
 }
 
+// FEATURE: Guest discovery advertises start/reset with honest hints (#149).
+// SPEC: Guest tools/list has 21 tools; start is neither read-only nor
+// destructive, reset is destructive.
+func TestGuestDiscoveryStartResetHints(t *testing.T) {
+	var out bytes.Buffer
+	input := handshake + "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n"
+	if err := Serve(context.Background(), strings.NewReader(input), &out, nil, GuestSpecs()); err != nil {
+		t.Fatal(err)
+	}
+	all := responses(t, &out)
+	tools := all[1]["result"].(map[string]any)["tools"].([]any)
+	if len(tools) != 21 {
+		t.Fatalf("guest tools=%d", len(tools))
+	}
+	want := map[string]bool{"start": false, "reset": true}
+	for _, raw := range tools {
+		tool := raw.(map[string]any)
+		destructive, ok := want[tool["name"].(string)]
+		if !ok {
+			continue
+		}
+		hints := tool["annotations"].(map[string]any)
+		if hints["readOnlyHint"] != false || hints["destructiveHint"] != destructive {
+			t.Errorf("%s hints: %v", tool["name"], hints)
+		}
+		delete(want, tool["name"].(string))
+	}
+	if len(want) != 0 {
+		t.Fatalf("guest discovery lacks %v", want)
+	}
+}
+
 func TestTerminalWaitDeadline(t *testing.T) {
 	if got := callTimeout(json.RawMessage(`{"wait":120}`)); got != 135*time.Second {
 		t.Fatalf("terminal deadline=%v", got)

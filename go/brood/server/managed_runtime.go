@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/proxmox"
 	"brood.dev/go/brood/proxmox/relay"
 	"brood.dev/go/brood/store"
@@ -594,7 +595,9 @@ func (m *managedProvider) actorByName(ctx context.Context, swarm, name string) (
 	return store.ManagedActor{}, store.ErrNotFound
 }
 
-func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace string) map[string]any {
+// managedActorJSON renders a managed actor; originMode is the caller's current
+// recomputation for a.Origin ("" when the origin has no admissible mode).
+func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace, originMode string) map[string]any {
 	state := "ACTOR_STATE_UNSPECIFIED"
 	switch a.Phase {
 	case "provisioning":
@@ -608,11 +611,15 @@ func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace string
 	case "error":
 		state = "ACTOR_STATE_CRASHED"
 	}
-	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "atespace": atespace}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name, "atespace": atespace}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Error}}
+	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "atespace": atespace}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name, "atespace": atespace}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Error}, "origin": a.Origin, "originMode": originMode}
 }
 
 func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNames map[string]bool) ([]any, error) {
 	actors, err := m.server.store.ListManagedActors(ctx, sw.ID)
+	if err != nil {
+		return nil, err
+	}
+	repository, err := m.server.store.ProjectRepository(ctx, sw.ProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -631,7 +638,11 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNa
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, managedActorJSON(a, p, sw.AtespaceName))
+		mode := ""
+		if a.Origin != "" {
+			mode = gitorigin.Mode(a.Origin, repository, m.server.git.remotes.has, managedPublicHost)
+		}
+		out = append(out, managedActorJSON(a, p, sw.AtespaceName, mode))
 	}
 	return out, nil
 }

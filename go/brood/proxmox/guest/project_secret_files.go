@@ -276,10 +276,12 @@ func readSecretJournal(dir int) (secretJournal, error) {
 	return journal, nil
 }
 
+func lockSecretManifest(dir int) (int, error) { return lockPrivateFile(dir, "project-secrets.lock") }
+
 // flock serializes separate processes as well as goroutines. Never unlink the
 // lock: doing so would let a later writer lock a different inode.
-func lockSecretManifest(dir int) (int, error) {
-	fd, err := unix.Openat(dir, "project-secrets.lock", unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0600)
+func lockPrivateFile(dir int, name string) (int, error) {
+	fd, err := unix.Openat(dir, name, unix.O_RDWR|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0600)
 	if err != nil {
 		return -1, secretFailure()
 	}

@@ -72,7 +72,7 @@ func TestMCPToolsUseOnlySwarmBroker(t *testing.T) {
 	}
 	schema := add["inputSchema"].(map[string]any)
 	properties := schema["properties"].(map[string]any)
-	if len(properties) != 1 || properties["name"] == nil || schema["required"].([]any)[0] != "name" || add["annotations"].(map[string]any)["readOnlyHint"] != false {
+	if len(properties) != 2 || properties["name"] == nil || properties["origin"] == nil || len(schema["required"].([]any)) != 1 || schema["required"].([]any)[0] != "name" || add["annotations"].(map[string]any)["readOnlyHint"] != false {
 		t.Fatalf("add schema: %v", add)
 	}
 	if calls[0].Tool != "send" || calls[0].To != "peer" || calls[0].WaitSeconds != 2 || calls[1].Tool != "agents" {

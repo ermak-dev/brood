@@ -94,7 +94,7 @@ func (s Spec) Schema() map[string]any {
 var catalog = []Spec{
 	agentsSpec, sendSpec, dispatchSpec, tailSpec, slashSpec,
 	sessionHistorySpec, sessionTerminalSpec, addSpec, deleteSpec,
-	stopSpec, restartSpec, updateSpec, recycleSpec, wipeSpec,
+	stopSpec, startSpec, restartSpec, updateSpec, recycleSpec, wipeSpec, resetSpec,
 	projectAddSpec, projectLimitSpec, landingSpec, nodeSpec,
 	nodeDrainSpec, nodeUpSpec, modelsSpec, profileSpec, statSpec,
 	diagnoseSpec, serverDiagnoseSpec,

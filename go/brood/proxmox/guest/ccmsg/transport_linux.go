@@ -31,7 +31,8 @@ type Delivery struct {
 // Exchange sends one message and listens on a separate reverse Unix socket.
 // It must run as the Claude session's unprivileged user. Session paths and keys
 // are untrusted; this function refuses root before opening any socket. The
-// envelope asserts prompting, matching the managed guest's default permissions.
+// envelope asserts bypass: managed Claude runs with --dangerously-skip-permissions,
+// and a mode that differs from the receiver's is held as mode-mismatch.
 // waitSec requests an authenticated idle notice; zero waits briefly for status.
 // A successful write without a matching receipt is unconfirmed. It does not
 // prove even queue acceptance, and must not be presented as delivered.
@@ -55,7 +56,7 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	}
 	callback := filepath.Join(filepath.Dir(socketPath), fmt.Sprintf("%d-%s.sock", os.Getpid(), hex.EncodeToString(suffix[:])))
 	address := "uds:" + callback
-	envelope, err := (EnvelopeBuilder{From: address, FromName: name, FromMode: "prompting"}).Build(body)
+	envelope, err := (EnvelopeBuilder{From: address, FromName: name, FromMode: "bypass"}).Build(body)
 	if err != nil {
 		return Delivery{}, err
 	}
@@ -73,7 +74,7 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	}
 	frames := []Frame{AuthFrame(token), user}
 	if waitSec > 0 {
-		idle, _ := ControlFrame("notify_when_idle", address, "prompting", idleID)
+		idle, _ := ControlFrame("notify_when_idle", address, "bypass", idleID)
 		frames = append(frames, idle)
 	}
 	data, err := EncodeNDJSON(frames)

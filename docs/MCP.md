@@ -60,8 +60,9 @@ MCP-настройки сохраняются. Namespace инструменто�
 ## Каталог и адаптация mop
 
 Источник сравнения — `~/mop` на commit `e8f04f26`: 25 инструментов.
-Перенос не подключает Brood к старой установке mop. Nomad job, узел,
-контейнер PVE, пул Brood и native Worker — разные сущности.
+Brood добавляет `start` и `reset`: у оператора 27 инструментов, в гостевом
+MCP — 21. Перенос не подключает Brood к старой установке mop. Nomad job,
+узел, контейнер PVE, пул Brood и native Worker — разные сущности.
 
 | Команда bro | Инструмент | Контракт Brood |
 |---|---|---|
@@ -73,12 +74,15 @@ MCP-настройки сохраняются. Namespace инструменто�
 | `session history` | `session_history` | Приватная история с cursor и epoch |
 | `session terminal` | `session_terminal` | Приватное ro/rw подключение со снимками экрана и последовательностями |
 | `add` | `add` | Master создаёт worker в своём одобренном пуле и рое |
+| `add --origin URL` | `add` (`origin`) | HTTPS Git origin нового worker; без флага — origin master, затем repository проекта ([PROXMOX.md](PROXMOX.md)) |
 | `delete` | `delete` | Асинхронное удаление CT и диска; требуется confirm |
 | `stop` | `stop` | Остановка managed CT с сохранением диска и квоты |
-| `restart` | `restart` | Перезапуск Claude внутри прежнего CT; требуется confirm |
-| `update` | `update` | Явный отказ: безопасное обновление immutable-профиля ещё не реализовано (#133) |
+| `start` | `start` | Запуск остановленного CT с прежним диском и поколением; работающий не меняется. Аналог mop `update`, поднимающего остановленный папет |
+| `restart` | `restart` | Перезапуск Claude в bypass-режиме внутри прежнего CT; требуется confirm |
+| `update` | `update` | Явный отказ: безопасное обновление immutable-профиля ещё не реализовано (#133); остановленный актор поднимает `start` |
 | `recycle` | `recycle` | Очистка Git-клона и новая Claude-сессия в прежнем CT; требуется confirm |
 | `wipe` | `wipe` | Очистка тихого Git-workspace без удаления клона; требуется confirm |
+| `reset` | `reset` | Новый CT и поколение: workspace удаляется, при заданном origin клонируется заново; требуется confirm |
 | `project add` | `project_add` | Создание проекта Brood с описанием, не Git checkout или сборка образа |
 | `project limit` | `project_limit` | Чтение или атомарное изменение только max_actors |
 | `landing` | `landing` | Advisory-токен интеграции проекта: show/take/give |
@@ -93,16 +97,28 @@ MCP-настройки сохраняются. Namespace инструменто�
 
 `project_*`, `node*` и `server_diagnose` не объявляются в гостевом MCP.
 Просмотр своих сессий доступен worker; просмотр соседей и управляющие
-действия требуют действующей master-делегации. Наличие инструмента в
-`tools/list` не является разрешением его выполнить.
+действия требуют действующей master-делегации. `start` и `reset` master
+выполняет только для своих workers — созданных им через `add`; как mop
+`update`, чужой папет — отказ. Оператору нужно право управлять роем, как
+для stop/delete. Наличие инструмента в `tools/list` не является
+разрешением его выполнить.
 
-Name-only `add` наследует одобренный пул именно от managed master. Оператор
+Name-only `add` наследует одобренный пул именно от managed master, а origin —
+от master или, если у master он пуст, repository проекта. `--origin`
+канонизируется сервером: допустим только repository проекта из
+`BROOD_GIT_REMOTES` (через серверный шлюз Git) или публичный host allowlist
+гостя; иное — отказ без резервирования. Оператор
 не может неявно выбрать пул через эту команду: создание с явным шаблоном
 остаётся в существующем API/панели. Native-акторы не изображаются managed
 акторами в этом канале. Управление занятой immutable-конфигурацией и полный
 workspace-preserving reboot CT — отдельные задачи #133 и #130.
 
-`restart` не меняет CTID, образ, PVE ownership и relay generation. Для него,
+`restart` не меняет CTID, образ, PVE ownership и relay generation. Новая
+сессия запускается тем же launch, что и автостарт при загрузке гостя:
+`claude --dangerously-skip-permissions` с сервером `brood`, без диалогов
+onboarding, trust и bypass ([PROXMOX.md](PROXMOX.md), «Автономный запуск
+Claude»). Модель новой сессии выполняет инструменты без запросов
+разрешений; то же относится к `recycle`. Для `restart`,
 `wipe` и `recycle` нужен проверенный Git-клон строго в `/workspace/project`.
 Неизвестный Git state, неподходящая конфигурация, symlink/gitdir вне корня,
 живые процессы и дополнительные tmux panes дают отказ до очистки. Эти
@@ -110,8 +126,19 @@ workspace-preserving reboot CT — отдельные задачи #133 и #130.
 `restart` и `recycle` ждут освобождения workspace до 4 секунд и нового session
 proof до 8 секунд в общем бюджете helper 15 секунд; timeout или отмена после
 эффекта дают unknown без автоматического освобождения reservation.
-`wipe` требует остановленной Claude-сессии, а не выключенного CT. Для
-возобновления выключенного CT остаётся существующее действие resume API/панели.
+`wipe` требует остановленной Claude-сессии, а не выключенного CT.
+Выключенный CT возобновляет `start`.
+
+`start` и `reset` — те же durable intents, что действия resume и reset
+API/панели: принятие — записанное намерение, а не готовность гостя.
+`start` сохраняет CTID, диск, owner nonce и поколение; для работающего
+актора это no-op без нового намерения и эффекта провайдера. `reset`
+останавливает и удаляет прежний CT, отзывает guest token старого поколения
+с первого шага и только после подтверждённого отсутствия создаёт CT с тем
+же CTID, новым owner nonce и поколением +1. Workspace не переносится: при
+заданном origin актора гость клонирует его заново (#146, #147), иначе
+workspace пуст. Координация с участием актора и workspace reservation
+дают отказ обоим до любого эффекта провайдера.
 
 ## Доставка и координация
 
@@ -141,9 +168,10 @@ bro --guest landing --action give --request-id integration-1
 
 Аренды и landing хранятся в SQLite, связаны с UID/поколением, человеком и
 проектом/роем. У них нет автоматического force-steal или expiry. Перед
-остановкой/удалением/reset и очисткой workspace активную координацию нужно
-явно освободить. Администратор может выполнить точное восстановительное
-release/give по request ID; это не impersonation master и не новая отправка.
+остановкой, запуском, удалением, reset и очисткой workspace активную
+координацию нужно явно освободить. Администратор может выполнить точное
+восстановительное release/give по request ID; это не impersonation master
+и не новая отправка.
 Human-оператор не может выполнять dispatch send или landing take без
 managed actor identity.
 

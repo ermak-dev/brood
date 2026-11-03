@@ -24,46 +24,73 @@ import (
 const modelAddress = "127.0.0.1:8317"
 const modelBodyLimit = 8 << 20
 
-// NewModelGateway uses only the supervisor's verified relay origin and token.
-// Actor credentials and caller-selected origins never reach the server gateway.
-func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
+// serverRoute is the supervisor's verified relay origin and scoped token. Every
+// loopback gateway derives its upstream from it, never from the actor request.
+type serverRoute struct {
+	origin     *url.URL // https://<relay host>, without path
+	uid, token string
+	generation string
+	tls        *tls.Config
+}
+
+func newServerRoute(cfg relay.ClientConfig) (serverRoute, error) {
 	target, err := url.Parse(cfg.URL)
 	if err != nil || target.Scheme != "wss" || target.Hostname() == "" || target.User != nil || target.RawQuery != "" || target.ForceQuery || target.Fragment != "" || target.RawPath != "" || len(cfg.Token) != 43 || cfg.Generation <= 0 || cfg.ActorUID == "" || len(cfg.ActorUID) > 128 {
-		return nil, errors.New("invalid model gateway configuration")
+		return serverRoute{}, errors.New("invalid gateway configuration")
 	}
 	for _, r := range cfg.ActorUID {
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
-			return nil, errors.New("invalid model gateway identity")
+			return serverRoute{}, errors.New("invalid gateway identity")
 		}
 	}
 	generation := strconv.FormatInt(cfg.Generation, 10)
 	guestPath := "/api/proxmox/guest/" + cfg.ActorUID + "/" + generation
 	if target.Path != "" && target.Path != "/" && target.Path != guestPath {
-		return nil, errors.New("invalid model gateway origin")
+		return serverRoute{}, errors.New("invalid gateway origin")
 	}
 	target.Scheme = "https"
 	target.Path = ""
 	target.RawPath = ""
 	roots, err := x509.SystemCertPool()
 	if err != nil {
-		return nil, errors.New("model TLS roots unavailable")
+		return serverRoute{}, errors.New("gateway TLS roots unavailable")
 	}
 	if len(cfg.CAPEM) > 0 {
 		roots = x509.NewCertPool()
 		if !roots.AppendCertsFromPEM(cfg.CAPEM) {
-			return nil, errors.New("invalid model TLS certificate")
+			return serverRoute{}, errors.New("invalid gateway TLS certificate")
 		}
 	}
+	return serverRoute{origin: target, uid: cfg.ActorUID, token: cfg.Token, generation: generation, tls: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: target.Hostname()}}, nil
+}
+
+// path is the server machine route of this actor generation under prefix.
+func (r serverRoute) path(prefix string) string { return prefix + r.uid + "/" + r.generation }
+
+func (r serverRoute) transport(headerTimeout time.Duration) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.DisableKeepAlives = true
-	transport.ResponseHeaderTimeout = 30 * time.Second
-	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: target.Hostname()}
+	transport.ResponseHeaderTimeout = headerTimeout
+	transport.TLSClientConfig = r.tls.Clone()
+	return transport
+}
+
+// NewModelGateway uses only the supervisor's verified relay origin and token.
+// Actor credentials and caller-selected origins never reach the server gateway.
+func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
+	route, err := newServerRoute(cfg)
+	if err != nil {
+		return nil, err
+	}
+	target := route.origin
+	transport := route.transport(30 * time.Second)
+	base := route.path("/api/proxmox/llm/")
 	proxy := &httputil.ReverseProxy{
 		Transport: transport, FlushInterval: -1,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
-			pr.Out.URL.Path = "/api/proxmox/llm/" + cfg.ActorUID + "/" + generation + pr.In.URL.Path
+			pr.Out.URL.Path = base + pr.In.URL.Path
 			pr.Out.URL.RawPath = ""
 			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			pr.Out.Host = target.Host
@@ -73,7 +100,7 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 					pr.Out.Header.Add(key, value)
 				}
 			}
-			pr.Out.Header.Set("Authorization", "Bearer "+cfg.Token)
+			pr.Out.Header.Set("Authorization", "Bearer "+route.token)
 		},
 		ModifyResponse: func(r *http.Response) error {
 			r.Header.Del("Set-Cookie")
@@ -145,8 +172,8 @@ func modelQuery(path, query string) bool {
 	return err == nil && n >= 1 && n <= 1000 && strconv.Itoa(n) == limit
 }
 
-// ModelGatewayService owns the supervisor's fixed-loopback model endpoint.
-type ModelGatewayService struct {
+// GatewayService owns one of the supervisor's fixed-loopback gateways.
+type GatewayService struct {
 	server *http.Server
 	done   chan struct{}
 	once   sync.Once
@@ -155,30 +182,34 @@ type ModelGatewayService struct {
 }
 
 // StartModelGateway binds before actor startup; a preexisting listener is never adopted.
-func StartModelGateway(ctx context.Context, cfg relay.ClientConfig) (*ModelGatewayService, error) {
+func StartModelGateway(ctx context.Context, cfg relay.ClientConfig) (*GatewayService, error) {
 	handler, err := NewModelGateway(cfg)
 	if err != nil {
 		return nil, err
 	}
-	listener, err := net.Listen("tcp4", modelAddress)
+	return startGatewayService(ctx, modelAddress, &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10}, "model gateway")
+}
+
+func startGatewayService(ctx context.Context, address string, server *http.Server, name string) (*GatewayService, error) {
+	listener, err := net.Listen("tcp4", address)
 	if err != nil {
-		return nil, errors.New("model gateway listener unavailable")
+		return nil, errors.New(name + " listener unavailable")
 	}
-	service := &ModelGatewayService{done: make(chan struct{})}
-	service.server = &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
+	server.BaseContext = func(net.Listener) context.Context { return ctx }
+	service := &GatewayService{server: server, done: make(chan struct{})}
 	service.stop = context.AfterFunc(ctx, func() { service.server.Close() })
 	go func() {
 		defer close(service.done)
 		err := service.server.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			service.err = errors.New("model gateway stopped unexpectedly")
+			service.err = errors.New(name + " stopped unexpectedly")
 		}
 	}()
 	return service, nil
 }
 
-func (s *ModelGatewayService) Wait() error { <-s.done; return s.err }
-func (s *ModelGatewayService) Close() error {
+func (s *GatewayService) Wait() error { <-s.done; return s.err }
+func (s *GatewayService) Close() error {
 	s.once.Do(func() { s.stop(); s.server.Close() })
 	return s.Wait()
 }

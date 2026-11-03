@@ -131,6 +131,21 @@
       "deleting": "正在删除",
       "error": "错误",
       "deleted": "已删除"
+    },
+    "repository": {
+      "title": "仓库",
+      "hint": "此项目中的新 actor 通过 brood Git 网关克隆该仓库。凭据保留在服务器上，不会发送给 actor 或此页面。",
+      "select": "项目仓库",
+      "select_hint": "从安装的 Git remotes 中选择。",
+      "no_remotes": "安装中没有 Git remotes；管理员需将其添加到 BROOD_GIT_REMOTES。",
+      "none_option": "无：actor 以空工作区启动",
+      "credentials": "已配置凭据",
+      "public": "无凭据",
+      "missing": "已不再配置",
+      "save": "保存仓库",
+      "current": "仓库",
+      "not_set": "未设置",
+      "member_hint": "只有管理员可以更改仓库。"
     }
   },
   "common": {
@@ -2650,11 +2665,11 @@
     "stop_done": "Actor {{name}} 正在停止",
     "stop_hint": "停止和启动保留磁盘上的工作区，但不保留运行中的进程或内存。",
     "managed_limitations": "受限开发配置：仅支持工作区、终端和受控网络。不支持 Docker、kind 和内存检查点。",
-    "suspend_unsupported": "无法冻结：此配置不支持内存检查点。请停止以保留工作区，再恢复启动。",
-    "reset": "重置工作区",
-    "reset_title": "破坏性重置 actor？",
-    "reset_message": "重置 {{name}}？这将永久删除工作区，并用全新容器替换其 CT。所有文件和运行中的进程都将丢失。停止和恢复则会保留工作区。",
-    "reset_done": "已请求重置 Actor {{name}}",
+    "suspend_unsupported": "无法冻结：此配置不支持内存检查点。请停止以保留工作区，之后再启动。",
+    "reset": "重建",
+    "reset_title": "重建 actor 的容器？",
+    "reset_message": "重建 {{name}}？这将永久删除工作区，并用全新容器替换其 CT。所有文件和运行中的进程都将丢失。停止和启动则会保留工作区。",
+    "reset_done": "已请求重建 {{name}}",
     "managed_state": {
       "provisioning": "创建中",
       "running": "运行中",
@@ -2706,6 +2721,208 @@
       "crashed": "已崩溃",
       "deleting": "删除中",
       "reverting": "回滚中"
+    },
+    "origin": "Origin",
+    "origin_hint": "首次启动时克隆到工作区的 Git 仓库。项目仓库通过 brood Git 网关克隆，凭据保留在服务器上；允许主机上的其他公开 HTTPS 仓库则直接克隆。留空则使用项目仓库；项目没有仓库时工作区为空。",
+    "origin_repository": "项目仓库：{{origin}}。",
+    "origin_no_repository": "项目没有仓库。",
+    "origin_repository_unavailable": "无法读取项目仓库：{{reason}}",
+    "origin_invalid": {
+      "length": "URL 超过 1024 字节。",
+      "control": "URL 含有控制字符。",
+      "scheme": "请使用 https:// 地址。",
+      "invalid": "这不是有效的 URL。",
+      "credentials": "请从 URL 中移除用户名或令牌：凭据由服务器保管。",
+      "query": "请移除 ?query 和 #fragment。",
+      "port": "只允许默认 HTTPS 端口。",
+      "host": "请使用主机名，而不是 IP 地址。",
+      "path": "请在主机名后添加仓库路径。"
+    },
+    "ops": {
+      "more": "更多",
+      "more_label": "{{name}} 的更多操作",
+      "groups": {
+        "session": "会话",
+        "workspace": "工作副本",
+        "danger": "不可撤销"
+      },
+      "unknown_state": "未知状态",
+      "reasons": {
+        "transition": "actor 处于「{{state}}」时不可用，请等待完成。",
+        "deleting": "已请求删除。",
+        "not_running": "仅在 actor 运行时可用，请先启动。",
+        "stopped": "actor 已停止。",
+        "no_terminal": "此配置没有终端。",
+        "pending": "此 actor 的另一个操作仍在进行中。"
+      },
+      "refused": "{{name}} 的「{{action}}」被拒绝",
+      "unconfirmed_title": "结果未知：{{name}} 的「{{action}}」",
+      "unconfirmed_body": "服务器无法确认该操作是否生效，不会自动重试。再次尝试前，请检查 actor 的状态和最近输出。",
+      "unconfirmed_badge": "结果未知",
+      "previous_unknown": "此 actor 上一次「{{action}}」的结果未知。重复前请检查其状态和最近输出。",
+      "dismiss": "关闭",
+      "type_name": "输入 {{name}} 以确认",
+      "terminal": {
+        "label": "打开终端",
+        "hint": "在新标签页中打开此 actor 的 Claude 终端。"
+      },
+      "start": {
+        "label": "启动",
+        "hint": "启动容器。磁盘上的文件保留，Claude 开始新会话。",
+        "done": "已请求启动 {{name}}",
+        "pending": "启动中…"
+      },
+      "stop": {
+        "label": "停止",
+        "hint": "关闭容器。磁盘上的文件保留，运行中的进程和 Claude 会话结束。",
+        "done": "已请求停止 {{name}}",
+        "pending": "停止中…"
+      },
+      "restart": {
+        "label": "重启 Claude",
+        "hint": "结束当前 Claude 会话，并在同一容器中开始新会话。文件保留。",
+        "title": "重启 {{name}} 中的 Claude？",
+        "message": "当前 Claude 会话及其正在进行的工作将被中断，并在同一容器中开始新会话。工作区、文件和容器均保留。工作区中需要有 Git 克隆。",
+        "done": "{{name}} 中的 Claude 已重启",
+        "pending": "重启中…"
+      },
+      "recycle": {
+        "label": "清理工作副本",
+        "hint": "在干净的副本上重启 Claude：删除未提交的更改以及未跟踪和被忽略的文件。提交和容器保留。",
+        "title": "清理 {{name}} 的工作副本？",
+        "message": "Claude 会话将结束，未提交的更改将被丢弃，工作副本中所有未跟踪和被忽略的文件将被删除，然后开始新会话。提交（包括尚未推送的）和容器保留。删除的文件无法恢复。",
+        "done": "{{name}} 的工作副本已清理，Claude 已重启",
+        "pending": "清理中…"
+      },
+      "wipe": {
+        "label": "清除工作副本",
+        "hint": "像「清理」一样清理副本，但不启动 Claude。仅在 Claude 已退出后可用。",
+        "title": "清除 {{name}} 的工作副本？",
+        "message": "未提交的更改将被丢弃，工作副本中所有未跟踪和被忽略的文件将被删除。提交和容器保留，Claude 不会启动。Claude 会话运行时服务器会拒绝。删除的文件无法恢复。",
+        "done": "{{name}} 的工作副本已清除",
+        "pending": "清除中…"
+      },
+      "reset": {
+        "label": "重建",
+        "hint": "用新容器替换当前容器。工作区将被删除，若设置了 origin 则重新克隆。",
+        "origin_set": "新工作区将从 {{origin}} 重新克隆。",
+        "origin_empty": "未设置 origin：新工作区为空。",
+        "done": "已请求重建 {{name}}",
+        "pending": "重建中…"
+      },
+      "delete": {
+        "label": "删除",
+        "hint": "删除容器及其磁盘上的所有文件，无法撤销。",
+        "done": "已请求删除 {{name}}。在确认容器删除之前，资源仍保持预留。",
+        "pending": "删除中…"
+      }
+    },
+    "console": {
+      "tabs_label": "Actor {{name}}",
+      "tabs": {
+        "overview": "概览",
+        "output": "输出",
+        "history": "历史",
+        "usage": "用量",
+        "send": "发送"
+      },
+      "viewer_hint": "此 swarm 的所有者和编辑者还可以查看输出、历史和用量，并执行操作。",
+      "not_running": "仅在 actor 运行时可用。",
+      "refresh": "刷新",
+      "read_at": "读取于 {{time}}",
+      "overview": {
+        "phase": "状态",
+        "desired": "目标状态",
+        "desired_values": {
+          "running": "运行",
+          "stopped": "停止",
+          "deleted": "删除"
+        },
+        "role": "角色",
+        "roles": {
+          "master": "master",
+          "worker": "worker"
+        },
+        "origin": "Origin",
+        "no_origin": "无：工作区创建时为空",
+        "origin_mode": "克隆方式",
+        "modes": {
+          "gateway": "通过 brood Git 网关克隆项目仓库；凭据保留在服务器上",
+          "direct": "公开 HTTPS，直接克隆",
+          "none": "不克隆"
+        },
+        "generation": "代数",
+        "generation_hint": "每次重建时递增；命令作用于当前代。",
+        "resources": "资源",
+        "disk": "磁盘 {{size}}"
+      },
+      "output": {
+        "lines": "行数",
+        "filter": "过滤",
+        "filter_hint": "只显示包含此文本的行；点击刷新后生效。",
+        "label": "{{name}} 的最近输出",
+        "empty": "没有输出。"
+      },
+      "history": {
+        "from_start": "从头加载",
+        "more": "加载更多",
+        "empty": "暂无历史。",
+        "reset": "会话已变更：历史已从新的 transcript 重新开始。",
+        "partial": "部分记录未能完整读取。",
+        "label": "{{name}} 的会话历史",
+        "kinds": {
+          "user": "用户",
+          "assistant": "助手",
+          "tool": "工具",
+          "summary": "摘要",
+          "system": "系统",
+          "notice": "通知",
+          "other": "记录"
+        }
+      },
+      "usage": {
+        "period": "时段",
+        "days": "{{count}} 天",
+        "input": "输入 token",
+        "output": "输出 token",
+        "cache_write": "缓存写入",
+        "cache_read": "缓存读取",
+        "day": "日期",
+        "partial": "数据不完整：部分 transcript 未能完整读取。",
+        "scope": "根据此 actor 的会话 transcript 统计。已删除的 transcript 不计入；这不是账单。"
+      },
+      "message": {
+        "title": "消息",
+        "cost": "发送会在此 actor 中启动一次模型回合：会消耗 token 并产生费用。回复不会返回到这里，请查看「输出」。",
+        "label": "发给 actor 的消息",
+        "hint": "服务器会将其标记为来自您（操作员）。",
+        "wait": "等待送达回执",
+        "wait_seconds": "最长等待（秒）",
+        "wait_hint": "等待的是回执或空闲通知，而不是回复。",
+        "wait_invalid": "请输入 1 到 {{max}} 之间的整数秒。",
+        "send": "发送消息",
+        "sent": "已送达。",
+        "unknown": "送达未确认：消息可能已到达，也可能没有。再次发送前请检查「输出」，重发可能导致重复。"
+      },
+      "slash": {
+        "title": "斜杠命令",
+        "hint": "仅限服务器白名单中的命令。",
+        "command": "命令",
+        "commands": {
+          "status": "显示会话状态。",
+          "compact": "压缩对话以释放上下文。会启动一次模型回合。",
+          "clear": "清除此会话的对话上下文。",
+          "model": "打开模型选择器；本身不会选择模型。",
+          "rc": "Claude Code 的 /rc 命令。",
+          "escape": "按下 Escape：中断当前回合。"
+        },
+        "send": "发送命令",
+        "sent": "已提交。执行未确认，请查看「输出」。",
+        "unknown": "提交未确认：命令可能已到达会话，也可能没有。重复前请检查「输出」。",
+        "clear_title": "清除 {{name}} 中的对话？",
+        "clear_message": "Claude 将丢失当前对话的上下文。文件不受影响。",
+        "clear_confirm": "清除"
+      }
     }
   },
   "proxmox_connections": {

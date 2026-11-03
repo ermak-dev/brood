@@ -7,6 +7,7 @@ import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { EntityTable } from '@/features/substrate/components/EntityTable';
 import { CapacityEditor } from './CapacityEditor';
 import { ProjectMembers } from './PermissionsPage';
+import { ProjectRepository } from './ProjectRepository';
 import { LoadState, useAccessActions, useAccessResource, useAdministrator } from './shared';
 import styles from '@/features/substrate/substrate.module.scss';
 
@@ -121,6 +122,7 @@ function ProjectDetail({ project }: { project: AccessProject }) {
           </section>
         )}
       </LoadState>
+      <ProjectRepository project={project} admin={admin} />
       <ProjectMembers project={project} />
       {editing && admin && (
         <CapacityEditor

@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/Button';
 import { actorsApi, type Actor, type ActorAction } from '@/services/brood/substrate';
 import { actorActions } from '../actorLifecycle';
 
+/** Действия native-актора: терминал и suspend/resume. Managed-строки
+ * используют ManagedActorActions с главным действием по состоянию и меню. */
 export function ActorLifecycleActions({
   actor,
   swarm,
@@ -15,20 +17,12 @@ export function ActorLifecycleActions({
   onAction: (action: ActorAction) => void;
 }) {
   const { t } = useTranslation();
-  const terminal =
-    actor.provider !== 'proxmox' ||
-    (actor.phase === 'running' && actor.desired !== 'deleted' && actor.capabilities?.terminal);
+  if (actor.provider === 'proxmox') return null;
   return (
     <>
-      {terminal && (
-        <a
-          href={actorsApi.terminal(swarm, actor.metadata.name)}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {t('access.terminal')}
-        </a>
-      )}
+      <a href={actorsApi.terminal(swarm, actor.metadata.name)} target="_blank" rel="noopener noreferrer">
+        {t('access.terminal')}
+      </a>
       {actorActions(actor).map((action) => (
         <Button
           key={action}

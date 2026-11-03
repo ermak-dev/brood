@@ -131,6 +131,21 @@
       "deleting": "Deleting",
       "error": "Error",
       "deleted": "Deleted"
+    },
+    "repository": {
+      "title": "Repository",
+      "hint": "New actors in this project clone the repository through the brood Git gateway. Credentials stay on the server and never reach actors or this page.",
+      "select": "Project repository",
+      "select_hint": "Chosen from the installation's Git remotes.",
+      "no_remotes": "The installation has no Git remotes; an administrator adds them to BROOD_GIT_REMOTES.",
+      "none_option": "None: actors start with an empty workspace",
+      "credentials": "credentials configured",
+      "public": "no credentials",
+      "missing": "no longer configured",
+      "save": "Save repository",
+      "current": "Repository",
+      "not_set": "Not set",
+      "member_hint": "Only an administrator can change the repository."
     }
   },
   "common": {
@@ -2652,11 +2667,11 @@
     "stop_done": "Actor {{name}} is stopping",
     "stop_hint": "Stop and start preserve the workspace on disk, but do not preserve running processes or memory.",
     "managed_limitations": "Limited coding profile: workspace, terminal and controlled network only. Docker, kind and memory checkpoints are not supported.",
-    "suspend_unsupported": "Suspend is unavailable: this profile cannot take a memory checkpoint. Use Stop to preserve the workspace, then Resume to start again.",
-    "reset": "Reset workspace",
-    "reset_title": "Destructively reset actor?",
-    "reset_message": "Reset {{name}}? This permanently deletes its workspace and replaces its CT with a fresh container. All files and running processes will be lost. Stop and Resume preserve the workspace instead.",
-    "reset_done": "Actor {{name}} reset requested",
+    "suspend_unsupported": "Suspend is unavailable: this profile cannot take a memory checkpoint. Use Stop to preserve the workspace, then Start to run it again.",
+    "reset": "Recreate",
+    "reset_title": "Recreate the actor's container?",
+    "reset_message": "Recreate {{name}}? This permanently deletes its workspace and replaces its CT with a fresh container. All files and running processes will be lost. Stop and Start keep the workspace instead.",
+    "reset_done": "Recreation requested for {{name}}",
     "managed_state": {
       "provisioning": "provisioning",
       "running": "running",
@@ -2708,6 +2723,209 @@
       "crashed": "crashed",
       "deleting": "deleting",
       "reverting": "reverting"
+    },
+    "origin": "Origin",
+    "origin_hint": "Git repository cloned into the workspace on first start. The project repository is cloned through the brood Git gateway, so credentials stay on the server; another public HTTPS repository on an allowed host is cloned directly. Leave empty to use the project repository, or to start with an empty workspace if the project has none.",
+    "origin_repository": "Project repository: {{origin}}.",
+    "origin_no_repository": "The project has no repository.",
+    "origin_repository_unavailable": "The project repository could not be read: {{reason}}",
+    "origin_invalid": {
+      "length": "The URL is longer than 1024 bytes.",
+      "control": "The URL contains control characters.",
+      "scheme": "Use an https:// URL.",
+      "invalid": "This is not a valid URL.",
+      "credentials": "Remove the user name or token from the URL: credentials stay on the server.",
+      "query": "Remove the ?query and #fragment.",
+      "port": "Only the default HTTPS port is allowed.",
+      "host": "Use a host name, not an IP address.",
+      "path": "Add the repository path after the host."
+    },
+    "ops": {
+      "more": "More",
+      "more_label": "More actions for {{name}}",
+      "groups": {
+        "session": "Session",
+        "workspace": "Working copy",
+        "danger": "Irreversible"
+      },
+      "unknown_state": "in an unknown state",
+      "reasons": {
+        "transition": "Unavailable while the actor is {{state}}. Wait for it to finish.",
+        "deleting": "Deletion has already been requested.",
+        "not_running": "Works only while the actor is running. Start it first.",
+        "stopped": "The actor is already stopped.",
+        "no_terminal": "This profile has no terminal.",
+        "pending": "Another action on this actor is still in progress."
+      },
+      "refused": "{{action}} refused for {{name}}",
+      "unconfirmed_title": "Outcome unknown: {{action}} on {{name}}",
+      "unconfirmed_body": "The server could not confirm whether this took effect. Nothing is retried automatically. Check the actor's state and recent output before you try again.",
+      "unconfirmed_badge": "outcome unknown",
+      "previous_unknown": "The previous {{action}} on this actor has an unknown outcome. Check its state and recent output before repeating it.",
+      "dismiss": "Dismiss",
+      "type_name": "Type {{name}} to confirm",
+      "terminal": {
+        "label": "Open terminal",
+        "hint": "Opens Claude's terminal for this actor in a new tab."
+      },
+      "start": {
+        "label": "Start",
+        "hint": "Starts the container. Files on disk are kept; Claude starts a new session.",
+        "done": "Start requested for {{name}}",
+        "pending": "Starting…"
+      },
+      "stop": {
+        "label": "Stop",
+        "hint": "Shuts the container down. Files on disk are kept; running processes and the Claude session end.",
+        "done": "Stop requested for {{name}}",
+        "pending": "Stopping…"
+      },
+      "restart": {
+        "label": "Restart Claude",
+        "hint": "Ends the current Claude session and starts a new one in the same container. Files are kept.",
+        "title": "Restart Claude in {{name}}?",
+        "message": "The current Claude session and whatever it is doing right now end, and a new session starts in the same container. The workspace, its files and the container are kept. Requires a Git clone in the workspace.",
+        "done": "Claude restarted in {{name}}",
+        "pending": "Restarting…"
+      },
+      "recycle": {
+        "label": "Clean working copy",
+        "hint": "Restarts Claude on a clean checkout: uncommitted changes, untracked and ignored files are removed. Commits and the container stay.",
+        "title": "Clean the working copy of {{name}}?",
+        "message": "The Claude session ends, uncommitted changes are discarded and every untracked and ignored file in the working copy is removed, then a new session starts. Commits, including ones not yet pushed, and the container are kept. Removed files cannot be recovered.",
+        "done": "Working copy of {{name}} cleaned, Claude restarted",
+        "pending": "Cleaning…"
+      },
+      "wipe": {
+        "label": "Wipe working copy",
+        "hint": "Cleans the checkout like Clean but does not start Claude. Works only after Claude has exited.",
+        "title": "Wipe the working copy of {{name}}?",
+        "message": "Uncommitted changes are discarded and every untracked and ignored file in the working copy is removed. Commits and the container are kept; Claude is not started. The server refuses while a Claude session is running. Removed files cannot be recovered.",
+        "done": "Working copy of {{name}} wiped",
+        "pending": "Wiping…"
+      },
+      "reset": {
+        "label": "Recreate",
+        "hint": "Replaces the container with a new one. The workspace is deleted and cloned again from the origin, if one is set.",
+        "origin_set": "The new workspace is cloned again from {{origin}}.",
+        "origin_empty": "No origin is set: the new workspace starts empty.",
+        "done": "Recreation requested for {{name}}",
+        "pending": "Recreating…"
+      },
+      "delete": {
+        "label": "Delete",
+        "hint": "Deletes the container and its disk with every file. Cannot be undone.",
+        "done": "Deletion requested for {{name}}. Capacity stays reserved until its container is confirmed deleted.",
+        "pending": "Deleting…"
+      }
+    },
+    "console": {
+      "tabs_label": "Actor {{name}}",
+      "tabs": {
+        "overview": "Overview",
+        "output": "Output",
+        "history": "History",
+        "usage": "Usage",
+        "send": "Send"
+      },
+      "viewer_hint": "Owners and editors of this swarm can also read output, history and usage and run actions.",
+      "not_running": "Available only while the actor is running.",
+      "refresh": "Refresh",
+      "read_at": "Read at {{time}}",
+      "overview": {
+        "phase": "State",
+        "desired": "Desired state",
+        "desired_values": {
+          "running": "running",
+          "stopped": "stopped",
+          "deleted": "deleted"
+        },
+        "role": "Role",
+        "roles": {
+          "master": "master",
+          "worker": "worker"
+        },
+        "origin": "Origin",
+        "no_origin": "None: the workspace started empty",
+        "origin_mode": "Clone path",
+        "modes": {
+          "gateway": "Project repository through the brood Git gateway; credentials stay on the server",
+          "direct": "Public HTTPS, cloned directly",
+          "none": "No clone"
+        },
+        "generation": "Generation",
+        "generation_hint": "Grows with each recreate; commands target the current one.",
+        "resources": "Resources",
+        "disk": "{{size}} disk"
+      },
+      "output": {
+        "lines": "Lines",
+        "filter": "Filter",
+        "filter_hint": "Only lines containing this text; applied on Refresh.",
+        "label": "Recent output of {{name}}",
+        "empty": "No output."
+      },
+      "history": {
+        "from_start": "Reload from start",
+        "more": "Load more",
+        "empty": "No history yet.",
+        "reset": "The session changed: history restarted from the new transcript.",
+        "partial": "Some records could not be read completely.",
+        "label": "Session history of {{name}}",
+        "kinds": {
+          "user": "user",
+          "assistant": "assistant",
+          "tool": "tool",
+          "summary": "summary",
+          "system": "system",
+          "notice": "notice",
+          "other": "record"
+        }
+      },
+      "usage": {
+        "period": "Period",
+        "days_one": "{{count}} day",
+        "days_other": "{{count}} days",
+        "input": "Input tokens",
+        "output": "Output tokens",
+        "cache_write": "Cache writes",
+        "cache_read": "Cache reads",
+        "day": "Day",
+        "partial": "Partial: some transcripts could not be read completely.",
+        "scope": "Counted from this actor's session transcripts. Deleted transcripts are not included; this is not billing."
+      },
+      "message": {
+        "title": "Message",
+        "cost": "Sending starts a model turn in this actor: it spends tokens and costs money. The reply does not come back here; check Output.",
+        "label": "Message to the actor",
+        "hint": "The server marks it as coming from you, the operator.",
+        "wait": "Wait for a delivery receipt",
+        "wait_seconds": "Wait up to, seconds",
+        "wait_hint": "Waits for the receipt or an idle notice, not for the answer.",
+        "wait_invalid": "Enter whole seconds from 1 to {{max}}.",
+        "send": "Send message",
+        "sent": "Delivered.",
+        "unknown": "Delivery unconfirmed: the message may or may not have arrived. Check Output before resending; a resend may duplicate it."
+      },
+      "slash": {
+        "title": "Slash command",
+        "hint": "Only commands from the server allowlist.",
+        "command": "Command",
+        "commands": {
+          "status": "Shows the session status.",
+          "compact": "Summarizes the conversation to free context. Starts a model turn.",
+          "clear": "Clears the conversation context of this session.",
+          "model": "Opens the model picker; does not select a model by itself.",
+          "rc": "Claude Code /rc command.",
+          "escape": "Presses Escape: interrupts the current turn."
+        },
+        "send": "Send command",
+        "sent": "Submitted. Completion is not confirmed; check Output.",
+        "unknown": "Submission unconfirmed: the command may or may not have reached the session. Check Output before repeating it.",
+        "clear_title": "Clear the conversation in {{name}}?",
+        "clear_message": "Claude loses the context of the current conversation. Files are not affected.",
+        "clear_confirm": "Clear"
+      }
     }
   },
   "proxmox_connections": {

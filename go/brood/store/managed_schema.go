@@ -50,7 +50,7 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		version = 3
-	} else if version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 {
+	} else if version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
 	expectedSchema := managedSchema
@@ -59,6 +59,9 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 	}
 	if version >= 7 {
 		expectedSchema = managedDelegationSchema()
+	}
+	if version >= 10 {
+		expectedSchema = managedOriginSchema()
 	}
 	if err := checkSchema(ctx, tx, expectedSchema); err != nil {
 		return err
@@ -113,6 +116,9 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=7`); err != nil {
 			return err
 		}
+	}
+	if version >= 10 {
+		return checkSchema(ctx, tx, managedOriginSchema())
 	}
 	return checkSchema(ctx, tx, managedDelegationSchema())
 }

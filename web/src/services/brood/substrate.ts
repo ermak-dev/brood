@@ -56,11 +56,21 @@ export interface ActorStatus {
   errorMessage?: string;
 }
 
+/** Как managed-актор получает origin: gateway — repository проекта через Git
+ * gateway сервера (учётные данные остаются на сервере), direct — публичный
+ * HTTPS напрямую, '' — origin нет, workspace пуст. */
+export type OriginMode = 'gateway' | 'direct' | '';
+
 export interface Actor extends ManagedProfileFields {
   generation?: string;
   phase?: 'provisioning' | 'running' | 'stopping' | 'stopped' | 'deleting' | 'error';
   desired?: 'running' | 'stopped' | 'deleted';
   placement?: { node: string; ctid?: number; pool: string };
+  /** Managed: master создаёт workers, worker — рабочая единица. */
+  role?: string;
+  /** Managed: канонический HTTPS origin workspace; при создании — запрошенный. */
+  origin?: string;
+  originMode?: OriginMode;
   templateDefinition?: {
     profile: string;
     digest: string;

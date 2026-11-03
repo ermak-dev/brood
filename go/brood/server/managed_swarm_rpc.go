@@ -17,7 +17,10 @@ var managedActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
 func managedAddRefusal(err error) string {
 	var capacity *app.CapacityExceededError
+	var origin *originRefusal
 	switch {
+	case errors.As(err, &origin):
+		return "actor creation refused: " + origin.detail
 	case errors.Is(err, app.ErrNotAllowed):
 		return "actor creation refused: master delegation is not authorized"
 	case errors.Is(err, app.ErrExists), store.IsUniqueViolation(err):

@@ -308,7 +308,10 @@ func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 }
 
 func managedAPIError(w http.ResponseWriter, r *http.Request, err error) {
+	var origin *originRefusal
 	switch {
+	case errors.As(err, &origin):
+		writeDetail(w, 422, origin.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeDetail(w, 404, "managed resource not found")
 	case errors.Is(err, proxmox.ErrPermission):
