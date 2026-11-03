@@ -6,7 +6,6 @@ import ipaddress
 import json
 from pathlib import Path
 import re
-import shutil
 import socket
 import ssl
 from urllib.parse import urlsplit
@@ -480,14 +479,14 @@ class Deploy:
         work = root / "bootstrap-artifacts"
         work.mkdir()
         pins = json.loads((self.project / "brood/dev/pins.json").read_text())
-        if not (self.project / "go/bin/linux_amd64/bro").is_file():
-            raise RuntimeError("guest bootstrap artifact is missing: bro")
-        shutil.copyfile(self.project / "go/bin/linux_amd64/bro", work / "bro")
-        code, _, err = self.cluster.shell.output(
-            "go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w",
-            "-o", str(work / "brood-guest"), "./go/cmd/brood-guest")
-        if code or not (work / "brood-guest").is_file():
-            raise RuntimeError("guest bootstrap artifact build failed: " + err[-2000:])
+        # Релизное дерево — git archive без собранных бинарей: машину деплоя
+        # не спрашивают о кэше, оба бинаря собирает её локальный go из pins.
+        for name, package in (("bro", "./go/cmd/brood"), ("brood-guest", "./go/cmd/brood-guest")):
+            code, _, err = self.cluster.shell.output(
+                "go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w",
+                "-o", str(work / name), package)
+            if code or not (work / name).is_file():
+                raise RuntimeError(f"guest bootstrap artifact build failed: {name}: " + err[-2000:])
         claude = work / "claude"
         code, _, err = self.cluster.shell.output("curl", "-fsSL", "-o", str(claude),
             f"https://downloads.claude.ai/claude-code-releases/{pins['CLAUDE_VERSION']}/linux-x64/claude")
