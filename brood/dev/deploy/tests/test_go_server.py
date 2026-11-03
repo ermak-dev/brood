@@ -191,9 +191,12 @@ class GoManifestTests(unittest.TestCase):
         deploy.publish_bootstrap_artifacts(root)
         argv, stream = streams[0]
         self.assertEqual(argv[-4:], ("/brood", "artifacts", "--dir", "/data/artifacts"))
-        self.assertIn(b"bro\0\x7fELFbro-release\0", stream)
-        self.assertIn(b"brood-guest\0\x7fELFguest-built\0", stream)
-        self.assertIn(b"claude\0\x7fELFclaude-pinned\0", stream)
+        # Запись «имя NUL размер NUL байты»: ELF содержит нули, разделитель
+        # после байтов его бы резал (прод 6757).
+        self.assertEqual(stream,
+                         b"bro\0" + b"15\0\x7fELFbro-release"
+                         + b"brood-guest\0" + b"15\0\x7fELFguest-built"
+                         + b"claude\0" + b"17\0\x7fELFclaude-pinned")
         builds = [a for a in calls if a[0] == "go"]
         self.assertEqual({a[-1] for a in builds}, {"./cmd/brood", "./cmd/brood-guest"})
 
