@@ -6,6 +6,7 @@ import ipaddress
 import json
 from pathlib import Path
 import re
+import shutil
 import socket
 import ssl
 from urllib.parse import urlsplit
@@ -467,4 +468,37 @@ class Deploy:
                                                    "rollout", "status", "deployment/brood-go", "--timeout=300s")
             if code:
                 raise RuntimeError("Go deployment rollout failed: " + err[-2000:])
+            self.publish_bootstrap_artifacts(root)
             return image
+
+    def publish_bootstrap_artifacts(self, root):
+        """Артефакты бутстрапа песочницы (#156): bro из релизной кросс-сборки,
+        brood-guest собирает машина деплоя локальным go, claude по пинам;
+        публикация через kubectl exec в PVC сервера. Образ сервера scratch —
+        поток «имя NUL байты NUL» разбирает сам бинарь (brood artifacts).
+        Отдельный метод: тесты подменяют его вместе с shell."""
+        work = root / "bootstrap-artifacts"
+        work.mkdir()
+        pins = json.loads((self.project / "brood/dev/pins.json").read_text())
+        if not (self.project / "go/bin/linux_amd64/bro").is_file():
+            raise RuntimeError("guest bootstrap artifact is missing: bro")
+        shutil.copyfile(self.project / "go/bin/linux_amd64/bro", work / "bro")
+        code, _, err = self.cluster.shell.output(
+            "go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w",
+            "-o", str(work / "brood-guest"), "./go/cmd/brood-guest")
+        if code or not (work / "brood-guest").is_file():
+            raise RuntimeError("guest bootstrap artifact build failed: " + err[-2000:])
+        claude = work / "claude"
+        code, _, err = self.cluster.shell.output("curl", "-fsSL", "-o", str(claude),
+            f"https://downloads.claude.ai/claude-code-releases/{pins['CLAUDE_VERSION']}/linux-x64/claude")
+        if code or hashlib.sha256(claude.read_bytes()).hexdigest() != pins["CLAUDE_SHA256"]:
+            raise RuntimeError("guest bootstrap claude artifact download failed")
+        stream = b"".join(
+            name.encode() + b"\0" + (work / name).read_bytes() + b"\0"
+            for name in ("bro", "brood-guest", "claude"))
+        code, _, err = self.cluster.shell.output_bytes(
+            ("kubectl", f"--context={local.CONTEXT}", "-n", "brood", "exec", "-i",
+             "deployment/brood-go", "--", "/brood", "artifacts", "--dir", "/data/artifacts"),
+            input=stream)
+        if code:
+            raise RuntimeError("guest bootstrap artifact publish failed: " + err[-2000:])
