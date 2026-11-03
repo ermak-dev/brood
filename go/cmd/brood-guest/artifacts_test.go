@@ -103,20 +103,40 @@ func TestBootstrapStageFetchesThenReexecesBeforeServices(t *testing.T) {
 		}
 		payload := "\x7fELFbootstrap"
 		return install(context.Background(), "brood-guest", strings.NewReader(payload), int64(len(payload)))
-	}, reexec: func() error {
+	}, reexec: func(env []string) error {
 		events = append(events, "reexec")
+		// Настоящий exec не возвращается: всё, что bootstrap должен закрыть,
+		// закрыто до него, а runtime получает исходный bootstrap env.
+		if !network.closed {
+			t.Error("DHCP client of the bootstrap stage survives exec")
+		}
+		runtime, err := parseConfig(env)
+		if err != nil || runtime.stage != "runtime" || runtime.relay.Token != "private-token" {
+			t.Errorf("runtime env does not parse as the runtime stage: %v %+v", err, runtime.stage)
+		}
+		stages := 0
+		for _, entry := range env {
+			if strings.HasPrefix(entry, "BROOD_GUEST_STAGE=") {
+				stages++
+			}
+		}
+		if stages != 1 {
+			t.Errorf("runtime env has %d stage entries", stages)
+		}
 		return nil
 	}}
-	if err := dispatch(ctx, nil, func() []string { return stageEnv(t, "bootstrap") }, d); err != nil {
+	// main очищает окружение процесса сразу после разбора: runtime не может
+	// брать токен из os.Environ (#155, прод: BROOD_GUEST_RELAY_TOKEN is required).
+	if err := dispatch(ctx, nil, func() []string {
+		env := stageEnv(t, "bootstrap")
+		t.Setenv("BROOD_GUEST_RELAY_TOKEN", "")
+		os.Unsetenv("BROOD_GUEST_RELAY_TOKEN")
+		return env
+	}, d); err != nil {
 		t.Fatal(err)
 	}
-	// Сеть поднимается раньше артефактов (#155: адрес приходит по DHCP), но
-	// закрывается после exec; секреты и сервисы актора не стартуют.
 	if !reflect.DeepEqual(events, []string{"network", "artifacts", "reexec"}) {
 		t.Fatalf("events %v", events)
-	}
-	if !network.closed {
-		t.Fatal("bootstrap leaked the DHCP service")
 	}
 	if strings.HasPrefix(os.Getenv("PATH"), "/opt/brood/bin:") {
 		t.Fatal("bootstrap prepended the runtime PATH")
@@ -134,7 +154,7 @@ func TestBootstrapFailureFailsClosed(t *testing.T) {
 					return nil
 				}
 				return errors.New("private-token")
-			}, reexec: func() error {
+			}, reexec: func([]string) error {
 				if failure == "reexec" {
 					return errors.New("private-token")
 				}
@@ -158,7 +178,7 @@ func TestRuntimeStageSkipsBootstrapAndPrependsPath(t *testing.T) {
 		t.Fatal("runtime stage fetched artifacts")
 		return nil
 	}
-	d.reexec = func() error {
+	d.reexec = func([]string) error {
 		t.Fatal("runtime stage reexeced")
 		return nil
 	}

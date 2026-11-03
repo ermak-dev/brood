@@ -28,7 +28,7 @@ func TestProjectSecretColdStartup(t *testing.T) {
 	var events []string
 	d := dependencies{euid: func() int { return 0 }, artifacts: func(context.Context, relay.ClientConfig, []string, func(context.Context, string, io.Reader, int64) error) error {
 		return nil
-	}, reexec: func() error { return nil }, network: func(context.Context) (service, error) { events = append(events, "network"); return network, nil }, secrets: func(context.Context, relay.ClientConfig) error {
+	}, reexec: func([]string) error { return nil }, network: func(context.Context) (service, error) { events = append(events, "network"); return network, nil }, secrets: func(context.Context, relay.ClientConfig) error {
 		events = append(events, "secrets")
 		return errors.New("opaque")
 	}, start: func(context.Context, []string) (actorRuntime, error) {

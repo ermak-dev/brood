@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,6 +36,10 @@ type config struct {
 	// stage — стадия supervisor (#155): bootstrap качает артефакты и
 	// exec-ается в runtime; runtime сразу ведёт сервисы.
 	stage string
+	// bootstrapEnv — принятые BROOD_GUEST_* bootstrap env без стадии: main
+	// очищает окружение процесса сразу после разбора, поэтому runtime-стадия
+	// получает их отсюда, а не из os.Environ.
+	bootstrapEnv []string
 }
 type service interface {
 	Wait() error
@@ -63,7 +68,7 @@ type dependencies struct {
 	// artifacts ставит три бинарных артефакта сервера (#155); reexec
 	// подменяет процесс на установленную runtime-стадию.
 	artifacts func(context.Context, relay.ClientConfig, []string, func(context.Context, string, io.Reader, int64) error) error
-	reexec    func() error
+	reexec    func(env []string) error
 	// boot — UID 1000 цель --brood-guest-autostart; autorun — root-цикл,
 	// который её запускает до появления сессии Claude.
 	boot    func(context.Context) error
@@ -136,6 +141,16 @@ func parseConfig(env []string) (config, error) {
 	} else if strings.HasSuffix(u.Host, ":") {
 		return c, errors.New("invalid guest relay port")
 	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		if key != "BROOD_GUEST_STAGE" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		c.bootstrapEnv = append(c.bootstrapEnv, key+"="+values[key])
+	}
 	c.relay = relay.ClientConfig{URL: values["BROOD_GUEST_RELAY_URL"], ActorUID: values["BROOD_GUEST_ACTOR_UID"], Generation: generation, Token: values["BROOD_GUEST_RELAY_TOKEN"], HostKey: values["BROOD_GUEST_RELAY_HOST_KEY"], CAPEM: ca, DialTarget: terminalDial, HandleMessage: guest.DeliverMessage, SessionFactory: guest.NewSessionHandler}
 	// Отменённый контекст проверяет реальный контракт relay без сетевого запроса.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -193,15 +208,12 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	if c.stage != "runtime" {
 		// Стадия bootstrap (#155): проверенные артефакты и переход в runtime
 		// до секретов и сервисов актора; отказ fail closed.
-		if err := bootstrapArtifacts(ctx, c, d); err != nil {
-			cancel()
-			boundedClose(network)
-			return err
-		}
-		// Успешный exec не возвращает: процесс bootstrap-стадии заменён
-		// runtime-бинарём. Сеть закрываем сама: exec не даст вернуться сюда.
+		// Успешный exec не возвращает: сеть закрывается внутри до exec, иначе
+		// DHCP-клиент bootstrap-стадии пережил бы его рядом с runtime-клиентом.
+		err := bootstrapArtifacts(ctx, c, d, network)
+		cancel()
 		boundedClose(network)
-		return nil
+		return err
 	}
 	// Артефакты runtime-стадии уже в /opt/brood/bin: bro и claude видны
 	// хелперам через PATH, не через копирование в /usr/local/bin.
@@ -316,17 +328,25 @@ var artifactRoot = "/opt/brood"
 // bootstrapArtifacts ставит проверенные артефакты сервера и переходит
 // в runtime-стадию. Причины отказов статичны и ограничены: bootstrap
 // не стартует сервисы без проверенных бинарников (fail closed).
-func bootstrapArtifacts(ctx context.Context, c config, d dependencies) error {
+func bootstrapArtifacts(ctx context.Context, c config, d dependencies, network service) error {
 	if d.artifacts == nil || d.reexec == nil {
 		return errors.New("guest bootstrap unavailable")
 	}
 	if err := d.artifacts(ctx, c.relay, c.hosts, installArtifact); err != nil {
 		return errors.New("guest bootstrap failed: artifacts not delivered")
 	}
-	if err := d.reexec(); err != nil {
+	boundedClose(network)
+	if err := d.reexec(runtimeEnv(c)); err != nil {
 		return errors.New("guest bootstrap failed: runtime stage not started")
 	}
 	return nil
+}
+
+// runtimeEnv — окружение runtime-стадии: служебные PATH/HOME/LANG, исходные
+// BROOD_GUEST_* bootstrap env и ровно одна стадия runtime.
+func runtimeEnv(c config) []string {
+	env := append(helperEnv(), c.bootstrapEnv...)
+	return append(env, "BROOD_GUEST_STAGE=runtime")
 }
 
 // installArtifact ставит один артефакт атомарно: спул в tmp, 0755, fsync
@@ -392,17 +412,9 @@ func installArtifact(_ context.Context, name string, stream io.Reader, size int6
 }
 
 // reexecRuntime подменяет процесс на установленный brood-guest runtime-стадии:
-// argv сохраняется, stdio наследуется, из env уходит только стадия.
-func reexecRuntime() error {
-	env := []string{}
-	for _, entry := range os.Environ() {
-		// Стадия не наследуется: runtime задаётся ниже, одна и без дублей.
-		if strings.HasPrefix(entry, "BROOD_GUEST_STAGE=") {
-			continue
-		}
-		env = append(env, entry)
-	}
-	return syscall.Exec("/opt/brood/bin/brood-guest", os.Args, append(env, "BROOD_GUEST_STAGE=runtime"))
+// argv сохраняется, stdio наследуется, окружение — собранное runtimeEnv.
+func reexecRuntime(env []string) error {
+	return syscall.Exec("/opt/brood/bin/brood-guest", os.Args, env)
 }
 
 func fileDigest(path string) ([]byte, error) {
