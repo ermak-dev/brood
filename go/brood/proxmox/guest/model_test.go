@@ -64,7 +64,7 @@ func TestGuestModelGatewayPinsOriginAndKeepsMachineTokenOutOfActor(t *testing.T)
 	if strings.Contains(strings.Join(actorEnv(), "\n"), token) {
 		t.Fatal("machine token leaked into actor environment")
 	}
-	if !strings.Contains(nftRules(), `tcp dport { 3128, 5353, 8317 } accept`) {
+	if !strings.Contains(nftRules(), `tcp dport { 3128, 5353, 8317, 8318 } accept`) {
 		t.Fatal("model gateway missing from fixed loopback policy")
 	}
 }

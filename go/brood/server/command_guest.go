@@ -52,7 +52,7 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 		return commandSwarmResponse(result)
 	case "agents":
 		return m.handleSwarmRequest(ctx, from.UID, from.Incarnation, relay.SwarmRequest{Tool: "agents"})
-	case "add", "delete", "stop", "update":
+	case "add", "delete", "stop", "start", "reset", "update":
 		result, err := m.executeLifecycleCommand(ctx, from, inv)
 		if err != nil {
 			return relay.SwarmResponse{Text: err.Error()}

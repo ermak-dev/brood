@@ -26,6 +26,8 @@ import (
 type config struct {
 	hosts []string
 	relay relay.ClientConfig
+	// origin и originMode не секретны: клон workspace (#147).
+	origin, originMode string
 }
 type service interface {
 	Wait() error
@@ -49,6 +51,12 @@ type dependencies struct {
 	mcp     func(context.Context) error
 	broker  func(context.Context) (swarmBroker, error)
 	model   func(context.Context, relay.ClientConfig) (service, error)
+	git     func(context.Context, relay.ClientConfig) (service, error)
+	origin  func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error)
+	// boot — UID 1000 цель --brood-guest-autostart; autorun — root-цикл,
+	// который её запускает до появления сессии Claude.
+	boot    func(context.Context) error
+	autorun func(context.Context)
 	euid    func() int
 	network func(context.Context) (service, error)
 	start   func(context.Context, []string) (actorRuntime, error)
@@ -58,6 +66,7 @@ type dependencies struct {
 func parseConfig(env []string) (config, error) {
 	var c config
 	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true}
+	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true}
 	values := map[string]string{}
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
@@ -76,7 +85,7 @@ func parseConfig(env []string) (config, error) {
 		values[key] = value
 	}
 	for key := range names {
-		if key != "BROOD_GUEST_CA_PEM_B64" && values[key] == "" {
+		if !optional[key] && values[key] == "" {
 			return c, fmt.Errorf("%s is required", key)
 		}
 	}
@@ -131,6 +140,9 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	if len(args) == 1 && args[0] == "--brood-guest-session" {
 		return d.session(ctx)
 	}
+	if len(args) == 1 && args[0] == "--brood-guest-autostart" {
+		return d.boot(ctx)
+	}
 	if len(args) == 1 && args[0] == "mcp" {
 		return d.mcp(ctx)
 	}
@@ -167,6 +179,15 @@ func supervise(parent context.Context, c config, d dependencies) error {
 			return guest.NewSessionHandlerWithSecrets(connection, func(ctx context.Context) error { return d.secrets(ctx, cfg) })
 		}
 	}
+	if d.origin != nil {
+		origin, err := d.origin(ctx, c.relay, c.hosts)
+		if err != nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest workspace origin initialization failed")
+		}
+		c.origin, c.originMode = origin.Origin, origin.Mode
+	}
 	if d.broker != nil {
 		broker, err := d.broker(ctx)
 		if err != nil {
@@ -188,6 +209,17 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		defer boundedClose(model)
 		go func() { model.Wait(); cancel() }()
 	}
+	// Только gateway-режим открывает 8318: direct-клон идёт через egress proxy.
+	if d.git != nil && c.originMode == "gateway" {
+		git, err := d.git(ctx, c.relay)
+		if err != nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest Git gateway initialization failed")
+		}
+		defer boundedClose(git)
+		go func() { git.Wait(); cancel() }()
+	}
 	runtime, err := d.start(ctx, c.hosts)
 	if err != nil {
 		cancel()
@@ -203,6 +235,15 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		return errors.New("invalid guest terminal target")
 	}
 	go func() { relayDone <- d.relay(ctx, c.relay); cancel() }()
+	// Сессия Claude поднимается без терминала: после секретов, origin и сервисов
+	// актора. Отказ автостарта не останавливает supervisor.
+	autostartDone := make(chan struct{})
+	go func() {
+		defer close(autostartDone)
+		if d.autorun != nil {
+			d.autorun(ctx)
+		}
+	}()
 	<-ctx.Done()
 	cancel()
 	cleanupErr := boundedClose(runtime, network)
@@ -211,6 +252,11 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	case <-relayDone:
 	case <-time.After(5 * time.Second):
 		return errors.New("guest relay shutdown timed out")
+	}
+	select {
+	case <-autostartDone:
+	case <-time.After(5 * time.Second):
+		return errors.New("guest session autostart shutdown timed out")
 	}
 	if cleanupErr != nil {
 		return cleanupErr
@@ -258,9 +304,13 @@ func cancellationOnly(err error) bool {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	d := dependencies{app: guest.RunProjectApp, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+	d := dependencies{app: func() error { return guest.RunProjectApp(os.Stderr) }, boot: guest.RunSessionAutostart, autorun: func(ctx context.Context) {
+		guest.AutostartSession(ctx, func(err error) { fmt.Fprintln(os.Stderr, err) })
+	}, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 		return guest.StartModelGateway(ctx, cfg)
-	}, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
+	}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+		return guest.StartGitGateway(ctx, cfg)
+	}, origin: guest.RefreshWorkspaceOrigin, euid: os.Geteuid, network: startDHCP, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
 	}, relay: relay.RunClient}
 	err := dispatch(ctx, os.Args[1:], func() []string {

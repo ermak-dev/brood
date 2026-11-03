@@ -66,8 +66,38 @@ export interface CreateUser {
   disabled?: boolean;
 }
 
+/** Git remote установки (BROOD_GIT_REMOTES). Токен сервер не отдаёт; панель
+ * и не читает ничего, кроме origin и признака настроенных учётных данных. */
+export interface GitRemote {
+  origin: string;
+  credentialConfigured: boolean;
+}
+
 const segment = encodeURIComponent;
 const projectPath = (id: string) => `/api/projects/${segment(id)}`;
+
+async function readRepository(id: string): Promise<string> {
+  const body = await request<{ origin?: unknown } | null>('GET', `${projectPath(id)}/repository`);
+  if (typeof body?.origin !== 'string') {
+    throw new Error('Server returned an invalid project repository');
+  }
+  return body.origin;
+}
+
+async function readGitRemotes(): Promise<GitRemote[]> {
+  const body = await request<{ items?: unknown } | null>('GET', '/api/git-remotes');
+  const items = Array.isArray(body?.items) ? body.items : null;
+  const remotes = items?.map((item: unknown) => {
+    const row = item as { origin?: unknown; credentialConfigured?: unknown } | null;
+    return typeof row?.origin === 'string' && typeof row.credentialConfigured === 'boolean'
+      ? { origin: row.origin, credentialConfigured: row.credentialConfigured }
+      : null;
+  });
+  if (!remotes || remotes.some((remote) => remote === null)) {
+    throw new Error('Server returned an invalid Git remote list');
+  }
+  return remotes as GitRemote[];
+}
 const swarmPath = (id: string) => `/api/swarms/${segment(id)}`;
 const userPath = (username: string) => `/api/admin/users/${segment(username)}`;
 
@@ -92,6 +122,13 @@ export const accessApi = {
   project: (id: string) => request<ProjectDetail>('GET', projectPath(id)),
   setCapacity: (id: string, capacity: ShardCapacity) =>
     request<void>('PUT', `${projectPath(id)}/capacity`, capacity),
+  /** Repository проекта: '' — не выбран. Читают участники проекта. */
+  repository: readRepository,
+  /** Только администратор: '' очищает выбор. */
+  setRepository: (id: string, origin: string) =>
+    request<void>('PUT', `${projectPath(id)}/repository`, { origin }),
+  /** Только администратор: remotes, из которых выбирается repository. */
+  gitRemotes: readGitRemotes,
   createProject: (name: string) => request<AccessProject>('POST', '/api/projects', { name }),
   deleteProject: (id: string) => request<void>('DELETE', projectPath(id)),
   addMember: (projectId: string, username: string) =>

@@ -32,8 +32,8 @@ func TestManagedRolePreservesDuplicateFieldRejection(t *testing.T) {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/", strings.NewReader(body))
 		var actor ateapi.Actor
-		if role, ok := parseActorCreation(w, r, &actor); ok || w.Code != 400 {
-			t.Fatalf("ambiguous actor accepted role=%q status=%d body=%s", role, w.Code, body)
+		if creation, ok := parseActorCreation(w, r, &actor); ok || w.Code != 400 {
+			t.Fatalf("ambiguous actor accepted role=%q status=%d body=%s", creation.role, w.Code, body)
 		}
 	}
 }

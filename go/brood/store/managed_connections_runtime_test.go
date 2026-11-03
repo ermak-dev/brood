@@ -51,12 +51,12 @@ func TestManagedConnectionV5Migration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, column := range []string{"role", "delegator_id", "parent_uid"} {
+	for _, column := range []string{"origin", "role", "delegator_id", "parent_uid"} {
 		if _, err := db.Exec(`ALTER TABLE managed_actors DROP COLUMN ` + column); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.Exec(`DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; DROP TABLE coordination_claims; DROP TABLE command_project_details; INSERT INTO managed_connections VALUES ('c','legacy','https://pve.invalid','a@b!c','keep-secret','keep-ca','n','r','s','v','created','updated'); PRAGMA user_version=5`); err != nil {
+	if _, err := db.Exec(`DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; DROP TABLE coordination_claims; DROP TABLE command_project_details; INSERT INTO managed_connections VALUES ('c','legacy','https://pve.invalid','a@b!c','keep-secret','keep-ca','n','r','s','v','created','updated'); PRAGMA user_version=5`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -66,7 +66,7 @@ func TestManagedConnectionV5Migration(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version int
-		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 9 {
+		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 10 {
 			t.Fatalf("version=%d err=%v", version, err)
 		}
 		rows, err := s.ListManagedConnections(ctx)

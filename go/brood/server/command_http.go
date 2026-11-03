@@ -66,7 +66,7 @@ func (s *Server) executeOperatorCommand(ctx context.Context, userID, swarmID, ca
 	switch inv.Name {
 	case "models", "profile", "project_add", "project_limit", "node", "node_drain", "node_up", "server_diagnose":
 		return s.executeAdminCommand(ctx, userID, swarmID, inv)
-	case "add", "delete", "stop", "update":
+	case "add", "delete", "stop", "start", "reset", "update":
 		if swarmID == "" {
 			return command.Result{}, errors.New("a swarm scope is required")
 		}

@@ -116,6 +116,9 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 	if err := initializeProjectSecrets(ctx, tx); err != nil {
 		return err
 	}
+	if err := initializeOrigins(ctx, tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema initialization: %w", err)
 	}

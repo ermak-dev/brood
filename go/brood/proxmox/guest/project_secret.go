@@ -9,11 +9,13 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,6 +106,14 @@ func RefreshProjectSecrets(ctx context.Context, cfg relay.ClientConfig) error {
 	if err != nil {
 		return secretFailure()
 	}
+	if err = prepareRunDirectory(); err != nil {
+		return err
+	}
+	return publishProjectSecrets(projectSecretDirectory, bundle, 0, 1000)
+}
+
+// prepareRunDirectory creates /run/brood as root:1000 0750 for the app wrapper.
+func prepareRunDirectory() error {
 	// /run is root-controlled; never create this directory through a symlink.
 	run, err := openSecretDirectory("/run", false)
 	if err != nil {
@@ -127,7 +137,7 @@ func RefreshProjectSecrets(ctx context.Context, cfg relay.ClientConfig) error {
 	if unix.Fchown(dir, 0, 1000) != nil || unix.Fchmod(dir, 0750) != nil {
 		return secretFailure()
 	}
-	return publishProjectSecrets(projectSecretDirectory, bundle, 0, 1000)
+	return nil
 }
 
 func publishProjectSecrets(path string, bundle projectsecret.Bundle, uid, gid int) error {
@@ -194,7 +204,8 @@ func projectAppEnvironment(bundle projectsecret.Bundle) ([]string, error) {
 
 // RunProjectApp is the only project-secret consumer. Dispatch before reading root
 // configuration. No caller-selected path, command, or environment is accepted.
-func RunProjectApp() error {
+// Nonfatal startup problems are reported to warn, the terminal of the session.
+func RunProjectApp(warn io.Writer) error {
 	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
 		return secretFailure()
 	}
@@ -211,20 +222,60 @@ func RunProjectApp() error {
 		return secretFailure()
 	}
 	unix.Umask(0077)
-	bundle, err := readProjectSecrets(projectSecretDirectory, 0, 1000)
+	layout := appLayout{Project: "/workspace/project", Home: "/workspace/home", Run: projectSecretDirectory, RunUID: 0, RunGID: 1000, Gateway: workspaceGatewayURL, CloneTimeout: 30 * time.Minute}
+	env, err := prepareProjectApp(layout, warn)
 	if err != nil {
 		return err
 	}
-	env, err := applyProjectSecrets("/workspace/project", "/workspace/home", bundle)
-	if err != nil {
-		return err
-	}
-	if os.Chdir("/workspace/project") != nil {
+	if os.Chdir(layout.Project) != nil {
 		return secretFailure()
 	}
 	return syscall.Exec("/usr/local/bin/claude", projectAppArgs(), env)
 }
 
+// appLayout fixes every path of the app wrapper; tests substitute temporary ones.
+type appLayout struct {
+	Project, Home, Run string
+	RunUID, RunGID     int
+	Gateway            string
+	CloneTimeout       time.Duration
+}
+
+// prepareProjectApp clones a fresh workspace before file secrets, which need a
+// checkout, and keeps Claude off its interactive dialogs. A failed clone or
+// refused Claude configuration still starts the app.
+func prepareProjectApp(l appLayout, warn io.Writer) ([]string, error) {
+	origin, err := readWorkspaceOrigin(l.Run, l.RunUID, l.RunGID)
+	if err != nil {
+		fmt.Fprintln(warn, "brood: workspace origin is unavailable; the first-start clone is skipped")
+	} else if err = cloneWorkspace(context.Background(), cloneSpec{Project: l.Project, Home: l.Home, Origin: origin.Origin, Mode: origin.Mode, Gateway: l.Gateway, Timeout: l.CloneTimeout}); err != nil {
+		fmt.Fprintf(warn, "brood: %s; Claude starts now and the clone is retried on the next start while the workspace is empty\n", err)
+	}
+	bundle, err := readProjectSecrets(l.Run, l.RunUID, l.RunGID)
+	if err != nil {
+		return nil, err
+	}
+	env, err := applyProjectSecrets(l.Project, l.Home, bundle)
+	if err != nil && len(bundle.Files) > 0 && missingCheckout(l.Project) {
+		// Без checkout байты файлов не публикуются; переменные всё равно нужны.
+		fmt.Fprintln(warn, "brood: project file secrets need a Git checkout in the workspace; Claude starts without them")
+		bundle.Files = nil
+		env, err = applyProjectSecrets(l.Project, l.Home, bundle)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := prepareClaudeConfig(l.Home, l.Project); err != nil {
+		fmt.Fprintf(warn, "brood: %s; Claude may stop on its first-run dialogs\n", err)
+	}
+	return env, nil
+}
+
+func missingCheckout(project string) bool {
+	_, err := os.Lstat(filepath.Join(project, ".git"))
+	return os.IsNotExist(err)
+}
+
 func projectAppArgs() []string {
-	return []string{"claude", "--permission-mode", "default", "--mcp-config", `{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}`}
+	return []string{"claude", "--dangerously-skip-permissions", "--mcp-config", `{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}`}
 }

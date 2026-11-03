@@ -16,12 +16,13 @@ import (
 type actorCommandArguments struct {
 	Name    string `json:"name"`
 	Confirm bool   `json:"confirm"`
+	Origin  string `json:"origin"`
 }
 
 func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 	var args actorCommandArguments
 	switch inv.Name {
-	case "add", "delete", "stop", "restart", "update", "recycle", "wipe":
+	case "add", "delete", "stop", "start", "reset", "restart", "update", "recycle", "wipe":
 	default:
 		return args, fmt.Errorf("unsupported actor lifecycle command")
 	}
@@ -45,6 +46,10 @@ func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 	case "delete":
 		if !args.Confirm {
 			return args, fmt.Errorf("delete destroys the actor disk; confirm=true is required")
+		}
+	case "reset":
+		if !args.Confirm {
+			return args, fmt.Errorf("reset destroys the actor container and workspace; confirm=true is required")
 		}
 	}
 	return args, nil
@@ -113,7 +118,7 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 			return command.Result{}, fmt.Errorf("actor creation refused: approved managed pool binding is unavailable")
 		}
 		input := &ateapi.Actor{Metadata: &ateapi.ResourceMetadata{Name: args.Name}, ActorTemplate: &ateapi.ObjectRef{Name: managedTemplatePrefix + pool.Name}}
-		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, input, pool, "worker", &from)
+		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, input, pool, "worker", args.Origin, &from)
 		if err != nil && a.UID == "" {
 			return command.Result{}, fmt.Errorf("%s", managedAddRefusal(err))
 		}
@@ -122,6 +127,12 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	target, err := m.authorizeCommandTarget(ctx, from, args.Name, true)
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
+	}
+	// start/reset master выполняет только для своих workers, как mop update
+	// отказывает в чужом папете. ParentUID неизменен с резервирования, а
+	// ревизия цели и делегация перепроверяются в самой операции.
+	if (inv.Name == "start" || inv.Name == "reset") && target.ParentUID != from.UID {
+		return command.Result{}, actorCommandError(app.ErrNotAllowed)
 	}
 	return m.server.applyActorCommand(ctx, from.DelegatorID, sw, target, inv.Name, &from)
 }

@@ -39,6 +39,9 @@ func (e *ConfigError) Error() string {
 // заполнены через lookup; необходимые проверки выполняет New.
 type Config struct {
 	proxmox *proxmoxRegistry
+	// gitRemotes — remotes установки (BROOD_GIT_REMOTES); токены остаются
+	// на сервере и не экспортируются.
+	gitRemotes gitRemotes
 	// DBPath — путь файла SQLite (BROOD_DB_PATH, по умолчанию ./brood.db).
 	DBPath string
 	// Addr — адрес HTTP-слушателя (BROOD_ADDR, по умолчанию 127.0.0.1:8080).
@@ -165,6 +168,9 @@ func LoadConfig(get getenv) (Config, error) {
 		return cfg, err
 	}
 	cfg.proxmox = registry
+	if cfg.gitRemotes, err = loadGitRemotes(envGet(get, gitRemotesSetting)); err != nil {
+		return cfg, err
+	}
 	for _, trust := range []struct {
 		setting string
 		value   *[]byte

@@ -131,6 +131,21 @@
       "deleting": "正在刪除",
       "error": "錯誤",
       "deleted": "已刪除"
+    },
+    "repository": {
+      "title": "儲存庫",
+      "hint": "此專案中的新 actor 透過 brood Git 閘道複製此儲存庫。憑證保留在伺服器上，不會傳給 actor 或此頁面。",
+      "select": "專案儲存庫",
+      "select_hint": "從安裝的 Git remotes 中選擇。",
+      "no_remotes": "安裝中沒有 Git remotes；管理員需將其加入 BROOD_GIT_REMOTES。",
+      "none_option": "無：actor 以空的工作區啟動",
+      "credentials": "已設定憑證",
+      "public": "無憑證",
+      "missing": "已不再設定",
+      "save": "儲存儲存庫",
+      "current": "儲存庫",
+      "not_set": "未設定",
+      "member_hint": "只有管理員可以變更儲存庫。"
     }
   },
   "common": {
@@ -2678,11 +2693,11 @@
     "stop_done": "Actor {{name}} 正在停止",
     "stop_hint": "停止和啟動保留磁碟上的工作區，但不保留執行中的程序或記憶體。",
     "managed_limitations": "受限開發設定：僅支援工作區、終端和受控網路。不支援 Docker、kind 和記憶體檢查點。",
-    "suspend_unsupported": "無法凍結：此設定不支援記憶體檢查點。請停止以保留工作區，再恢復啟動。",
-    "reset": "重設工作區",
-    "reset_title": "破壞性重設 actor？",
-    "reset_message": "重設 {{name}}？這將永久刪除工作區，並用全新容器取代其 CT。所有檔案和執行中的程序都將遺失。停止和恢復則會保留工作區。",
-    "reset_done": "已請求重設 Actor {{name}}",
+    "suspend_unsupported": "無法凍結：此設定不支援記憶體檢查點。請停止以保留工作區，之後再啟動。",
+    "reset": "重建",
+    "reset_title": "重建 actor 的容器？",
+    "reset_message": "重建 {{name}}？這將永久刪除工作區，並用全新容器取代其 CT。所有檔案和執行中的程序都將遺失。停止和啟動則會保留工作區。",
+    "reset_done": "已要求重建 {{name}}",
     "managed_state": {
       "provisioning": "建立中",
       "running": "執行中",
@@ -2734,6 +2749,208 @@
       "crashed": "已崩潰",
       "deleting": "刪除中",
       "reverting": "回滾中"
+    },
+    "origin": "Origin",
+    "origin_hint": "首次啟動時複製到工作區的 Git 儲存庫。專案儲存庫透過 brood Git 閘道複製，憑證保留在伺服器上；允許主機上的其他公開 HTTPS 儲存庫則直接複製。留空則使用專案儲存庫；專案沒有儲存庫時工作區為空。",
+    "origin_repository": "專案儲存庫：{{origin}}。",
+    "origin_no_repository": "專案沒有儲存庫。",
+    "origin_repository_unavailable": "無法讀取專案儲存庫：{{reason}}",
+    "origin_invalid": {
+      "length": "URL 超過 1024 位元組。",
+      "control": "URL 含有控制字元。",
+      "scheme": "請使用 https:// 位址。",
+      "invalid": "這不是有效的 URL。",
+      "credentials": "請從 URL 中移除使用者名稱或權杖：憑證由伺服器保管。",
+      "query": "請移除 ?query 和 #fragment。",
+      "port": "只允許預設的 HTTPS 連接埠。",
+      "host": "請使用主機名稱，而不是 IP 位址。",
+      "path": "請在主機名稱後加上儲存庫路徑。"
+    },
+    "ops": {
+      "more": "更多",
+      "more_label": "{{name}} 的更多操作",
+      "groups": {
+        "session": "工作階段",
+        "workspace": "工作副本",
+        "danger": "無法復原"
+      },
+      "unknown_state": "未知狀態",
+      "reasons": {
+        "transition": "actor 處於「{{state}}」時無法使用，請等待完成。",
+        "deleting": "已要求刪除。",
+        "not_running": "僅在 actor 執行時可用，請先啟動。",
+        "stopped": "actor 已停止。",
+        "no_terminal": "此設定檔沒有終端。",
+        "pending": "此 actor 的另一個操作仍在進行中。"
+      },
+      "refused": "{{name}} 的「{{action}}」遭拒絕",
+      "unconfirmed_title": "結果未知：{{name}} 的「{{action}}」",
+      "unconfirmed_body": "伺服器無法確認此操作是否生效，不會自動重試。再次嘗試前，請檢查 actor 的狀態和最近輸出。",
+      "unconfirmed_badge": "結果未知",
+      "previous_unknown": "此 actor 上一次「{{action}}」的結果未知。重複前請檢查其狀態和最近輸出。",
+      "dismiss": "關閉",
+      "type_name": "輸入 {{name}} 以確認",
+      "terminal": {
+        "label": "開啟終端",
+        "hint": "在新分頁中開啟此 actor 的 Claude 終端。"
+      },
+      "start": {
+        "label": "啟動",
+        "hint": "啟動容器。磁碟上的檔案保留，Claude 開始新的工作階段。",
+        "done": "已要求啟動 {{name}}",
+        "pending": "啟動中…"
+      },
+      "stop": {
+        "label": "停止",
+        "hint": "關閉容器。磁碟上的檔案保留，執行中的程序和 Claude 工作階段結束。",
+        "done": "已要求停止 {{name}}",
+        "pending": "停止中…"
+      },
+      "restart": {
+        "label": "重新啟動 Claude",
+        "hint": "結束目前的 Claude 工作階段，並在同一容器中開始新的工作階段。檔案保留。",
+        "title": "重新啟動 {{name}} 中的 Claude？",
+        "message": "目前的 Claude 工作階段及其正在進行的工作將被中斷，並在同一容器中開始新的工作階段。工作區、檔案和容器均保留。工作區中需要有 Git 複製。",
+        "done": "{{name}} 中的 Claude 已重新啟動",
+        "pending": "重新啟動中…"
+      },
+      "recycle": {
+        "label": "清理工作副本",
+        "hint": "在乾淨的副本上重新啟動 Claude：刪除未提交的變更，以及未追蹤和被忽略的檔案。提交和容器保留。",
+        "title": "清理 {{name}} 的工作副本？",
+        "message": "Claude 工作階段將結束，未提交的變更將被捨棄，工作副本中所有未追蹤和被忽略的檔案將被刪除，然後開始新的工作階段。提交（包括尚未推送的）和容器保留。刪除的檔案無法復原。",
+        "done": "{{name}} 的工作副本已清理，Claude 已重新啟動",
+        "pending": "清理中…"
+      },
+      "wipe": {
+        "label": "清除工作副本",
+        "hint": "像「清理」一樣清理副本，但不啟動 Claude。僅在 Claude 已結束後可用。",
+        "title": "清除 {{name}} 的工作副本？",
+        "message": "未提交的變更將被捨棄，工作副本中所有未追蹤和被忽略的檔案將被刪除。提交和容器保留，Claude 不會啟動。Claude 工作階段執行時伺服器會拒絕。刪除的檔案無法復原。",
+        "done": "{{name}} 的工作副本已清除",
+        "pending": "清除中…"
+      },
+      "reset": {
+        "label": "重建",
+        "hint": "以新容器取代目前的容器。工作區將被刪除，若設定了 origin 則重新複製。",
+        "origin_set": "新的工作區將從 {{origin}} 重新複製。",
+        "origin_empty": "未設定 origin：新的工作區為空。",
+        "done": "已要求重建 {{name}}",
+        "pending": "重建中…"
+      },
+      "delete": {
+        "label": "刪除",
+        "hint": "刪除容器及其磁碟上的所有檔案，無法復原。",
+        "done": "已要求刪除 {{name}}。在確認容器刪除之前，資源仍保持保留。",
+        "pending": "刪除中…"
+      }
+    },
+    "console": {
+      "tabs_label": "Actor {{name}}",
+      "tabs": {
+        "overview": "概覽",
+        "output": "輸出",
+        "history": "歷史",
+        "usage": "用量",
+        "send": "傳送"
+      },
+      "viewer_hint": "此 swarm 的擁有者和編輯者還可以查看輸出、歷史和用量，並執行操作。",
+      "not_running": "僅在 actor 執行時可用。",
+      "refresh": "重新整理",
+      "read_at": "讀取於 {{time}}",
+      "overview": {
+        "phase": "狀態",
+        "desired": "目標狀態",
+        "desired_values": {
+          "running": "執行",
+          "stopped": "停止",
+          "deleted": "刪除"
+        },
+        "role": "角色",
+        "roles": {
+          "master": "master",
+          "worker": "worker"
+        },
+        "origin": "Origin",
+        "no_origin": "無：工作區建立時為空",
+        "origin_mode": "複製方式",
+        "modes": {
+          "gateway": "透過 brood Git 閘道複製專案儲存庫；憑證保留在伺服器上",
+          "direct": "公開 HTTPS，直接複製",
+          "none": "不複製"
+        },
+        "generation": "代數",
+        "generation_hint": "每次重建時遞增；指令作用於目前的一代。",
+        "resources": "資源",
+        "disk": "磁碟 {{size}}"
+      },
+      "output": {
+        "lines": "行數",
+        "filter": "篩選",
+        "filter_hint": "只顯示包含此文字的行；按重新整理後生效。",
+        "label": "{{name}} 的最近輸出",
+        "empty": "沒有輸出。"
+      },
+      "history": {
+        "from_start": "從頭載入",
+        "more": "載入更多",
+        "empty": "尚無歷史。",
+        "reset": "工作階段已變更：歷史已從新的 transcript 重新開始。",
+        "partial": "部分紀錄未能完整讀取。",
+        "label": "{{name}} 的工作階段歷史",
+        "kinds": {
+          "user": "使用者",
+          "assistant": "助理",
+          "tool": "工具",
+          "summary": "摘要",
+          "system": "系統",
+          "notice": "通知",
+          "other": "紀錄"
+        }
+      },
+      "usage": {
+        "period": "期間",
+        "days": "{{count}} 天",
+        "input": "輸入 token",
+        "output": "輸出 token",
+        "cache_write": "快取寫入",
+        "cache_read": "快取讀取",
+        "day": "日期",
+        "partial": "資料不完整：部分 transcript 未能完整讀取。",
+        "scope": "依此 actor 的工作階段 transcript 統計。已刪除的 transcript 不計入；這不是帳單。"
+      },
+      "message": {
+        "title": "訊息",
+        "cost": "傳送會在此 actor 中啟動一次模型回合：會消耗 token 並產生費用。回覆不會回到這裡，請查看「輸出」。",
+        "label": "傳給 actor 的訊息",
+        "hint": "伺服器會將其標記為來自您（操作員）。",
+        "wait": "等待送達回條",
+        "wait_seconds": "最長等待（秒）",
+        "wait_hint": "等待的是回條或閒置通知，而不是回覆。",
+        "wait_invalid": "請輸入 1 到 {{max}} 之間的整數秒。",
+        "send": "傳送訊息",
+        "sent": "已送達。",
+        "unknown": "送達未確認：訊息可能已到達，也可能沒有。再次傳送前請檢查「輸出」，重傳可能造成重複。"
+      },
+      "slash": {
+        "title": "斜線指令",
+        "hint": "僅限伺服器允許清單中的指令。",
+        "command": "指令",
+        "commands": {
+          "status": "顯示工作階段狀態。",
+          "compact": "壓縮對話以釋放上下文。會啟動一次模型回合。",
+          "clear": "清除此工作階段的對話上下文。",
+          "model": "開啟模型選擇器；本身不會選擇模型。",
+          "rc": "Claude Code 的 /rc 指令。",
+          "escape": "按下 Escape：中斷目前的回合。"
+        },
+        "send": "傳送指令",
+        "sent": "已提交。執行未確認，請查看「輸出」。",
+        "unknown": "提交未確認：指令可能已到達工作階段，也可能沒有。重複前請檢查「輸出」。",
+        "clear_title": "清除 {{name}} 中的對話？",
+        "clear_message": "Claude 將失去目前對話的上下文。檔案不受影響。",
+        "clear_confirm": "清除"
+      }
     }
   },
   "proxmox_connections": {

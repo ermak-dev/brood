@@ -223,3 +223,25 @@ func TestWorkspaceRestartAndRecycle(t *testing.T) {
 		t.Fatal("changed identity stopped")
 	}
 }
+
+// FEATURE: The first-start clone records its canonical origin (#147).
+// SPEC: brood.origin is plain data, so restart/recycle/wipe keep accepting the
+// clone; other unknown keys stay refused.
+func TestWorkspaceAcceptsRecordedOrigin(t *testing.T) {
+	e := workspaceFixture(t)
+	f, err := os.OpenFile(filepath.Join(e.root, ".git/config"), os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("[brood]\n\torigin = https://git.example.org/group/repo.git\n[remote \"origin\"]\n\turl = http://127.0.0.1:8318/origin.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n")
+	f.Close()
+	if r := e.handle(context.Background(), workspaceRequest("workspace", `{}`)); !r.OK || !strings.Contains(r.Text, `"git":"clean"`) {
+		t.Fatalf("recorded origin refused: %+v", r)
+	}
+	if r := e.handle(context.Background(), workspaceRequest("wipe", `{"confirm":true}`)); !r.OK {
+		t.Fatalf("wipe of a recorded clone: %+v", r)
+	}
+	if workspaceConfigKey("brood.other") {
+		t.Fatal("only the recorded origin is accepted in the brood section")
+	}
+}

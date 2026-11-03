@@ -6,21 +6,27 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { actorsApi, templatesApi, type Actor, type ActorAction } from '@/services/brood/substrate';
 import { swarmCapabilities } from '@/features/access/shardState';
 import { useAdministrator } from '@/features/access/shared';
+import { ActorDetailsSheet } from './ActorDetailsSheet';
 import { ActorEditor } from './ActorEditor';
 import { ActorActionFailure } from './components/ActorActionFailure';
+import { ActorOutcomeNotices } from './components/ActorOutcomeNotices';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { EntityTable, type Column } from './components/EntityTable';
+import { ManagedActorActions } from './components/ManagedActorActions';
 import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
 import { SwarmSections } from './components/SwarmSections';
 import { StateBadge } from './components/StateBadge';
 import { DASH, formatDate } from './format';
 import {
+  actionDialogText,
   actorPlacement,
   actorState,
   canViewActorDetails,
   deleteConfirmation,
-  resetConfirmation,
 } from './actorLifecycle';
+import { confirmationOf, type ManagedActionId } from './actorActions';
+import { useActorOperations, type UnknownOutcome } from './actorOperations';
 import { ActorLifecycleActions } from './components/ActorLifecycleActions';
 import { useActions, useResource } from './hooks';
 import styles from './substrate.module.scss';
@@ -38,7 +44,7 @@ async function updateFresh(project: string, edited: Actor) {
 
 /** brood: actors of the active project -- the units of work. Suspend freezes
  * an actor into a snapshot, resume wakes it; editing changes its template and
- * placement. */
+ * placement. Managed actors get their full set of actions and a console. */
 export function ActorsPage() {
   const { t } = useTranslation();
   const admin = useAdministrator();
@@ -50,6 +56,7 @@ export function ActorsPage() {
             <Actors
               key={swarm.id}
               project={swarm.id}
+              projectId={project.id}
               name={swarm.name}
               administrator={admin}
               canManage={swarmCapabilities(swarm, admin).manage}
@@ -69,6 +76,23 @@ interface EditorState {
   session: number;
 }
 
+/** Managed-актор в деталях — по имени: строка списка обновляется после
+ * каждого действия, и детали показывают её текущее состояние. */
+interface DetailsState {
+  name: string;
+  open: boolean;
+  session: number;
+}
+
+/** Подтверждение managed-действия; остаётся смонтированным закрытым, чтобы
+ * фокус вернулся к кнопке, которая его открыла. */
+interface DialogState {
+  actor: Actor;
+  id: 'restart' | 'recycle' | 'wipe' | 'reset' | 'delete';
+  open: boolean;
+  session: number;
+}
+
 /** Actors and templates in one load: the editor picks a template from them,
  * and a template's golden actor -- named by the template's uid, created by
  * ateapi to take the golden snapshot -- is told apart from the user's own. */
@@ -83,11 +107,13 @@ async function loadActors(project: string) {
 
 function Actors({
   project,
+  projectId,
   name,
   canManage,
   administrator,
 }: {
   project: string;
+  projectId: string;
   name: string;
   canManage: boolean;
   administrator: boolean;
@@ -98,21 +124,29 @@ function Actors({
   const data = loaded?.actors ?? null;
   const goldenOf = (actor: Actor) => loaded?.golden.get(actor.metadata.name);
   const { run, confirm } = useActions(refresh);
+  const ops = useActorOperations(project, refresh);
   const [editor, setEditor] = useState<EditorState>({ actor: null, open: false, session: 0 });
+  const [details, setDetails] = useState<DetailsState>({ name: '', open: false, session: 0 });
+  const [dialog, setDialog] = useState<DialogState | null>(null);
 
   const openEditor = (actor: Actor | null) =>
     setEditor((prev) => ({ actor, open: true, session: prev.session + 1 }));
   const closeEditor = () => setEditor((prev) => ({ ...prev, open: false }));
+  const open = (actor: Actor) =>
+    actor.provider === 'proxmox'
+      ? setDetails((prev) => ({ name: actor.metadata.name, open: true, session: prev.session + 1 }))
+      : openEditor(actor);
+  const detailsActor = data?.find((a) => a.metadata.name === details.name);
 
-  const [actionFailure, setActionFailure] = useState<{ name: string; error: unknown } | null>(null);
+  // Native-действия: прежний поток с общим флагом, отказ — в той же плашке.
   const [acting, setActing] = useState(false);
   const mutate = async (actor: Actor, action: ActorAction) => {
     setActing(true);
-    setActionFailure(null);
+    ops.clearFailure();
     try {
       return await actorsApi.act(project, actor.metadata.name, action);
     } catch (error) {
-      setActionFailure({ name: actor.metadata.name, error });
+      ops.setFailure({ name: actor.metadata.name, error });
       throw error;
     } finally {
       setActing(false);
@@ -128,6 +162,22 @@ function Actors({
 
   const remove = (actor: Actor) =>
     confirm(deleteConfirmation(actor, t, () => actorsApi.remove(project, actor.metadata.name)));
+
+  // Managed: обратимое — сразу, остальное — через подтверждение с последствиями.
+  const request = (actor: Actor, id: ManagedActionId) => {
+    if (id === 'terminal') return;
+    if (confirmationOf(id) === 'none') {
+      void ops.perform(actor, id);
+      return;
+    }
+    setDialog((prev) => ({
+      actor,
+      id: id as DialogState['id'],
+      open: true,
+      session: (prev?.session ?? 0) + 1,
+    }));
+  };
+  const closeDialog = () => setDialog((prev) => prev && { ...prev, open: false });
 
   const count = (state: string) => (data ?? []).filter((a) => stateOf(a) === state).length;
   const create = canManage ? (
@@ -150,14 +200,16 @@ function Actors({
         actions={create}
       />
 
-      {actionFailure && (
+      {ops.failure && (
         <ActorActionFailure
-          name={actionFailure.name}
-          error={actionFailure.error}
+          name={ops.failure.name}
+          action={ops.failure.action ? t(`actors.ops.${ops.failure.action}.label`) : undefined}
+          error={ops.failure.error}
           administrator={administrator}
-          onClose={() => setActionFailure(null)}
+          onClose={ops.clearFailure}
         />
       )}
+      <ActorOutcomeNotices items={ops.unknown} onDismiss={ops.dismissUnknown} />
 
       {loading ? (
         <LoadingSpinner />
@@ -171,13 +223,12 @@ function Actors({
           swarm={project}
           canManage={canManage}
           acting={acting}
+          pending={ops.pending}
+          unknown={ops.unknown}
           goldenOf={goldenOf}
-          onOpen={openEditor}
-          onAction={(a, action) =>
-            action === 'reset'
-              ? confirm(resetConfirmation(a, t, () => mutate(a, 'reset')))
-              : void act(a, action)
-          }
+          onOpen={open}
+          onAction={(a, action) => void act(a, action)}
+          onManaged={request}
           onRemove={remove}
         />
       ) : (
@@ -194,6 +245,7 @@ function Actors({
         <ActorEditor
           key={editor.session}
           project={project}
+          projectId={projectId}
           actor={editor.actor}
           templates={loaded?.templates ?? null}
           open={editor.open}
@@ -210,35 +262,111 @@ function Actors({
           }}
         />
       )}
+
+      {detailsActor && canViewActorDetails(canManage, detailsActor) && (
+        <ActorDetailsSheet
+          key={details.session}
+          open={details.open}
+          onClose={() => setDetails((prev) => ({ ...prev, open: false }))}
+          actor={detailsActor}
+          swarm={project}
+          swarmName={name}
+          canManage={canManage}
+          administrator={administrator}
+          pending={ops.pending[detailsActor.metadata.name]}
+          failure={ops.failure}
+          unknown={ops.unknown}
+          onAction={(id) => request(detailsActor, id)}
+          onClearFailure={ops.clearFailure}
+          onDismissUnknown={ops.dismissUnknown}
+        />
+      )}
+
+      {dialog && canManage && (
+        <ManagedActionDialog
+          key={dialog.session}
+          dialog={dialog}
+          unknown={ops.unknown}
+          onCancel={closeDialog}
+          onConfirm={() => {
+            closeDialog();
+            void ops.perform(dialog.actor, dialog.id);
+          }}
+        />
+      )}
     </div>
   );
 }
 
+/** Подтверждение называет последствие действия; необратимое — ввод имени.
+ * Если прежний исход того же действия неизвестен, это сказано до повтора. */
+function ManagedActionDialog({
+  dialog,
+  unknown,
+  onCancel,
+  onConfirm,
+}: {
+  dialog: DialogState;
+  unknown: UnknownOutcome[];
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useTranslation();
+  const { actor, id } = dialog;
+  const name = actor.metadata.name;
+  const text = actionDialogText(actor, id, t);
+  const previous = unknown.some((item) => item.name === name && item.action === id);
+  return (
+    <ConfirmDialog
+      open={dialog.open}
+      title={text.title}
+      confirmText={text.confirmText}
+      typedName={confirmationOf(id) === 'typed' ? name : undefined}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    >
+      <p>{text.message}</p>
+      {text.note && <p className={styles.muted}>{text.note}</p>}
+      {previous && (
+        <p role="alert" className={`${styles.notice} ${styles.unknownNotice}`}>
+          {t('actors.ops.previous_unknown', { action: t(`actors.ops.${id}.label`) })}
+        </p>
+      )}
+    </ConfirmDialog>
+  );
+}
+
 /** brood: the actors of one swarm. Provider and Proxmox CT share the placement
- * cell instead of columns of their own, and a managed row wraps its five
- * actions between the lifecycle and object groups, so the table fits a 1280px
- * screen with the sidebar open without scrolling. A native row keeps its
- * actions on one line, as before managed actors existed. */
+ * cell instead of columns of their own. A managed row shows its state-driven
+ * primary action and Stop, then details and a grouped menu of the rest; a
+ * native row keeps its actions on one line, as before managed actors existed. */
 export function ActorTable({
   rows,
   swarm,
   canManage,
   acting,
+  pending = {},
+  unknown = [],
   goldenOf,
   onOpen,
   onAction,
+  onManaged = () => {},
   onRemove: remove,
 }: {
   rows: Actor[];
   swarm: string;
   canManage: boolean;
   acting: boolean;
+  pending?: Record<string, ManagedActionId>;
+  unknown?: UnknownOutcome[];
   goldenOf: (actor: Actor) => string | undefined;
   onOpen: (actor: Actor) => void;
   onAction: (actor: Actor, action: ActorAction) => void;
+  onManaged?: (actor: Actor, id: ManagedActionId) => void;
   onRemove: (actor: Actor) => void;
 }) {
   const { t, i18n } = useTranslation();
+  const uncertain = new Set(unknown.map((item) => item.name));
   const columns: Column<Actor>[] = [
     {
       key: 'name',
@@ -259,10 +387,17 @@ export function ActorTable({
       key: 'state',
       label: t('substrate.state'),
       render: (a) => (
-        <StateBadge
-          state={stateOf(a)}
-          namespace={a.provider === 'proxmox' ? 'actors.managed_state' : 'actors.state'}
-        />
+        <span className={styles.stateCell}>
+          <StateBadge
+            state={stateOf(a)}
+            namespace={a.provider === 'proxmox' ? 'actors.managed_state' : 'actors.state'}
+          />
+          {uncertain.has(a.metadata.name) && (
+            <span className={`${styles.badge} ${styles['tone-warning']}`}>
+              {t('actors.ops.unconfirmed_badge')}
+            </span>
+          )}
+        </span>
       ),
     },
     {
@@ -300,33 +435,46 @@ export function ActorTable({
                       a.provider === 'proxmox' ? styles.actorActionsWrap : styles.actorActions
                     }
                   >
-                    <span className={styles.actorActionGroup}>
-                      {canManage && (
-                        <ActorLifecycleActions
-                          actor={a}
-                          swarm={swarm}
-                          disabled={acting}
-                          onAction={(action) => onAction(a, action)}
-                        />
-                      )}
-                    </span>
-                    <span className={styles.actorActionGroup}>
-                      {canViewActorDetails(canManage, a) && (
-                        <Button variant="ghost" size="sm" onClick={() => onOpen(a)}>
-                          {t(a.provider === 'proxmox' ? 'actors.details' : 'substrate.edit')}
-                        </Button>
-                      )}
-                      {canManage && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className={styles.dangerText}
-                          onClick={() => remove(a)}
-                        >
-                          {t('substrate.delete')}
-                        </Button>
-                      )}
-                    </span>
+                    {a.provider === 'proxmox' ? (
+                      <ManagedActorActions
+                        actor={a}
+                        swarm={swarm}
+                        canManage={canManage}
+                        pending={pending[a.metadata.name]}
+                        onAction={(id) => onManaged(a, id)}
+                        onDetails={() => onOpen(a)}
+                      />
+                    ) : (
+                      <>
+                        <span className={styles.actorActionGroup}>
+                          {canManage && (
+                            <ActorLifecycleActions
+                              actor={a}
+                              swarm={swarm}
+                              disabled={acting}
+                              onAction={(action) => onAction(a, action)}
+                            />
+                          )}
+                        </span>
+                        <span className={styles.actorActionGroup}>
+                          {canViewActorDetails(canManage, a) && (
+                            <Button variant="ghost" size="sm" onClick={() => onOpen(a)}>
+                              {t('substrate.edit')}
+                            </Button>
+                          )}
+                          {canManage && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={styles.dangerText}
+                              onClick={() => remove(a)}
+                            >
+                              {t('substrate.delete')}
+                            </Button>
+                          )}
+                        </span>
+                      </>
+                    )}
                   </div>
                 )
             : undefined

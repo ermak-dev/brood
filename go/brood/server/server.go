@@ -37,6 +37,7 @@ type Options struct {
 type Server struct {
 	store     *store.Store
 	managed   *managedProvider
+	git       *gitGateway
 	catalog   *Catalog
 	gateway   *Gateway
 	app       *app.Service
@@ -92,7 +93,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}}
+	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes)}
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
 		catalog.Close()
@@ -159,6 +160,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProxmoxPools(cfg.proxmox)
 	srv.mountProxmoxConnections()
 	srv.mountProjectSecrets()
+	srv.mountGitRepositories()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
@@ -212,8 +214,16 @@ func (s *Server) Handler() http.Handler {
 			s.serveGuestProjectSecrets(w, r)
 			return
 		}
+		if publicWorkspacePath(r.URL.Path) {
+			s.serveGuestWorkspace(w, r)
+			return
+		}
 		if publicManagedLLMPath(r.URL.Path) {
 			s.managedLLM.ServeHTTP(w, r)
+			return
+		}
+		if publicManagedGitPath(r.URL.Path) {
+			s.serveManagedGit(w, r)
 			return
 		}
 		if publicGuestPath(r.URL.Path) {

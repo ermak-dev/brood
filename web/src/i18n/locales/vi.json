@@ -131,6 +131,21 @@
       "deleting": "Đang xóa",
       "error": "Lỗi",
       "deleted": "Đã xóa"
+    },
+    "repository": {
+      "title": "Kho mã",
+      "hint": "Actor mới trong dự án này clone kho qua cổng Git của brood. Thông tin xác thực ở lại máy chủ, không đến actor hay trang này.",
+      "select": "Kho của dự án",
+      "select_hint": "Chọn từ các Git remote của bản cài đặt.",
+      "no_remotes": "Bản cài đặt chưa có Git remote; quản trị viên thêm chúng vào BROOD_GIT_REMOTES.",
+      "none_option": "Không có: actor bắt đầu với thư mục làm việc trống",
+      "credentials": "đã cấu hình thông tin xác thực",
+      "public": "không có thông tin xác thực",
+      "missing": "không còn được cấu hình",
+      "save": "Lưu kho",
+      "current": "Kho mã",
+      "not_set": "Chưa đặt",
+      "member_hint": "Chỉ quản trị viên mới đổi được kho."
     }
   },
   "common": {
@@ -2658,11 +2673,11 @@
     "stop_done": "Actor {{name}} đang dừng",
     "stop_hint": "Dừng và khởi động giữ nguyên thư mục làm việc trên đĩa, nhưng không giữ tiến trình hoặc bộ nhớ.",
     "managed_limitations": "Hồ sơ lập trình giới hạn: chỉ có thư mục làm việc, terminal và mạng được kiểm soát. Không hỗ trợ Docker, kind và checkpoint bộ nhớ.",
-    "suspend_unsupported": "Không thể tạm dừng: hồ sơ này không hỗ trợ checkpoint bộ nhớ. Hãy Dừng để giữ thư mục làm việc, rồi Đánh thức để chạy lại.",
-    "reset": "Đặt lại thư mục làm việc",
-    "reset_title": "Đặt lại actor và xóa dữ liệu?",
-    "reset_message": "Đặt lại {{name}}? Thư mục làm việc sẽ bị xóa vĩnh viễn và CT được thay bằng container mới. Mọi tệp và tiến trình đang chạy sẽ mất. Dừng và Đánh thức sẽ giữ nguyên thư mục làm việc.",
-    "reset_done": "Đã yêu cầu đặt lại actor {{name}}",
+    "suspend_unsupported": "Không thể tạm dừng: hồ sơ này không hỗ trợ checkpoint bộ nhớ. Hãy Dừng để giữ thư mục làm việc, rồi Khởi động để chạy lại.",
+    "reset": "Tạo lại",
+    "reset_title": "Tạo lại container của actor?",
+    "reset_message": "Tạo lại {{name}}? Thư mục làm việc sẽ bị xóa vĩnh viễn và CT được thay bằng container mới. Mọi tệp và tiến trình đang chạy sẽ mất. Dừng và Khởi động sẽ giữ nguyên thư mục làm việc.",
+    "reset_done": "Đã yêu cầu tạo lại {{name}}",
     "managed_state": {
       "provisioning": "đang tạo",
       "running": "đang chạy",
@@ -2714,6 +2729,209 @@
       "crashed": "đã sập",
       "deleting": "đang xóa",
       "reverting": "đang hoàn tác"
+    },
+    "origin": "Origin",
+    "origin_hint": "Kho Git được clone vào thư mục làm việc ở lần khởi động đầu tiên. Kho của dự án được clone qua cổng Git của brood nên thông tin xác thực ở lại máy chủ; kho HTTPS công khai khác trên máy chủ được phép sẽ được clone trực tiếp. Để trống để dùng kho của dự án, hoặc bắt đầu với thư mục làm việc trống nếu dự án không có kho.",
+    "origin_repository": "Kho của dự án: {{origin}}.",
+    "origin_no_repository": "Dự án chưa có kho.",
+    "origin_repository_unavailable": "Không đọc được kho của dự án: {{reason}}",
+    "origin_invalid": {
+      "length": "URL dài hơn 1024 byte.",
+      "control": "URL chứa ký tự điều khiển.",
+      "scheme": "Hãy dùng địa chỉ https://.",
+      "invalid": "Đây không phải URL hợp lệ.",
+      "credentials": "Hãy bỏ tên người dùng hoặc token khỏi URL: thông tin xác thực do máy chủ giữ.",
+      "query": "Hãy bỏ ?query và #fragment.",
+      "port": "Chỉ cho phép cổng HTTPS mặc định.",
+      "host": "Hãy dùng tên máy chủ, không dùng địa chỉ IP.",
+      "path": "Hãy thêm đường dẫn kho sau tên máy chủ."
+    },
+    "ops": {
+      "more": "Thêm",
+      "more_label": "Thao tác khác cho {{name}}",
+      "groups": {
+        "session": "Phiên",
+        "workspace": "Bản làm việc",
+        "danger": "Không thể hoàn tác"
+      },
+      "unknown_state": "trạng thái không xác định",
+      "reasons": {
+        "transition": "Không khả dụng khi actor đang ở trạng thái “{{state}}”. Hãy đợi hoàn tất.",
+        "deleting": "Đã yêu cầu xóa.",
+        "not_running": "Chỉ dùng được khi actor đang chạy. Hãy khởi động trước.",
+        "stopped": "Actor đã dừng.",
+        "no_terminal": "Hồ sơ này không có terminal.",
+        "pending": "Một thao tác khác trên actor này vẫn đang chạy."
+      },
+      "refused": "“{{action}}” bị từ chối cho {{name}}",
+      "unconfirmed_title": "Chưa rõ kết quả: “{{action}}” trên {{name}}",
+      "unconfirmed_body": "Máy chủ không xác nhận được thao tác đã có hiệu lực hay chưa. Không tự động thử lại. Hãy kiểm tra trạng thái và đầu ra gần đây của actor trước khi thử lại.",
+      "unconfirmed_badge": "chưa rõ kết quả",
+      "previous_unknown": "Kết quả của “{{action}}” trước đó trên actor này chưa rõ. Hãy kiểm tra trạng thái và đầu ra gần đây trước khi lặp lại.",
+      "dismiss": "Đóng",
+      "type_name": "Nhập {{name}} để xác nhận",
+      "terminal": {
+        "label": "Mở terminal",
+        "hint": "Mở terminal Claude của actor này trong tab mới."
+      },
+      "start": {
+        "label": "Khởi động",
+        "hint": "Khởi động container. Tệp trên đĩa được giữ, Claude bắt đầu phiên mới.",
+        "done": "Đã yêu cầu khởi động {{name}}",
+        "pending": "Đang khởi động…"
+      },
+      "stop": {
+        "label": "Dừng",
+        "hint": "Tắt container. Tệp trên đĩa được giữ; tiến trình đang chạy và phiên Claude kết thúc.",
+        "done": "Đã yêu cầu dừng {{name}}",
+        "pending": "Đang dừng…"
+      },
+      "restart": {
+        "label": "Khởi động lại Claude",
+        "hint": "Kết thúc phiên Claude hiện tại và bắt đầu phiên mới trong cùng container. Tệp được giữ.",
+        "title": "Khởi động lại Claude trong {{name}}?",
+        "message": "Phiên Claude hiện tại và mọi việc đang làm sẽ bị dừng, rồi một phiên mới bắt đầu trong cùng container. Thư mục làm việc, tệp và container được giữ. Cần có bản clone Git trong thư mục làm việc.",
+        "done": "Đã khởi động lại Claude trong {{name}}",
+        "pending": "Đang khởi động lại…"
+      },
+      "recycle": {
+        "label": "Dọn bản làm việc",
+        "hint": "Khởi động lại Claude trên bản sạch: thay đổi chưa commit, tệp không theo dõi và tệp bị bỏ qua bị xóa. Commit và container được giữ.",
+        "title": "Dọn bản làm việc của {{name}}?",
+        "message": "Phiên Claude kết thúc, thay đổi chưa commit bị bỏ, mọi tệp không theo dõi và bị bỏ qua trong bản làm việc bị xóa, rồi một phiên mới bắt đầu. Commit, kể cả commit chưa push, và container được giữ. Không thể khôi phục tệp đã xóa.",
+        "done": "Đã dọn bản làm việc của {{name}} và khởi động lại Claude",
+        "pending": "Đang dọn…"
+      },
+      "wipe": {
+        "label": "Xóa sạch bản làm việc",
+        "hint": "Dọn bản làm việc như “Dọn” nhưng không khởi động Claude. Chỉ dùng được sau khi Claude đã thoát.",
+        "title": "Xóa sạch bản làm việc của {{name}}?",
+        "message": "Thay đổi chưa commit bị bỏ và mọi tệp không theo dõi và bị bỏ qua trong bản làm việc bị xóa. Commit và container được giữ; Claude không khởi động. Máy chủ từ chối khi phiên Claude đang chạy. Không thể khôi phục tệp đã xóa.",
+        "done": "Đã xóa sạch bản làm việc của {{name}}",
+        "pending": "Đang xóa sạch…"
+      },
+      "reset": {
+        "label": "Tạo lại",
+        "hint": "Thay container bằng container mới. Thư mục làm việc bị xóa và được clone lại từ origin nếu có.",
+        "origin_set": "Thư mục làm việc mới sẽ được clone lại từ {{origin}}.",
+        "origin_empty": "Chưa đặt origin: thư mục làm việc mới sẽ trống.",
+        "done": "Đã yêu cầu tạo lại {{name}}",
+        "pending": "Đang tạo lại…"
+      },
+      "delete": {
+        "label": "Xóa",
+        "hint": "Xóa container và ổ đĩa cùng mọi tệp. Không thể hoàn tác.",
+        "done": "Đã yêu cầu xóa {{name}}. Tài nguyên vẫn được giữ cho đến khi xác nhận container đã bị xóa.",
+        "pending": "Đang xóa…"
+      }
+    },
+    "console": {
+      "tabs_label": "Actor {{name}}",
+      "tabs": {
+        "overview": "Tổng quan",
+        "output": "Đầu ra",
+        "history": "Lịch sử",
+        "usage": "Mức dùng",
+        "send": "Gửi"
+      },
+      "viewer_hint": "Chủ sở hữu và người chỉnh sửa của swarm này còn xem được đầu ra, lịch sử, mức dùng và chạy thao tác.",
+      "not_running": "Chỉ khả dụng khi actor đang chạy.",
+      "refresh": "Làm mới",
+      "read_at": "Đọc lúc {{time}}",
+      "overview": {
+        "phase": "Trạng thái",
+        "desired": "Trạng thái mong muốn",
+        "desired_values": {
+          "running": "chạy",
+          "stopped": "dừng",
+          "deleted": "xóa"
+        },
+        "role": "Vai trò",
+        "roles": {
+          "master": "master",
+          "worker": "worker"
+        },
+        "origin": "Origin",
+        "no_origin": "Không có: thư mục làm việc được tạo trống",
+        "origin_mode": "Cách clone",
+        "modes": {
+          "gateway": "Kho của dự án qua cổng Git của brood; thông tin xác thực ở lại máy chủ",
+          "direct": "HTTPS công khai, clone trực tiếp",
+          "none": "Không clone"
+        },
+        "generation": "Thế hệ",
+        "generation_hint": "Tăng sau mỗi lần tạo lại; lệnh nhắm vào thế hệ hiện tại.",
+        "resources": "Tài nguyên",
+        "disk": "đĩa {{size}}"
+      },
+      "output": {
+        "lines": "Số dòng",
+        "filter": "Lọc",
+        "filter_hint": "Chỉ các dòng chứa văn bản này; áp dụng khi làm mới.",
+        "label": "Đầu ra gần đây của {{name}}",
+        "empty": "Không có đầu ra."
+      },
+      "history": {
+        "from_start": "Tải lại từ đầu",
+        "more": "Tải thêm",
+        "empty": "Chưa có lịch sử.",
+        "reset": "Phiên đã thay đổi: lịch sử được hiển thị lại từ transcript mới.",
+        "partial": "Một số bản ghi không đọc được đầy đủ.",
+        "label": "Lịch sử phiên của {{name}}",
+        "kinds": {
+          "user": "người dùng",
+          "assistant": "trợ lý",
+          "tool": "công cụ",
+          "summary": "tóm tắt",
+          "system": "hệ thống",
+          "notice": "thông báo",
+          "other": "bản ghi"
+        }
+      },
+      "usage": {
+        "period": "Khoảng thời gian",
+        "days_one": "{{count}} ngày",
+        "days_other": "{{count}} ngày",
+        "input": "Token đầu vào",
+        "output": "Token đầu ra",
+        "cache_write": "Ghi bộ nhớ đệm",
+        "cache_read": "Đọc bộ nhớ đệm",
+        "day": "Ngày",
+        "partial": "Dữ liệu chưa đầy đủ: một số transcript không đọc được hết.",
+        "scope": "Tính từ transcript phiên của actor này. Transcript đã xóa không được tính; đây không phải hóa đơn."
+      },
+      "message": {
+        "title": "Tin nhắn",
+        "cost": "Gửi sẽ bắt đầu một lượt mô hình trong actor này: tốn token và chi phí. Câu trả lời không quay về đây; hãy xem Đầu ra.",
+        "label": "Tin nhắn gửi actor",
+        "hint": "Máy chủ đánh dấu tin nhắn là của bạn, người vận hành.",
+        "wait": "Chờ biên nhận giao",
+        "wait_seconds": "Chờ tối đa (giây)",
+        "wait_hint": "Chờ biên nhận hoặc thông báo rảnh, không phải câu trả lời.",
+        "wait_invalid": "Nhập số giây nguyên từ 1 đến {{max}}.",
+        "send": "Gửi tin nhắn",
+        "sent": "Đã giao.",
+        "unknown": "Chưa xác nhận giao: tin nhắn có thể đã đến hoặc chưa. Hãy kiểm tra Đầu ra trước khi gửi lại; gửi lại có thể tạo bản trùng."
+      },
+      "slash": {
+        "title": "Lệnh gạch chéo",
+        "hint": "Chỉ các lệnh trong danh sách cho phép của máy chủ.",
+        "command": "Lệnh",
+        "commands": {
+          "status": "Hiển thị trạng thái phiên.",
+          "compact": "Tóm tắt cuộc hội thoại để giải phóng ngữ cảnh. Bắt đầu một lượt mô hình.",
+          "clear": "Xóa ngữ cảnh hội thoại của phiên này.",
+          "model": "Mở bộ chọn mô hình; bản thân lệnh không chọn mô hình.",
+          "rc": "Lệnh /rc của Claude Code.",
+          "escape": "Nhấn Escape: ngắt lượt hiện tại."
+        },
+        "send": "Gửi lệnh",
+        "sent": "Đã gửi. Chưa xác nhận hoàn tất; hãy xem Đầu ra.",
+        "unknown": "Chưa xác nhận gửi: lệnh có thể đã đến phiên hoặc chưa. Hãy kiểm tra Đầu ra trước khi lặp lại.",
+        "clear_title": "Xóa cuộc hội thoại trong {{name}}?",
+        "clear_message": "Claude sẽ mất ngữ cảnh của cuộc hội thoại hiện tại. Tệp không bị ảnh hưởng.",
+        "clear_confirm": "Xóa"
+      }
     }
   },
   "proxmox_connections": {

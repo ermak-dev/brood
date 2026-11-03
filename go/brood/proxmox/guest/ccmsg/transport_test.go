@@ -3,10 +3,10 @@
 package ccmsg
 
 // FEATURE: Реальный непривилегированный канал с обратными квитанциями.
-// SPEC: prompting, отдельный обратный сокет, совпадающий orig_msg_id,
+// SPEC: bypass, как у получателя (#148), отдельный обратный сокет, совпадающий orig_msg_id,
 // отсутствие квитанции означает unconfirmed, held не означает delivered,
 // обратный notify_when_idle аутентифицирован, ввод и ожидание ограничены.
-// IMPLEMENTATION: Реальные Unix fixtures, peer auth, correlation и prompting.
+// IMPLEMENTATION: Реальные Unix fixtures, peer auth, correlation и bypass.
 // RESULT: IMPLEMENTED — транспорт квитанций, без модельных вызовов.
 // STATUS: DONE
 
@@ -63,7 +63,7 @@ func TestExchangeReceipts(t *testing.T) {
 				var msg Frame
 				_ = json.Unmarshal(s.Bytes(), &msg)
 				content := msg["message"].(map[string]any)["content"].(string)
-				if !strings.Contains(content, `from-name="lead" from-mode="prompting"`) {
+				if !strings.Contains(content, `from-name="lead" from-mode="bypass"`) {
 					t.Errorf("envelope: %s", content)
 				}
 				from := strings.TrimPrefix(msg["from"].(string), "uds:")
@@ -151,7 +151,7 @@ func TestExchangeIdleDoesNotProveDelivery(t *testing.T) {
 			}
 			_ = json.Unmarshal(s.Bytes(), &frame)
 		}
-		if frame["action"] != "notify_when_idle" || frame["from_mode"] != "prompting" {
+		if frame["action"] != "notify_when_idle" || frame["from_mode"] != "bypass" {
 			t.Errorf("subscription: %#v", frame)
 		}
 		if !canonicalUUID.MatchString(frame["msg_id"].(string)) {

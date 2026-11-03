@@ -947,3 +947,301 @@
     font-size: 16px;
   }
 }
+
+/* ─── действия managed-актора (#151) ───────────────────────────────── */
+
+/* Заблокированное действие остаётся в фокусе (aria-disabled), чтобы его
+ * причина была доступна с клавиатуры; выглядит как disabled. */
+:global(.btn).actionBlocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pendingNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.stateCell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.menuTrigger {
+  display: inline-flex;
+
+  :global(.btn) {
+    gap: 4px;
+  }
+}
+
+.hintBubble {
+  max-width: 280px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--floating-surface, var(--bg-primary));
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  line-height: 1.45;
+  pointer-events: auto;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--floating-surface, var(--bg-primary));
+  box-shadow: var(--shadow-lg), 0 20px 48px rgb(0 0 0 / 0.18);
+  animation: actorMenuIn var(--dur-hover) var(--ease-out-strong);
+}
+
+@keyframes actorMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.menuGroupLabel {
+  padding: 8px 10px 4px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text-tertiary);
+}
+
+.menuSeparator {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border-color);
+}
+
+.menuItem {
+  @include button-reset;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: $radius-md;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color var(--dur-hover) var(--ease-out-strong);
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-tertiary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: -2px;
+  }
+}
+
+.menuItemLabel {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.menuItemText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.menuItemReason {
+  color: var(--amber-color);
+  font-weight: 550;
+}
+
+.menuItemDanger .menuItemLabel {
+  color: var(--viz-failure);
+}
+
+.menuItemBlocked {
+  cursor: not-allowed;
+
+  .menuItemLabel {
+    opacity: 0.6;
+  }
+}
+
+.unknownNotice {
+  border-left-color: var(--amber-color);
+  background: color-mix(in srgb, var(--amber-color) 7%, var(--bg-secondary));
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+
+  p {
+    margin: 6px 0;
+  }
+}
+
+.costNotice {
+  border-left-color: var(--amber-color);
+  color: var(--text-primary);
+}
+
+.confirmBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+
+  p {
+    margin: 0;
+    line-height: 1.5;
+  }
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* ─── пульт актора в деталях ──────────────────────────────────────── */
+
+.consoleHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.consoleTabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-color);
+  scrollbar-width: thin;
+}
+
+.consoleTab {
+  @include button-reset;
+  flex-shrink: 0;
+  padding: 9px 12px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--dur-hover) var(--ease-out-strong);
+
+  &:hover {
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: -2px;
+  }
+}
+
+.consoleTabActive {
+  border-bottom-color: var(--primary-color);
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.consoleControls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+    min-width: 200px;
+  }
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.historyEntry {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+  background: var(--bg-secondary);
+}
+
+.historyMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.historyText {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.messageArea {
+  min-height: 120px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.checkRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.narrowInput {
+  max-width: 160px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    animation: none;
+  }
+
+  .menuItem,
+  .consoleTab {
+    transition: none;
+  }
+}
+
+@include mobile {
+  .messageArea {
+    font-size: 16px;
+  }
+}

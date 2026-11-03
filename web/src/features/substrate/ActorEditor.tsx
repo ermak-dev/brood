@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { accessApi } from '@/services/brood/access';
+import { errorMessage } from '@/services/brood/http';
 import type { Actor, ActorTemplate } from '@/services/brood/substrate';
 import { actorCreateDraft, actorState } from './actorLifecycle';
+import { originProblem } from './originDraft';
 import { ManagedProfile } from './components/ManagedProfile';
 import { EditorSheet } from './components/EditorSheet';
 import { Field, Section } from './components/form';
@@ -14,6 +17,8 @@ import styles from './substrate.module.scss';
 
 interface ActorEditorProps {
   project: string;
+  /** Проект роя: из его repository подставляется origin нового managed-актора. */
+  projectId?: string;
   /** null -- create a new actor; otherwise edit this one. */
   actor: Actor | null;
   /** Шаблоны роя, включая виртуальные профили; null во время загрузки. */
@@ -30,6 +35,7 @@ interface ActorEditorProps {
  * the rest (sourceTag, metadata preconditions) goes back unchanged. */
 export function ActorEditor({
   project,
+  projectId,
   actor,
   templates,
   open,
@@ -56,15 +62,37 @@ export function ActorEditor({
   const [labels, setLabels] = useState<Record<string, string>>(initial.labels);
   const [sourceTag, setSourceTag] = useState(initial.sourceTag);
   const [saving, setSaving] = useState(false);
+  // Origin нового managed-актора: null — не трогали, поле следует repository
+  // проекта; сбой чтения repository не мешает ввести origin вручную.
+  const [origin, setOrigin] = useState<string | null>(null);
+  const [repository, setRepository] = useState<{ origin: string } | { error: string } | null>(
+    null
+  );
+  useEffect(() => {
+    if (editing || !projectId) return;
+    let current = true;
+    accessApi.repository(projectId).then(
+      (value) => current && setRepository({ origin: value }),
+      (reason: unknown) => current && setRepository({ error: errorMessage(reason) })
+    );
+    return () => {
+      current = false;
+    };
+  }, [editing, projectId]);
+  const projectOrigin = repository && 'origin' in repository ? repository.origin : '';
+  const originValue = origin ?? projectOrigin;
 
   const selectedTemplate = templates?.find((tpl) => tpl.metadata.name === template);
   const managedTemplate = selectedTemplate?.provider === 'proxmox';
+  const originError = !editing && managedTemplate ? originProblem(originValue) : null;
   const nameValid = editing || isShortName(name);
-  const valid = nameValid && template !== '' && !managed && (editing || !!selectedTemplate);
+  const valid =
+    nameValid && template !== '' && !managed && (editing || !!selectedTemplate) && !originError;
   const dirty =
     name !== initial.name ||
     template !== initial.template ||
     sourceTag !== initial.sourceTag ||
+    origin !== null ||
     JSON.stringify(labels) !== JSON.stringify(initial.labels);
 
   const build = (): Actor => {
@@ -76,7 +104,14 @@ export function ActorEditor({
       next.workerSelector = selector;
       return next;
     }
-    return actorCreateDraft(project, name, selectedTemplate!, labels, sourceTag);
+    return actorCreateDraft(
+      project,
+      name,
+      selectedTemplate!,
+      labels,
+      sourceTag,
+      managedTemplate ? originValue : ''
+    );
   };
 
   const save = async () => {
@@ -197,6 +232,31 @@ export function ActorEditor({
                   />
                 )}
               </Field>
+              {!editing && managedTemplate && (
+                <Input
+                  name="actor-origin"
+                  label={t('actors.origin')}
+                  value={originValue}
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="https://git.example.com/team/repo.git"
+                  hint={
+                    <>
+                      {t('actors.origin_hint')}{' '}
+                      {repository === null
+                        ? ''
+                        : 'error' in repository
+                          ? t('actors.origin_repository_unavailable', { reason: repository.error })
+                          : repository.origin
+                            ? t('actors.origin_repository', { origin: repository.origin })
+                            : t('actors.origin_no_repository')}
+                    </>
+                  }
+                  error={originError ? t(`actors.origin_invalid.${originError}`) : undefined}
+                  onChange={(event) => setOrigin(event.target.value)}
+                />
+              )}
               {!editing && !managedTemplate && (
                 <Input
                   name="actor-source-tag"

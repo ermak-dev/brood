@@ -8,7 +8,13 @@
 export class BroodApiError extends Error {
   status: number;
 
-  constructor(status: number, message: string, public readonly body?: unknown) {
+  constructor(
+    status: number,
+    message: string,
+    public readonly body?: unknown,
+    /** Заголовки отказа: по ним команда узнаёт неизвестный исход. */
+    public readonly headers?: Headers
+  ) {
     super(message);
     this.name = 'BroodApiError';
     this.status = status;
@@ -25,7 +31,12 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+/** Тело ответа вместе с заголовками: командам нужен X-Brood-Command-Outcome. */
+export async function requestWithHeaders<T>(
+  method: string,
+  url: string,
+  body?: unknown
+): Promise<{ data: T; headers: Headers }> {
   const unsafe = method !== 'GET';
   if (unsafe && !csrfToken()) {
     // The session endpoint sets the cookie the write must send back.
@@ -50,8 +61,13 @@ export async function request<T>(method: string, url: string, body?: unknown): P
     throw new BroodApiError(
       response.status,
       typeof detail === 'string' ? detail : `HTTP ${response.status}`,
-      data
+      data,
+      response.headers
     );
   }
-  return data as T;
+  return { data: data as T, headers: response.headers };
+}
+
+export async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  return (await requestWithHeaders<T>(method, url, body)).data;
 }

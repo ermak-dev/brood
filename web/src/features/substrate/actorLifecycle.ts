@@ -39,32 +39,33 @@ export function deleteConfirmation(actor: Actor, t: TFunction, run: () => Promis
   };
 }
 
+/** Suspend/resume native-актора. У managed своих действий больше и у каждого
+ * своя причина недоступности — их план строит managedActionPlan. */
 export function actorActions(actor: Actor): ActorAction[] {
+  if (actor.provider === 'proxmox') return [];
   const state = actorState(actor);
-  if (actor.provider !== 'proxmox') {
-    return state === 'running' ? ['suspend'] : state === 'suspended' ? ['resume'] : [];
-  }
-  if (actor.desired === 'deleted') return [];
-  if (state === 'running') return ['stop', 'reset'];
-  if (state === 'stopped') return ['resume', 'reset'];
-  if (state === 'error') return ['resume', 'stop', 'reset'];
-  return [];
+  return state === 'running' ? ['suspend'] : state === 'suspended' ? ['resume'] : [];
 }
 
 // Виртуальный профиль не принимает sourceTag и native atespace из формы.
+// Origin есть только у managed-актора; пустой не отправляется — тогда сервер
+// берёт значение по умолчанию (repository проекта или пустой workspace).
 export function actorCreateDraft(
   swarm: string,
   name: string,
   template: ActorTemplate,
   labels: Record<string, string>,
-  sourceTag: string
+  sourceTag: string,
+  origin = ''
 ): Actor {
   const workerSelector = Object.keys(labels).length ? { matchLabels: labels } : undefined;
   if (template.provider === 'proxmox') {
+    const requested = origin.trim();
     return {
       metadata: { name },
       actorTemplate: { name: template.metadata.name },
       ...(workerSelector ? { workerSelector } : {}),
+      ...(requested ? { origin: requested } : {}),
     };
   }
   return {
@@ -83,5 +84,43 @@ export function resetConfirmation(actor: Actor, t: TFunction, run: () => Promise
     confirmText: t('actors.reset'),
     success: t('actors.reset_done', { name: actor.metadata.name }),
     run,
+  };
+}
+
+export interface ActionDialogText {
+  title: string;
+  /** Что будет потеряно и что сохранится. */
+  message: string;
+  /** Уточнение к последствию (например, откуда возьмётся новый workspace). */
+  note?: string;
+  confirmText: string;
+}
+
+const noop = async () => {};
+
+/** Текст подтверждения managed-действия называет последствие именно этого
+ * действия. Reset и delete — те же тексты, что и прежде (единственный
+ * источник); reset говорит, будет ли новый workspace клонирован заново. */
+export function actionDialogText(
+  actor: Actor,
+  id: 'restart' | 'recycle' | 'wipe' | 'reset' | 'delete',
+  t: TFunction
+): ActionDialogText {
+  const name = actor.metadata.name;
+  if (id === 'reset') {
+    const { title, message, confirmText } = resetConfirmation(actor, t, noop);
+    const note = actor.origin
+      ? t('actors.ops.reset.origin_set', { origin: actor.origin })
+      : t('actors.ops.reset.origin_empty');
+    return { title, message, note, confirmText };
+  }
+  if (id === 'delete') {
+    const { title, message, confirmText } = deleteConfirmation(actor, t, noop);
+    return { title, message, confirmText };
+  }
+  return {
+    title: t(`actors.ops.${id}.title`, { name }),
+    message: t(`actors.ops.${id}.message`, { name }),
+    confirmText: t(`actors.ops.${id}.label`),
   };
 }

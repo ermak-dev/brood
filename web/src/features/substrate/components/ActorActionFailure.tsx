@@ -29,8 +29,10 @@ function ResourceReason({ reason }: { reason: PlacementReason }) {
   })}</>;
 }
 
-export function ActorActionFailure({ name, error, administrator, onClose }: {
+export function ActorActionFailure({ name, action, error, administrator, onClose }: {
   name: string;
+  /** Подпись отклонённого действия: отказ называет, что именно не удалось. */
+  action?: string;
   error: unknown;
   administrator: boolean;
   onClose: () => void;
@@ -40,7 +42,13 @@ export function ActorActionFailure({ name, error, administrator, onClose }: {
   const diagnostic = administrator ? failure?.diagnostic : null;
   return (
     <section role="alert" className={`${styles.notice} ${styles.operationFailure}`}>
-      <strong>{failure ? t('placement.title', { name }) : name}</strong>
+      <strong>
+        {failure
+          ? t('placement.title', { name })
+          : action
+            ? t('actors.ops.refused', { action, name })
+            : name}
+      </strong>
       {!failure ? <p>{errorMessage(error)}</p> : diagnostic ? (
         <>
           <dl>

@@ -54,6 +54,7 @@ func NewRequest(invocation command.Invocation) (Request, error) {
 	request := Request{Tool: invocation.Name, Arguments: invocation.Arguments}
 	var legacy struct {
 		Name        string `json:"name"`
+		Origin      string `json:"origin"`
 		To          string `json:"to"`
 		Message     string `json:"message"`
 		WaitSeconds int    `json:"wait_seconds"`
@@ -63,8 +64,11 @@ func NewRequest(invocation command.Invocation) (Request, error) {
 	case "agents":
 		request.Arguments = nil
 	case "add":
-		request.Arguments = nil
-		request.To = legacy.Name
+		// The legacy wire has no origin field: keep canonical arguments for it.
+		if legacy.Origin == "" {
+			request.Arguments = nil
+			request.To = legacy.Name
+		}
 	case "send":
 		request.Arguments = nil
 		request.To = legacy.To

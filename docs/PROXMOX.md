@@ -33,8 +33,10 @@ Brood Go API + SQLite
 - UID/GID 1000, `NoNewPrivs=1`, без effective/ambient capabilities;
 - без Docker/kind, доступа к host kernel log и memory checkpoint.
 
-Новый workspace пустой. Секреты оператора, SSH-конфигурация, `.env`, сессия
-Brood и credentials модели в образ или workspace не копируются. Запуск
+Новый workspace пуст, пока у актора нет origin; с origin первый старт
+приложения клонирует его (см. «Origin и первый клон»). Секреты оператора,
+SSH-конфигурация, `.env`, сессия Brood и credentials модели в образ или
+workspace не копируются. Запуск
 `claude --version` или открытие CLI не является проверкой платного model task.
 В новом guest image Claude использует локальный шлюз CLIProxyAPI установки:
 `ANTHROPIC_BASE_URL=http://127.0.0.1:8317`, discovery моделей включён.
@@ -208,6 +210,109 @@ Private, loopback, link-local, multicast и unspecified targets не стано�
 или удалить правила уже работающего supervisor. Для этого профиля не нужно
 менять глобальные PVE firewall, AppArmor, sysctl или bridge policy.
 
+## Автономный запуск Claude
+
+Claude стартует без человека у терминала. При загрузке, после DHCP, секретов,
+origin, gateway и сервисов актора, root supervisor запускает собственный
+бинарник с фиксированным `--brood-guest-autostart` от UID/GID 1000 с
+NoNewPrivs и фиксированным env. Helper поднимает detached tmux-сессию
+`claude` тем же launch, что и `restart`: сервер tmux в `/workspace/home`,
+pane в `/workspace/project`, команда `brood-guest --brood-guest-app`. Если
+сессия уже есть, ничего не меняется; ttyd по-прежнему выполняет
+`tmux new-session -A` и подключается к ней. Отказ helper пишется одной
+строкой в stderr supervisor и повторяется с паузой от 1 до 30 секунд до
+успеха или остановки; supervisor от него не падает. Секреты в env и argv tmux
+не попадают: их читает только wrapper.
+
+Wrapper запускает `claude --dangerously-skip-permissions --mcp-config ...`,
+как mop. Перед exec он сливает в `~/.claude.json`
+`hasCompletedOnboarding=true`, `theme` (если не задан, `dark`),
+`resumeReturnDismissed=true` и
+`projects["/workspace/project"].hasTrustDialogAccepted=true`, а в
+`~/.claude/settings.json` — `skipDangerousModePermissionPrompt=true`.
+Прочие ключи сохраняются байт в байт. Запись атомарна (новый inode и rename),
+symlink, hard link, чужой владелец и файл больше 1 MiB — отказ без
+изменений; повреждённый файл или не-объект заменяется минимальным объектом
+с этими ключами, но не пустым файлом. Неудача настройки — предупреждение в
+терминале, Claude всё равно стартует.
+
+Bypass снимает запросы разрешений внутри CT: модель выполняет инструменты
+без подтверждения. Граница остаётся прежней — UID 1000 без capabilities,
+nft, DNS и HTTP/CONNECT proxy root supervisor, machine credentials вне
+актора. Не выдавайте проекту секреты, которые его код и модель не должны
+использовать ([SECRETS.md](SECRETS.md)).
+
+## Origin и первый клон
+
+Bootstrap env остаётся совместимым с прежними образами: новых
+`BROOD_GUEST_*` переменных origin нет. Новый root supervisor при загрузке
+получает `{"origin":"...","mode":"gateway|direct"}` через
+`GET /api/proxmox/workspace/{uid}/{generation}` с scoped guest token и
+проверкой TLS. Пустой origin возвращается вместе с пустым mode. Путь,
+поколение, активная привязка роя и namespace проверяются как при доставке
+проектных секретов; пользовательская cookie не заменяет guest token.
+Supervisor проверяет HTTPS origin, отсутствие credentials/query/fragment,
+DNS-имя и лимит 1024 байта. Direct host обязан входить в
+`BROOD_GUEST_ALLOWED_HOSTS`. Неверный ответ останавливает загрузку до актора.
+Старый guest image нового endpoint не вызывает: он продолжает загружаться,
+но не клонирует origin. Для clone нужен новый образ; наличие origin в панели
+само по себе не подтверждает, что старый образ создал checkout.
+
+Origin не секрет, но env приложения фиксирован и в tmux не расширяется.
+Поэтому root supervisor до запуска актора пишет пару в
+`/run/brood/workspace-origin.json` (root:1000, 0440, рядом с проекцией
+секретов), а UID 1000 wrapper `--brood-guest-app` читает его без symlink и с
+той же проверкой. Каждый start CT пишет файл заново: сервер пересчитывает
+режим при каждом start.
+
+Клонирует wrapper при старте приложения, до файловых секретов, и только
+если `/workspace/project` пуст. `gateway` — `git clone
+http://127.0.0.1:8318/origin.git`, `direct` — `git clone <origin>` через
+egress proxy. Remote `origin` клона указывает на тот URL, через который
+клонировали, поэтому fetch и push идут тем же путём; канонический origin
+записывается в `git config brood.origin`. Git запускается без системной и
+пользовательской конфигурации, без credential helper, prompt и redirects,
+только с протоколом `http` (gateway) или `https` (direct).
+
+Git получает отдельный приватный staging-каталог в `~/.config/brood`, а не
+живой workspace: при неудаче сам Git может рекурсивно удалить destination.
+После успешного клона и записи `brood.origin` wrapper заново проверяет пустоту
+workspace и переносит записи через `renameat2(RENAME_NOREPLACE)`, `.git` —
+последней. Конкурентная запись не перезаписывается; частичная публикация
+оставляет маркер и требует явного reset. Staging и workspace должны быть
+на одной файловой системе, как в образе brood. Обычная ошибка удаляет только
+созданный staging; после SIGKILL его остаток не публикуется и не даёт права
+очищать workspace.
+
+Ошибка клона — одна строка причины в терминале сессии; Claude всё равно
+запускается. Следующий старт повторяет клон только при пустом workspace.
+Непустой каталог не очищается автоматически даже после ошибки Git или при
+маркере `~/.config/brood/workspace-clone.pending`: там могла появиться работа
+между попытками или во время клонирования. После прерывания оператор явно
+подтверждает reset, если требуется заново создать рабочую копию. Клоны
+сериализуются flock; маркер не является разрешением на удаление данных.
+
+### Git gateway
+
+В режиме `gateway` root supervisor слушает `127.0.0.1:8318` (рядом с model
+gateway на 8317; nft пропускает UID 1000 к этому порту только по loopback).
+Принимаются только Host `127.0.0.1:8318` и пути
+`/origin.git/info/refs` (GET, query ровно `service=git-upload-pack` или
+`service=git-receive-pack`), `/origin.git/git-upload-pack` и
+`/origin.git/git-receive-pack` (POST, без query). Dumb HTTP, другие
+репозитории, percent-encoded пути, `Origin` header и тело у discovery —
+отказ до сервера.
+
+Запрос уходит на `https://<хост relay>/api/proxmox/git/<uid>/<generation>/<op>`
+с scoped relay token в `Authorization: Bearer`. Authorization, cookies и
+прочие заголовки актора отбрасываются; передаются только `Accept`,
+`Content-Type`, `Content-Encoding`, `Git-Protocol`, обратно — `Content-Type`,
+`Content-Encoding`, `Cache-Control`. Redirect — 502, 401/407 сервера —
+403, чтобы Git актора не спрашивал пароль. Тела идут потоком в обе стороны
+без буфера model gateway: upload-pack до 64 MiB, receive-pack до 1 GiB,
+весь запрос до 30 минут, одновременно не более четырёх запросов. Учётные
+данные remote остаются на сервере.
+
 ## Приём сообщений в госте
 
 Гостевой relay обрабатывает входящий `brood-swarm-msg` отдельно от терминала:
@@ -220,9 +325,10 @@ Helper проверяет личность, сбрасывает capabilities и
 до чтения `~/.claude/sessions` и обращения к Unix-сокетам.
 
 Получатель выбирается по единственной живой сессии `/workspace/project`.
-Конверт заявляет `from-mode="prompting"`: managed Claude запускается с обычными
-правами; `crossSessionInbound: accept` и bypass не предполагаются и не
-устанавливаются. Peer key передаётся первым кадром; обратный сокет создаётся
+Конверт заявляет `from-mode="bypass"`: managed Claude запускается с
+`--dangerously-skip-permissions`, а режим конверта, отличный от режима
+получателя, Claude Code удерживает как `mode-mismatch`.
+`crossSessionInbound: accept` не устанавливается. Peer key передаётся первым кадром; обратный сокет создаётся
 рядом с inbox, принимает квитанции только своего UID, ограничивает их размер
 и сверяет `orig_msg_id`. `notify_when_idle` имеет отдельный идентификатор.
 
@@ -233,7 +339,7 @@ Helper проверяет личность, сбрасывает capabilities и
 Автоматический повтор после такого результата может создать дубликат.
 
 Claude получает дополнительный MCP-сервер `brood` через `--mcp-config`, без
-перезаписи пользовательских настроек. Инструменты `agents` и `send` используют
+перезаписи пользовательских MCP-настроек. Инструменты `agents` и `send` используют
 локальный root-owned broker; credentials остаются у supervisor. Сервер
 выводит отправителя из текущей SSH identity и ограничивает список и доставку
 managed-акторами того же роя. Native-акторы пока не адресуются этим каналом.
@@ -284,6 +390,97 @@ management paths через этот шлюз нельзя. Публичный `
 сразу, уже открытый поток отменяется при проверке авторизации раз в секунду.
 Наличие серверного шлюза само по себе не настраивает proxy внутри старого гостя.
 Изменение guest image не должно уничтожать workspace работающего актора.
+
+## Origin актора и серверный шлюз Git
+
+Managed-актор хранит неизменяемый `origin` — HTTPS URL Git-репозитория,
+который гость клонирует в пустой `/workspace/project`. Пустой origin — пустой
+workspace, как раньше. Origin задаётся при создании: поле `origin` в
+`POST /api/swarms/{id}/actors` (только managed; native-актор с этим полем
+получает 400) или `add NAME --origin URL` у master. Без origin worker,
+созданный master, наследует origin master; иначе берётся repository проекта;
+иначе workspace пустой. JSON актора содержит `"origin"` и `"originMode"`:
+`gateway`, `direct` или `""`.
+
+Каноническая форма (пакет `gitorigin`): только `https://`, hostname DNS
+(не IP и не числовая запись вроде `127.1`), порт отсутствует или 443,
+непустой путь из сегментов `[A-Za-z0-9._~-]` без `.`/`..`, без userinfo,
+query, fragment, percent-encoding и управляющих символов, не длиннее 1024
+байт; host в нижнем регистре, без завершающего `/`. Хранится только
+каноническая форма; отказ называет правило и не повторяет значение.
+
+Режим вычисляется заново при чтении, на каждом start и на каждом запросе
+шлюза:
+
+- `gateway` — origin в точности равен repository проекта, и этот remote
+  настроен в `BROOD_GIT_REMOTES`;
+- `direct` — host origin точно входит в публичный allowlist гостя
+  (`github.com`, `gitlab.com` и т.д.), клон идёт через egress proxy гостя;
+- иначе создание отказывает 422 до резервирования, а не создаёт пустой
+  workspace молча.
+
+На каждом старте гостя supervisor заново получает origin и режим через
+авторизованный workspace endpoint. Если origin потерял режим (repository
+проекта сменился или remote убран), сервер возвращает оба поля пустыми:
+гость не клонирует, шлюз отказывает. Bootstrap env не расширяется, учётные
+данные remote в гостя не попадают. Схема SQLite 10 добавляет `managed_actors.origin` и таблицу
+`project_repositories` аддитивно: прежние акторы получают пустой origin.
+
+### Remotes установки и repository проекта
+
+`BROOD_GIT_REMOTES` — секрет установки в `.env`: JSON-объект, ключ —
+канонический HTTPS URL репозитория, значение `{"username":"...","token":"..."}`
+или `{}` (без учётных данных). Неканонический ключ, неизвестное или
+регистровое имя поля, повтор, только одно из двух полей, двоеточие в
+username, непечатаемые символы или более 256 remotes — отказ запуска с
+именем настройки, без значений. Токен остаётся на сервере: его нет в JSON,
+логах, ошибках, окружении гостя и форматировании конфигурации.
+
+- `GET /api/git-remotes` (администратор):
+  `{"items":[{"origin":"...","credentialConfigured":true}]}`;
+- `GET /api/projects/{id}/repository` (участники проекта): `{"origin":""}`;
+- `PUT /api/projects/{id}/repository` (администратор, same-origin, CSRF):
+  тело ровно `{"origin":"..."}`; значение канонизируется и должно быть
+  настроенным remote, `""` очищает. Неизвестные и регистровые варианты полей,
+  повторы, `null`, другие типы и лишние документы — 400; не remote — 422.
+  Сессия и роль перепроверяются в транзакции записи.
+
+### Шлюз
+
+Гость не достаёт до частного Git установки: egress proxy гостя по-прежнему
+отвергает private-адреса, и это не меняется. Сервер посредничает так же, как
+шлюз моделей:
+
+- `GET /api/proxmox/git/<uid>/<generation>/info/refs?service=git-upload-pack`
+  или `?service=git-receive-pack` (query ровно такой);
+- `POST /api/proxmox/git/<uid>/<generation>/git-upload-pack`;
+- `POST /api/proxmox/git/<uid>/<generation>/git-receive-pack`.
+
+Авторизация — ровно один `Authorization: Bearer <guest token>` той же проверки
+UID, поколения, start intent, привязки роя и namespace, что у
+`/api/proxmox/llm` и `/api/proxmox/secrets`; cookie панели не принимается.
+Затем режим origin актора должен быть `gateway`. Upstream — `<origin>/<op>`
+с Basic auth из remote. Вверх уходят только `Content-Type`, `Accept`,
+`Content-Encoding`, `Git-Protocol` и фиксированный `User-Agent`; вниз —
+`Content-Type`, `Content-Encoding`, `Cache-Control`. Cookies, `Set-Cookie`,
+`WWW-Authenticate` и forwarded identity не проходят, redirect — 502, а не
+переход. POST требует точный `application/x-git-*-request`. Тела потоковые:
+upload-pack до 64 MiB, receive-pack до 1 GiB (413); весь запрос — 30 минут;
+не более 4 одновременных запросов на актора (429). Stop, reset, смена
+repository проекта или remote отменяют и открытый поток в течение секунды.
+Тела и учётные данные не журналируются.
+
+Модель доверия: **актор может читать и пушить с учётными данными установки
+ровно в repository своего проекта**, и только пока он выбран и настроен.
+Любой код или модель внутри актора получает это право, включая force-push и
+удаление веток, если их разрешает credential. Выдавайте remote отдельный
+токен с минимальными правами одного репозитория; защита веток на Git-сервере
+остаётся границей. Другой remote установки или repository другого проекта
+через шлюз недоступен: upstream определяется только origin актора.
+
+Выкладка сервера должна отдельно доставить `BROOD_GIT_REMOTES` в Secret
+`brood-go-env` и разрешить egress сервера к host remotes на 443; это не
+входит в серверный код.
 
 ## Состояние, восстановление и освобождение ресурсов
 
