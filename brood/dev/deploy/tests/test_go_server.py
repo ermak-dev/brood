@@ -179,10 +179,10 @@ class GoManifestTests(unittest.TestCase):
             calls.append(argv)
             if argv[0] == "curl":
                 Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFclaude-pinned")
-            if argv[0] == "go":
+            if "go" in argv:
                 package = argv[-1]
                 Path(argv[argv.index("-o") + 1]).write_bytes(
-                    b"\x7fELFbro-release" if package == "./cmd/brood" else b"\x7fELFguest-built")
+                    b"\x7fELFbro-release" if package == "./cmd/bro" else b"\x7fELFguest-built")
             return 0, "", ""
 
         streams = []
@@ -197,8 +197,13 @@ class GoManifestTests(unittest.TestCase):
                          b"bro\0" + b"15\0\x7fELFbro-release"
                          + b"brood-guest\0" + b"15\0\x7fELFguest-built"
                          + b"claude\0" + b"17\0\x7fELFclaude-pinned")
-        builds = [a for a in calls if a[0] == "go"]
-        self.assertEqual({a[-1] for a in builds}, {"./cmd/brood", "./cmd/brood-guest"})
+        # Артефакт bro — клиент cmd/bro, не сервер cmd/brood (прод: bro был
+        # серверным бинарём); статическая сборка под гостя независимо от
+        # компилятора C на машине деплоя.
+        builds = [a for a in calls if "go" in a]
+        self.assertEqual({a[-1] for a in builds}, {"./cmd/bro", "./cmd/brood-guest"})
+        for build in builds:
+            self.assertEqual(build[:5], ("env", "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "go"))
 
     def test_kubernetes_configuration_also_supplies_approved_worker_images(self):
         deployment = next(item for item in render("localhost:5002/brood-go@sha256:" + "a" * 64)
