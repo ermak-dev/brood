@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next';
 import type { Actor, ActorAction, ActorTemplate } from '@/services/brood/substrate';
+import type { PanelAction, PanelActionGroup } from './components/EntityPanel';
 import { DASH, shortState } from './format';
 
 export function actorState(actor: Actor): string {
@@ -45,6 +46,64 @@ export function actorActions(actor: Actor): ActorAction[] {
   if (actor.provider === 'proxmox') return [];
   const state = actorState(actor);
   return state === 'running' ? ['suspend'] : state === 'suspended' ? ['resume'] : [];
+}
+
+export interface NativePanelOptions {
+  t: TFunction;
+  /** owner/editor роя; viewer native-актора не открывает вовсе. */
+  canManage: boolean;
+  /** Идущее действие этого актора: его кнопка ждёт исхода. */
+  pending?: ActorAction;
+  terminal: string;
+  onAction: (action: ActorAction) => void;
+  onRemove: () => void;
+}
+
+/** Группы панели native-актора (#157) — те же действия, что были в строке:
+ * терминал и suspend/resume, удаление — отдельным необратимым блоком.
+ * Главное — Resume у приостановленного, иначе терминал. Managed-актор
+ * строит свои группы сам (managedActionGroups). */
+export function nativeActionGroups(
+  actor: Actor,
+  { t, canManage, pending, terminal, onAction, onRemove }: NativePanelOptions
+): PanelActionGroup[] {
+  if (!canManage || actor.provider === 'proxmox') return [];
+  const lifecycle = actorActions(actor);
+  const asleep = lifecycle.includes('resume');
+  const open: PanelAction = {
+    id: 'terminal',
+    label: t('actors.ops.terminal.label'),
+    description: t('actors.native.terminal_hint'),
+    tone: asleep ? undefined : 'primary',
+    href: terminal,
+  };
+  const states = lifecycle.map(
+    (action): PanelAction => ({
+      id: action,
+      label: t(`actors.${action}`),
+      description: t(`actors.native.${action}_hint`),
+      tone: action === 'resume' ? 'primary' : undefined,
+      pending: pending === action,
+      onSelect: () => onAction(action),
+    })
+  );
+  return [
+    { id: 'main', label: t('substrate.actions'), actions: asleep ? [...states, open] : [open, ...states] },
+    {
+      id: 'danger',
+      label: t('substrate.panel_danger'),
+      danger: true,
+      actions: [
+        {
+          id: 'delete',
+          label: t('substrate.delete'),
+          description: t('actors.native.delete_hint'),
+          tone: 'danger',
+          onSelect: onRemove,
+        },
+      ],
+    },
+  ];
 }
 
 // Виртуальный профиль не принимает sourceTag и native atespace из формы.

@@ -146,6 +146,20 @@
       "current": "儲存庫",
       "not_set": "未設定",
       "member_hint": "只有管理員可以變更儲存庫。"
+    },
+    "panel": {
+      "select_hint": "將此專案設為當前專案並開啟其群組。",
+      "details_hint": "開啟專案的容量、儲存庫和成員。",
+      "delete_project_hint": "刪除專案及其成員關係和群組記錄。",
+      "swarm_access_hint": "查看誰可以使用此群組及其角色。",
+      "retry_create_hint": "繼續已儲存的群組建立操作。",
+      "transfer_hint": "將群組轉交給另一位有效成員，並撤銷目前擁有者的授權。",
+      "delete_swarm_hint": "刪除群組及其 Substrate 資源；仍有工作負載時會被拒絕。",
+      "retry_delete_hint": "刪除群組或繼續被中斷的刪除操作。",
+      "edit_user_hint": "修改顯示名稱、角色或停用狀態。",
+      "reset_password_hint": "設定新密碼並結束該使用者的所有工作階段。",
+      "delete_user_hint": "刪除該帳戶並撤銷其工作階段和成員關係。",
+      "remove_member_hint": "撤銷該成員對專案及其中自己群組的存取權限。"
     }
   },
   "common": {
@@ -2574,7 +2588,10 @@
     "golden_failed": "失败：{{error}}",
     "golden_disabled": "已禁用",
     "storage": "快照存儲",
-    "storage_hint": "留空则使用安裝的默認存儲"
+    "storage_hint": "留空则使用安裝的默認存儲",
+    "duplicate_hint": "在副本上開啟編輯器。模板不可變，修改會成為一個新模板。",
+    "delete_hint": "刪除模板。已由它創建的 actor 會保留。",
+    "managed_readonly": "由其 Proxmox 資源池發布並隨之變化：無法在此複製或刪除。"
   },
   "workers": {
     "replace": "恢復容量",
@@ -2606,7 +2623,9 @@
       "active": "活躍",
       "draining": "已退出服務",
       "unavailable": "不可用"
-    }
+    },
+    "drain_hint": "永久停止接收 actor。已分配的 actor 可能無法恢復。",
+    "replace_hint": "刪除此已退役 worker，由池啟動新的 worker。僅在沒有已分配資源時可用。"
   },
   "policy": {
     "title": "訪問策略",
@@ -2680,7 +2699,9 @@
     "switcher_title": "當前項目",
     "switcher_none": "項目",
     "switcher_empty": "暫無項目",
-    "switcher_manage": "全部項目…"
+    "switcher_manage": "全部項目…",
+    "panel_danger": "不可復原",
+    "opens_new_tab": "（在新分頁中開啟）"
   },
   "actors": {
     "provider": "提供方",
@@ -2951,6 +2972,12 @@
         "clear_message": "Claude 將失去目前對話的上下文。檔案不受影響。",
         "clear_confirm": "清除"
       }
+    },
+    "native": {
+      "terminal_hint": "在新分頁中開啟此 actor 的終端。",
+      "suspend_hint": "將 actor 連同執行中的程序和記憶體凍結為快照。喚醒後從該處繼續。",
+      "resume_hint": "從快照喚醒 actor，從中斷處繼續。",
+      "delete_hint": "刪除 actor 及其快照，無法復原。"
     }
   },
   "proxmox_connections": {
@@ -3019,7 +3046,10 @@
       "digest": "輸入 sha256 和 64 位小寫十六進位數字",
       "integer": "輸入支援範圍內的正整數",
       "budget": "資源池容量必須滿足每個 actor"
-    }
+    },
+    "activate_hint": "使用安裝設定的容量和範本發布受管設定。不會啟動 actor。",
+    "drain_hint": "停止新分配。現有 actor 及其預留資源保持不變。",
+    "enable_hint": "重新允許新分配。不會自動恢復現有 actor。"
   },
   "worker_pools": {
     "not_installed": "受支援但此處不提供，因為本安裝未為其宣告 worker 映像：{{classes}}。",
@@ -3064,6 +3094,9 @@
       "image": "輸入不含空白的工作節點映像。",
       "quantity": "輸入非負的 Kubernetes 數量。",
       "limit": "限制值不得小於請求值。"
-    }
+    },
+    "edit_hint": "修改副本數、標籤和每個工作節點的資源。沙箱類別和映像保持建立時的設定。",
+    "delete_hint": "刪除該池及其工作節點 Pod。所有專案中執行的 Actor 可能被中斷。",
+    "delete_unversioned": "伺服器未傳回 uid 和 resourceVersion，無法依此版本核對刪除。請重新整理清單。"
   }
 }

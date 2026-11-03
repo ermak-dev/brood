@@ -50,6 +50,29 @@ export function currentResource<T>(snapshot: ResourceSnapshot<T>, source: () => 
   return snapshot.source === source ? snapshot : { data: null, error: '', loading: true };
 }
 
+/** Открытая панель объекта показывает его свежую строку: после обновления
+ * списка -- новые данные, исчезнувший объект закрывает панель. Пока список
+ * грузится или не загрузился, остаётся прежняя строка. */
+export function retainedRow<T>(
+  selected: T | null,
+  resource: { data: T[] | null; loading: boolean; error: string },
+  same: (row: T, selected: T) => boolean
+): T | null {
+  if (!selected) return null;
+  if (resource.loading || resource.error) return selected;
+  return resource.data?.find((row) => same(row, selected)) ?? null;
+}
+
+export type BadgeTone = 'success' | 'warning' | 'danger' | 'muted';
+
+/** Тон бейджа состояния роя: сбой -- сбой, переходные -- ожидание. */
+export function swarmTone(state: string): BadgeTone {
+  if (state === 'active') return 'success';
+  if (state === 'provisioning' || state === 'deleting') return 'warning';
+  if (state === 'error') return 'danger';
+  return 'muted';
+}
+
 /** Варианты выбора: «нет» и remotes установки. Текущий выбор, которого уже
  * нет в настройке, остаётся видимым и помеченным, а не исчезает молча. */
 export function repositoryOptions(

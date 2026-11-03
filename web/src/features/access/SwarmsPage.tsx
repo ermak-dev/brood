@@ -3,16 +3,20 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { accessApi, type AccessProject, type AccessSwarm } from '@/services/brood/access';
+import { EntityPanel } from '@/features/substrate/components/EntityPanel';
 import { EntityTable, type Column } from '@/features/substrate/components/EntityTable';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
+import { panelGroups, swarmPlan, type ActionSpec, type SwarmAction } from './panelActions';
 import {
   AccessEditor,
   LoadState,
+  PanelDetails,
+  StatusBadge,
   useAccessActions,
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { ownerCandidates } from './state';
+import { ownerCandidates, swarmTone } from './state';
 import { retainedSwarm, swarmCapabilities } from './shardState';
 import { SwarmAccess } from './SwarmAccess';
 import { ProjectScope } from '@/features/substrate/components/ProjectScope';
@@ -38,8 +42,10 @@ function Swarms({ project }: { project: AccessProject }) {
   const [creating, setCreating] = useState(false);
   const [selectedTransfer, setSelectedTransfer] = useState<AccessSwarm | null>(null);
   const [selectedAccess, setSelectedAccess] = useState<AccessSwarm | null>(null);
+  const [selectedPanel, setSelectedPanel] = useState<AccessSwarm | null>(null);
   const transfer = retainedSwarm(selectedTransfer, resource);
   const access = retainedSwarm(selectedAccess, resource);
+  const viewing = retainedSwarm(selectedPanel, resource);
   const canTransfer = !!transfer && swarmCapabilities(transfer, admin).own;
   const loadMembers = useCallback(
     () =>
@@ -53,7 +59,11 @@ function Swarms({ project }: { project: AccessProject }) {
     await Promise.all([resource.refresh(), members.refresh()]);
   });
   const owners = ownerCandidates(members.data, transfer?.owner_username ?? '');
-  const remove = (swarm: AccessSwarm) => confirm(swarm.name, () => accessApi.deleteSwarm(swarm.id));
+  const remove = (swarm: AccessSwarm) =>
+    confirm(swarm.name, async () => {
+      await accessApi.deleteSwarm(swarm.id);
+      setSelectedPanel(null);
+    });
   const columns: Column<AccessSwarm>[] = [
     { key: 'name', label: t('substrate.name'), primary: true, render: (swarm) => swarm.name },
     {
@@ -98,59 +108,27 @@ function Swarms({ project }: { project: AccessProject }) {
           columns={columns}
           rows={resource.data ?? []}
           rowKey={(swarm) => swarm.id}
-          actionsLabel={t('substrate.actions')}
-          actions={(swarm) => {
-            const capability = swarmCapabilities(swarm, admin);
-            return (
-              <>
-                {swarm.state === 'active' && (
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedAccess(swarm)}>
-                    {t('access.swarm_access')}
-                  </Button>
-                )}
-                {capability.retryCreate && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(() => accessApi.createSwarm(swarm.project_id, swarm.name))
-                    }
-                  >
-                    {t('access.retry_create')}
-                  </Button>
-                )}
-                {capability.own && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => setSelectedTransfer(swarm)}
-                  >
-                    {t('access.transfer')}
-                  </Button>
-                )}
-                {capability.remove && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    className={styles.dangerText}
-                    onClick={() => remove(swarm)}
-                  >
-                    {t(
-                      ['error', 'deleting'].includes(swarm.state)
-                        ? 'access.retry_delete'
-                        : 'substrate.delete'
-                    )}
-                  </Button>
-                )}
-              </>
-            );
-          }}
+          onRowClick={setSelectedPanel}
         />
         {resource.data?.length === 0 && <p>{t('access.no_swarms')}</p>}
       </LoadState>
+      <SwarmPanel
+        swarm={viewing}
+        projectName={project.name}
+        admin={admin}
+        busy={busy}
+        close={() => setSelectedPanel(null)}
+        openAccess={(swarm) => {
+          setSelectedPanel(null);
+          setSelectedAccess(swarm);
+        }}
+        openTransfer={(swarm) => {
+          setSelectedPanel(null);
+          setSelectedTransfer(swarm);
+        }}
+        retryCreate={(swarm) => void run(() => accessApi.createSwarm(swarm.project_id, swarm.name))}
+        remove={remove}
+      />
       {creating && (
         <AccessEditor
           key={projectId}
@@ -189,5 +167,90 @@ function Swarms({ project }: { project: AccessProject }) {
         />
       )}
     </div>
+  );
+}
+
+/** Панель роя (#157). Доступ и передача открывают свои редакторы вместо
+ * панели; повтор создания идёт на месте, и панель показывает новое
+ * состояние роя. Отдельный компонент: вызовы с роем при рендере Swarms
+ * продлевали изменяемость списка, и React Compiler снимал мемоизацию
+ * loadMembers. */
+function SwarmPanel({
+  swarm,
+  projectName,
+  admin,
+  busy,
+  close,
+  openAccess,
+  openTransfer,
+  retryCreate,
+  remove,
+}: {
+  swarm: AccessSwarm | null;
+  projectName: string;
+  admin: boolean;
+  busy: boolean;
+  close: () => void;
+  openAccess: (swarm: AccessSwarm) => void;
+  openTransfer: (swarm: AccessSwarm) => void;
+  retryCreate: (swarm: AccessSwarm) => void;
+  remove: (swarm: AccessSwarm) => void;
+}) {
+  const { t } = useTranslation();
+  const actions = (target: AccessSwarm): Record<SwarmAction, ActionSpec> => {
+    const retryingDelete = ['error', 'deleting'].includes(target.state);
+    return {
+      access: {
+        label: t('access.swarm_access'),
+        description: t('access.panel.swarm_access_hint'),
+        onSelect: () => openAccess(target),
+      },
+      retry_create: {
+        label: t('access.retry_create'),
+        description: t('access.panel.retry_create_hint'),
+        pending: busy,
+        onSelect: () => retryCreate(target),
+      },
+      transfer: {
+        label: t('access.transfer'),
+        description: t('access.panel.transfer_hint'),
+        pending: busy,
+        onSelect: () => openTransfer(target),
+      },
+      delete: {
+        label: t(retryingDelete ? 'access.retry_delete' : 'substrate.delete'),
+        description: t(
+          retryingDelete ? 'access.panel.retry_delete_hint' : 'access.panel.delete_swarm_hint'
+        ),
+        pending: busy,
+        onSelect: () => remove(target),
+      },
+    };
+  };
+  return (
+    <EntityPanel
+      open={swarm !== null}
+      onClose={close}
+      eyebrow={projectName}
+      title={swarm?.name ?? ''}
+      status={
+        swarm && (
+          <StatusBadge tone={swarmTone(swarm.state)}>
+            {t(`access.states.${swarm.state}`, { defaultValue: swarm.state })}
+          </StatusBadge>
+        )
+      }
+      actions={swarm ? panelGroups(swarmPlan(swarm, admin), actions(swarm), t) : []}
+    >
+      {swarm && (
+        <PanelDetails
+          details={[
+            { label: t('access.role'), value: t(`access.swarm_roles.${swarm.role}`) },
+            { label: t('access.owner'), value: swarm.owner_username, title: swarm.owner_id },
+            { label: t('access.id'), value: swarm.id, mono: true },
+          ]}
+        />
+      )}
+    </EntityPanel>
   );
 }

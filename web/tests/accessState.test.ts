@@ -50,6 +50,40 @@ test('select values must still belong to the current options', async () => {
   expect(validEditorField({ required: true }, '  ')).toBe(false);
 });
 
+// Открытая панель объекта (#157) показывает свежую строку списка: после
+// обновления -- новые данные, исчезнувший объект закрывает панель, а пока
+// список грузится или не загрузился, прежняя строка остаётся на месте.
+test('an open panel follows its row through list refreshes', async () => {
+  const { retainedRow } = await import('../src/features/access/state');
+  const same = (a: { id: string }, b: { id: string }) => a.id === b.id;
+  const open = { id: 'a', name: 'old' };
+  const loaded = (data: Array<{ id: string; name: string }>) => ({
+    data,
+    loading: false,
+    error: '',
+  });
+  expect(retainedRow(null, loaded([open]), same)).toBeNull();
+  expect(retainedRow(open, loaded([{ id: 'a', name: 'new' }]), same)).toEqual({
+    id: 'a',
+    name: 'new',
+  });
+  expect(retainedRow(open, loaded([{ id: 'b', name: 'other' }]), same)).toBeNull();
+  expect(retainedRow(open, { data: null, loading: true, error: '' }, same)).toBe(open);
+  expect(retainedRow(open, { data: null, loading: false, error: 'refused' }, same)).toBe(open);
+});
+
+// Состояние роя в панели -- бейдж с тоном: сбой виден как сбой, переходное
+// как ожидание, а не всё одинаково серым.
+test('swarm state badges distinguish failure from transition', async () => {
+  const { swarmTone } = await import('../src/features/access/state');
+  expect(swarmTone('active')).toBe('success');
+  expect(swarmTone('provisioning')).toBe('warning');
+  expect(swarmTone('deleting')).toBe('warning');
+  expect(swarmTone('error')).toBe('danger');
+  expect(swarmTone('deleted')).toBe('muted');
+  expect(swarmTone('unexpected')).toBe('muted');
+});
+
 // Выбор теперь явный и глобальный; функция автоматического выбора первого
 // проекта удалена. Защита от ответа предыдущего контекста остаётся.
 test('never exposes a result from the previous project loader', async () => {

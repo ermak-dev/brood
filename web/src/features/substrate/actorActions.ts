@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next';
 import type { Actor } from '@/services/brood/substrate';
+import type { PanelAction, PanelActionGroup } from './components/EntityPanel';
 
 /** Действия managed-актора. terminal — ссылка, остальные — изменения. */
 export type ManagedActionId =
@@ -78,10 +79,10 @@ function stateOf(actor: Actor, id: ManagedActionId, pending: boolean): ActionSta
   return reason ? { id, enabled: false, reason } : { id, enabled: true };
 }
 
-/** Что показать в строке managed-актора: главное действие по состоянию
- * (терминал у работающего или запускаемого, Start у остальных), Stop рядом,
- * остальное — меню по группам, опасные последними. Пока действие строки
- * выполняется, вся строка заблокирована: второй клик не уходит на сервер. */
+/** Что доступно managed-актору: главное действие по состоянию (терминал у
+ * работающего или запускаемого, Start у остальных), Stop рядом, остальное —
+ * по группам, опасные последними. Пока действие актора выполняется, всё
+ * заблокировано: второй клик не уходит на сервер. */
 export function managedActionPlan(
   actor: Actor,
   pending?: ManagedActionId | null
@@ -114,4 +115,54 @@ export function blockedText(actor: Actor, state: ActionState, t: TFunction): str
   if (state.enabled || !state.reason) return undefined;
   const phase = actor.phase ? t(`actors.managed_state.${actor.phase}`) : t('actors.ops.unknown_state');
   return t(`actors.ops.reasons.${state.reason}`, { state: phase });
+}
+
+export interface ManagedPanelOptions {
+  t: TFunction;
+  /** owner/editor роя; viewer не получает ни одного изменяющего действия. */
+  canManage: boolean;
+  pending?: ManagedActionId | null;
+  /** Адрес терминала актора: ссылка в новой вкладке, а не действие. */
+  terminal: string;
+  onAction: (id: ManagedActionId) => void;
+}
+
+/** Группы панели managed-актора (#157) по managedActionPlan: главная
+ * (терминал или Start, затем Stop), сессия, рабочая копия и необратимые
+ * отдельным блоком. Недоступное действие несёт причину словами; идущее —
+ * помечено pending, остальные называют его причиной блокировки. Терминал —
+ * ссылка, только пока он доступен. */
+export function managedActionGroups(
+  actor: Actor,
+  { t, canManage, pending, terminal, onAction }: ManagedPanelOptions
+): PanelActionGroup[] {
+  if (!canManage) return [];
+  const plan = managedActionPlan(actor, pending);
+  const item = (state: ActionState, tone?: PanelAction['tone']): PanelAction => {
+    const running = state.id === pending;
+    const link = state.id === 'terminal';
+    return {
+      id: state.id,
+      label: t(`actors.ops.${state.id}.label`),
+      description: t(`actors.ops.${state.id}.hint`),
+      blocked: running ? undefined : blockedText(actor, state, t),
+      pending: running,
+      tone,
+      href: link && state.enabled ? terminal : undefined,
+      onSelect: link ? undefined : () => onAction(state.id),
+    };
+  };
+  return [
+    {
+      id: 'main',
+      label: t('substrate.actions'),
+      actions: [item(plan.primary, 'primary'), item(plan.stop)],
+    },
+    ...plan.groups.map(({ id, actions }) => ({
+      id,
+      label: t(`actors.ops.groups.${id}`),
+      danger: id === 'danger',
+      actions: actions.map((state) => item(state, id === 'danger' ? 'danger' : undefined)),
+    })),
+  ];
 }

@@ -146,6 +146,20 @@
       "current": "Kho mã",
       "not_set": "Chưa đặt",
       "member_hint": "Chỉ quản trị viên mới đổi được kho."
+    },
+    "panel": {
+      "select_hint": "Đặt dự án này làm dự án đang chọn và mở các bầy của nó.",
+      "details_hint": "Mở dung lượng, kho mã và thành viên của dự án.",
+      "delete_project_hint": "Xóa dự án cùng tư cách thành viên và bản ghi bầy.",
+      "swarm_access_hint": "Xem ai có quyền dùng bầy này và với vai trò nào.",
+      "retry_create_hint": "Tiếp tục thao tác tạo bầy đã lưu.",
+      "transfer_hint": "Giao bầy cho một thành viên đang hoạt động khác và thu hồi quyền của chủ sở hữu hiện tại.",
+      "delete_swarm_hint": "Xóa bầy và tài nguyên Substrate của nó; bị từ chối khi vẫn còn công việc.",
+      "retry_delete_hint": "Xóa bầy hoặc tiếp tục lần xóa bị gián đoạn.",
+      "edit_user_hint": "Đổi tên hiển thị, vai trò hoặc trạng thái vô hiệu hóa.",
+      "reset_password_hint": "Đặt mật khẩu mới và kết thúc mọi phiên của người dùng.",
+      "delete_user_hint": "Xóa tài khoản và thu hồi phiên đăng nhập cùng tư cách thành viên.",
+      "remove_member_hint": "Thu hồi quyền truy cập dự án và các bầy của thành viên trong đó."
     }
   },
   "common": {
@@ -2554,7 +2568,10 @@
     "golden_failed": "lỗi: {{error}}",
     "golden_disabled": "đã tắt",
     "storage": "Kho snapshot",
-    "storage_hint": "Để trống -- kho mặc định của bản cài"
+    "storage_hint": "Để trống -- kho mặc định của bản cài",
+    "duplicate_hint": "Mở trình sửa trên một bản sao. Mẫu là bất biến, nên thay đổi sẽ thành một mẫu mới.",
+    "delete_hint": "Xóa mẫu. Actor đã tạo từ nó vẫn còn.",
+    "managed_readonly": "Được công bố từ nhóm Proxmox của nó và thay đổi theo nhóm: không thể sao chép hoặc xóa tại đây."
   },
   "workers": {
     "replace": "Khôi phục tài nguyên",
@@ -2586,7 +2603,9 @@
       "active": "hoạt động",
       "draining": "đã ngừng nhận việc",
       "unavailable": "không khả dụng"
-    }
+    },
+    "drain_hint": "Ngừng nhận actor vĩnh viễn. Actor đã gán có thể không tiếp tục được.",
+    "replace_hint": "Xóa worker đã ngừng để pool khởi tạo worker mới. Chỉ khi không còn tài nguyên được cấp."
   },
   "policy": {
     "title": "Chính sách truy cập",
@@ -2660,7 +2679,9 @@
     "switcher_title": "Dự án đang chọn",
     "switcher_none": "Dự án",
     "switcher_empty": "Chưa có dự án",
-    "switcher_manage": "Tất cả dự án…"
+    "switcher_manage": "Tất cả dự án…",
+    "panel_danger": "Không thể hoàn tác",
+    "opens_new_tab": "(mở trong thẻ mới)"
   },
   "actors": {
     "provider": "Nhà cung cấp",
@@ -2932,6 +2953,12 @@
         "clear_message": "Claude sẽ mất ngữ cảnh của cuộc hội thoại hiện tại. Tệp không bị ảnh hưởng.",
         "clear_confirm": "Xóa"
       }
+    },
+    "native": {
+      "terminal_hint": "Mở terminal của actor này trong tab mới.",
+      "suspend_hint": "Đóng băng actor vào snapshot, gồm cả tiến trình đang chạy và bộ nhớ. Đánh thức sẽ tiếp tục từ đó.",
+      "resume_hint": "Đánh thức actor từ snapshot, tiếp tục từ chỗ đã dừng.",
+      "delete_hint": "Xóa actor cùng các snapshot của nó. Không thể hoàn tác."
     }
   },
   "proxmox_connections": {
@@ -3000,7 +3027,10 @@
       "digest": "Nhập sha256 và 64 ký tự thập lục phân viết thường",
       "integer": "Nhập số nguyên dương trong phạm vi hỗ trợ",
       "budget": "Dung lượng nhóm phải đủ cho mọi actor"
-    }
+    },
+    "activate_hint": "Công bố cấu hình được quản lý với dung lượng và mẫu do bản cài đặt quản lý. Không khởi chạy actor.",
+    "drain_hint": "Ngừng phân bổ mới. Actor hiện có và tài nguyên đã đặt trước vẫn được giữ lại.",
+    "enable_hint": "Cho phép phân bổ mới trở lại. Actor hiện có không tự tiếp tục chạy."
   },
   "worker_pools": {
     "not_installed": "Được hỗ trợ nhưng không hiển thị ở đây, vì bản cài đặt này chưa khai báo image worker cho chúng: {{classes}}.",
@@ -3045,6 +3075,9 @@
       "image": "Nhập ảnh worker không có khoảng trắng.",
       "quantity": "Nhập số lượng Kubernetes không âm.",
       "limit": "Giới hạn phải lớn hơn hoặc bằng yêu cầu."
-    }
+    },
+    "edit_hint": "Thay đổi số bản sao, nhãn và tài nguyên mỗi worker. Lớp sandbox và ảnh giữ nguyên như lúc tạo.",
+    "delete_hint": "Xóa nhóm và các pod worker của nó. Actor đang chạy trong mọi dự án có thể bị gián đoạn.",
+    "delete_unversioned": "Máy chủ không trả về uid và resourceVersion nên không thể đối chiếu việc xóa với phiên bản này. Hãy làm mới danh sách."
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -9,6 +9,7 @@ import { actorCreateDraft, actorState } from './actorLifecycle';
 import { originProblem } from './originDraft';
 import { ManagedProfile } from './components/ManagedProfile';
 import { EditorSheet } from './components/EditorSheet';
+import { PanelActions, type PanelActionGroup } from './components/EntityPanel';
 import { Field, Section } from './components/form';
 import { KeyValueEditor } from './components/KeyValueEditor';
 import { StateBadge } from './components/StateBadge';
@@ -27,12 +28,19 @@ interface ActorEditorProps {
   onClose: () => void;
   /** Resolves true once saved; on a refusal the form stays as typed. */
   onSubmit: (actor: Actor) => Promise<boolean>;
+  /** Действия над существующим актором (#157): обычные — над формой,
+   * необратимые — под ней. Редактор native-актора и есть его панель. */
+  actions?: PanelActionGroup[];
+  /** Отказ последнего действия над этим актором: страница под панелью скрыта. */
+  notice?: ReactNode;
 }
 
 /** brood: create or edit an actor. ateapi lets an update change the template
  * (only while the actor is suspended) and the worker selector; the update
  * replaces the whole object, so the edit is applied onto the actor as read and
- * the rest (sourceTag, metadata preconditions) goes back unchanged. */
+ * the rest (sourceTag, metadata preconditions) goes back unchanged. For an
+ * existing actor the sheet is its side panel: state and actions on top, as in
+ * EntityPanel, then the form, the irreversible block last. */
 export function ActorEditor({
   project,
   projectId,
@@ -41,6 +49,8 @@ export function ActorEditor({
   open,
   onClose,
   onSubmit,
+  actions = [],
+  notice,
 }: ActorEditorProps) {
   const { t, i18n } = useTranslation();
   const editing = actor !== null;
@@ -154,15 +164,15 @@ export function ActorEditor({
     >
       <div className={styles.form}>
         {editing && (
+          <div className={styles.panelStatus}>
+            <StateBadge state={state} namespace={managed ? 'actors.managed_state' : 'actors.state'} />
+          </div>
+        )}
+        <PanelActions groups={actions.filter((group) => !group.danger)} />
+        {notice}
+        {editing && (
           <Section title={t('actors.status_section')}>
             <dl className={styles.details}>
-              <dt>{t('substrate.state')}</dt>
-              <dd>
-                <StateBadge
-                  state={state}
-                  namespace={managed ? 'actors.managed_state' : 'actors.state'}
-                />
-              </dd>
               {!managed && (
                 <>
                   <dt>{t('actors.node')}</dt>
@@ -282,6 +292,7 @@ export function ActorEditor({
             </Section>
           </>
         )}
+        <PanelActions groups={actions.filter((group) => group.danger)} />
       </div>
     </EditorSheet>
   );

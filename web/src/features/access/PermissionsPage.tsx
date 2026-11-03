@@ -2,20 +2,28 @@ import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { accessApi, type AccessProject } from '@/services/brood/access';
+import { accessApi, type AccessProject, type AccessUser } from '@/services/brood/access';
+import { EntityPanel } from '@/features/substrate/components/EntityPanel';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { EntityTable } from '@/features/substrate/components/EntityTable';
+import { memberPlan, panelGroups, type ActionSpec, type MemberAction } from './panelActions';
 import {
   AccessEditor,
+  AccountBadge,
+  AccountDetails,
   LoadState,
   useAccessActions,
   useAccessResource,
   useAdministrator,
 } from './shared';
-import { memberCandidates } from './state';
+import { memberCandidates, retainedRow } from './state';
 import styles from '@/features/substrate/substrate.module.scss';
 
-/** Состав проекта открыт его участникам; меняет его только администратор. */
+const sameMember = (row: AccessUser, open: AccessUser) => row.username === open.username;
+
+/** Состав проекта открыт его участникам; меняет его только администратор.
+ * Строка участника открывает его панель (#157): у участника она только для
+ * чтения, у администратора в ней исключение из проекта. */
 export function ProjectMembers({ project }: { project: AccessProject }) {
   const { t } = useTranslation();
   const admin = useAdministrator();
@@ -33,6 +41,25 @@ export function ProjectMembers({ project }: { project: AccessProject }) {
     await Promise.all([members.refresh(), users.refresh()]);
   });
   const candidates = memberCandidates(users.data, members.data);
+  const [opened, setOpened] = useState<AccessUser | null>(null);
+  const viewing = retainedRow(opened, members, sameMember);
+  const actions = (member: AccessUser): Record<MemberAction, ActionSpec> => ({
+    remove: {
+      label: t('access.remove_member'),
+      description: t('access.panel.remove_member_hint'),
+      pending: busy,
+      onSelect: () =>
+        confirm(
+          member.username,
+          async () => {
+            await accessApi.removeMember(projectId, member.username);
+            setOpened(null);
+          },
+          t('access.remove_member'),
+          t('access.confirm_member', { name: member.username })
+        ),
+    },
+  });
   return (
     <section className={styles.page}>
       <PageHeader
@@ -74,31 +101,20 @@ export function ProjectMembers({ project }: { project: AccessProject }) {
               render: (member) => t(member.disabled ? 'access.disabled' : 'access.enabled'),
             },
           ]}
-          actionsLabel={t('substrate.actions')}
-          actions={
-            admin
-              ? (member) => (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() =>
-                      confirm(
-                        member.username,
-                        () => accessApi.removeMember(projectId, member.username),
-                        t('access.remove_member'),
-                        t('access.confirm_member', { name: member.username })
-                      )
-                    }
-                  >
-                    {t('access.remove_member')}
-                  </Button>
-                )
-              : undefined
-          }
+          onRowClick={setOpened}
         />
         {members.data?.length === 0 && <p>{t('access.empty')}</p>}
       </LoadState>
+      <EntityPanel
+        open={viewing !== null}
+        onClose={() => setOpened(null)}
+        eyebrow={project.name}
+        title={viewing?.username ?? ''}
+        status={viewing && <AccountBadge user={viewing} />}
+        actions={viewing ? panelGroups(memberPlan(admin), actions(viewing), t) : []}
+      >
+        {viewing && <AccountDetails user={viewing} />}
+      </EntityPanel>
       {adding && admin && (
         <AccessEditor
           key={projectId}

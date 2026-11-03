@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { errorMessage } from '@/services/brood/http';
+import type { AccessUser } from '@/services/brood/access';
+import { DASH } from '@/features/substrate/format';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select, type SelectOption } from '@/components/ui/Select';
 import { EditorSheet } from '@/features/substrate/components/EditorSheet';
-import { Field } from '@/features/substrate/components/form';
+import { Field, Section } from '@/features/substrate/components/form';
 import styles from '@/features/substrate/substrate.module.scss';
-import { currentResource, validEditorField, type ResourceSnapshot } from './state';
+import { currentResource, validEditorField, type BadgeTone, type ResourceSnapshot } from './state';
 
 export function useAdministrator() {
   return useAuthStore((state) => 'isSuperuser' in state && state.isSuperuser === true);
@@ -76,6 +78,66 @@ export function LoadState({
       </div>
     );
   return children;
+}
+
+/** Бейдж состояния в сводке панели: те же стили, что у объектов Substrate. */
+export function StatusBadge({ tone, children }: { tone: BadgeTone; children: ReactNode }) {
+  return <span className={`${styles.badge} ${styles[`tone-${tone}`]}`}>{children}</span>;
+}
+
+export interface Detail {
+  label: string;
+  value: ReactNode;
+  mono?: boolean;
+  /** Полное значение при наведении, когда показано короткое. */
+  title?: string;
+}
+
+/** Сведения об объекте в его боковой панели (#157). */
+export function PanelDetails({ details }: { details: Detail[] }) {
+  const { t } = useTranslation();
+  return (
+    <div className={styles.form}>
+      <Section title={t('actors.details')}>
+        <dl className={styles.details}>
+          {details.map((detail) => (
+            <Fragment key={detail.label}>
+              <dt>{detail.label}</dt>
+              <dd className={detail.mono ? styles.mono : undefined} title={detail.title}>
+                {detail.value}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      </Section>
+    </div>
+  );
+}
+
+/** Учётная запись в панели: пользователь установки и участник проекта
+ * сводятся одинаково -- состояние бейджем, имя и роль в сведениях. */
+export function AccountBadge({ user }: { user: AccessUser }) {
+  const { t } = useTranslation();
+  return (
+    <StatusBadge tone={user.disabled ? 'muted' : 'success'}>
+      {t(user.disabled ? 'access.disabled' : 'access.enabled')}
+    </StatusBadge>
+  );
+}
+
+export function AccountDetails({ user }: { user: AccessUser }) {
+  const { t } = useTranslation();
+  return (
+    <PanelDetails
+      details={[
+        { label: t('access.display_name'), value: user.display_name || DASH },
+        {
+          label: t('access.role'),
+          value: t(user.is_admin ? 'access.administrator' : 'access.user'),
+        },
+      ]}
+    />
+  );
 }
 
 export interface EditorField {

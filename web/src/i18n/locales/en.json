@@ -146,6 +146,20 @@
       "current": "Repository",
       "not_set": "Not set",
       "member_hint": "Only an administrator can change the repository."
+    },
+    "panel": {
+      "select_hint": "Makes this the active project and opens its swarms.",
+      "details_hint": "Opens the project's capacity, repository and members.",
+      "delete_project_hint": "Deletes the project with its memberships and swarm records.",
+      "swarm_access_hint": "Shows who can use this swarm and with which role.",
+      "retry_create_hint": "Resumes the saved creation of this swarm.",
+      "transfer_hint": "Hands the swarm to another active member and revokes the current owner's grant.",
+      "delete_swarm_hint": "Deletes the swarm and its Substrate resources; refused while workloads remain.",
+      "retry_delete_hint": "Deletes the swarm or resumes an interrupted deletion.",
+      "edit_user_hint": "Changes the display name, role or blocked status.",
+      "reset_password_hint": "Sets a new password and ends all of the user's sessions.",
+      "delete_user_hint": "Deletes the account and revokes its sessions and memberships.",
+      "remove_member_hint": "Takes away access to the project and to the member's swarms in it."
     }
   },
   "common": {
@@ -2548,7 +2562,10 @@
     "golden_failed": "failed: {{error}}",
     "golden_disabled": "disabled",
     "storage": "Snapshot storage",
-    "storage_hint": "Empty -- the install's default storage"
+    "storage_hint": "Empty -- the install's default storage",
+    "duplicate_hint": "Opens the editor on a copy. Templates are immutable, so a change becomes a new template.",
+    "delete_hint": "Removes the template. Actors already created from it stay.",
+    "managed_readonly": "Published from its Proxmox pool and changes with it: it cannot be copied or deleted here."
   },
   "workers": {
     "replace": "Restore capacity",
@@ -2580,7 +2597,9 @@
       "active": "active",
       "draining": "retired",
       "unavailable": "unavailable"
-    }
+    },
+    "drain_hint": "Stops accepting actors permanently. Assigned actors may not resume.",
+    "replace_hint": "Deletes this retired worker so the pool starts a fresh one. Only without allocated resources."
   },
   "policy": {
     "title": "Access policy",
@@ -2654,7 +2673,9 @@
     "switcher_title": "Active project",
     "switcher_none": "Project",
     "switcher_empty": "No projects yet",
-    "switcher_manage": "All projects…"
+    "switcher_manage": "All projects…",
+    "panel_danger": "Irreversible",
+    "opens_new_tab": "(opens in a new tab)"
   },
   "actors": {
     "provider": "Provider",
@@ -2926,6 +2947,12 @@
         "clear_message": "Claude loses the context of the current conversation. Files are not affected.",
         "clear_confirm": "Clear"
       }
+    },
+    "native": {
+      "terminal_hint": "Opens this actor's terminal in a new tab.",
+      "suspend_hint": "Freezes the actor into a snapshot, running processes and memory included. Resume continues from there.",
+      "resume_hint": "Wakes the actor from its snapshot, where it left off.",
+      "delete_hint": "Deletes the actor together with its snapshots. Cannot be undone."
     }
   },
   "proxmox_connections": {
@@ -2994,7 +3021,10 @@
       "digest": "Use sha256 followed by 64 lowercase hexadecimal digits",
       "integer": "Use a positive whole number within the supported range",
       "budget": "The pool budget must cover every actor"
-    }
+    },
+    "activate_hint": "Publishes the managed profile with installation-owned capacity and template. Does not start an actor.",
+    "drain_hint": "Stops new allocations. Existing actors and their reservations remain.",
+    "enable_hint": "Allows new allocations again. Existing actors are not resumed."
   },
   "worker_pools": {
     "not_installed": "Supported but not offered here, because this installation declares no worker image for them: {{classes}}.",
@@ -3039,6 +3069,9 @@
       "image": "No valid deployed worker image is available for this sandbox class.",
       "quantity": "Enter a nonnegative Kubernetes quantity.",
       "limit": "The limit must be at least the request."
-    }
+    },
+    "edit_hint": "Change replicas, labels and resources per worker. The sandbox class and image stay as created.",
+    "delete_hint": "Removes the pool and its worker pods. Running actors in every project can be interrupted.",
+    "delete_unversioned": "The server did not return uid and resourceVersion, so deletion cannot be checked against this version. Refresh the list."
   }
 }

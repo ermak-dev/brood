@@ -1,31 +1,4 @@
-import { useEffect, useRef, type CSSProperties } from 'react';
-
-const MARGIN = 8;
-const OFFSET = 6;
-/** Выше Sheet (2000) и Select (2010): меню и подсказки открываются и в деталях. */
-export const FLOATING_Z = 2100;
-
-/** Позиция всплывающего слоя у якоря: fixed, по правому краю якоря, вниз или
- * вверх — где больше места; не выходит за экран. Таблица прокручивается
- * внутри overflow-контейнера, поэтому слой живёт в портале, а не в ячейке. */
-export function floatingStyle(
-  anchor: DOMRect,
-  size: { width: number; height: number },
-  align: 'end' | 'center' = 'end'
-): CSSProperties {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const width = Math.min(size.width, vw - MARGIN * 2);
-  const preferred = align === 'end' ? anchor.right - width : anchor.left + (anchor.width - width) / 2;
-  const left = Math.min(Math.max(preferred, MARGIN), vw - width - MARGIN);
-  const below = vh - anchor.bottom - OFFSET - MARGIN;
-  const above = anchor.top - OFFSET - MARGIN;
-  const down = below >= size.height || below >= above;
-  const maxHeight = Math.max(120, down ? below : above);
-  return down
-    ? { position: 'fixed', left, top: anchor.bottom + OFFSET, maxWidth: width, maxHeight, zIndex: FLOATING_Z }
-    : { position: 'fixed', left, bottom: vh - anchor.top + OFFSET, maxWidth: width, maxHeight, zIndex: FLOATING_Z };
-}
+import { useEffect, useRef } from 'react';
 
 // Открытые слои, верхний — последний. Один слушатель на всех: Escape получает
 // только верхний слой, даже если под ним открыт ещё один.

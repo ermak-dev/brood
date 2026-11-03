@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { workersApi, type Worker, type WorkerResources } from '@/services/brood/substrate';
-import { EditorSheet } from './components/EditorSheet';
+import { EntityPanel, type PanelActionGroup } from './components/EntityPanel';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
 import { PageHeader } from './components/PageHeader';
@@ -42,29 +42,33 @@ export function WorkersPage() {
   const { confirm } = useActions(refresh);
   const [viewing, setViewing] = useState<Worker | null>(null);
 
-  const action = (worker: Worker, size?: 'sm') => {
+  // Единственное действие воркера зависит от состояния: вывод из работы
+  // необратим (отдельный блок), восстановление ёмкости — обычное.
+  const actionGroups = (worker: Worker): PanelActionGroup[] => {
     const next = workerAction(stateOf(worker));
-    if (!next) return null;
-    return (
-      <Button
-        variant={next === 'replace' ? 'secondary' : 'danger'}
-        size={size}
-        onClick={() => confirm({
-          title: t(`workers.${next}_title`),
-          message: t(`workers.${next}_message`, { name: worker.metadata.name }),
-          confirmText: t(`workers.${next}`),
-          success: t(next === 'replace' ? 'workers.replaced' : 'workers.drained', {
-            name: worker.metadata.name,
-          }),
-          run: async () => {
-            await workersApi[next](worker.metadata.name);
-            setViewing(null);
-          },
-        })}
-      >
-        {t(`workers.${next}`)}
-      </Button>
-    );
+    if (!next) return [];
+    const run = () => confirm({
+      title: t(`workers.${next}_title`),
+      message: t(`workers.${next}_message`, { name: worker.metadata.name }),
+      confirmText: t(`workers.${next}`),
+      success: t(next === 'replace' ? 'workers.replaced' : 'workers.drained', {
+        name: worker.metadata.name,
+      }),
+      run: async () => {
+        await workersApi[next](worker.metadata.name);
+        setViewing(null);
+      },
+    });
+    const action = {
+      id: next,
+      label: t(`workers.${next}`),
+      description: t(`workers.${next}_hint`),
+      tone: next === 'drain' ? ('danger' as const) : ('primary' as const),
+      onSelect: run,
+    };
+    return next === 'drain'
+      ? [{ id: 'danger', label: t('substrate.panel_danger'), danger: true, actions: [action] }]
+      : [{ id: 'main', label: t('substrate.actions'), actions: [action] }];
   };
 
   const columns: Column<Worker>[] = [
@@ -120,8 +124,6 @@ export function WorkersPage() {
           rows={data}
           rowKey={(w) => w.metadata.uid ?? w.metadata.name}
           onRowClick={setViewing}
-          actionsLabel={t('substrate.actions')}
-          actions={(w) => stateOf(w) === 'draining' ? action(w, 'sm') : null}
         />
       ) : (
         <div className={styles.empty}>
@@ -130,22 +132,18 @@ export function WorkersPage() {
         </div>
       )}
 
-      <EditorSheet
+      <EntityPanel
         open={viewing !== null}
         onClose={() => setViewing(null)}
-        size="lg"
         eyebrow={viewing?.workerPool}
         title={viewing?.metadata.name ?? ''}
-        extra={viewing && action(viewing)}
+        status={viewing && <StateBadge state={stateOf(viewing)} namespace="workers.state" />}
+        actions={viewing ? actionGroups(viewing) : []}
       >
         {viewing && (
           <div className={styles.form}>
             <Section title={t('workers.placement')}>
               <dl className={styles.details}>
-                <dt>{t('substrate.state')}</dt>
-                <dd>
-                  <StateBadge state={stateOf(viewing)} namespace="workers.state" />
-                </dd>
                 <dt>{t('workers.node')}</dt>
                 <dd>{viewing.nodeName || DASH}</dd>
                 <dt>{t('workers.pod')}</dt>
@@ -186,7 +184,7 @@ export function WorkersPage() {
             </Section>
           </div>
         )}
-      </EditorSheet>
+      </EntityPanel>
     </div>
   );
 }
