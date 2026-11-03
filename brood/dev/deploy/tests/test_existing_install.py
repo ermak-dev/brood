@@ -361,7 +361,7 @@ class ExistingInstallTests(unittest.TestCase):
 
             cluster.shell.output.side_effect = output
             deploy = go_server.Deploy(cluster, get=get)
-            with patch.object(go_server, "Infrastructure") as infra, patch.object(deploy, "_registry_access", return_value=None):
+            with patch.object(go_server, "Infrastructure") as infra, patch.object(deploy, "_registry_access", return_value=None), patch.object(deploy, "publish_bootstrap_artifacts"):
                 infra.return_value._tls.return_value = {}
                 infra.return_value._api_egress.return_value = []
                 if fail:
@@ -398,6 +398,7 @@ class ExistingInstallTests(unittest.TestCase):
 
         cluster.shell.output.side_effect = output
         deploy = go_server.Deploy(cluster, get=get, resolver=Mock(return_value=[(2, 1, 6, "", ("192.168.10.20", 443))]))
+        deploy.publish_bootstrap_artifacts = lambda root: None
         with patch.object(go_server, "Infrastructure") as infra, patch.object(deploy, "_registry_access", return_value=None):
             infra.return_value._tls.return_value = {}
             infra.return_value._api_egress.return_value = []

@@ -249,6 +249,15 @@ class Shell:
             raise RuntimeError(f"{argv[0]} is not installed") from None
         return r.returncode, r.stdout, r.stderr
 
+    def output_bytes(self, argv, *, input):
+        """Процесс с бинарным stdin -> (код, stdout, stderr): артефакты
+        бутстрапа (#156) идут в pod потоком байтов."""
+        try:
+            r = subprocess.run(argv, env=self.env, cwd=self.cwd, input=input, capture_output=True)
+        except FileNotFoundError:
+            raise RuntimeError(f"{argv[0]} is not installed") from None
+        return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+
     def which(self, tool):
         return shutil.which(tool, path=self.env.get("PATH")) is not None
 

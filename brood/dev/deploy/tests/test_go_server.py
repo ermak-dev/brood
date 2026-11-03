@@ -157,6 +157,47 @@ class GoManifestTests(unittest.TestCase):
                for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(env.get("BROOD_ARTIFACTS_DIR"), "/data/artifacts")
 
+    def test_bootstrap_artifact_publish_streams_all_three_binaries(self):
+        """#156: после rollout выкладка отдаёт серверу bro/brood-guest/claude
+        одним бинарным потоком brood artifacts; отказ любого шага — отказ
+        выкладки, без частичной публикации."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import Mock
+        project = Path(tempfile.mkdtemp()) / "project"
+        (project / "brood/dev").mkdir(parents=True)
+        import hashlib
+        (project / "brood/dev/pins.json").write_text(json.dumps(
+            {"CLAUDE_VERSION": "2.1.310",
+             "CLAUDE_SHA256": hashlib.sha256(b"\x7fELFclaude-pinned").hexdigest()}))
+        deploy = go_server.Deploy(Mock(), get={"BROOD_SESSION_SECRET": "x" * 32}.get, project=str(project))
+        calls = []
+        root = Path(tempfile.mkdtemp())
+        (root).mkdir(exist_ok=True)
+        bro = deploy.project / "go/bin/linux_amd64/bro"
+        bro.parent.mkdir(parents=True, exist_ok=True)
+        bro.write_bytes(b"\x7fELFbro-release")
+
+        def output(*argv):
+            calls.append(argv)
+            if argv[0] == "curl":
+                Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFclaude-pinned")
+            if argv[0] == "go":
+                Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFguest-built")
+            return 0, "", ""
+
+        streams = []
+        deploy.cluster.shell.output.side_effect = output
+        deploy.cluster.shell.output_bytes.side_effect = lambda argv, *, input: (streams.append((argv, input)), (0, b"", b""))[1]
+        deploy.publish_bootstrap_artifacts(root)
+        argv, stream = streams[0]
+        self.assertEqual(argv[-4:], ("/brood", "artifacts", "--dir", "/data/artifacts"))
+        self.assertIn(b"bro\0\x7fELFbro-release\0", stream)
+        self.assertIn(b"brood-guest\0\x7fELFguest-built\0", stream)
+        self.assertIn(b"claude\0\x7fELFclaude-pinned\0", stream)
+        go_call = next(a for a in calls if a[0] == "go")
+        self.assertIn("./go/cmd/brood-guest", go_call)
+
     def test_kubernetes_configuration_also_supplies_approved_worker_images(self):
         deployment = next(item for item in render("localhost:5002/brood-go@sha256:" + "a" * 64)
                           if item["kind"] == "Deployment")
@@ -220,7 +261,11 @@ class GoDeploymentTests(unittest.TestCase):
         values = {"BROOD_SESSION_SECRET": "x" * 32, "WORKER_POOL_IMAGES": json.dumps(workers),
                   "BROOD_RELEASE_SHA": "c" * 40}
         values.update(settings or {})
-        return go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout")
+        deploy = go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout")
+        # Шаг артефактов (#156) требует реальных бинарей и машины деплоя:
+        # в этих тестах он подменён, собственный тест ниже.
+        deploy.publish_bootstrap_artifacts = lambda root: None
+        return deploy
 
     # FEATURE: Ключ модели CLIProxyAPI доставляется только серверу.
     # SPEC: Secret reference без значения в pod spec; ротация меняет checksum.
