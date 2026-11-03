@@ -481,10 +481,11 @@ class Deploy:
         pins = json.loads((self.project / "brood/dev/pins.json").read_text())
         # Релизное дерево — git archive без собранных бинарей: машину деплоя
         # не спрашивают о кэше, оба бинаря собирает её локальный go из pins.
-        for name, package in (("bro", "./go/cmd/brood"), ("brood-guest", "./go/cmd/brood-guest")):
+        # cwd shell — checkout Substrate, не релиз: путь пакета абсолютный.
+        for name, package in (("bro", "cmd/brood"), ("brood-guest", "cmd/brood-guest")):
             code, _, err = self.cluster.shell.output(
-                "go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w",
-                "-o", str(work / name), package)
+                "go", "build", "-C", str(self.project / "go"), "-trimpath", "-buildvcs=false",
+                "-ldflags=-s -w", "-o", str(work / name), package)
             if code or not (work / name).is_file():
                 raise RuntimeError(f"guest bootstrap artifact build failed: {name}: " + err[-2000:])
         claude = work / "claude"
