@@ -146,6 +146,20 @@
       "current": "仓库",
       "not_set": "未设置",
       "member_hint": "只有管理员可以更改仓库。"
+    },
+    "panel": {
+      "select_hint": "将此项目设为当前项目并打开其群组。",
+      "details_hint": "打开项目的容量、仓库和成员。",
+      "delete_project_hint": "删除项目及其成员关系和群组记录。",
+      "swarm_access_hint": "查看谁可以使用此群组及其角色。",
+      "retry_create_hint": "继续已保存的群组创建操作。",
+      "transfer_hint": "将群组转交给另一位活跃成员，并撤销当前所有者的授权。",
+      "delete_swarm_hint": "删除群组及其 Substrate 资源；仍有工作负载时会被拒绝。",
+      "retry_delete_hint": "删除群组或继续被中断的删除操作。",
+      "edit_user_hint": "修改显示名称、角色或禁用状态。",
+      "reset_password_hint": "设置新密码并结束该用户的所有会话。",
+      "delete_user_hint": "删除该账户并撤销其会话和成员关系。",
+      "remove_member_hint": "撤销该成员对项目及其中自己群组的访问权限。"
     }
   },
   "common": {
@@ -2546,7 +2560,10 @@
     "golden_failed": "失败：{{error}}",
     "golden_disabled": "已禁用",
     "storage": "快照存储",
-    "storage_hint": "留空则使用安装的默认存储"
+    "storage_hint": "留空则使用安装的默认存储",
+    "duplicate_hint": "在副本上打开编辑器。模板不可变，修改会成为一个新模板。",
+    "delete_hint": "删除模板。已由它创建的 actor 会保留。",
+    "managed_readonly": "由其 Proxmox 资源池发布并随之变化：无法在此复制或删除。"
   },
   "workers": {
     "replace": "恢复容量",
@@ -2578,7 +2595,9 @@
       "active": "活跃",
       "draining": "已退出服务",
       "unavailable": "不可用"
-    }
+    },
+    "drain_hint": "永久停止接收 actor。已分配的 actor 可能无法恢复。",
+    "replace_hint": "删除此已退役 worker，由池启动新的 worker。仅在没有已分配资源时可用。"
   },
   "policy": {
     "title": "访问策略",
@@ -2652,7 +2671,9 @@
     "switcher_title": "当前项目",
     "switcher_none": "项目",
     "switcher_empty": "暂无项目",
-    "switcher_manage": "全部项目…"
+    "switcher_manage": "全部项目…",
+    "panel_danger": "不可撤销",
+    "opens_new_tab": "（在新标签页中打开）"
   },
   "actors": {
     "provider": "提供方",
@@ -2923,6 +2944,12 @@
         "clear_message": "Claude 将丢失当前对话的上下文。文件不受影响。",
         "clear_confirm": "清除"
       }
+    },
+    "native": {
+      "terminal_hint": "在新标签页中打开此 actor 的终端。",
+      "suspend_hint": "将 actor 连同运行中的进程和内存冻结为快照。唤醒后从该处继续。",
+      "resume_hint": "从快照唤醒 actor，从中断处继续。",
+      "delete_hint": "删除 actor 及其快照，无法撤销。"
     }
   },
   "proxmox_connections": {
@@ -2991,7 +3018,10 @@
       "digest": "输入 sha256 和 64 位小写十六进制数字",
       "integer": "输入支持范围内的正整数",
       "budget": "资源池容量必须满足每个 actor"
-    }
+    },
+    "activate_hint": "使用安装配置的容量和模板发布托管配置。不会启动 actor。",
+    "drain_hint": "停止新分配。现有 actor 及其预留资源保持不变。",
+    "enable_hint": "重新允许新分配。不会自动恢复现有 actor。"
   },
   "worker_pools": {
     "not_installed": "受支持但此处不提供，因为本安装未为其声明 worker 镜像：{{classes}}。",
@@ -3036,6 +3066,9 @@
       "image": "输入不含空白的工作节点镜像。",
       "quantity": "输入非负的 Kubernetes 数量。",
       "limit": "限制值不得小于请求值。"
-    }
+    },
+    "edit_hint": "修改副本数、标签和每个工作节点的资源。沙箱类别和镜像保持创建时的设置。",
+    "delete_hint": "删除该池及其工作节点 Pod。所有项目中运行的 Actor 可能被中断。",
+    "delete_unversioned": "服务器未返回 uid 和 resourceVersion，无法按此版本校验删除。请刷新列表。"
   }
 }

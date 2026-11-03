@@ -6,7 +6,7 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { templatesApi, type ActorTemplate } from '@/services/brood/substrate';
 import { swarmCapabilities } from '@/features/access/shardState';
 import { useAdministrator } from '@/features/access/shared';
-import { EditorSheet } from './components/EditorSheet';
+import { EntityPanel } from './components/EntityPanel';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
 import { PageHeader } from './components/PageHeader';
@@ -15,12 +15,13 @@ import { SwarmSections } from './components/SwarmSections';
 import { DASH, formatCpu, formatDate, formatMemory, selectorText } from './format';
 import { useActions, useResource } from './hooks';
 import { TemplateEditor } from './TemplateEditor';
+import { templateActionGroups } from './templateActions';
 import { ManagedProfile } from './components/ManagedProfile';
 import styles from './substrate.module.scss';
 
 /** brood: actor templates of the active project. ateapi keeps templates
  * immutable, so a change is a new template: "Duplicate" opens the editor on a
- * copy. */
+ * copy. A row opens the template's side panel, where its actions live (#157). */
 export function TemplatesPage() {
   const { t } = useTranslation();
   const admin = useAdministrator();
@@ -46,6 +47,8 @@ const fidelityOf = (tpl: ActorTemplate) =>
 
 const imagesOf = (tpl: ActorTemplate) => (tpl.containers ?? []).map((c) => c.image).filter(Boolean);
 
+const keyOf = (tpl: ActorTemplate) => tpl.metadata.uid ?? tpl.metadata.name;
+
 function Templates({
   project,
   name,
@@ -59,7 +62,10 @@ function Templates({
   const load = useCallback(() => templatesApi.list(project), [project]);
   const { data, error, loading, refresh } = useResource(load);
   const { run, confirm } = useActions(refresh);
-  const [viewing, setViewing] = useState<ActorTemplate | null>(null);
+  // Ключ, а не объект: после обновления списка панель показывает свежий
+  // шаблон (статус золотого снапшота), а удалённый закрывает её сам.
+  const [viewingKey, setViewingKey] = useState<string | null>(null);
+  const viewing = (viewingKey && data?.find((tpl) => keyOf(tpl) === viewingKey)) || null;
   const [editor, setEditor] = useState({
     source: null as ActorTemplate | null,
     open: false,
@@ -67,19 +73,10 @@ function Templates({
   });
 
   const openEditor = (source: ActorTemplate | null) => {
-    setViewing(null);
+    setViewingKey(null);
     setEditor((prev) => ({ source, open: true, session: prev.session + 1 }));
   };
   const closeEditor = () => setEditor((prev) => ({ ...prev, open: false }));
-
-  const remove = (tpl: ActorTemplate) =>
-    confirm({
-      title: t('templates.delete_title'),
-      message: t('templates.delete_message', { name: tpl.metadata.name }),
-      confirmText: t('substrate.delete'),
-      success: t('templates.deleted', { name: tpl.metadata.name }),
-      run: () => templatesApi.remove(project, tpl.metadata.name),
-    });
 
   const goldenText = (tpl: ActorTemplate) => {
     if (tpl.provider === 'proxmox') return t('actors.suspend_unsupported');
@@ -152,29 +149,9 @@ function Templates({
         <EntityTable
           columns={columns}
           rows={data}
-          rowKey={(tpl) => tpl.metadata.uid ?? tpl.metadata.name}
-          onRowClick={setViewing}
-          actionsLabel={t('substrate.actions')}
-          actions={
-            canManage
-              ? (tpl) =>
-                  tpl.readOnly || tpl.provider === 'proxmox' ? null : (
-                    <>
-                      <Button variant="ghost" size="sm" onClick={() => openEditor(tpl)}>
-                        {t('templates.duplicate')}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={styles.dangerText}
-                        onClick={() => remove(tpl)}
-                      >
-                        {t('substrate.delete')}
-                      </Button>
-                    </>
-                  )
-              : undefined
-          }
+          rowKey={keyOf}
+          onRowClick={(tpl) => setViewingKey(keyOf(tpl))}
+          isActive={(tpl) => keyOf(tpl) === viewingKey}
         />
       ) : (
         <div className={styles.empty}>
@@ -186,22 +163,25 @@ function Templates({
         </div>
       )}
 
-      <EditorSheet
+      <EntityPanel
         open={viewing !== null}
-        onClose={() => setViewing(null)}
-        size="lg"
+        onClose={() => setViewingKey(null)}
         eyebrow={project}
         title={viewing?.metadata.name ?? ''}
         description={t('templates.immutable_hint')}
-        extra={
-          viewing &&
-          canManage &&
-          !viewing.readOnly &&
-          viewing.provider !== 'proxmox' && (
-            <Button variant="secondary" onClick={() => openEditor(viewing)}>
-              {t('templates.duplicate')}
-            </Button>
-          )
+        actions={
+          viewing
+            ? templateActionGroups(viewing, {
+                t,
+                canManage,
+                confirm,
+                duplicate: () => openEditor(viewing),
+                remove: async () => {
+                  await templatesApi.remove(project, viewing.metadata.name);
+                  setViewingKey(null);
+                },
+              })
+            : []
         }
       >
         {viewing && (
@@ -234,7 +214,7 @@ function Templates({
             </Section>
           </div>
         )}
-      </EditorSheet>
+      </EntityPanel>
 
       {canManage && (
         <TemplateEditor

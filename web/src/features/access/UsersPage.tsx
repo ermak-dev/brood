@@ -3,19 +3,35 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { accessApi, type AccessUser } from '@/services/brood/access';
 import { useAuthStore } from '@/stores';
+import { EntityPanel } from '@/features/substrate/components/EntityPanel';
 import { EntityTable, type Column } from '@/features/substrate/components/EntityTable';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
-import { AccessEditor, LoadState, useAccessActions, useAccessResource } from './shared';
+import { panelGroups, userPlan, type ActionSpec, type UserAction } from './panelActions';
+import {
+  AccessEditor,
+  AccountBadge,
+  AccountDetails,
+  LoadState,
+  useAccessActions,
+  useAccessResource,
+} from './shared';
+import { retainedRow } from './state';
 import styles from '@/features/substrate/substrate.module.scss';
 
 type Editor =
   { kind: 'create' } | { kind: 'edit'; user: AccessUser } | { kind: 'password'; username: string };
 
+const sameUser = (row: AccessUser, open: AccessUser) => row.username === open.username;
+
+/** Строка пользователя открывает его панель (#157); правка, сброс пароля и
+ * удаление -- действия в ней. Страница открыта только администратору. */
 export function UsersPage() {
   const { t } = useTranslation();
   const resource = useAccessResource(accessApi.users);
   const { run, confirm, busy } = useAccessActions(resource.refresh);
   const [editor, setEditor] = useState<Editor | null>(null);
+  const [opened, setOpened] = useState<AccessUser | null>(null);
+  const viewing = retainedRow(opened, resource, sameUser);
   const editing = editor?.kind === 'edit' ? editor.user : null;
   const initialValues = editing
     ? {
@@ -44,6 +60,43 @@ export function UsersPage() {
       render: (user) => t(user.disabled ? 'access.disabled' : 'access.enabled'),
     },
   ];
+  // Правка и сброс пароля открывают прежний редактор вместо панели.
+  const actions = (user: AccessUser): Record<UserAction, ActionSpec> => ({
+    edit: {
+      label: t('common.edit'),
+      description: t('access.panel.edit_user_hint'),
+      pending: busy,
+      onSelect: () => {
+        setOpened(null);
+        setEditor({ kind: 'edit', user });
+      },
+    },
+    password: {
+      label: t('access.reset_password'),
+      description: t('access.panel.reset_password_hint'),
+      pending: busy,
+      onSelect: () => {
+        setOpened(null);
+        setEditor({ kind: 'password', username: user.username });
+      },
+    },
+    delete: {
+      label: t('substrate.delete'),
+      description: t('access.panel.delete_user_hint'),
+      pending: busy,
+      onSelect: () =>
+        confirm(
+          user.username,
+          async () => {
+            await accessApi.deleteUser(user.username);
+            setOpened(null);
+            await useAuthStore.getState().checkAuth();
+          },
+          t('substrate.delete'),
+          t('access.confirm_user', { name: user.username })
+        ),
+    },
+  });
   return (
     <div className={styles.page}>
       <PageHeader
@@ -57,50 +110,19 @@ export function UsersPage() {
           columns={columns}
           rows={resource.data ?? []}
           rowKey={(user) => user.username}
-          onRowClick={(user) => setEditor({ kind: 'edit', user })}
-          actionsLabel={t('substrate.actions')}
-          actions={(user) => (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() => setEditor({ kind: 'edit', user })}
-              >
-                {t('common.edit')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() => setEditor({ kind: 'password', username: user.username })}
-              >
-                {t('access.reset_password')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                className={styles.dangerText}
-                onClick={() =>
-                  confirm(
-                    user.username,
-                    async () => {
-                      await accessApi.deleteUser(user.username);
-                      await useAuthStore.getState().checkAuth();
-                    },
-                    t('substrate.delete'),
-                    t('access.confirm_user', { name: user.username })
-                  )
-                }
-              >
-                {t('substrate.delete')}
-              </Button>
-            </>
-          )}
+          onRowClick={setOpened}
         />
         {resource.data?.length === 0 && <p>{t('access.empty')}</p>}
       </LoadState>
+      <EntityPanel
+        open={viewing !== null}
+        onClose={() => setOpened(null)}
+        title={viewing?.username ?? ''}
+        status={viewing && <AccountBadge user={viewing} />}
+        actions={viewing ? panelGroups(userPlan(), actions(viewing), t) : []}
+      >
+        {viewing && <AccountDetails user={viewing} />}
+      </EntityPanel>
       {editor && (
         <AccessEditor
           key={`${editor.kind}-${editing?.username ?? (editor.kind === 'password' ? editor.username : '')}`}

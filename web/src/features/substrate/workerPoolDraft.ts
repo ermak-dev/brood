@@ -38,6 +38,10 @@ export function missingSandboxClasses(defaults: WorkerPoolDefaults): string[] {
   return SANDBOX_CLASSES.filter((name) => !images[name]);
 }
 
+/** Прочитанный пул несёт предусловия uid и resourceVersion: без них ни правка,
+ * ни удаление не сверятся с тем, что видел пользователь. */
+export const versioned = (pool: WorkerPool) => Boolean(pool.metadata.uid && pool.metadata.resourceVersion);
+
 export function newPoolDraft(workerImage: string, sandboxClass = 'gvisor'): PoolDraft {
   return {
     name: '', replicas: '1', workerImage, sandboxClass,

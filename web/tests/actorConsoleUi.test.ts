@@ -1,10 +1,12 @@
-// FEATURE: Пульт managed-актора и repository проекта в панели (#151).
+// FEATURE: Пульт managed-актора и repository проекта в панели (#151, #157).
 // SPEC: Подтверждение называет последствия; необратимое требует ввода имени.
-// Недоступное действие несёт причину в accessible description. Viewer видит
-// только обзор, без вкладок сессии и действий. Детали показывают origin, режим
-// клона, поколение и роль. Repository выбирается из remotes без токенов;
-// исчезнувший из настройки выбор помечен. Новые строки есть во всех локалях
-// с теми же подстановками.
+// Действия — в боковой панели актора: группы над сведениями обзора,
+// необратимые после них. Недоступное действие несёт причину в accessible
+// description; идущее — статус и блокировка остальных; неизвестный исход
+// виден до закрытия. Viewer видит только обзор, без вкладок сессии и действий.
+// Детали показывают origin, режим клона, поколение и роль. Repository
+// выбирается из remotes без токенов; исчезнувший из настройки выбор помечен.
+// Новые строки есть во всех локалях с теми же подстановками.
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
@@ -14,7 +16,6 @@ import { I18nextProvider } from 'react-i18next';
 import { actionDialogText } from '@/features/substrate/actorLifecycle';
 import { ActorDetailsSheet } from '@/features/substrate/ActorDetailsSheet';
 import { ConfirmDialog } from '@/features/substrate/components/ConfirmDialog';
-import { ManagedActorActions } from '@/features/substrate/components/ManagedActorActions';
 import { mergeHistory } from '@/features/substrate/historyView';
 import { repositoryOptions } from '@/features/access/state';
 import type { Actor } from '@/services/brood/substrate';
@@ -108,40 +109,84 @@ test('an irreversible confirmation stays disabled until the exact name is typed'
   expect(submitDisabled(plain)).toBe(false);
 });
 
-test('a blocked row action is focusable and describes its reason', async () => {
-  const html = await render(ManagedActorActions, {
-    actor: { ...actor, phase: 'stopped', desired: 'stopped' },
-    swarm: 'swarm',
+const details = {
+  open: true,
+  onClose: () => {},
+  actor,
+  swarm: 'swarm',
+  swarmName: 'team',
+  administrator: false,
+  failure: null,
+  unknown: [],
+  onAction: () => {},
+  onClearFailure: () => {},
+  onDismissUnknown: () => {},
+};
+
+const strip = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+// Кнопка или ссылка панели по видимому названию (первый текст внутри).
+const control = (html: string, label: string) =>
+  [...html.matchAll(/<(button|a)\b([^>]*)>([\s\S]*?)<\/\1>/g)]
+    .map(([, tag, attrs, inner]) => ({ tag, attrs, inner, text: strip(inner) }))
+    .find((item) => item.text === label || item.text.startsWith(`${label} `));
+const headings = (html: string) => [...html.matchAll(/<h3[^>]*>([^<]+)<\/h3>/g)].map((m) => m[1]);
+
+test('a blocked panel action stays focusable and describes its reason', async () => {
+  const html = await render(ActorDetailsSheet, {
+    ...details,
     canManage: true,
-    onAction: () => {},
-    onDetails: () => {},
+    actor: { ...actor, phase: 'stopped', desired: 'stopped' },
   });
-  const stop = html.match(/<button[^>]*aria-describedby="([^"]+)"[^>]*>(?:(?!<\/button>)[\s\S])*Stop/);
-  expect(stop?.[0]).toContain('aria-disabled="true"');
-  expect(stop?.[0]).not.toContain('disabled=""');
-  expect(html).toContain(`id="${stop?.[1]}" hidden="">The actor is already stopped.</span>`);
-  // An available action describes its effect instead.
-  expect(html).toContain('Starts the container.');
+  const stop = control(html, 'Stop');
+  expect(stop?.tag).toBe('button');
+  expect(stop?.attrs).toContain('aria-disabled="true"');
+  expect(stop?.attrs).not.toContain('disabled=""');
+  const described = stop?.attrs.match(/aria-describedby="([^"]+)"/)?.[1];
+  const description = stop?.inner.match(new RegExp(`id="${described}"[^>]*>([\\s\\S]*)</span>`))?.[1];
+  expect(strip(description ?? '')).toContain('The actor is already stopped.');
+  // An available action describes its effect instead and can be pressed.
+  const start = control(html, 'Start');
+  expect(start?.attrs).not.toContain('aria-disabled');
+  expect(start?.text).toContain('Starts the container.');
+});
+
+test('an action in flight shows its status, locks the rest; unknown outcomes stay until dismissed', async () => {
+  const html = await render(ActorDetailsSheet, {
+    ...details,
+    canManage: true,
+    pending: 'restart',
+    unknown: [
+      { name: 'coding', action: 'wipe', detail: 'relay lost' },
+      { name: 'other', action: 'stop', detail: '' },
+    ],
+  });
+  expect(html).toMatch(/role="status"[^>]*><span class="loading-spinner"[^>]*><\/span>Restarting…<\/span>/);
+  const restart = control(html, 'Restart Claude');
+  expect(restart?.attrs).toContain('aria-busy="true"');
+  expect(restart?.attrs).toContain('aria-disabled="true"');
+  for (const label of ['Open terminal', 'Stop', 'Clean working copy', 'Wipe working copy', 'Recreate', 'Delete']) {
+    const item = control(html, label);
+    expect(item?.tag, label).toBe('button');
+    expect(item?.attrs, label).toContain('aria-disabled="true"');
+    expect(item?.text, label).toContain(en.actors.ops.reasons.pending);
+  }
+  expect(html).not.toContain('href=');
+  expect(html).toContain('role="alert"');
+  expect(html).toContain('Outcome unknown: Wipe working copy on coding');
+  expect(html).toContain('relay lost');
+  expect(html).not.toContain('on other');
 });
 
 test('viewers get the overview without session tabs or actions; managers get the console', async () => {
-  const props = {
-    open: true,
-    onClose: () => {},
-    actor,
-    swarm: 'swarm',
-    swarmName: 'team',
-    administrator: false,
-    failure: null,
-    unknown: [],
-    onAction: () => {},
-    onClearFailure: () => {},
-    onDismissUnknown: () => {},
-  };
+  const props = details;
   const viewer = await render(ActorDetailsSheet, { ...props, canManage: false });
   expect(viewer).not.toContain('role="tablist"');
-  expect(viewer).not.toContain('More actions');
   expect(viewer).not.toContain('href=');
+  expect(headings(viewer)).toEqual([]);
+  expect(viewer).not.toContain('aria-describedby');
+  for (const action of ['Open terminal', 'Stop', 'Restart Claude', 'Recreate', 'Delete']) {
+    expect(control(viewer, action), action).toBeUndefined();
+  }
   expect(viewer).toContain(en.actors.console.viewer_hint);
   for (const fact of [
     'https://git.example.com/team/repo',
@@ -164,7 +209,19 @@ test('viewers get the overview without session tabs or actions; managers get the
     ['Usage', 'false'],
     ['Send', 'false'],
   ]);
-  expect(manager).toContain('aria-label="More actions for coding"');
+  // Overview opens first with the actions: groups above the facts, the
+  // irreversible block after them; the terminal opens in a new tab.
+  expect(headings(manager)).toEqual(['Actions', 'Session', 'Working copy', 'Irreversible']);
+  const at = (needle: string) => manager.indexOf(needle);
+  expect(at('>Working copy<')).toBeLessThan(at('Generation'));
+  expect(at('Generation')).toBeLessThan(at('>Irreversible<'));
+  expect(at('>Irreversible<')).toBeLessThan(at('>Recreate<'));
+  const terminal = control(manager, 'Open terminal');
+  expect(terminal?.tag).toBe('a');
+  expect(terminal?.attrs).toContain('href="/api/swarms/swarm/proxy/actors/coding/"');
+  expect(terminal?.attrs).toContain('target="_blank"');
+  expect(terminal?.text).toContain(en.substrate.opens_new_tab);
+  expect(manager).not.toContain('aria-haspopup="menu"');
   // Every tab controls an existing panel; session panels mount only when opened,
   // so rendering the details reads nothing from the session.
   const panels = [...manager.matchAll(/role="tabpanel" id="([^"]+)"/g)].map((m) => m[1]);
@@ -247,6 +304,7 @@ test('every new string exists in all six locales with the same placeholders', ()
       [
         ...leaves(messages.actors.ops as Tree, 'actors.ops.'),
         ...leaves(messages.actors.console as Tree, 'actors.console.'),
+        ...leaves((messages.actors.native ?? {}) as Tree, 'actors.native.'),
         ...leaves(messages.access.repository as Tree, 'access.repository.'),
         ...['origin', 'origin_hint', 'origin_repository', 'origin_no_repository',
           'origin_repository_unavailable', 'reset', 'reset_message'].map(

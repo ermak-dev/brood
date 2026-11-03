@@ -17,8 +17,10 @@ import {
   resetConfirmation,
   deleteConfirmation,
   canViewActorDetails,
+  nativeActionGroups,
 } from '@/features/substrate/actorLifecycle';
 import { ManagedProfile } from '@/features/substrate/components/ManagedProfile';
+import { PanelActions, type PanelActionGroup } from '@/features/substrate/components/EntityPanel';
 import {
   actorsApi,
   templatesApi,
@@ -26,9 +28,11 @@ import {
   type ActorTemplate,
 } from '@/services/brood/substrate';
 import en from '../src/i18n/locales/en.json';
-import { ActorLifecycleActions } from '@/features/substrate/components/ActorLifecycleActions';
-import { ManagedActorActions } from '@/features/substrate/components/ManagedActorActions';
-import { managedActionPlan } from '@/features/substrate/actorActions';
+import {
+  managedActionGroups,
+  managedActionPlan,
+  type ManagedActionId,
+} from '@/features/substrate/actorActions';
 
 const capabilities = {
   workspace: true,
@@ -215,75 +219,65 @@ test('managed details show real placement and limitations without service counte
   expect(html).not.toContain('Worker');
 });
 
-test('rendering lifecycle controls never starts actors and gates terminal and unsupported actions', async () => {
+test('rendering panel controls never starts actors and gates terminal and unsupported actions', async () => {
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
   const actions: string[] = [];
-  const managed = (value: Actor, pending?: 'restart') =>
+  const render = (groups: PanelActionGroup[]) =>
     renderToStaticMarkup(
-      createElement(
-        I18nextProvider,
-        { i18n },
-        createElement(ManagedActorActions, {
-          actor: value,
-          swarm: 'swarm/a',
-          canManage: true,
-          pending,
-          onAction: (action: string) => {
-            actions.push(action);
-          },
-          onDetails: () => actions.push('details'),
-        })
-      )
+      createElement(I18nextProvider, { i18n }, createElement(PanelActions, { groups }))
     );
+  const managed = (value: Actor, pending?: ManagedActionId) =>
+    render(
+      managedActionGroups(value, {
+        t: i18n.t,
+        canManage: true,
+        pending,
+        terminal: actorsApi.terminal('swarm/a', value.metadata.name),
+        onAction: (action) => actions.push(action),
+      })
+    );
+  // Название кнопки панели — первый текст; пояснение и причина — ниже него.
   const enabledButtons = (html: string) =>
     [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)]
       .filter((match) => !/aria-disabled="true"|disabled=""/.test(match[1]))
-      .map((match) => match[2].replace(/<[^>]+>/g, '').trim());
+      .map((match) => match[2].match(/^<span[^>]*>(?:<span[^>]*><\/span>)?([^<]*)<\/span>/)?.[1]);
   const stopped = managed(actor);
-  expect(enabledButtons(stopped)).toEqual(['Start', 'Details', 'More']);
+  expect(enabledButtons(stopped)).toEqual(['Start', 'Recreate', 'Delete']);
   expect(stopped).not.toContain('Suspend');
   expect(stopped).not.toContain('href=');
   const running = managed({ ...actor, phase: 'running', desired: 'running' });
-  expect(enabledButtons(running)).toEqual(['Stop', 'Details', 'More']);
+  expect(enabledButtons(running)).toEqual([
+    'Stop', 'Restart Claude', 'Clean working copy', 'Wipe working copy', 'Recreate', 'Delete',
+  ]);
   expect(running).not.toContain('>Start<');
   expect(running).not.toContain('Suspend');
   expect(running).toContain('href="/api/swarms/swarm%2Fa/proxy/actors/test/"');
   expect(running).toContain('target="_blank"');
-  // A transition leaves nothing to press but details and the menu (delete).
-  expect(enabledButtons(managed({ ...actor, phase: 'stopping' }))).toEqual(['Details', 'More']);
+  // A transition leaves nothing to press but the idempotent delete.
+  expect(enabledButtons(managed({ ...actor, phase: 'stopping' }))).toEqual(['Delete']);
   expect(managed({ ...actor, phase: 'deleting', desired: 'deleted' })).not.toContain('href=');
   const pending = managed({ ...actor, phase: 'running', desired: 'running' }, 'restart');
-  expect(pending).toContain('Restarting…');
-  expect(enabledButtons(pending)).toEqual(['Details']);
-  const native = renderToStaticMarkup(
-    createElement(
-      I18nextProvider,
-      { i18n },
-      createElement(ActorLifecycleActions, {
-        actor: { metadata: { name: 'native' }, status: { state: 'ACTOR_STATE_RUNNING' } },
-        swarm: 'swarm',
-        disabled: false,
-        onAction: (action: string) => actions.push(action),
-      })
+  expect(pending).toContain('aria-busy="true"');
+  expect(pending).not.toContain('href=');
+  expect(enabledButtons(pending)).toEqual([]);
+  const nativeOptions = {
+    t: i18n.t,
+    canManage: true,
+    terminal: actorsApi.terminal('swarm', 'native'),
+    onAction: (action: string) => actions.push(action),
+    onRemove: () => actions.push('remove'),
+  };
+  const native = render(
+    nativeActionGroups(
+      { metadata: { name: 'native' }, status: { state: 'ACTOR_STATE_RUNNING' } },
+      nativeOptions
     )
   );
-  expect(native).toContain('Suspend');
-  // Managed rows never render through the native component.
-  expect(
-    renderToStaticMarkup(
-      createElement(
-        I18nextProvider,
-        { i18n },
-        createElement(ActorLifecycleActions, {
-          actor,
-          swarm: 'swarm',
-          disabled: false,
-          onAction: () => {},
-        })
-      )
-    )
-  ).toBe('');
+  expect(enabledButtons(native)).toEqual(['Suspend', 'Delete']);
+  expect(native).toContain('href="/api/swarms/swarm/proxy/actors/native/"');
+  // Managed actors never render through the native groups.
+  expect(nativeActionGroups(actor, nativeOptions)).toEqual([]);
   expect(actions).toEqual([]);
 });
 

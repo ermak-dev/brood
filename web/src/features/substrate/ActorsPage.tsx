@@ -12,7 +12,6 @@ import { ActorActionFailure } from './components/ActorActionFailure';
 import { ActorOutcomeNotices } from './components/ActorOutcomeNotices';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { EntityTable, type Column } from './components/EntityTable';
-import { ManagedActorActions } from './components/ManagedActorActions';
 import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
 import { SwarmSections } from './components/SwarmSections';
@@ -24,10 +23,10 @@ import {
   actorState,
   canViewActorDetails,
   deleteConfirmation,
+  nativeActionGroups,
 } from './actorLifecycle';
 import { confirmationOf, type ManagedActionId } from './actorActions';
 import { useActorOperations, type UnknownOutcome } from './actorOperations';
-import { ActorLifecycleActions } from './components/ActorLifecycleActions';
 import { useActions, useResource } from './hooks';
 import styles from './substrate.module.scss';
 
@@ -44,7 +43,9 @@ async function updateFresh(project: string, edited: Actor) {
 
 /** brood: actors of the active project -- the units of work. Suspend freezes
  * an actor into a snapshot, resume wakes it; editing changes its template and
- * placement. Managed actors get their full set of actions and a console. */
+ * placement. A row opens the actor's side panel (#157), where its actions
+ * live: managed actors get their full set and a console, native ones their
+ * editor with lifecycle and delete. */
 export function ActorsPage() {
   const { t } = useTranslation();
   const admin = useAdministrator();
@@ -137,31 +138,49 @@ function Actors({
       ? setDetails((prev) => ({ name: actor.metadata.name, open: true, session: prev.session + 1 }))
       : openEditor(actor);
   const detailsActor = data?.find((a) => a.metadata.name === details.name);
+  // Редактор native-актора — его панель: действия и состояние берутся из
+  // свежего списка (после suspend шаблон становится изменяемым), снимок на
+  // момент открытия — только пока актора в списке нет.
+  const editorActor =
+    editor.actor &&
+    (data?.find((a) => a.metadata.name === editor.actor?.metadata.name) ?? editor.actor);
 
-  // Native-действия: прежний поток с общим флагом, отказ — в той же плашке.
-  const [acting, setActing] = useState(false);
+  // Native-действия: прежний поток, отказ — в той же плашке. Идущее действие
+  // помнится по актору: его кнопка в панели ждёт исхода, повтор не уходит.
+  const [acting, setActing] = useState<Record<string, ActorAction>>({});
   const mutate = async (actor: Actor, action: ActorAction) => {
-    setActing(true);
+    const name = actor.metadata.name;
+    setActing((items) => ({ ...items, [name]: action }));
     ops.clearFailure();
     try {
-      return await actorsApi.act(project, actor.metadata.name, action);
+      return await actorsApi.act(project, name, action);
     } catch (error) {
-      ops.setFailure({ name: actor.metadata.name, error });
+      ops.setFailure({ name, error });
       throw error;
     } finally {
-      setActing(false);
+      setActing((items) => {
+        const next = { ...items };
+        delete next[name];
+        return next;
+      });
     }
   };
   const act = (actor: Actor, action: ActorAction) => {
-    if (acting) return;
+    if (acting[actor.metadata.name]) return;
     return run(
       () => mutate(actor, action),
       t(`actors.${action}_done`, { name: actor.metadata.name })
     );
   };
 
+  // Удаление native-актора запускается из его панели; удалённому панель не нужна.
   const remove = (actor: Actor) =>
-    confirm(deleteConfirmation(actor, t, () => actorsApi.remove(project, actor.metadata.name)));
+    confirm(
+      deleteConfirmation(actor, t, async () => {
+        await actorsApi.remove(project, actor.metadata.name);
+        closeEditor();
+      })
+    );
 
   // Managed: обратимое — сразу, остальное — через подтверждение с последствиями.
   const request = (actor: Actor, id: ManagedActionId) => {
@@ -220,16 +239,11 @@ function Actors({
       ) : data && data.length > 0 ? (
         <ActorTable
           rows={data}
-          swarm={project}
           canManage={canManage}
-          acting={acting}
           pending={ops.pending}
           unknown={ops.unknown}
           goldenOf={goldenOf}
           onOpen={open}
-          onAction={(a, action) => void act(a, action)}
-          onManaged={request}
-          onRemove={remove}
         />
       ) : (
         <div className={styles.empty}>
@@ -243,13 +257,36 @@ function Actors({
 
       {canViewActorDetails(canManage, editor.actor) && (
         <ActorEditor
-          key={editor.session}
+          key={`editor-${editor.session}`}
           project={project}
           projectId={projectId}
-          actor={editor.actor}
+          actor={editorActor}
           templates={loaded?.templates ?? null}
           open={editor.open}
           onClose={closeEditor}
+          actions={
+            editorActor
+              ? nativeActionGroups(editorActor, {
+                  t,
+                  canManage,
+                  pending: acting[editorActor.metadata.name],
+                  terminal: actorsApi.terminal(project, editorActor.metadata.name),
+                  onAction: (action) => void act(editorActor, action),
+                  onRemove: () => remove(editorActor),
+                })
+              : []
+          }
+          notice={
+            editorActor &&
+            ops.failure?.name === editorActor.metadata.name && (
+              <ActorActionFailure
+                name={ops.failure.name}
+                error={ops.failure.error}
+                administrator={administrator}
+                onClose={ops.clearFailure}
+              />
+            )
+          }
           onSubmit={async (actor) => {
             if (!canManage) return false;
             const name = actor.metadata.name;
@@ -265,7 +302,7 @@ function Actors({
 
       {detailsActor && canViewActorDetails(canManage, detailsActor) && (
         <ActorDetailsSheet
-          key={details.session}
+          key={`details-${details.session}`}
           open={details.open}
           onClose={() => setDetails((prev) => ({ ...prev, open: false }))}
           actor={detailsActor}
@@ -284,7 +321,7 @@ function Actors({
 
       {dialog && canManage && (
         <ManagedActionDialog
-          key={dialog.session}
+          key={`confirmation-${dialog.session}`}
           dialog={dialog}
           unknown={ops.unknown}
           onCancel={closeDialog}
@@ -337,36 +374,30 @@ function ManagedActionDialog({
 }
 
 /** brood: the actors of one swarm. Provider and Proxmox CT share the placement
- * cell instead of columns of their own. A managed row shows its state-driven
- * primary action and Stop, then details and a grouped menu of the rest; a
- * native row keeps its actions on one line, as before managed actors existed. */
+ * cell instead of columns of their own. A row holds no actions (#157): it
+ * opens the actor's panel -- managed details for anyone who may read them,
+ * the native editor for those who manage the swarm. The state cell still says
+ * when an action is in flight or its outcome is unknown, with the panel closed. */
 export function ActorTable({
   rows,
-  swarm,
   canManage,
-  acting,
   pending = {},
   unknown = [],
   goldenOf,
   onOpen,
-  onAction,
-  onManaged = () => {},
-  onRemove: remove,
 }: {
   rows: Actor[];
-  swarm: string;
   canManage: boolean;
-  acting: boolean;
   pending?: Record<string, ManagedActionId>;
   unknown?: UnknownOutcome[];
   goldenOf: (actor: Actor) => string | undefined;
   onOpen: (actor: Actor) => void;
-  onAction: (actor: Actor, action: ActorAction) => void;
-  onManaged?: (actor: Actor, id: ManagedActionId) => void;
-  onRemove: (actor: Actor) => void;
 }) {
   const { t, i18n } = useTranslation();
   const uncertain = new Set(unknown.map((item) => item.name));
+  // Golden-актор ведёт ateapi; native-актор viewer'у открыть нечем: редактор
+  // меняет его, а сервер этого не пустит.
+  const openable = (a: Actor) => !goldenOf(a) && canViewActorDetails(canManage, a);
   const columns: Column<Actor>[] = [
     {
       key: 'name',
@@ -392,6 +423,12 @@ export function ActorTable({
             state={stateOf(a)}
             namespace={a.provider === 'proxmox' ? 'actors.managed_state' : 'actors.state'}
           />
+          {pending[a.metadata.name] && (
+            <span className={styles.pendingNote}>
+              <span className="loading-spinner" aria-hidden="true" />
+              {t(`actors.ops.${pending[a.metadata.name]}.pending`)}
+            </span>
+          )}
           {uncertain.has(a.metadata.name) && (
             <span className={`${styles.badge} ${styles['tone-warning']}`}>
               {t('actors.ops.unconfirmed_badge')}
@@ -419,67 +456,12 @@ export function ActorTable({
   ];
 
   return (
-    <div className={styles.actorTable}>
-      <EntityTable
-        columns={columns}
-        rows={rows}
-        rowKey={(a) => a.metadata.uid ?? a.metadata.name}
-        onRowClick={canManage ? (a) => !goldenOf(a) && onOpen(a) : undefined}
-        actionsLabel={t('substrate.actions')}
-        actions={
-          canManage || rows.some((a) => a.provider === 'proxmox')
-            ? (a) =>
-                goldenOf(a) ? null : (
-                  <div
-                    className={
-                      a.provider === 'proxmox' ? styles.actorActionsWrap : styles.actorActions
-                    }
-                  >
-                    {a.provider === 'proxmox' ? (
-                      <ManagedActorActions
-                        actor={a}
-                        swarm={swarm}
-                        canManage={canManage}
-                        pending={pending[a.metadata.name]}
-                        onAction={(id) => onManaged(a, id)}
-                        onDetails={() => onOpen(a)}
-                      />
-                    ) : (
-                      <>
-                        <span className={styles.actorActionGroup}>
-                          {canManage && (
-                            <ActorLifecycleActions
-                              actor={a}
-                              swarm={swarm}
-                              disabled={acting}
-                              onAction={(action) => onAction(a, action)}
-                            />
-                          )}
-                        </span>
-                        <span className={styles.actorActionGroup}>
-                          {canViewActorDetails(canManage, a) && (
-                            <Button variant="ghost" size="sm" onClick={() => onOpen(a)}>
-                              {t('substrate.edit')}
-                            </Button>
-                          )}
-                          {canManage && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className={styles.dangerText}
-                              onClick={() => remove(a)}
-                            >
-                              {t('substrate.delete')}
-                            </Button>
-                          )}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                )
-            : undefined
-        }
-      />
-    </div>
+    <EntityTable
+      columns={columns}
+      rows={rows}
+      rowKey={(a) => a.metadata.uid ?? a.metadata.name}
+      onRowClick={rows.some(openable) ? onOpen : undefined}
+      canOpen={openable}
+    />
   );
 }

@@ -11,6 +11,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IconX } from './icons';
 import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from './scrollLock';
+import { isTopmostDialog, restoreDialogFocus } from './dialogFocus';
 
 interface ModalProps {
   open: boolean;
@@ -129,7 +130,7 @@ export function Modal({
 
   useEffect(() => {
     if (open || isVisible) return;
-    previouslyFocusedRef.current?.focus();
+    restoreDialogFocus(previouslyFocusedRef.current);
     previouslyFocusedRef.current = null;
   }, [isVisible, open]);
 
@@ -137,6 +138,7 @@ export function Modal({
     if (!open) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isTopmostDialog(modalRef.current)) return;
       if (event.key === 'Escape') {
         if (closeDisabled) return;
         event.preventDefault();

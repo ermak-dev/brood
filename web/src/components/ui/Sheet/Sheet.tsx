@@ -11,6 +11,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IconX } from '../icons';
 import { FOCUSABLE_SELECTOR, lockScroll, unlockScroll } from '../scrollLock';
+import { isTopmostDialog, restoreDialogFocus } from '../dialogFocus';
 import styles from './Sheet.module.scss';
 
 export type SheetSize = 'md' | 'lg' | 'xl';
@@ -156,13 +157,14 @@ export function Sheet({
 
   useEffect(() => {
     if (open || isVisible) return;
-    previouslyFocusedRef.current?.focus();
+    restoreDialogFocus(previouslyFocusedRef.current);
     previouslyFocusedRef.current = null;
   }, [isVisible, open]);
 
   useEffect(() => {
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
+      if (!isTopmostDialog(sheetRef.current)) return;
       if (event.key === 'Escape') {
         if (closeDisabled) return;
         event.preventDefault();

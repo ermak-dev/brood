@@ -13,16 +13,17 @@ test('actor and template pages pass explicit swarm capabilities to every workloa
     expect(page).toContain('canManage: boolean');
     expect(page).toMatch(/const create = canManage\s*\?/);
     if (name === 'Templates') {
-      expect(page).toMatch(/actions=\{\s*canManage\s*\?/);
+      // #157: template actions live in its panel; the builder takes the swarm role.
+      expect(page).toMatch(/templateActionGroups\(viewing, \{[\s\S]*?canManage,/);
       expect(page).toMatch(/\{canManage && \(\s*<TemplateEditor/);
     } else {
-      expect(page).toMatch(/\{canManage && \(\s*<ActorLifecycleActions/);
-      expect(page).toMatch(/\{canManage && \(\s*<Button[\s\S]*?onClick=\{\(\) => remove\(a\)\}/);
+      // #157: actions live in the actor's panel; builders take the swarm role.
+      expect(page).toMatch(/nativeActionGroups\(editorActor, \{\s*t,\s*canManage,/);
+      expect(page).toMatch(/\{dialog && canManage && \(\s*<ManagedActionDialog/);
       expect(page).toContain('canViewActorDetails(canManage, editor.actor)');
       expect(page).toContain('if (!canManage) return false;');
     }
   }
-  expect(source('Actors')).toContain('onRowClick={canManage ?');
-  expect(source('Templates')).toMatch(/viewing &&\s*canManage &&/);
-  expect(source('Templates')).toContain('onRowClick={setViewing}');
+  expect(source('Actors')).toContain('!goldenOf(a) && canViewActorDetails(canManage, a)');
+  expect(source('Templates')).toContain('onRowClick={(tpl) => setViewingKey(keyOf(tpl))}');
 });

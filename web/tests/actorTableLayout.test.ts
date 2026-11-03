@@ -1,9 +1,10 @@
-// FEATURE: Таблица акторов вмещает действия рядом с managed-размещением (#108).
+// FEATURE: Таблица акторов: одна ячейка размещения (#108), действия — в панели (#157).
 // SPEC: Provider и логический пул/CTID — не отдельные колонки, а одна ячейка
 // размещения: native — узел, Proxmox — «Proxmox · узел · CT (пул)» без
-// выдуманного native-воркера. Managed-строка: главное действие по состоянию и
-// Stop, затем детали и меню остальных (#151); группы переносятся, native-строка
-// — одной линией, как прежде.
+// выдуманного native-воркера. В строке нет кнопок: строка (карточка на
+// телефоне) открывает панель актора, там все действия. Идущее действие и
+// неизвестный исход видны в ячейке состояния и при закрытой панели. Viewer
+// открывает только managed-детали; golden-актор не открывается.
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
@@ -65,7 +66,7 @@ test('placement is the node for native actors and the real Proxmox placement for
   expect(actorPlacement({ ...managed, placement: undefined })).toBe('Proxmox');
 });
 
-async function table(rows: Actor[], canManage: boolean) {
+async function table(rows: Actor[], canManage: boolean, extra: object = {}) {
   expect(typeof actorsPage.ActorTable).toBe('function');
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
@@ -75,33 +76,32 @@ async function table(rows: Actor[], canManage: boolean) {
       { i18n },
       createElement(actorsPage.ActorTable, {
         rows,
-        swarm: 'swarm',
         canManage,
-        acting: false,
         goldenOf: () => undefined,
         onOpen: () => {},
-        onAction: () => {},
-        onRemove: () => {},
+        ...extra,
       })
     )
   );
-  // Скрытые описания (aria-describedby) — не видимый текст строки.
-  const visible = (html: string) => html.replace(/<span[^>]*hidden=""[^>]*>[\s\S]*?<\/span>/g, '');
-  const text = (html: string) =>
-    visible(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const heads = [...markup.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((m) => text(m[1]));
   const body = markup.slice(markup.indexOf('<tbody'));
   const lines = body.split('<tr').slice(1).map((row) => {
     const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1]);
-    return { cells: cells.map(text), actions: visible(cells.at(-1) ?? '') };
+    return { row: row.slice(0, row.indexOf('>')), cells: cells.map(text), raw: cells };
   });
-  return { heads, lines, markup, text };
+  return { heads, lines, markup, body };
 }
 
-test('provider and pool/CTID fold into one placement column, all actions stay in each row', async () => {
-  const { heads, lines, markup, text } = await table([running, suspended, managed], true);
-  expect(heads).toEqual(['Name', 'State', 'Template', 'Placement', 'Updated', 'Actions']);
-  for (const gone of ['Provider', 'Logical pool / CTID', '>Node<', 'fake-native-worker']) {
+// Всё, что было кнопками строки до #157: в таблице их больше нет.
+const ROW_ACTIONS = ['Open terminal', 'Suspend', 'Resume', 'Start', 'Stop', 'Details', 'More', 'Edit', 'Delete'];
+
+test('provider and pool/CTID fold into one placement column; rows hold no actions and open the panel', async () => {
+  const { heads, lines, markup, body } = await table([running, suspended, managed], true);
+  // The last column is the row's open chevron, hidden from assistive technology.
+  expect(heads).toEqual(['Name', 'State', 'Template', 'Placement', 'Updated', '']);
+  expect(markup).toMatch(/<th[^>]*aria-hidden="true"[^>]*><\/th><\/tr><\/thead>/);
+  for (const gone of ['Provider', 'Logical pool / CTID', '>Node<', 'fake-native-worker', '>Actions<']) {
     expect(markup).not.toContain(gone);
   }
   expect(lines.map((line) => line.cells[3])).toEqual([
@@ -117,54 +117,64 @@ test('provider and pool/CTID fold into one placement column, all actions stay in
     expect(messages.substrate.placement?.length).toBeGreaterThan(0);
   }
 
-  const actions = lines.map((line) => line.cells.at(-1));
-  expect(actions).toEqual([
-    'Open terminal Suspend Edit Delete',
-    'Open terminal Resume Edit Delete',
-    'Open terminal Stop Details More',
+  // No buttons, links or menus in any row: each row is one focusable control
+  // that opens the actor's panel, a chevron at its end.
+  expect(body).not.toMatch(/<(button|a)\b/);
+  expect(body).not.toContain('aria-haspopup');
+  for (const action of ROW_ACTIONS) expect(body).not.toContain(`>${action}<`);
+  for (const line of lines) {
+    expect(line.row).toContain('tabindex="0"');
+    expect(line.cells).toHaveLength(6);
+    expect(line.raw.at(-1)).toContain('<svg');
+  }
+  expect(lines.map((line) => line.cells.slice(0, 2))).toEqual([
+    ['coding', 'running'],
+    ['lxc', 'suspended'],
+    ['claude', 'running'],
   ]);
-  // Lifecycle и действия над объектом — две группы; Button несёт свой <span>,
-  // поэтому кнопки и ссылки сначала сводятся к тексту.
-  const control = /<(button|a)\b[^>]*>([\s\S]*?)<\/\1>/g;
-  const flatten = (html: string) =>
-    html.replace(control, (_, _tag, inner: string) => ` ${text(inner)} `);
-  const groups = (html: string) =>
-    [...flatten(html).matchAll(/<span[^>]*>([\s\S]*?)<\/span>/g)].map((m) =>
-      text(m[1])
-    );
-  expect(groups(lines[2].actions)).toEqual(['Open terminal Stop', 'Details More']);
-  // The rarer and destructive managed actions live in the menu, not in the row.
-  for (const hidden of ['Recreate', 'Restart Claude', 'Clean working copy', 'Wipe']) {
-    expect(lines[2].actions).not.toContain(hidden);
-  }
-  expect(lines[2].actions).toContain('aria-haspopup="menu"');
-  expect(lines[2].actions).toContain('aria-label="More actions for claude"');
-  expect(groups(lines[0].actions)).toEqual(['Open terminal Suspend', 'Edit Delete']);
 });
 
-test('viewers keep read-only managed details and see no native workload actions', async () => {
-  const { lines, markup } = await table([running, managed], false);
-  expect(lines.map((line) => line.cells.at(-1))).toEqual(['', 'Details']);
-  for (const hidden of ['Delete', 'Suspend', 'Stop', 'Open terminal', 'Edit']) {
-    expect(markup).not.toContain(hidden);
-  }
+test('the state cell keeps an action in flight and an unknown outcome visible with the panel closed', async () => {
+  const { lines } = await table([managed], true, {
+    pending: { claude: 'restart' },
+    unknown: [{ name: 'claude', action: 'wipe', detail: '' }],
+  });
+  expect(lines[0].cells[1]).toBe('running Restarting… outcome unknown');
+  expect(lines[0].raw[1]).toContain('class="loading-spinner"');
 });
 
-test('the actions column takes the width its actions need and only managed groups wrap', () => {
+test('viewers open read-only managed details only; golden actors never open', async () => {
+  const mixed = await table([running, managed], false);
+  for (const action of ROW_ACTIONS) expect(mixed.body).not.toContain(`>${action}<`);
+  expect(mixed.body).not.toMatch(/<(button|a)\b/);
+  expect(mixed.lines[1].row).toContain('tabindex="0"');
+  // A viewer has nothing to open for a native actor: its panel is the editor.
+  for (const rows of [[running], [suspended, running]]) {
+    const { lines, markup } = await table(rows, false);
+    for (const line of lines) expect(line.row).not.toContain('tabindex');
+    expect(markup).not.toContain('<svg');
+  }
+  const golden = await table([running], true, { goldenOf: () => 'brood-coding' });
+  expect(golden.lines[0].row).not.toContain('tabindex');
+  expect(golden.lines[0].cells[0]).toBe('golden snapshot · brood-coding');
+});
+
+test('the page builds the panels from the shared builders and keeps viewer gates', () => {
   const page = readFileSync(
     new URL('../src/features/substrate/ActorsPage.tsx', import.meta.url),
     'utf8'
   );
-  const styles = readFileSync(
-    new URL('../src/features/substrate/substrate.module.scss', import.meta.url),
+  // Rows open what canViewActorDetails allows; the native panel takes the
+  // swarm role, so a viewer would get no lifecycle or delete there either.
+  expect(page).toContain('const openable = (a: Actor) => !goldenOf(a) && canViewActorDetails(canManage, a);');
+  expect(page).toMatch(/nativeActionGroups\(editorActor, \{\s*t,\s*canManage,/);
+  expect(page).toMatch(/\{dialog && canManage && \(\s*<ManagedActionDialog/);
+  for (const [scope, state] of [['editor', 'editor'], ['details', 'details'], ['confirmation', 'dialog']]) {
+    expect(page).toContain('key={`' + scope + '-${' + state + '.session}`}');
+  }
+  const sheet = readFileSync(
+    new URL('../src/features/substrate/ActorDetailsSheet.tsx', import.meta.url),
     'utf8'
   );
-  expect(page).toContain('<div className={styles.actorTable}>');
-  expect(page).toContain(
-    "a.provider === 'proxmox' ? styles.actorActionsWrap : styles.actorActions"
-  );
-  expect(styles).toMatch(/\.actorTable \.cellActions\s*\{[^}]*width: auto;/);
-  expect(styles).toMatch(/\.actorActions\s*\{[^}]*flex-wrap: nowrap;/);
-  expect(styles).toMatch(/\.actorActionsWrap\s*\{[^}]*flex-wrap: wrap;/);
-  expect(styles).toMatch(/\.actorActionGroup\s*\{[^}]*white-space: nowrap;/);
+  expect(sheet).toMatch(/managedActionGroups\(actor, \{\s*t,\s*canManage,/);
 });

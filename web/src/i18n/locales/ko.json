@@ -146,6 +146,20 @@
       "current": "저장소",
       "not_set": "설정되지 않음",
       "member_hint": "관리자만 저장소를 변경할 수 있습니다."
+    },
+    "panel": {
+      "select_hint": "이 프로젝트를 활성 프로젝트로 지정하고 스웜 목록을 엽니다.",
+      "details_hint": "프로젝트의 용량, 저장소, 구성원을 엽니다.",
+      "delete_project_hint": "프로젝트와 구성원 관계, 스웜 기록을 삭제합니다.",
+      "swarm_access_hint": "이 스웜을 사용할 수 있는 사람과 역할을 보여 줍니다.",
+      "retry_create_hint": "저장된 스웜 생성 작업을 이어갑니다.",
+      "transfer_hint": "스웜을 다른 활성 구성원에게 넘기고 현재 소유자의 권한을 해제합니다.",
+      "delete_swarm_hint": "스웜과 Substrate 리소스를 삭제합니다. 워크로드가 남아 있으면 거부됩니다.",
+      "retry_delete_hint": "스웜을 삭제하거나 중단된 삭제를 이어갑니다.",
+      "edit_user_hint": "표시 이름, 역할 또는 비활성화 상태를 변경합니다.",
+      "reset_password_hint": "새 비밀번호를 설정하고 사용자의 모든 세션을 종료합니다.",
+      "delete_user_hint": "계정을 삭제하고 세션과 구성원 관계를 해제합니다.",
+      "remove_member_hint": "프로젝트와 그 안의 해당 구성원 스웜에 대한 접근 권한을 회수합니다."
     }
   },
   "common": {
@@ -2548,7 +2562,10 @@
     "golden_failed": "실패: {{error}}",
     "golden_disabled": "비활성",
     "storage": "스냅샷 저장소",
-    "storage_hint": "비우면 설치의 기본 저장소"
+    "storage_hint": "비우면 설치의 기본 저장소",
+    "duplicate_hint": "사본으로 편집기를 엽니다. 템플릿은 변경할 수 없으므로 수정 사항은 새 템플릿이 됩니다.",
+    "delete_hint": "템플릿을 삭제합니다. 이미 만든 actor는 유지됩니다.",
+    "managed_readonly": "Proxmox 풀에서 게시되며 풀과 함께 바뀝니다: 여기에서 복사하거나 삭제할 수 없습니다."
   },
   "workers": {
     "replace": "용량 복구",
@@ -2580,7 +2597,9 @@
       "active": "활성",
       "draining": "운영에서 제외됨",
       "unavailable": "사용 불가"
-    }
+    },
+    "drain_hint": "액터 수락을 영구히 중단합니다. 할당된 액터가 재개되지 않을 수 있습니다.",
+    "replace_hint": "퇴역한 워커를 삭제하여 풀이 새 워커를 시작하게 합니다. 할당된 리소스가 없을 때만 가능합니다."
   },
   "policy": {
     "title": "접근 정책",
@@ -2654,7 +2673,9 @@
     "switcher_title": "활성 프로젝트",
     "switcher_none": "프로젝트",
     "switcher_empty": "아직 프로젝트가 없습니다",
-    "switcher_manage": "모든 프로젝트…"
+    "switcher_manage": "모든 프로젝트…",
+    "panel_danger": "되돌릴 수 없음",
+    "opens_new_tab": "(새 탭에서 열림)"
   },
   "actors": {
     "provider": "제공자",
@@ -2926,6 +2947,12 @@
         "clear_message": "Claude가 현재 대화의 컨텍스트를 잃습니다. 파일에는 영향이 없습니다.",
         "clear_confirm": "지우기"
       }
+    },
+    "native": {
+      "terminal_hint": "이 actor의 터미널을 새 탭에서 엽니다.",
+      "suspend_hint": "실행 중인 프로세스와 메모리를 포함해 actor를 스냅샷으로 고정합니다. 재개하면 그 지점부터 이어집니다.",
+      "resume_hint": "스냅샷에서 actor를 깨워 멈춘 지점부터 이어갑니다.",
+      "delete_hint": "actor와 스냅샷을 함께 삭제합니다. 취소할 수 없습니다."
     }
   },
   "proxmox_connections": {
@@ -2994,7 +3021,10 @@
       "digest": "sha256과 소문자 16진수 64자리를 입력하세요",
       "integer": "지원 범위 내의 양의 정수를 입력하세요",
       "budget": "모든 actor에 충분한 용량이 필요합니다"
-    }
+    },
+    "activate_hint": "설치에서 관리하는 용량과 템플릿으로 관리 프로필을 게시합니다. actor를 실행하지는 않습니다.",
+    "drain_hint": "새 할당을 중지합니다. 기존 actor와 예약된 리소스는 유지됩니다.",
+    "enable_hint": "새 할당을 다시 허용합니다. 기존 actor는 자동으로 재개되지 않습니다."
   },
   "worker_pools": {
     "not_installed": "지원되지만 이 설치가 워커 이미지를 선언하지 않아 여기에 제공되지 않습니다: {{classes}}.",
@@ -3039,6 +3069,9 @@
       "image": "공백 없는 워커 이미지를 입력하세요.",
       "quantity": "음수가 아닌 Kubernetes 수량을 입력하세요.",
       "limit": "제한은 요청 이상이어야 합니다."
-    }
+    },
+    "edit_hint": "복제본 수, 레이블 및 워커별 리소스를 변경합니다. 샌드박스 클래스와 이미지는 생성 시 그대로 유지됩니다.",
+    "delete_hint": "풀과 워커 파드를 삭제합니다. 모든 프로젝트에서 실행 중인 액터가 중단될 수 있습니다.",
+    "delete_unversioned": "서버가 uid 및 resourceVersion을 반환하지 않아 이 버전 기준으로 삭제를 확인할 수 없습니다. 목록을 새로 고치세요."
   }
 }

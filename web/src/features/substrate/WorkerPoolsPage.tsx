@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -11,16 +12,16 @@ import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAdministrator } from '@/features/access/shared';
 import { ConnectionForm } from './ConnectionForm';
 import { EditorSheet } from './components/EditorSheet';
+import { EntityPanel } from './components/EntityPanel';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Field, Section } from './components/form';
 import { KeyValueEditor } from './components/KeyValueEditor';
 import { PageHeader } from './components/PageHeader';
 import { DASH, formatCpu, formatMemory, fromPairs, toPairs, type Pair } from './format';
 import { useActions, useResource } from './hooks';
-import { missingSandboxClasses, newPoolDraft, poolDraft, poolPayload, validatePoolDraft, workerPoolImages, type PoolDraft } from './workerPoolDraft';
+import { proxmoxPoolActionGroups, workerPoolActionGroups, type ProxmoxPoolActionId } from './poolActions';
+import { missingSandboxClasses, newPoolDraft, poolDraft, poolPayload, validatePoolDraft, versioned, workerPoolImages, type PoolDraft } from './workerPoolDraft';
 import styles from './substrate.module.scss';
-
-const versioned = (pool: WorkerPool) => Boolean(pool.metadata.uid && pool.metadata.resourceVersion);
 
 // У пула нет общей conditions: состояние разрешения — у каждого sandbox class.
 function PoolResolution({ pool }: { pool: WorkerPool }) {
@@ -56,6 +57,55 @@ function PoolLabels({ pool }: { pool: WorkerPool }) {
   );
 }
 
+const readyReplicas = (pool: WorkerPool) => (pool.status ? (pool.status.readyReplicas ?? 0) : DASH);
+const sandboxOf = (pool: WorkerPool) => pool.spec.sandboxClasses.map((entry) => entry.name).join(', ');
+
+/** Сведения WorkerPool в его панели: реплики, ресурсы воркера, метки и
+ * разрешение классов. Правит их редактор, панель только показывает. */
+export function WorkerPoolDetails({ pool }: { pool: WorkerPool }) {
+  const { t } = useTranslation();
+  const resources = pool.spec.template?.resources;
+  return (
+    <div className={styles.form}>
+      <Section title={t('worker_pools.configuration')}>
+        <dl className={styles.details}>
+          <dt>{t('worker_pools.replicas')}</dt>
+          <dd>{pool.spec.replicas}</dd>
+          <dt>{t('worker_pools.observed')}</dt>
+          <dd>{pool.status?.replicas ?? DASH}</dd>
+          <dt>{t('worker_pools.ready')}</dt>
+          <dd>{readyReplicas(pool)}</dd>
+          <dt>{t('worker_pools.sandbox')}</dt>
+          <dd>{sandboxOf(pool) || DASH}</dd>
+          <dt>{t('worker_pools.image')}</dt>
+          <dd className={styles.mono}>{pool.spec.workerImage || DASH}</dd>
+        </dl>
+      </Section>
+      <Section title={t('worker_pools.resources')}>
+        <dl className={styles.details}>
+          <dt>{t('worker_pools.request_cpu')}</dt>
+          <dd>{resources?.requests?.cpu || DASH}</dd>
+          <dt>{t('worker_pools.request_memory')}</dt>
+          <dd>{resources?.requests?.memory || DASH}</dd>
+          <dt>{t('worker_pools.limit_cpu')}</dt>
+          <dd>{resources?.limits?.cpu || DASH}</dd>
+          <dt>{t('worker_pools.limit_memory')}</dt>
+          <dd>{resources?.limits?.memory || DASH}</dd>
+        </dl>
+      </Section>
+      <Section title={t('worker_pools.labels')} hint={t('worker_pools.labels_hint')}>
+        <PoolLabels pool={pool} />
+      </Section>
+      <Section title={t('worker_pools.resolution')}>
+        <PoolResolution pool={pool} />
+      </Section>
+    </div>
+  );
+}
+
+/** brood: WorkerPools of the install and its Proxmox pools. A row opens the
+ * pool's side panel; editing, deleting and the Proxmox allocation switches
+ * live there (#157). */
 export function WorkerPoolsPage() {
   const { t } = useTranslation();
   const administrator = useAdministrator();
@@ -64,18 +114,19 @@ export function WorkerPoolsPage() {
   useHeaderRefresh(connections.refresh);
   const { confirm } = useActions(refresh);
   const [editing, setEditing] = useState<{ name?: string } | null>(null);
-  const remove = (pool: WorkerPool) => confirm({
-    title: t('worker_pools.delete_title'),
-    message: t('worker_pools.delete_message', { name: pool.metadata.name }),
-    confirmText: t('substrate.delete'),
-    success: t('worker_pools.deleted', { name: pool.metadata.name }),
-    run: () => workerPoolsApi.remove(pool),
-  });
+  // Имя, а не объект: панель показывает пул после обновления списка, а
+  // удалённый пул закрывает её сам.
+  const [viewingName, setViewingName] = useState<string | null>(null);
+  const viewing = (viewingName !== null && data?.find((pool) => pool.metadata.name === viewingName)) || null;
+  const edit = (name: string) => {
+    setViewingName(null);
+    setEditing({ name });
+  };
   const columns: Column<WorkerPool>[] = [
     { key: 'name', label: t('substrate.name'), primary: true, render: (pool) => pool.metadata.name },
     { key: 'desired', label: t('worker_pools.replicas'), render: (pool) => pool.spec.replicas },
     { key: 'observed', label: t('worker_pools.observed'), render: (pool) => pool.status?.replicas ?? DASH },
-    { key: 'ready', label: t('worker_pools.ready'), render: (pool) => pool.status ? (pool.status.readyReplicas ?? 0) : DASH },
+    { key: 'ready', label: t('worker_pools.ready'), render: readyReplicas },
     { key: 'labels', label: t('worker_pools.labels'), render: (pool) => <PoolLabels pool={pool} /> },
     { key: 'resolution', label: t('worker_pools.resolution'), render: (pool) => <PoolResolution pool={pool} /> },
   ];
@@ -91,14 +142,28 @@ export function WorkerPoolsPage() {
         <EmptyState title={t('substrate.load_failed')} description={error} action={<Button onClick={() => void refresh()}>{t('worker_pools.retry')}</Button>} />
       ) : data?.length ? (
         <EntityTable columns={columns} rows={data} rowKey={(pool) => pool.metadata.uid ?? pool.metadata.name}
-          onRowClick={(pool) => setEditing({ name: pool.metadata.name })}
-          actionsLabel={t('substrate.actions')}
-          actions={(pool) => (
-            <Button variant="ghost" size="sm" className={styles.dangerText}
-              disabled={!versioned(pool)} onClick={() => remove(pool)}>{t('substrate.delete')}</Button>
-          )}
+          onRowClick={(pool) => setViewingName(pool.metadata.name)}
+          isActive={(pool) => pool.metadata.name === viewingName}
         />
       ) : <EmptyState title={t('worker_pools.empty')} description={t('worker_pools.empty_hint')} action={create} />}
+      <EntityPanel
+        open={viewing !== null}
+        onClose={() => setViewingName(null)}
+        eyebrow={viewing && sandboxOf(viewing)}
+        title={viewing?.metadata.name ?? ''}
+        status={viewing && <span>{t('worker_pools.ready')}: {readyReplicas(viewing)} / {viewing.spec.replicas}</span>}
+        actions={viewing ? workerPoolActionGroups(viewing, {
+          t,
+          confirm,
+          edit: () => edit(viewing.metadata.name),
+          remove: async () => {
+            await workerPoolsApi.remove(viewing);
+            setViewingName(null);
+          },
+        }) : []}
+      >
+        {viewing && <WorkerPoolDetails pool={viewing} />}
+      </EntityPanel>
       <ProxmoxConnections items={connections.data} error={connections.error} onRetry={connections.refresh} canAdd={administrator} />
       {editing && <PoolEditor key={editing.name ?? ''} name={editing.name} onClose={() => setEditing(null)} refresh={refresh} />}
     </div>
@@ -125,66 +190,108 @@ interface ProxmoxConnectionsProps {
   canAdd?: boolean;
 }
 
-/** Подключения и резервирования видны даже при отказе Kubernetes; секреты скрыты. */
+/** Подписанные поля подключения; ни токена, ни его ID здесь нет. */
+function connectionFacts(pool: ProxmoxPool, t: TFunction): Array<[string, string]> {
+  return [
+    [t('proxmox_connections.endpoint'), pool.endpoint],
+    [t('proxmox_connections.node'), pool.node],
+    [t('proxmox_connections.resource_pool'), pool.resourcePool],
+    [t('proxmox_connections.storage'), pool.storage],
+    [t('proxmox_connections.network'), pool.network],
+  ];
+}
+
+/** Резервирование «занято / всего» в единицах человека (CPU/GiB), а не сырые
+ * int64 строки; без управляемого пула резервирования нет. */
+function capacityFacts(pool: ProxmoxPool, t: TFunction): Array<[string, string]> | null {
+  const managed = pool.managedPool;
+  if (!managed) return null;
+  return [
+    [t('proxmox_connections.actors'), `${managed.usedActors} / ${managed.maxActors}`],
+    [t('proxmox_connections.cpu'), `${formatCpu(managed.usedCPUMillicores)} / ${formatCpu(managed.cpuMillicores)}`],
+    [t('proxmox_connections.memory'), `${formatMemory(managed.usedMemoryBytes)} / ${formatMemory(managed.memoryBytes)}`],
+    [t('proxmox_connections.disk'), `${formatMemory(managed.usedDiskBytes)} / ${formatMemory(managed.diskBytes)}`],
+  ];
+}
+
+function runtimeText(pool: ProxmoxPool, t: TFunction): string {
+  return t(pool.runtimeAvailable ? 'proxmox_connections.runtime_available' : 'proxmox_connections.runtime_not_installed');
+}
+
+function managedStateText(pool: ProxmoxPool, t: TFunction): string | null {
+  const state = pool.managedPool?.state;
+  if (state === undefined) return null;
+  if (state === 'enabled') return t('proxmox_connections.state_enabled');
+  if (state === 'draining') return t('proxmox_connections.state_draining');
+  return state;
+}
+
+/** Сведения подключения Proxmox в его панели: где оно и сколько занято. */
+export function ProxmoxPoolDetails({ pool }: { pool: ProxmoxPool }) {
+  const { t } = useTranslation();
+  const details = (items: Array<[string, string]>) => (
+    <dl className={styles.details}>
+      {items.map(([term, value]) => (
+        <Fragment key={term}><dt>{term}</dt><dd>{value || DASH}</dd></Fragment>
+      ))}
+    </dl>
+  );
+  const capacity = capacityFacts(pool, t);
+  return (
+    <div className={styles.form}>
+      <Section title={t('proxmox_connections.connection')}>{details(connectionFacts(pool, t))}</Section>
+      <Section title={t('proxmox_connections.capacity')}>
+        {capacity ? details(capacity) : <span className={styles.muted}>{DASH}</span>}
+      </Section>
+    </div>
+  );
+}
+
+/** Подключения и резервирования видны даже при отказе Kubernetes; секреты скрыты.
+ * Строка открывает панель пула: активация, вывод и включение живут в ней (#157). */
 export function ProxmoxConnections({ items, error, onRetry, canAdd }: ProxmoxConnectionsProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // Отказ относится к пулу, над которым шло действие: панель другого пула его не показывает.
+  const [actionError, setActionError] = useState<{ pool: string; message: string } | null>(null);
   const [adding, setAdding] = useState(false);
+  // Имя, а не объект: после действия панель остаётся открытой и показывает
+  // новое состояние пула и следующее действие.
+  const [viewingName, setViewingName] = useState<string | null>(null);
+  const viewing = (viewingName !== null && items?.find((pool) => pool.name === viewingName)) || null;
   const reload = useCallback(async () => { await onRetry(); }, [onRetry]);
   const { confirm } = useActions(reload);
-  type PoolAction = 'activate' | 'drain' | 'enable';
-  const act = (pool: ProxmoxPool, action: PoolAction) => confirm({
-    title: t(`proxmox_connections.${action}`),
-    message: t(`proxmox_connections.${action}_message`, { name: pool.name }),
-    confirmText: t(`proxmox_connections.${action}`),
-    success: t('proxmox_connections.action_done', { name: pool.name }),
-    run: async () => {
-      setBusy(true);
-      setActionError(null);
-      try {
-        return await proxmoxPoolsApi[action](pool.name);
-      } catch (error) {
-        setActionError(errorMessage(error));
-        throw error;
-      } finally {
-        setBusy(false);
-      }
-    },
-  });
+  const perform = async (pool: ProxmoxPool, action: ProxmoxPoolActionId) => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      return await proxmoxPoolsApi[action](pool.name);
+    } catch (error) {
+      setActionError({ pool: pool.name, message: errorMessage(error) });
+      throw error;
+    } finally {
+      setBusy(false);
+    }
+  };
   if (!canAdd && !error && !items?.length) return null;
-  // Столбцов столько, чтобы действие строки было видно без прокрутки:
-  // поля подключения -- одна подписанная ячейка, учётные данные -- в состоянии.
-  // У значения ячейки один корень: на телефоне ячейка -- сетка «подпись | значение».
+  // Строка только открывает панель: поля подключения -- одна подписанная
+  // ячейка, учётные данные -- в состоянии. У значения ячейки один корень:
+  // на телефоне ячейка -- сетка «подпись | значение».
   const columns: Column<ProxmoxPool>[] = [
     { key: 'name', label: t('substrate.name'), primary: true, render: (pool) => pool.name },
-    { key: 'connection', label: t('proxmox_connections.connection'), render: (pool) => <Facts items={[
-      [t('proxmox_connections.endpoint'), pool.endpoint],
-      [t('proxmox_connections.node'), pool.node],
-      [t('proxmox_connections.resource_pool'), pool.resourcePool],
-      [t('proxmox_connections.storage'), pool.storage],
-      [t('proxmox_connections.network'), pool.network],
-    ]} /> },
+    { key: 'connection', label: t('proxmox_connections.connection'), render: (pool) => <Facts items={connectionFacts(pool, t)} /> },
     { key: 'state', label: t('substrate.state'), render: (pool) => (
       <div>
-        <div>{t(pool.runtimeAvailable ? 'proxmox_connections.runtime_available' : 'proxmox_connections.runtime_not_installed')}</div>
-        {pool.managedPool && <div>{pool.managedPool.state === 'enabled'
-          ? t('proxmox_connections.state_enabled') : pool.managedPool.state === 'draining'
-            ? t('proxmox_connections.state_draining') : pool.managedPool.state}</div>}
+        <div>{runtimeText(pool, t)}</div>
+        {pool.managedPool && <div>{managedStateText(pool, t)}</div>}
       </div>
     ) },
     { key: 'capacity', label: t('proxmox_connections.capacity'), render: (pool) => {
-      const managed = pool.managedPool;
-      if (!managed) return DASH;
-      // Человек видит единицы (CPU/GiB), а не сырые int64 строки резервирования.
-      return <Facts stacked items={[
-        [t('proxmox_connections.actors'), `${managed.usedActors} / ${managed.maxActors}`],
-        [t('proxmox_connections.cpu'), `${formatCpu(managed.usedCPUMillicores)} / ${formatCpu(managed.cpuMillicores)}`],
-        [t('proxmox_connections.memory'), `${formatMemory(managed.usedMemoryBytes)} / ${formatMemory(managed.memoryBytes)}`],
-        [t('proxmox_connections.disk'), `${formatMemory(managed.usedDiskBytes)} / ${formatMemory(managed.diskBytes)}`],
-      ]} />;
+      const capacity = capacityFacts(pool, t);
+      return capacity ? <Facts stacked items={capacity} /> : DASH;
     } },
   ];
+  const used = viewing?.managedPool;
   return (
     <section className={styles.section} aria-label={t('proxmox_connections.title')}>
       <div className={styles.sectionHead}>
@@ -202,19 +309,33 @@ export function ProxmoxConnections({ items, error, onRetry, canAdd }: ProxmoxCon
           {items?.some((pool) => pool.runtimeAvailable || pool.managedPool) &&
             <p className={styles.sectionHint}>{t('proxmox_connections.profile_hint')}</p>
           }
-          {actionError && <p className={styles.fieldError} role="alert">{actionError}</p>}
+          {actionError && !viewing && <p className={styles.fieldError} role="alert">{actionError.message}</p>}
           <EntityTable columns={columns} rows={items ?? []} rowKey={(pool) => pool.name}
-            actionsLabel={t('substrate.actions')}
-            actions={(pool) => {
-              const action = !pool.managedPool
-                ? (pool.runtimeAvailable ? 'activate' : null)
-                : pool.managedPool.state === 'enabled' ? 'drain'
-                  : pool.managedPool.state === 'draining' && pool.runtimeAvailable ? 'enable' : null;
-              return action && <Button variant="secondary" size="sm" disabled={busy}
-                onClick={() => act(pool, action)}>{t(`proxmox_connections.${action}`)}</Button>;
-            }} />
+            onRowClick={(pool) => setViewingName(pool.name)}
+            isActive={(pool) => pool.name === viewingName} />
         </>
       )}
+      <EntityPanel
+        open={viewing !== null}
+        onClose={() => setViewingName(null)}
+        eyebrow={t('proxmox_connections.title')}
+        title={viewing?.name ?? ''}
+        status={viewing && (
+          <>
+            <span>{runtimeText(viewing, t)}</span>
+            {used && <span>{managedStateText(viewing, t)}</span>}
+            {used && <span>{t('proxmox_connections.actors')}: {used.usedActors} / {used.maxActors}</span>}
+          </>
+        )}
+        actions={viewing ? proxmoxPoolActionGroups(viewing, {
+          t, confirm, pending: busy, perform: (action) => perform(viewing, action),
+        }) : []}
+      >
+        {viewing && actionError?.pool === viewing.name && (
+          <p className={styles.fieldError} role="alert">{actionError.message}</p>
+        )}
+        {viewing && <ProxmoxPoolDetails pool={viewing} />}
+      </EntityPanel>
     </section>
   );
 }

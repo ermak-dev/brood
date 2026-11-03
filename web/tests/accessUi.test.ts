@@ -89,12 +89,82 @@ test('membership and retry capabilities are stated truthfully, never guessed', a
   ]) {
     expect(visibleAccessPath(path, false)).toBe(true);
   }
-  // Участники проекта читают состав, но не получают админские действия.
+  // Участники проекта читают состав, но не получают админские действия:
+  // действия панели участника решает memberPlan по признаку администратора
+  // (memberPlan(false) пуст -- accessPanels.test.ts).
   const page = source('features/access/PermissionsPage.tsx');
   expect(page).toContain('() => accessApi.members(projectId)');
-  expect(page).toMatch(/actions=\{\s*admin\s*\?/);
+  expect(page).toContain('memberPlan(admin)');
   expect(page).toContain('adding && admin');
   expect(page).toContain('admin && adding ? accessApi.users()');
+});
+
+/** JSX каждого <EntityTable ... /> страницы: до "/>" вне фигурных скобок,
+ * чтобы разметка внутри render-функций колонок не обрывала поиск. */
+function entityTables(text: string): string[] {
+  const tables: string[] = [];
+  for (
+    let start = text.indexOf('<EntityTable');
+    start >= 0;
+    start = text.indexOf('<EntityTable', start + 1)
+  ) {
+    let depth = 0;
+    let end = start;
+    for (; end < text.length; end += 1) {
+      if (text[end] === '{') depth += 1;
+      if (text[end] === '}') depth -= 1;
+      if (depth === 0 && text.startsWith('/>', end)) break;
+    }
+    tables.push(text.slice(start, end + 2));
+  }
+  return tables;
+}
+
+// #157: строка таблицы страницы только открывает панель объекта; кнопок в
+// строке нет, все действия -- в панели, по плану с теми же правами.
+test('page tables open an object panel instead of carrying row buttons', () => {
+  const pages = {
+    ProjectsPage: 'projectPlan(admin)',
+    SwarmsPage: 'swarmPlan(swarm, admin)',
+    UsersPage: 'userPlan()',
+    PermissionsPage: 'memberPlan(admin)',
+  };
+  for (const [page, plan] of Object.entries(pages)) {
+    const text = source(`features/access/${page}.tsx`);
+    const tables = entityTables(text);
+    expect(tables.length).toBe(1);
+    for (const table of tables) {
+      expect(table).toContain('onRowClick=');
+      expect(table).not.toContain('actions=');
+      expect(table).not.toContain('actionsLabel=');
+    }
+    expect(text).toContain('<EntityPanel');
+    expect(text).toContain(`panelGroups(${plan}`);
+  }
+  // Таблица внутри листа доступа к рою -- вложенная, её строки сохраняют
+  // свои кнопки (EntityTable: actions только для таблиц внутри панели).
+  expect(entityTables(source('features/access/SwarmAccess.tsx'))[0]).toContain('actions=');
+});
+
+// Перенос в панель не меняет подтверждений: те же заголовок, текст и
+// последствие, что у прежней кнопки строки.
+test('panel actions keep the confirmations of the former row buttons', () => {
+  const projects = source('features/access/ProjectsPage.tsx');
+  expect(projects).toContain("t('access.confirm_project', { name: project.name })");
+  expect(projects).toContain('await accessApi.deleteProject(project.id)');
+  expect(projects).toContain("if (selected === project.id) setProject('')");
+  const users = source('features/access/UsersPage.tsx');
+  expect(users).toContain("t('access.confirm_user', { name: user.username })");
+  expect(users).toContain('await useAuthStore.getState().checkAuth()');
+  const members = source('features/access/PermissionsPage.tsx');
+  expect(members).toContain("t('access.confirm_member', { name: member.username })");
+  expect(members).toContain('accessApi.removeMember(projectId, member.username)');
+  const swarms = source('features/access/SwarmsPage.tsx');
+  expect(swarms).toContain('confirm(swarm.name, async () => {');
+  expect(swarms).toContain('await accessApi.deleteSwarm(swarm.id)');
+  // Повтор создания идёт без вопроса, как и прежде: он продолжает
+  // сохранённую операцию, а не разрушает.
+  expect(swarms).toContain('run(() => accessApi.createSwarm(swarm.project_id, swarm.name))');
 });
 
 test('all locales explain actual permissions without dead claims', () => {
@@ -163,6 +233,7 @@ test('project sections register one refresh for tables and picker resources', ()
 test('each confirmed action carries its own consequence', () => {
   expect(source('features/access/ProjectsPage.tsx')).toContain('access.confirm_project');
   expect(source('features/access/PermissionsPage.tsx')).toContain('access.confirm_member');
+  expect(source('features/access/UsersPage.tsx')).toContain('access.confirm_user');
   for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW', 'ko', 'vi']) {
     const access = JSON.parse(source(`i18n/locales/${locale}.json`)).access;
     for (const key of ['confirm', 'confirm_project', 'confirm_member']) {

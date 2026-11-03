@@ -1,7 +1,7 @@
 import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Actor } from '@/services/brood/substrate';
-import { sessionReadable, type ManagedActionId } from './actorActions';
+import { actorsApi, type Actor } from '@/services/brood/substrate';
+import { managedActionGroups, sessionReadable, type ManagedActionId } from './actorActions';
 import type { ActionFailure, UnknownOutcome } from './actorOperations';
 import { ActorActionFailure } from './components/ActorActionFailure';
 import { ActorHistory } from './components/ActorHistory';
@@ -10,8 +10,7 @@ import { ActorOutcomeNotices } from './components/ActorOutcomeNotices';
 import { ActorOutput } from './components/ActorOutput';
 import { ActorOverview } from './components/ActorOverview';
 import { ActorUsage } from './components/ActorUsage';
-import { EditorSheet } from './components/EditorSheet';
-import { ManagedActorActions } from './components/ManagedActorActions';
+import { EntityPanel, PanelActions } from './components/EntityPanel';
 import { StateBadge } from './components/StateBadge';
 import styles from './substrate.module.scss';
 
@@ -76,11 +75,15 @@ function ConsoleTabs({
   );
 }
 
-/** brood: детали managed-актора — пульт: действия, обзор, вывод, история,
- * расход, сообщение. Данные сессии требуют прав owner/editor роя (сервер
- * проверяет их сам), поэтому viewer видит только обзор. Посещённые вкладки
- * остаются смонтированными: возврат не перечитывает их без запроса. После
- * reset (новое поколение) вкладки сессии читаются заново. */
+/** brood: панель managed-актора (#157) — пульт: состояние, обзор с
+ * действиями, вывод, история, расход, сообщение. Действия — во вкладке
+ * обзора, она открыта первой: группы сверху, необратимые после сведений, как
+ * в EntityPanel; вкладки сессии не сдвигаются кнопками вниз. Состояние,
+ * идущее действие и неизвестные исходы — над вкладками, видны с любой.
+ * Данные сессии и действия требуют прав owner/editor роя (сервер проверяет их
+ * сам), поэтому viewer видит только обзор. Посещённые вкладки остаются
+ * смонтированными: возврат не перечитывает их без запроса. После reset
+ * (новое поколение) вкладки сессии читаются заново. */
 export function ActorDetailsSheet({
   open,
   onClose,
@@ -123,9 +126,24 @@ export function ActorDetailsSheet({
   const ids = (id: Tab) => ({ tab: `${base}-tab-${id}`, panel: `${base}-panel-${id}` });
   const readable = sessionReadable(actor);
   const generation = `${actor.metadata.uid ?? name}:${actor.generation ?? ''}`;
+  const groups = managedActionGroups(actor, {
+    t,
+    canManage,
+    pending,
+    terminal: actorsApi.terminal(swarm, name),
+    onAction,
+  });
 
   const panel = (id: Tab) => {
-    if (id === 'overview') return <ActorOverview actor={actor} />;
+    if (id === 'overview') {
+      return (
+        <div className={styles.panel}>
+          <PanelActions groups={groups.filter((group) => !group.danger)} />
+          <ActorOverview actor={actor} />
+          <PanelActions groups={groups.filter((group) => group.danger)} />
+        </div>
+      );
+    }
     if (!readable) return <p className={styles.notice}>{t('actors.console.not_running')}</p>;
     if (id === 'output') return <ActorOutput swarm={swarm} name={name} />;
     if (id === 'history') return <ActorHistory swarm={swarm} name={name} />;
@@ -134,66 +152,63 @@ export function ActorDetailsSheet({
   };
 
   return (
-    <EditorSheet
+    <EntityPanel
       open={open}
       onClose={onClose}
-      size="lg"
       eyebrow={swarmName}
       title={t('actors.details_title', { name })}
-    >
-      <div className={styles.form}>
-        <div className={styles.consoleHead}>
+      status={
+        <>
           <StateBadge state={actor.phase ?? ''} namespace="actors.managed_state" />
-          {canManage && (
-            <div className={styles.actorActionsWrap}>
-              <ManagedActorActions
-                actor={actor}
-                swarm={swarm}
-                canManage={canManage}
-                pending={pending}
-                onAction={onAction}
-              />
-            </div>
-          )}
-        </div>
-        {failure?.name === name && (
-          <ActorActionFailure
-            name={name}
-            action={failure.action ? t(`actors.ops.${failure.action}.label`) : undefined}
-            error={failure.error}
-            administrator={administrator}
-            onClose={onClearFailure}
-          />
-        )}
-        <ActorOutcomeNotices
-          items={unknown.filter((item) => item.name === name)}
-          onDismiss={onDismissUnknown}
+          {/* Живая область есть всегда: появление «Restarting…» объявляется. */}
+          <span role="status" className={pending ? styles.pendingNote : undefined}>
+            {pending && (
+              <>
+                <span className="loading-spinner" aria-hidden="true" />
+                {t(`actors.ops.${pending}.pending`, { name })}
+              </>
+            )}
+          </span>
+        </>
+      }
+    >
+      {failure?.name === name && (
+        <ActorActionFailure
+          name={name}
+          action={failure.action ? t(`actors.ops.${failure.action}.label`) : undefined}
+          error={failure.error}
+          administrator={administrator}
+          onClose={onClearFailure}
         />
-        {canManage ? (
-          <ConsoleTabs
-            tabs={tabs}
-            active={tab}
-            ids={ids}
-            label={t('actors.console.tabs_label', { name })}
-            onChange={select}
-          />
-        ) : (
-          <p className={styles.notice}>{t('actors.console.viewer_hint')}</p>
-        )}
-        {/* Контейнер каждой вкладки есть всегда (aria-controls указывает на
-            существующий элемент); содержимое монтируется при первом открытии. */}
-        {tabs.map((id) => (
-          <div
-            key={`${id}:${generation}`}
-            role={canManage ? 'tabpanel' : undefined}
-            id={ids(id).panel}
-            aria-labelledby={canManage ? ids(id).tab : undefined}
-            hidden={tab !== id}
-          >
-            {visited.has(id) && panel(id)}
-          </div>
-        ))}
-      </div>
-    </EditorSheet>
+      )}
+      <ActorOutcomeNotices
+        items={unknown.filter((item) => item.name === name)}
+        onDismiss={onDismissUnknown}
+      />
+      {canManage ? (
+        <ConsoleTabs
+          tabs={tabs}
+          active={tab}
+          ids={ids}
+          label={t('actors.console.tabs_label', { name })}
+          onChange={select}
+        />
+      ) : (
+        <p className={styles.notice}>{t('actors.console.viewer_hint')}</p>
+      )}
+      {/* Контейнер каждой вкладки есть всегда (aria-controls указывает на
+          существующий элемент); содержимое монтируется при первом открытии. */}
+      {tabs.map((id) => (
+        <div
+          key={`${id}:${generation}`}
+          role={canManage ? 'tabpanel' : undefined}
+          id={ids(id).panel}
+          aria-labelledby={canManage ? ids(id).tab : undefined}
+          hidden={tab !== id}
+        >
+          {visited.has(id) && panel(id)}
+        </div>
+      ))}
+    </EntityPanel>
   );
 }

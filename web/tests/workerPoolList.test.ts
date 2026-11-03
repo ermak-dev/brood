@@ -10,9 +10,10 @@ import { I18nextProvider } from 'react-i18next';
 import { createInstance } from 'i18next';
 import { readFileSync } from 'node:fs';
 
-// FEATURE: Отдельный read-only блок подключений Proxmox на странице пулов.
+// FEATURE: Отдельный блок подключений Proxmox на странице пулов.
 // SPEC: items, независимость от Kubernetes, без секретов и ложной готовности;
 // пустой список скрыт, отказ локален, все шесть локалей имеют одинаковые ключи.
+// В таблице нет элементов управления: строка только открывает панель пула (#157).
 const connection = {
   name: 'brood-proxmox', endpoint: 'https://pve.example.invalid:8006',
   tokenID: 'synthetic-user@pve!panel', node: 'synthetic-node',
@@ -60,7 +61,7 @@ test('Proxmox empty items stay empty, malformed data and 404 never invent connec
   }
 });
 
-test('connection block is read-only, reports configuration not readiness, and omits token data', async () => {
+test('connection block has no controls, reports configuration not readiness, and omits token data', async () => {
   const withUnexpectedSecret = { ...connection, tokenSecret: 'SYNTHETIC_SECRET_SENTINEL' };
   const markup = await connectionMarkup([withUnexpectedSecret]);
   for (const value of [connection.name, connection.endpoint, connection.node, connection.resourcePool,
@@ -68,7 +69,10 @@ test('connection block is read-only, reports configuration not readiness, and om
     expect(markup).toContain(value);
   }
   for (const forbidden of ['SYNTHETIC_SECRET_SENTINEL', connection.tokenID, '<input', '<button',
-    'tabindex=', 'Ready', 'replicas', 'Credential configured']) expect(markup).not.toContain(forbidden);
+    'Ready', 'replicas', 'Credential configured']) expect(markup).not.toContain(forbidden);
+  // Единственная точка фокуса -- сама строка: она открывает панель пула.
+  expect(markup.match(/tabindex=/g)).toEqual(['tabindex=']);
+  expect(markup).toMatch(/<tr[^>]*tabindex="0"/);
 });
 
 test('empty and loading connections add no clutter; failure is concise and scoped', async () => {
@@ -87,7 +91,7 @@ test('all six locales translate the connection block with matching keys and bool
   for (const locale of locales) {
     const strings = messages(locale).proxmox_connections;
     expect(strings).toBeDefined();
-    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'action_done', 'connection', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining', 'add', 'form_title', 'form_hint', 'form_section', 'create', 'created', 'duplicate_name', 'secret_note', 'ca_hint', 'fields', 'placement_section', 'runtime_section', 'runtime_hint', 'validation'].sort());
+    expect(Object.keys(strings).sort()).toEqual([...keys, 'runtime_available', 'activate', 'drain', 'enable', 'activate_message', 'drain_message', 'enable_message', 'activate_hint', 'drain_hint', 'enable_hint', 'action_done', 'connection', 'capacity', 'actors', 'cpu', 'memory', 'disk', 'profile_hint', 'state_enabled', 'state_draining', 'add', 'form_title', 'form_hint', 'form_section', 'create', 'created', 'duplicate_name', 'secret_note', 'ca_hint', 'fields', 'placement_section', 'runtime_section', 'runtime_hint', 'validation'].sort());
     for (const [key, value] of Object.entries(strings)) if (key !== 'fields' && key !== 'validation') expect(typeof value === 'string' && value.length > 0).toBe(true);
     for (const group of ['fields', 'validation']) {
       expect(Object.keys(strings[group]).sort()).toEqual(Object.keys(messages('en').proxmox_connections[group]).sort());
