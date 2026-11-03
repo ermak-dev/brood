@@ -268,3 +268,14 @@ private keys или admin password. Private provisioning инструкции и
 Docker/kind и свежими секретами (`docs/WORKBENCH.md`). Отсутствие ёмкости —
 блокер, а не разрешение остановить пользовательский актор или менять host
 runtime policy. Server deploy никогда не вызывает перевод пулов на microVM.
+
+## Артефакты бутстрапа песочницы
+
+После выкладки сервера `brood-deploy.sh` собирает `brood-guest` и `bro` из
+релизного дерева, скачивает `claude` по пинам из `brood/dev/pins.json` и
+публикует все три артефакта с `manifest.json` в PVC сервера
+(`/data/artifacts`, настройка `BROOD_ARTIFACTS_DIR`). Образ сервера — scratch
+без shell, поэтому поток разбирает сам бинарь: `kubectl exec -i
+deployment/brood-go -- /brood artifacts --dir /data/artifacts`. Сервер
+перечитывает манифест на каждый запрос гостя: новый CT забирает новые бинари
+без рестарта сервера; работающие акторы продолжают старые до reset.

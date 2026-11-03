@@ -148,6 +148,15 @@ class GoManifestTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertTrue(env.get(key), f"incomplete router configuration: {key}")
 
+    def test_server_receives_artifacts_directory_setting(self):
+        # #156: выкладка публикует артефакты бутстрапа в PVC сервера; путь —
+        # свойство машины деплоя, не секрет установки.
+        deployment = next(item for item in render("localhost:5002/brood-go@sha256:" + "a" * 64)
+                          if item["kind"] == "Deployment")
+        env = {item["name"]: item.get("value")
+               for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env.get("BROOD_ARTIFACTS_DIR"), "/data/artifacts")
+
     def test_kubernetes_configuration_also_supplies_approved_worker_images(self):
         deployment = next(item for item in render("localhost:5002/brood-go@sha256:" + "a" * 64)
                           if item["kind"] == "Deployment")
