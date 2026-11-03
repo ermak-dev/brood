@@ -221,7 +221,10 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
            "ATENET_SERVER_NAME": "atenet-router.ate-system.svc",
            "KUBE_API_URL": "https://kubernetes.default.svc",
            "KUBE_API_TOKEN": "/var/run/secrets/kubernetes.io/serviceaccount/token",
-           "KUBE_API_CA": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"}
+           "KUBE_API_CA": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+           # Артефакты бутстрапа песочницы (#156): выкладка публикует их в PVC
+           # после rollout; сервер перечитывает манифест на каждый запрос.
+           "BROOD_ARTIFACTS_DIR": "/data/artifacts"}
     if registry:
         env.update(BROOD_REGISTRY_URL=registry["url"], BROOD_REGISTRY_IMAGE_HOST=f"localhost:{local.REGISTRY_PORT}")
     container = {"name": "brood", "image": image, "args": ["serve"],

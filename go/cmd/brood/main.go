@@ -38,6 +38,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdBootstrapAdmin(rest, stdin, stdout, stderr)
 	case "database":
 		return cmdDatabase(rest, stdout, stderr)
+	case "artifacts":
+		return cmdArtifacts(rest, stdin, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return 0
