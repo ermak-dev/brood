@@ -51,6 +51,9 @@ type Server struct {
 	mux       *http.ServeMux
 	cancel    context.CancelFunc
 
+	// artifactsDir — каталог доставки артефактов бутстрапа гостя.
+	artifactsDir string
+
 	managedLLM  http.Handler
 	adminModels *adminModelClient
 }
@@ -93,7 +96,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes)}
+	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir}
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
 		catalog.Close()
@@ -216,6 +219,10 @@ func (s *Server) Handler() http.Handler {
 		}
 		if publicWorkspacePath(r.URL.Path) {
 			s.serveGuestWorkspace(w, r)
+			return
+		}
+		if publicArtifactsPath(r.URL.Path) {
+			s.serveGuestArtifacts(w, r)
 			return
 		}
 		if publicManagedLLMPath(r.URL.Path) {

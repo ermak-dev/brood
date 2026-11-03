@@ -177,7 +177,8 @@ func TestOrchestration(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			}}
-			err := dispatch(ctx, nil, func() []string { return validEnv(t) }, d)
+			t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+			err := dispatch(ctx, nil, func() []string { return append(validEnv(t), "BROOD_GUEST_STAGE=runtime") }, d)
 			if failure == "signal" {
 				if err != nil {
 					t.Fatal(err)

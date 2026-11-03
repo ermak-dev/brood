@@ -1,4 +1,5 @@
 """Образ получает только Git-снимки и закреплённые инструменты проекта."""
+import json
 import subprocess
 import tempfile
 import unittest
@@ -125,6 +126,11 @@ class ImageBuildTests(unittest.TestCase):
         text = (build.HERE / "Dockerfile").read_text()
         self.assertIn("ARG CLAUDE_VERSION=2.1.310", text)
         self.assertIn("ARG CLAUDE_SHA256=b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56", text)
+        # Пин claude общий для всей установки (#155/#156): workbench и pins.json
+        # обязаны совпадать, иначе версии разъедутся молча.
+        pins = json.loads((build.HERE.parent / "pins.json").read_text())
+        self.assertEqual((pins["CLAUDE_VERSION"], pins["CLAUDE_SHA256"]),
+                         ("2.1.310", "b73676430af12f97316a798b8371f81d640f90a58bdcb8f3ce56a835bb47df56"))
         self.assertIn("https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude", text)
         self.assertIn('"${CLAUDE_SHA256}"', text)
         self.assertIn("ttyd", text)

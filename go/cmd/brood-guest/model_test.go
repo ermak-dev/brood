@@ -29,7 +29,8 @@ func TestModelGatewayStartsBeforeActorAndClosesOnShutdown(t *testing.T) {
 		},
 		relay: func(ctx context.Context, _ relay.ClientConfig) error { cancel(); <-ctx.Done(); return ctx.Err() },
 	}
-	if err := dispatch(ctx, nil, func() []string { return validEnv(t) }, d); err != nil {
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	if err := dispatch(ctx, nil, func() []string { return append(validEnv(t), "BROOD_GUEST_STAGE=runtime") }, d); err != nil {
 		t.Fatal(err)
 	}
 	if !model.closed || !runtime.closed || !network.closed {
