@@ -21,6 +21,12 @@ OWNER = {"app.kubernetes.io/managed-by": "brood-go"}
 PROXMOX_SETTINGS = ("BROOD_PROXMOX_POOLS", "BROOD_PROXMOX_TOKENS")
 PROXMOX_RUNTIME_SETTINGS = ("BROOD_PUBLIC_ORIGIN", "BROOD_PROXMOX_RELAY_SECRET")
 ACTOR_LLM_SETTINGS = ("BROOD_ACTOR_LLM_URL", "BROOD_ACTOR_LLM_API_KEY", "BROOD_ACTOR_LLM_CA_PEM_B64")
+GIT_REMOTES = "BROOD_GIT_REMOTES"
+# Канон origin из контракта сервера (docs/DEPLOY.md, «Git remotes»): https, DNS-host в нижнем регистре,
+# только неявный порт 443, непустой путь без "/" в конце, без userinfo, query,
+# fragment и percent-encoding. Строже сервера безопасно: отказ здесь — до сборки.
+GIT_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+GIT_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 
 
 def actor_model_environment(get):
@@ -100,6 +106,70 @@ def proxmox_egress(endpoints, resolver, setting="BROOD_PROXMOX_POOLS"):
             for cidr, port in sorted(rules)]
 
 
+def visible_ascii(value):
+    return isinstance(value, str) and bool(value) and all(32 < ord(char) < 127 for char in value)
+
+
+def unique_keys(pairs):
+    # json.loads молча оставляет последний из повторов: второй remote вытеснил бы первый.
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError
+    return dict(pairs)
+
+
+def git_origin_host(origin):
+    """Канонический HTTPS URL репозитория -> его host; иначе ValueError."""
+    if not isinstance(origin, str) or len(origin.encode("utf-8")) > 1024 or not origin.startswith("https://"):
+        raise ValueError
+    host, slash, path = origin.removeprefix("https://").partition("/")
+    labels = host.split(".")
+    # Последняя метка с буквы: IPv4 в любой записи (10.0.0.5, 127.1) — не DNS-имя.
+    if (not slash or len(host) > 253 or not all(GIT_HOST_LABEL.fullmatch(label) for label in labels)
+            or not labels[-1][0].isalpha()):
+        raise ValueError
+    if any(segment in (".", "..") or not GIT_PATH_SEGMENT.fullmatch(segment) for segment in path.split("/")):
+        raise ValueError
+    return host
+
+
+def git_remote_hosts(raw):
+    """BROOD_GIT_REMOTES -> отсортированные различные hosts remotes; пусто или {} -> [].
+
+    Ключ — канонический HTTPS URL репозитория, значение — {} или ровно
+    username и token видимым ASCII. Отказ называет настройку, но не значения:
+    в них токены и адреса установки."""
+    if not raw:
+        return []
+    try:
+        remotes = json.loads(raw, object_pairs_hook=unique_keys)
+        if not isinstance(remotes, dict):
+            raise ValueError
+    except (ValueError, TypeError, RecursionError):
+        raise RuntimeError(f"{GIT_REMOTES} must contain a JSON object of repository remotes "
+                           "without duplicate keys") from None
+    hosts = set()
+    for origin, credentials in remotes.items():
+        try:
+            hosts.add(git_origin_host(origin))
+        except ValueError:
+            raise RuntimeError(f"{GIT_REMOTES} keys must be canonical HTTPS repository URLs: lowercase DNS host, "
+                               "no port, credentials, query or fragment, non-empty path without trailing slash") from None
+        if credentials != {} and not (isinstance(credentials, dict) and set(credentials) == {"username", "token"}
+                                      and all(map(visible_ascii, credentials.values()))):
+            raise RuntimeError(f"{GIT_REMOTES} values must be {{}} or a username and token "
+                               "of visible ASCII characters without spaces")
+    return sorted(hosts)
+
+
+def git_remote_egress(hosts, resolver):
+    """Hosts remotes -> egress сервера на TCP 443 каждого найденного адреса.
+
+    Частный адрес LAN допустим: host задал оператор. Loopback, link-local,
+    multicast, unspecified и reserved отвергает proxmox_egress."""
+    return proxmox_egress({f"https://{host}" for host in hosts}, resolver, GIT_REMOTES)
+
+
 def approved_images(raw):
     try:
         images = json.loads(raw)
@@ -123,7 +193,7 @@ def registry_endpoint(raw):
 
 
 def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False,
-              proxy_api_key=False, actor_llm_settings=()):
+              proxy_api_key=False, actor_llm_settings=(), git_remotes=False):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -177,6 +247,9 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
             "name": "brood-go-env", "key": "CLIPROXY_API_KEY"}}})
     container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
         "name": "brood-go-env", "key": key}}} for key in ACTOR_LLM_SETTINGS if key in actor_llm_settings)
+    if git_remotes:
+        container["env"].append({"name": GIT_REMOTES, "valueFrom": {"secretKeyRef": {
+            "name": "brood-go-env", "key": GIT_REMOTES}}})
     if proxmox:
         container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": key}}} for key in PROXMOX_SETTINGS)
@@ -297,6 +370,12 @@ class Deploy:
         environment.update(actor_env)
         actor_rules = proxmox_egress({actor_env["BROOD_ACTOR_LLM_URL"]}, self.resolver,
                                      "BROOD_ACTOR_LLM_URL") if actor_env else []
+        git_raw = self.get(GIT_REMOTES)
+        git_hosts = git_remote_hosts(git_raw)
+        if git_hosts:
+            # Сервер получает значение целиком: полный контракт и токены — его, не deploy.
+            environment[GIT_REMOTES] = git_raw
+        git_rules = git_remote_egress(git_hosts, self.resolver)
         proxy_url = self.get("CLIPROXY_URL")
         model_key = self.get("CLIPROXY_API_KEY")
         if model_key:
@@ -353,7 +432,7 @@ class Deploy:
             objects = manifests(image, workers, proxy=bool(proxy_url), registry=registry,
                                 proxy_api_key=bool(model_key), proxmox=all(key in environment for key in PROXMOX_SETTINGS),
                                 proxmox_runtime=all(key in environment for key in PROXMOX_RUNTIME_SETTINGS),
-                                actor_llm_settings=tuple(actor_env))
+                                actor_llm_settings=tuple(actor_env), git_remotes=GIT_REMOTES in environment)
             # data сохраняет владение apply ключами, включая их удаление при отключении.
             env_data = {key: base64.b64encode(value.encode("utf-8")).decode("ascii")
                         for key, value in environment.items()}
@@ -361,7 +440,7 @@ class Deploy:
                 env_data, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
             deployment = next(obj for obj in objects if obj["kind"] == "Deployment")
             deployment["spec"]["template"]["metadata"]["annotations"] = {"brood.dev/server-env-sha256": checksum}
-            objects[-1]["spec"]["egress"].extend([*api_rules, *pve_rules, *actor_rules])
+            objects[-1]["spec"]["egress"].extend([*api_rules, *pve_rules, *actor_rules, *git_rules])
             if proxy_url:
                 objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
                     "metadata": {"name": "brood-go-cliproxy", "namespace": "brood", "labels": OWNER.copy()},

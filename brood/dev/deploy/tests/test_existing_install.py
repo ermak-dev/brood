@@ -1,4 +1,5 @@
 """Проверки выкладки существующей установки без operator credentials."""
+import base64
 import copy
 import json
 import unittest
@@ -12,8 +13,8 @@ from brood.dev.deploy.tests.test_public import VALUES
 IMAGE = "localhost:5002/brood-go@sha256:" + "a" * 64
 
 
-def resources():
-    objects = manifests(IMAGE, {"gvisor": "registry/worker@sha256:" + "b" * 64})
+def resources(**options):
+    objects = manifests(IMAGE, {"gvisor": "registry/worker@sha256:" + "b" * 64}, **options)
     result = {}
     for obj in objects:
         obj["metadata"]["uid"] = obj["metadata"]["name"] + "-uid"
@@ -48,9 +49,9 @@ def resources():
 # RESULT: IMPLEMENTED — fail-closed snapshot and post-rollout inspect, no auth mutation.
 # STATUS: DONE
 class ExistingInstallTests(unittest.TestCase):
-    def helper(self):
+    def helper(self, **options):
         from brood.dev.deploy.existing_install import ExistingInstall
-        objects = resources()
+        objects = resources(**options)
         deployment = public.Deployment(Mock(), get={**VALUES, "BROOD_DEPLOY_MODE": "existing"}.get)
         deployment.get_object = Mock(side_effect=lambda kind, name: copy.deepcopy(objects.get((kind, name))))
         return ExistingInstall(deployment), objects
@@ -370,6 +371,47 @@ class ExistingInstallTests(unittest.TestCase):
                 else:
                     self.assertEqual(deploy.run(before_apply=backup), IMAGE)
                     self.assertEqual(events, ["build", "backup", "apply"])
+
+    # FEATURE: existing-режим переносит BROOD_GIT_REMOTES тем же Secret и rollout.
+    # SPEC: snapshot до apply, ключ и secretKeyRef в release, следующий preflight
+    # принимает сервер с этой ссылкой; токен не попадает в argv и manifests вне Secret.
+    def test_existing_rollout_carries_git_remotes_and_next_preflight_accepts_it(self):
+        from pathlib import Path
+        from brood.dev.deploy import go_server
+
+        token = "synthetic-existing-git-token"
+        remotes = json.dumps({"https://git.example.test/group/repo": {"username": "oauth2", "token": token}})
+        get = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_GIT_REMOTES": remotes,
+               "WORKER_POOL_IMAGES": json.dumps({"gvisor": "registry/worker@sha256:" + "b" * 64})}.get
+        events, applied = [], []
+        cluster = Mock()
+
+        def output(*args):
+            self.assertFalse(any(token in str(arg) for arg in args))
+            if "build" in args:
+                Path(args[args.index("--metadata-file") + 1]).write_text(
+                    json.dumps({"containerimage.digest": "sha256:" + "a" * 64}))
+            if "apply" in args:
+                events.append("apply")
+                applied.extend(json.loads(Path(args[args.index("-f") + 1]).read_text())["items"])
+            return 0, "", ""
+
+        cluster.shell.output.side_effect = output
+        deploy = go_server.Deploy(cluster, get=get, resolver=Mock(return_value=[(2, 1, 6, "", ("192.168.10.20", 443))]))
+        with patch.object(go_server, "Infrastructure") as infra, patch.object(deploy, "_registry_access", return_value=None):
+            infra.return_value._tls.return_value = {}
+            infra.return_value._api_egress.return_value = []
+            self.assertEqual(deploy.run(before_apply=lambda image: events.append("backup")), IMAGE)
+        self.assertEqual(events, ["backup", "apply"])
+        secret = next(o for o in applied if o["metadata"]["name"] == "brood-go-env")
+        self.assertEqual(base64.b64decode(secret["data"]["BROOD_GIT_REMOTES"]).decode(), remotes)
+        server = next(o for o in applied if o["kind"] == "Deployment")
+        env = {e["name"]: e for e in server["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["BROOD_GIT_REMOTES"]["valueFrom"]["secretKeyRef"],
+                         {"name": "brood-go-env", "key": "BROOD_GIT_REMOTES"})
+        self.assertNotIn(token, json.dumps(applied))
+        helper, _ = self.helper(git_remotes=True)
+        self.assertEqual(helper.check()["path"], "/data/brood.db")
 
     def test_existing_flow_never_bootstraps_and_reports_pending_operator_acceptance(self):
         values = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_ADMIN_PASSWORD": ""}

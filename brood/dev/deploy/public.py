@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from brood.common import config
 from brood.dev.deploy import edge
 from brood.dev.deploy.existing_install import ExistingInstall
-from brood.dev.deploy.go_server import Deploy as GoDeploy, actor_model_environment
+from brood.dev.deploy.go_server import GIT_REMOTES, Deploy as GoDeploy, actor_model_environment, git_remote_hosts
 from brood.dev.deploy.infrastructure import Infrastructure
 from brood.dev.substrate import local
 
@@ -56,6 +56,8 @@ def settings(get):
         if not values["CLIPROXY_MANAGEMENT_KEY"]:
             raise RuntimeError("CLIPROXY_MANAGEMENT_KEY is required with CLIPROXY_URL")
     values.update(actor_model_environment(get))
+    # Только форма, без DNS: отказ до сборки edge; значение берёт Go-выкладка.
+    git_remote_hosts(get(GIT_REMOTES))
     return values
 
 
