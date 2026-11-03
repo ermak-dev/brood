@@ -49,7 +49,7 @@ bro mcp
 Профиль `claude-proxmox` добавляет следующий сервер к Claude Code:
 
 ```json
-{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}
+{"mcpServers":{"brood":{"command":"/opt/brood/bin/bro","args":["--guest","mcp"]}}}
 ```
 
 Это дополнительный `--mcp-config`, не `--strict-mcp-config`. Пользовательские

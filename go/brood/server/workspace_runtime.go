@@ -28,7 +28,7 @@ type workspaceOrigin struct {
 func (s *Server) serveGuestWorkspace(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	g, ok := s.openGuestRuntime(ctx, w, r, workspaceRuntimePrefix, "workspace origin delivery unavailable")
+	g, _, ok := s.openGuestRuntime(ctx, w, r, workspaceRuntimePrefix, "workspace origin delivery unavailable", noGuestRuntimeRest)
 	if !ok {
 		return
 	}

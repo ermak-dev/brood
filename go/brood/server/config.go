@@ -93,6 +93,9 @@ type Config struct {
 	ActorLLMURL    string
 	ActorLLMAPIKey string `json:"-"`
 	ActorLLMCAPEM  []byte `json:"-"`
+	// artifactsDir — каталог артефактов бутстрапа гостя (BROOD_ARTIFACTS_DIR):
+	// свойство машины, без дефолта. Пусто — доставка артефактов не настроена.
+	artifactsDir string
 }
 
 // String and GoString keep server credentials out of diagnostic formatting.
@@ -147,6 +150,11 @@ func LoadConfig(get getenv) (Config, error) {
 		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 	}
+	artifactsDir, err := loadGuestArtifactsDir(get)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.artifactsDir = artifactsDir
 	if cfg.DBPath == "" {
 		cfg.DBPath = defaultDBPath
 	}

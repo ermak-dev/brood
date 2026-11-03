@@ -31,33 +31,42 @@ type guestRuntime struct {
 	swarm      store.Swarm
 }
 
+// noGuestRuntimeRest — маршруты без хвоста после <uid>/<generation>.
+func noGuestRuntimeRest(rest []string) bool { return len(rest) == 0 }
+
 // openGuestRuntime — общая авторизация машинных маршрутов гостя вне
-// cookie/CSRF middleware: только GET точного пути без query и тела, ровно один
-// Bearer token этого UID и поколения при текущем start intent, активная
-// привязка роя и namespace. Отказ уже записан в w, когда ok == false;
-// unavailable — деталь 503 маршрута.
-func (s *Server) openGuestRuntime(ctx context.Context, w http.ResponseWriter, r *http.Request, prefix, unavailable string) (guestRuntime, bool) {
+// cookie/CSRF middleware: только GET, без query и тела, ровно один Bearer
+// token этого UID и поколения при текущем start intent, активная привязка
+// роя и namespace. restOK решает судьбу хвоста пути после <uid>/<generation>
+// до авторизации: у секретов и workspace хвоста нет, у артефактов — имя
+// файла из закрытого списка. Отказ уже записан в w, когда ok == false;
+// unavailable — деталь 503 маршрута. Второе значение — принятый хвост.
+func (s *Server) openGuestRuntime(ctx context.Context, w http.ResponseWriter, r *http.Request, prefix, unavailable string, restOK func([]string) bool) (guestRuntime, []string, bool) {
 	var g guestRuntime
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		writeDetail(w, 405, "method not allowed")
-		return g, false
+		return g, nil, false
 	}
 	if r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.ForceQuery || r.ContentLength != 0 {
 		writeDetail(w, 404, "not found")
-		return g, false
+		return g, nil, false
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, prefix), "/")
-	if len(parts) != 2 || !projectSecretActorUID.MatchString(parts[0]) {
+	var rest []string
+	if len(parts) > 2 {
+		rest = parts[2:]
+	}
+	if len(parts) < 2 || !projectSecretActorUID.MatchString(parts[0]) || !restOK(rest) {
 		writeDetail(w, 404, "not found")
-		return g, false
+		return g, nil, false
 	}
 	generation, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || generation <= 0 || strconv.FormatInt(generation, 10) != parts[1] {
 		writeDetail(w, 404, "not found")
-		return g, false
+		return g, nil, false
 	}
 	credentials := r.Header.Values("Authorization")
 	token := ""
@@ -67,27 +76,27 @@ func (s *Server) openGuestRuntime(ctx context.Context, w http.ResponseWriter, r 
 	uid := parts[0]
 	if s.managed == nil || s.managed.hub == nil || s.managed.registry == nil || len(s.managed.registry.relaySecret) < 32 || len(token) != 43 || !s.managed.authorizeGuest(uid, generation, token) {
 		writeDetail(w, 401, "guest authorization denied")
-		return g, false
+		return g, nil, false
 	}
 	actor, err := s.store.GetManagedActor(ctx, uid)
 	if err != nil {
 		writeDetail(w, 401, "guest authorization denied")
-		return g, false
+		return g, nil, false
 	}
 	swarm, err := s.store.GetSwarm(ctx, actor.SwarmID)
 	if err != nil || swarm.State != "active" || swarm.AtespaceUID == nil || *swarm.AtespaceUID != actor.AtespaceUID {
 		writeDetail(w, 401, "guest authorization denied")
-		return g, false
+		return g, nil, false
 	}
 	if err := s.checkSwarmNamespace(ctx, toAppSwarm(swarm)); err != nil {
 		writeDetail(w, 503, unavailable)
-		return g, false
+		return g, nil, false
 	}
 	if !s.managed.authorizeGuest(uid, generation, token) {
 		writeDetail(w, 401, "guest authorization denied")
-		return g, false
+		return g, nil, false
 	}
-	return guestRuntime{uid: uid, generation: generation, token: token, actor: actor, swarm: swarm}, true
+	return guestRuntime{uid: uid, generation: generation, token: token, actor: actor, swarm: swarm}, rest, true
 }
 
 // guestRuntimeCurrent повторяет привязку после чтения ответа: тот же проект, активный рой
@@ -110,7 +119,7 @@ func writeGuestRuntime(w http.ResponseWriter, data []byte) {
 func (s *Server) serveGuestProjectSecrets(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	g, ok := s.openGuestRuntime(ctx, w, r, projectSecretRuntimePrefix, "project secret delivery unavailable")
+	g, _, ok := s.openGuestRuntime(ctx, w, r, projectSecretRuntimePrefix, "project secret delivery unavailable", noGuestRuntimeRest)
 	if !ok {
 		return
 	}

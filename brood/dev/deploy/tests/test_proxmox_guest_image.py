@@ -32,8 +32,13 @@ class ProxmoxGuestImageTests(unittest.TestCase):
         recipe = self.required(RECIPE).read_text()
         factory = (ROOT / "brood/dev/workbench/Dockerfile").read_text()
         for line in factory.splitlines():
-            if line.startswith(("ARG CLAUDE_", "ARG TTYD_")):
+            # claude пинает только workbench: в гостевой образ его ставит
+            # bootstrap из артефактов сервера (#155), а не слой образа.
+            if line.startswith(("ARG TTYD_",)):
                 self.assertIn(line, recipe)
+        for pin in ("CLAUDE_VERSION", "CLAUDE_SHA256"):
+            self.assertIn(f'"{pin}"', (ROOT / "brood/dev/pins.json").read_text())
+        self.assertNotIn("downloads.claude.ai", recipe)
         bun = next(line.split(" AS ")[0] for line in
                    (ROOT / "deploy/Dockerfile.go").read_text().splitlines()
                    if line.startswith("FROM oven/bun:"))

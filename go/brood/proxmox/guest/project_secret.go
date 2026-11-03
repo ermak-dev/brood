@@ -230,7 +230,7 @@ func RunProjectApp(warn io.Writer) error {
 	if os.Chdir(layout.Project) != nil {
 		return secretFailure()
 	}
-	return syscall.Exec("/usr/local/bin/claude", projectAppArgs(), env)
+	return syscall.Exec("/opt/brood/bin/claude", projectAppArgs(), env)
 }
 
 // appLayout fixes every path of the app wrapper; tests substitute temporary ones.
@@ -277,5 +277,5 @@ func missingCheckout(project string) bool {
 }
 
 func projectAppArgs() []string {
-	return []string{"claude", "--dangerously-skip-permissions", "--mcp-config", `{"mcpServers":{"brood":{"command":"/usr/local/bin/bro","args":["--guest","mcp"]}}}`}
+	return []string{"claude", "--dangerously-skip-permissions", "--mcp-config", `{"mcpServers":{"brood":{"command":"/opt/brood/bin/bro","args":["--guest","mcp"]}}}`}
 }

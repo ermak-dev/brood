@@ -36,7 +36,7 @@ func TestClaudeReceivesAdditiveCredentialFreeMCPConfig(t *testing.T) {
 	if len(config.MCPServers) != 1 {
 		t.Fatalf("unexpected MCP namespaces: %v", config.MCPServers)
 	}
-	if server.Command != "/usr/local/bin/bro" || len(server.Args) != 2 || server.Args[0] != "--guest" || server.Args[1] != "mcp" {
+	if server.Command != "/opt/brood/bin/bro" || len(server.Args) != 2 || server.Args[0] != "--guest" || server.Args[1] != "mcp" {
 		t.Fatalf("server: %+v", server)
 	}
 }

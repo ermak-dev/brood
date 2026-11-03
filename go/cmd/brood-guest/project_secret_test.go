@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -25,14 +26,19 @@ func TestProjectSecretColdStartup(t *testing.T) {
 	defer cancel()
 	network := newFake()
 	var events []string
-	d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { events = append(events, "network"); return network, nil }, secrets: func(context.Context, relay.ClientConfig) error {
+	d := dependencies{euid: func() int { return 0 }, artifacts: func(context.Context, relay.ClientConfig, []string, func(context.Context, string, io.Reader, int64) error) error {
+		return nil
+	}, reexec: func() error { return nil }, network: func(context.Context) (service, error) { events = append(events, "network"); return network, nil }, secrets: func(context.Context, relay.ClientConfig) error {
 		events = append(events, "secrets")
 		return errors.New("opaque")
 	}, start: func(context.Context, []string) (actorRuntime, error) {
 		t.Fatal("app launched without secrets")
 		return nil, nil
 	}}
-	err := dispatch(ctx, nil, func() []string { return validEnv(t) }, d)
+	// Стадия runtime: секреты проверяются после exec от установленных
+	// артефактов (#155); bootstrap-стадию качает отдельный тест.
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	err := dispatch(ctx, nil, func() []string { return append(validEnv(t), "BROOD_GUEST_STAGE=runtime") }, d)
 	if err == nil || strings.Contains(err.Error(), "opaque") || !reflect.DeepEqual(events, []string{"network", "secrets"}) || !network.closed {
 		t.Fatal("cold secret failure not closed", events, err)
 	}
