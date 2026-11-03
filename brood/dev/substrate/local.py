@@ -241,10 +241,11 @@ class Shell:
         if r.returncode:
             raise RuntimeError(f"{step(argv)} exited with {r.returncode}")
 
-    def output(self, *argv):
-        """Процесс с захватом вывода -> (код, stdout, stderr)."""
+    def output(self, *argv, cwd=None):
+        """Процесс с захватом вывода -> (код, stdout, stderr). cwd перекрывает
+        каталог shell: сборка артефактов идёт в релизном дереве (#156)."""
         try:
-            r = subprocess.run(argv, env=self.env, cwd=self.cwd, capture_output=True, text=True)
+            r = subprocess.run(argv, env=self.env, cwd=cwd or self.cwd, capture_output=True, text=True)
         except FileNotFoundError:
             raise RuntimeError(f"{argv[0]} is not installed") from None
         return r.returncode, r.stdout, r.stderr

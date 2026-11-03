@@ -175,14 +175,14 @@ class GoManifestTests(unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         (root).mkdir(exist_ok=True)
 
-        def output(*argv):
+        def output(*argv, cwd=None):
             calls.append(argv)
             if argv[0] == "curl":
                 Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFclaude-pinned")
             if argv[0] == "go":
                 package = argv[-1]
                 Path(argv[argv.index("-o") + 1]).write_bytes(
-                    b"\x7fELFbro-release" if package == "cmd/brood" else b"\x7fELFguest-built")
+                    b"\x7fELFbro-release" if package == "./cmd/brood" else b"\x7fELFguest-built")
             return 0, "", ""
 
         streams = []
@@ -195,9 +195,7 @@ class GoManifestTests(unittest.TestCase):
         self.assertIn(b"brood-guest\0\x7fELFguest-built\0", stream)
         self.assertIn(b"claude\0\x7fELFclaude-pinned\0", stream)
         builds = [a for a in calls if a[0] == "go"]
-        self.assertEqual({a[-1] for a in builds}, {"cmd/brood", "cmd/brood-guest"})
-        for a in builds:
-            self.assertEqual(a[:3], ("go", "build", "-C"))  # cwd shell — Substrate, не релиз
+        self.assertEqual({a[-1] for a in builds}, {"./cmd/brood", "./cmd/brood-guest"})
 
     def test_kubernetes_configuration_also_supplies_approved_worker_images(self):
         deployment = next(item for item in render("localhost:5002/brood-go@sha256:" + "a" * 64)
