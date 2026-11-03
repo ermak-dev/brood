@@ -125,6 +125,7 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательные microvm и подготовленный lxc |
 | `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only management key |
 | `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |
+| `BROOD_GIT_REMOTES` | необязательные remotes репозиториев проектов и их токены для Git gateway; только Secret сервера, см. «Git remotes» |
 
 Для отдельного backend managed-акторов задаются `BROOD_ACTOR_LLM_URL`
 (строгий HTTPS origin) и `BROOD_ACTOR_LLM_API_KEY`. Необязательная
@@ -166,6 +167,31 @@ IP внутреннего registry в kind network. Go получает `BROOD_R
 найденный IP:5000. Registry не перепубликуется наружу: внешний клиент передаёт
 chunks до 32 MiB через обычный HTTPS session/CSRF API. Ограничение edge 64 MiB
 сохраняется. Подробности — `docs/BUILD.md`.
+
+## Git remotes
+
+`BROOD_GIT_REMOTES` — секрет установки в `.env` релиза: JSON-объект, ключ —
+канонический HTTPS URL репозитория, значение — `{}` (без учётных данных) или
+ровно `{"username": "...", "token": "..."}` видимым ASCII без пробелов.
+Канонический URL: `https://`, DNS-имя в нижнем регистре (не IP, без точки в
+конце), без явного порта (только 443), userinfo, query, fragment и
+percent-encoding; непустой путь из сегментов `[A-Za-z0-9._~-]` без `.`, `..`,
+пустых сегментов и завершающего `/`; не длиннее 1024 байт. Повтор ключа —
+отказ, а не молчаливое вытеснение.
+
+Пустая настройка или `{}` оставляют выкладку прежней: ключа нет ни в Secret,
+ни в env, DNS не разрешается, egress не добавляется. Иначе форму проверяет
+уже `deploy server --check` (без DNS), а Go-выкладка до сборки образа и записи
+в кластер разрешает каждый различный host remotes тем же resolver, что Proxmox
+endpoints. Значение целиком уходит в `data` Secret `brood-go-env` и серверу
+через `secretKeyRef`; NetworkPolicy сервера получает `/32` или `/128` каждого
+найденного адреса только на TCP 443. Частные адреса LAN разрешены: host задал
+оператор. Loopback, link-local, multicast, unspecified, reserved адрес, пустой
+ответ или ошибка DNS — отказ. Отказ называет настройку, но не URL, host или
+token. Ротация токена меняет checksum `Secret.data` и перезапускает сервер;
+режим `existing` переносит ключ тем же rollout после snapshot. Смена адресов
+host требует повторной выкладки. Токен не попадает в argv, вывод, edge,
+акторов и воркеров.
 
 ## Proxmox runtime
 

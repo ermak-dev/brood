@@ -1,5 +1,6 @@
 """Публичная Go-выкладка начинает с чистой БД и не затрагивает акторов."""
 import importlib
+import io
 import json
 from pathlib import Path
 import unittest
@@ -56,6 +57,28 @@ class PublicSettingsTests(unittest.TestCase):
         self.assertIn("bootstrap-admin", argv)
         self.assertNotIn(VALUES["BROOD_ADMIN_PASSWORD"], argv)
         self.assertEqual(runner.call_args.kwargs["input"], "admin\nnew-random-password\n")
+
+    # FEATURE: Preflight выкладки проверяет BROOD_GIT_REMOTES до сборки edge и обращений к кластеру.
+    def test_server_preflight_refuses_invalid_git_remotes_without_values(self):
+        command = importlib.import_module("brood.dev.deploy.cli.server")
+        token = "synthetic-preflight-token"
+        valid = json.dumps({"https://git.example.test/group/repo": {"username": "oauth2", "token": token}})
+        self.assertEqual(self.module().settings({**VALUES, "BROOD_GIT_REMOTES": valid}.get)["BROOD_PUBLIC_HOST"],
+                         "brood.example.test")
+        for raw in (valid.replace(token, token + " x"), valid.replace("https://git", "https://user@git"), "[]"):
+            values = {**VALUES, "BROOD_GIT_REMOTES": raw}
+            with self.subTest(raw=raw):
+                with patch.object(command.config, "get", side_effect=lambda key: values.get(key, "")), \
+                        patch.object(command, "Deployment") as deploy, patch.object(command, "cluster") as cluster, \
+                        patch("sys.stdout", new_callable=io.StringIO) as out, \
+                        self.assertRaises(RuntimeError) as raised:
+                    command.main(["--check"])
+                self.assertIn("BROOD_GIT_REMOTES", str(raised.exception))
+                self.assertNotIn(token, str(raised.exception))
+                self.assertNotIn("example.test", str(raised.exception))
+                self.assertEqual(out.getvalue(), "")
+                deploy.assert_not_called()
+                cluster.assert_not_called()
 
     def test_server_command_preflight_runs_no_mutation(self):
         command = importlib.import_module("brood.dev.deploy.cli.server")

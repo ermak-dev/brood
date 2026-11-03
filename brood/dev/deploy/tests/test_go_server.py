@@ -5,13 +5,121 @@ import json
 import socket
 from pathlib import Path
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from brood.dev.deploy import go_server
 
 
-def render(image):
-    return go_server.manifests(image, {"gvisor": "localhost:5002/ateworker-gvisor@sha256:" + "b" * 64})
+GIT_USER = "synthetic-git-user"
+GIT_TOKEN = "synthetic-git-token-sentinel"
+REMOTES = {"https://git.example.test/group/repo.git": {"username": GIT_USER, "token": GIT_TOKEN},
+           "https://git.example.test/group/other": {},
+           "https://lan.example.test/team/tools": {}}
+
+
+def render(image, **options):
+    return go_server.manifests(image, {"gvisor": "localhost:5002/ateworker-gvisor@sha256:" + "b" * 64}, **options)
+
+
+def answer(address):
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    return (family, socket.SOCK_STREAM, 6, "", (address, 443))
+
+
+# FEATURE: BROOD_GIT_REMOTES — remotes репозиториев проекта, секрет установки.
+# SPEC: ключ — канонический HTTPS URL, значение — {} или username/token видимым ASCII;
+# отказ называет настройку, но не значения: в них токены и адреса.
+class GitRemotesSettingTests(unittest.TestCase):
+    def refused(self, raw):
+        with self.assertRaises(RuntimeError) as raised:
+            go_server.git_remote_hosts(raw)
+        message = str(raised.exception)
+        self.assertIn("BROOD_GIT_REMOTES", message)
+        for value in (GIT_TOKEN, GIT_USER, "example.test", "sentinel"):
+            self.assertNotIn(value, message)
+        return message
+
+    def test_valid_remotes_yield_distinct_sorted_hosts(self):
+        self.assertEqual(go_server.git_remote_hosts(json.dumps(REMOTES)), ["git.example.test", "lan.example.test"])
+        self.assertEqual(go_server.git_remote_hosts(json.dumps({
+            "https://git-01.lan/~owner/Group/Repo_2.git": {"username": "oauth2", "token": "glpat-A_b.c~!$"},
+            "https://gitlab/team/repo": {}})), ["git-01.lan", "gitlab"])
+
+    def test_absent_or_empty_setting_has_no_remotes(self):
+        for raw in (None, "", "{}"):
+            with self.subTest(raw=raw):
+                self.assertEqual(go_server.git_remote_hosts(raw), [])
+
+    def test_non_canonical_origins_are_refused_without_values(self):
+        for origin in ("http://git.example.test/repo", "ssh://git.example.test/repo",
+                       "git@git.example.test:repo.git", "HTTPS://git.example.test/repo",
+                       "https://Git.example.test/repo", "https://git.example.test./repo",
+                       "https://git.example.test:443/repo", "https://git.example.test:8443/repo",
+                       "https://git.example.test:/repo", "https://user@git.example.test/repo",
+                       "https://user:pw@git.example.test/repo", "https://git.example.test/repo?ref=main",
+                       "https://git.example.test/repo#main", "https://git.example.test",
+                       "https://git.example.test/", "https://git.example.test/repo/",
+                       "https://git.example.test//repo", "https://git.example.test/a/../repo",
+                       "https://git.example.test/./repo", "https://git.example.test/re%2Fpo",
+                       "https://git.example.test/re po", "https://git.example.test/re\tpo",
+                       "https://git.example.test/re\\po", "https://git.example.test/репо",
+                       "https://гит.example.test/repo", "https://10.0.0.5/repo", "https://127.1/repo",
+                       "https://[fd00::5]/repo", "https://-git.example.test/repo",
+                       "https://git_lab.example.test/repo", "https://" + "a" * 64 + ".example.test/repo",
+                       "https://git.example.test/" + "r" * 1024, "", " https://git.example.test/repo"):
+            with self.subTest(origin=origin):
+                message = self.refused(json.dumps({origin: {}}))
+                if origin:
+                    self.assertNotIn(origin, message)
+
+    def test_credentials_are_empty_or_visible_username_and_token(self):
+        for credentials in ({"username": GIT_USER}, {"token": GIT_TOKEN},
+                            {"username": GIT_USER, "token": GIT_TOKEN, "extra": "sentinel"},
+                            {"username": "", "token": GIT_TOKEN}, {"username": GIT_USER, "token": ""},
+                            {"username": GIT_USER, "token": GIT_TOKEN + " x"},
+                            {"username": GIT_USER, "token": GIT_TOKEN + "\t"},
+                            {"username": GIT_USER, "token": GIT_TOKEN + "\n"},
+                            {"username": GIT_USER, "token": GIT_TOKEN + "ж"},
+                            {"username": 7, "token": GIT_TOKEN}, {"username": GIT_USER, "token": None},
+                            {"password": GIT_TOKEN}, None, [], GIT_TOKEN, True):
+            with self.subTest(credentials=credentials):
+                self.refused(json.dumps({"https://git.example.test/repo": credentials}))
+
+    def test_malformed_or_duplicated_json_is_refused(self):
+        for raw in ("sentinel", " ", "[]", "null", "1", '"https://git.example.test/repo"',
+                    '{"https://git.example.test/repo": {}, "https://git.example.test/repo": {}}',
+                    '{"https://git.example.test/repo": {"username": "u", "token": "a", "token": "'
+                    + GIT_TOKEN + '"}}', "[" * 100000):
+            with self.subTest(raw=raw[:80]):
+                self.refused(raw)
+
+    def test_egress_allows_operator_lan_hosts_on_https_only(self):
+        answers = {"git.example.test": [answer("203.0.113.7")],
+                   "lan.example.test": [answer("192.168.10.20"), answer("10.1.2.3"), answer("fd00::20"),
+                                        answer("::ffff:192.168.10.20")]}
+        resolver = Mock(side_effect=lambda host, port, **kwargs: answers[host])
+        self.assertEqual(go_server.git_remote_egress(["git.example.test", "lan.example.test"], resolver), [
+            {"to": [{"ipBlock": {"cidr": cidr}}], "ports": [{"port": 443, "protocol": "TCP"}]}
+            for cidr in ("10.1.2.3/32", "192.168.10.20/32", "203.0.113.7/32", "fd00::20/128")])
+        self.assertCountEqual(resolver.call_args_list, [
+            call(host, 443, type=socket.SOCK_STREAM) for host in ("git.example.test", "lan.example.test")])
+        self.assertEqual(go_server.git_remote_egress([], Mock(side_effect=AssertionError("unexpected DNS"))), [])
+
+    def test_egress_refuses_unsafe_or_failed_resolution_without_values(self):
+        for address in ("127.0.0.1", "::1", "0.0.0.0", "::", "169.254.169.254", "fe80::1", "224.0.0.1",
+                        "ff02::1", "240.0.0.1", "::ffff:127.0.0.1", "fe80::1%eth0"):
+            with self.subTest(address=address):
+                with self.assertRaises(RuntimeError) as raised:
+                    go_server.git_remote_egress(["git.example.test"], Mock(return_value=[
+                        answer("192.168.10.20"), answer(address)]))
+                self.assertIn("BROOD_GIT_REMOTES", str(raised.exception))
+                self.assertNotIn("example.test", str(raised.exception))
+        for resolver in (Mock(return_value=[]), Mock(side_effect=socket.gaierror(GIT_TOKEN + " git.example.test"))):
+            with self.assertRaises(RuntimeError) as raised:
+                go_server.git_remote_egress(["git.example.test"], resolver)
+            self.assertIn("BROOD_GIT_REMOTES", str(raised.exception))
+            self.assertNotIn("sentinel", str(raised.exception))
+            self.assertNotIn("example.test", str(raised.exception))
 
 
 class GoManifestTests(unittest.TestCase):
@@ -85,6 +193,15 @@ class GoManifestTests(unittest.TestCase):
         for image in ("localhost:5002/brood-go:latest", "", None):
             with self.subTest(image=image), self.assertRaises(RuntimeError):
                 render(image)
+
+    def test_git_remotes_reach_server_only_through_secret_reference(self):
+        def env(objects):
+            deployment = next(item for item in objects if item["kind"] == "Deployment")
+            return {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+        configured = env(render("localhost:5002/brood-go@sha256:" + "a" * 64, git_remotes=True))
+        self.assertEqual(configured["BROOD_GIT_REMOTES"], {"name": "BROOD_GIT_REMOTES", "valueFrom": {
+            "secretKeyRef": {"name": "brood-go-env", "key": "BROOD_GIT_REMOTES"}}})
+        self.assertNotIn("BROOD_GIT_REMOTES", env(render("localhost:5002/brood-go@sha256:" + "a" * 64)))
 
 
 class GoDeploymentTests(unittest.TestCase):
@@ -166,7 +283,72 @@ class GoDeploymentTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, "BROOD_ACTOR_LLM_"):
                 self.capture_release({**values, **change}, resolver=resolver)
 
-    def capture_release(self, settings, resolver=None):
+    # FEATURE: BROOD_GIT_REMOTES доходит до сервера Secret'ом и открывает точный HTTPS egress.
+    # SPEC: полный JSON — только в data Secret; env — secretKeyRef; /32 и /128 на 443
+    # каждого host; ротация токена меняет checksum; токен не попадает в argv, вывод и manifests.
+    def test_git_remotes_reach_server_secret_and_open_exact_https_egress(self):
+        raw = json.dumps(REMOTES)
+        answers = {"git.example.test": [answer("203.0.113.7")],
+                   "lan.example.test": [answer("192.168.10.20"), answer("fd00::20")]}
+        resolver = Mock(side_effect=lambda host, port, **kwargs: answers[host])
+        objects = self.capture_release({"BROOD_GIT_REMOTES": raw}, resolver=resolver, forbidden=(GIT_TOKEN, GIT_USER))
+        self.assertCountEqual(resolver.call_args_list, [
+            call(host, 443, type=socket.SOCK_STREAM) for host in ("git.example.test", "lan.example.test")])
+        secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+        self.assertEqual(base64.b64decode(secret["data"]["BROOD_GIT_REMOTES"]).decode("utf-8"), raw)
+        deployment = next(o for o in objects if o["kind"] == "Deployment")
+        env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["BROOD_GIT_REMOTES"], {"name": "BROOD_GIT_REMOTES", "valueFrom": {
+            "secretKeyRef": {"name": "brood-go-env", "key": "BROOD_GIT_REMOTES"}}})
+        baseline = next(o for o in render("localhost:5002/brood-go@sha256:" + "a" * 64)
+                        if o["kind"] == "NetworkPolicy")
+        policy = next(o for o in objects if o["kind"] == "NetworkPolicy" and o["metadata"]["name"] == "brood-go")
+        self.assertEqual(policy["spec"]["egress"], baseline["spec"]["egress"] + [
+            {"to": [{"ipBlock": {"cidr": cidr}}], "ports": [{"port": 443, "protocol": "TCP"}]}
+            for cidr in ("192.168.10.20/32", "203.0.113.7/32", "fd00::20/128")])
+        released = json.dumps(objects)
+        for value in (GIT_TOKEN, GIT_USER, raw):
+            self.assertNotIn(value, released)
+        rotated = self.capture_release({"BROOD_GIT_REMOTES": raw.replace(GIT_TOKEN, "rotated-git-token")},
+                                       resolver=resolver)
+        self.assertNotEqual(*(next(o for o in release if o["kind"] == "Deployment")["spec"]["template"]
+                              ["metadata"]["annotations"]["brood.dev/server-env-sha256"]
+                              for release in (objects, rotated)))
+
+    def test_git_remotes_absent_or_empty_keep_previous_release(self):
+        with patch.object(go_server.socket, "getaddrinfo", side_effect=AssertionError("unexpected DNS")):
+            baseline = self.capture_release({})
+            for raw in ("", "{}"):
+                with self.subTest(raw=raw):
+                    self.assertEqual(self.capture_release({"BROOD_GIT_REMOTES": raw}), baseline)
+        secret = next(o for o in baseline if o["metadata"]["name"] == "brood-go-env")
+        self.assertNotIn("BROOD_GIT_REMOTES", secret["data"])
+
+    def test_git_remotes_invalid_or_unsafe_refuse_before_native_calls_without_values(self):
+        valid = json.dumps(REMOTES)
+        cases = [(json.dumps({"https://git.example.test/repo": {"token": GIT_TOKEN}}), [answer("192.168.10.20")]),
+                 (json.dumps({"https://git.example.test:8443/repo": {}}), [answer("192.168.10.20")]),
+                 ("not json " + GIT_TOKEN, [answer("192.168.10.20")]),
+                 (valid, [answer("127.0.0.1")]), (valid, [answer("169.254.169.254")]), (valid, [])]
+        for raw, answers in cases:
+            with self.subTest(raw=raw[:60], answers=answers):
+                deploy = self.deploy({"BROOD_GIT_REMOTES": raw})
+                deploy.resolver = Mock(return_value=answers)
+                with patch.object(go_server, "Infrastructure") as infrastructure, \
+                        patch("builtins.print") as printed, self.assertRaises(RuntimeError) as raised:
+                    deploy.run()
+                message = str(raised.exception)
+                self.assertIn("BROOD_GIT_REMOTES", message)
+                for value in (GIT_TOKEN, GIT_USER, "example.test"):
+                    self.assertNotIn(value, message)
+                printed.assert_not_called()
+                infrastructure.assert_not_called()
+                deploy.cluster.check.assert_not_called()
+                deploy.cluster.shell.output.assert_not_called()
+                if raw != valid:
+                    deploy.resolver.assert_not_called()
+
+    def capture_release(self, settings, resolver=None, forbidden=()):
         deploy = self.deploy(settings)
         if resolver is not None:
             deploy.resolver = resolver
@@ -175,10 +357,13 @@ class GoDeploymentTests(unittest.TestCase):
         def output(*args):
             for key in ("BROOD_SESSION_SECRET", *go_server.PROXMOX_SETTINGS,
                         "BROOD_PUBLIC_ORIGIN", "BROOD_PROXMOX_RELAY_SECRET",
-                        "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY", "CLIPROXY_API_KEY", *go_server.ACTOR_LLM_SETTINGS):
+                        "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY", "CLIPROXY_API_KEY", *go_server.ACTOR_LLM_SETTINGS,
+                        "BROOD_GIT_REMOTES"):
                 value = settings.get(key)
                 if value:
                     self.assertNotIn(value, args)
+            for value in forbidden:
+                self.assertFalse(any(value in str(arg) for arg in args))
             if "build" in args:
                 Path(args[args.index("--metadata-file") + 1]).write_text(
                     json.dumps({"containerimage.digest": "sha256:" + "a" * 64}))
