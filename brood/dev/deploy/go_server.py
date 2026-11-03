@@ -494,8 +494,11 @@ class Deploy:
             f"https://downloads.claude.ai/claude-code-releases/{pins['CLAUDE_VERSION']}/linux-x64/claude")
         if code or hashlib.sha256(claude.read_bytes()).hexdigest() != pins["CLAUDE_SHA256"]:
             raise RuntimeError("guest bootstrap claude artifact download failed")
+        # Запись «имя NUL размер NUL байты»: ELF содержит нули, поэтому длина
+        # задаётся явно, а не разделителем после байтов.
         stream = b"".join(
-            name.encode() + b"\0" + (work / name).read_bytes() + b"\0"
+            name.encode() + b"\0" + str((work / name).stat().st_size).encode() + b"\0"
+            + (work / name).read_bytes()
             for name in ("bro", "brood-guest", "claude"))
         code, _, err = self.cluster.shell.output_bytes(
             ("kubectl", f"--context={local.CONTEXT}", "-n", "brood", "exec", "-i",
