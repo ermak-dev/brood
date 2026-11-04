@@ -2838,6 +2838,7 @@
       "tabs_label": "Актор {{name}}",
       "tabs": {
         "overview": "Обзор",
+        "actions": "Действия",
         "output": "Вывод",
         "history": "История",
         "usage": "Расход",

@@ -1,7 +1,7 @@
 // FEATURE: Пульт managed-актора и repository проекта в панели (#151, #157).
 // SPEC: Подтверждение называет последствия; необратимое требует ввода имени.
-// Действия — в боковой панели актора: группы над сведениями обзора,
-// необратимые после них. Недоступное действие несёт причину в accessible
+// Обзор и действия — отдельные вкладки (#159), необратимые последними.
+// Недоступное действие несёт причину в accessible
 // description; идущее — статус и блокировка остальных; неизвестный исход
 // виден до закрытия. Viewer видит только обзор, без вкладок сессии и действий.
 // Детали показывают origin, режим клона, поколение и роль. Repository
@@ -16,7 +16,6 @@ import { I18nextProvider } from 'react-i18next';
 import { actionDialogText } from '@/features/substrate/actorLifecycle';
 import { ActorDetailsSheet } from '@/features/substrate/ActorDetailsSheet';
 import { ConfirmDialog } from '@/features/substrate/components/ConfirmDialog';
-import { mergeHistory } from '@/features/substrate/historyView';
 import { repositoryOptions } from '@/features/access/state';
 import type { Actor } from '@/services/brood/substrate';
 import en from '../src/i18n/locales/en.json';
@@ -164,7 +163,7 @@ test('an action in flight shows its status, locks the rest; unknown outcomes sta
   const restart = control(html, 'Restart Claude');
   expect(restart?.attrs).toContain('aria-busy="true"');
   expect(restart?.attrs).toContain('aria-disabled="true"');
-  for (const label of ['Open terminal', 'Stop', 'Clean working copy', 'Wipe working copy', 'Recreate', 'Delete']) {
+  for (const label of ['Stop', 'Clean working copy', 'Wipe working copy', 'Recreate', 'Delete']) {
     const item = control(html, label);
     expect(item?.tag, label).toBe('button');
     expect(item?.attrs, label).toContain('aria-disabled="true"');
@@ -187,7 +186,7 @@ test('viewers get the overview without session tabs or actions; managers get the
   for (const action of ['Open terminal', 'Stop', 'Restart Claude', 'Recreate', 'Delete']) {
     expect(control(viewer, action), action).toBeUndefined();
   }
-  expect(viewer).toContain(en.actors.console.viewer_hint);
+  expect(viewer).not.toContain(en.actors.console.viewer_hint);
   for (const fact of [
     'https://git.example.com/team/repo',
     en.actors.console.overview.modes.gateway,
@@ -204,59 +203,30 @@ test('viewers get the overview without session tabs or actions; managers get the
   const tabs = [...manager.matchAll(/role="tab"[^>]*aria-selected="(true|false)"[^>]*>([^<]+)</g)];
   expect(tabs.map((m) => [m[2], m[1]])).toEqual([
     ['Overview', 'true'],
-    ['Output', 'false'],
-    ['History', 'false'],
-    ['Usage', 'false'],
-    ['Send', 'false'],
+    ['Actions', 'false'],
   ]);
-  // Overview opens first with the actions: groups above the facts, the
-  // irreversible block after them; the terminal opens in a new tab.
+  // Обзор открыт первым; действия в отдельной скрытой вкладке, терминал в списке.
   expect(headings(manager)).toEqual(['Actions', 'Session', 'Working copy', 'Irreversible']);
-  const at = (needle: string) => manager.indexOf(needle);
-  expect(at('>Working copy<')).toBeLessThan(at('Generation'));
-  expect(at('Generation')).toBeLessThan(at('>Irreversible<'));
-  expect(at('>Irreversible<')).toBeLessThan(at('>Recreate<'));
-  const terminal = control(manager, 'Open terminal');
-  expect(terminal?.tag).toBe('a');
-  expect(terminal?.attrs).toContain('href="/api/swarms/swarm/proxy/actors/coding/"');
-  expect(terminal?.attrs).toContain('target="_blank"');
-  expect(terminal?.text).toContain(en.substrate.opens_new_tab);
+  const panelsStart = manager.indexOf('role="tabpanel"');
+  const actionsStart = manager.indexOf('role="tabpanel"', panelsStart + 1);
+  const overview = manager.slice(panelsStart, actionsStart);
+  const actions = manager.slice(actionsStart);
+  expect(overview).toContain('Generation');
+  expect(overview).not.toContain('>Restart Claude<');
+  expect(actions).toContain('>Restart Claude<');
+  expect(actions).not.toContain('Generation');
+  expect(actions.indexOf('>Working copy<')).toBeLessThan(actions.indexOf('>Irreversible<'));
+  expect(control(manager, 'Open terminal')).toBeUndefined();
   expect(manager).not.toContain('aria-haspopup="menu"');
   // Every tab controls an existing panel; session panels mount only when opened,
   // so rendering the details reads nothing from the session.
   const panels = [...manager.matchAll(/role="tabpanel" id="([^"]+)"/g)].map((m) => m[1]);
   const controls = [...manager.matchAll(/aria-controls="([^"]+)"/g)].map((m) => m[1]);
   expect(panels).toEqual(controls);
-  expect(manager.match(/role="tabpanel"[^>]*hidden=""/g)?.length).toBe(4);
+  expect(manager.match(/role="tabpanel"[^>]*hidden=""/g)?.length).toBe(1);
   for (const absent of [en.actors.console.output.lines, en.actors.console.message.cost]) {
     expect(manager).not.toContain(absent);
   }
-});
-
-test('history pages append, a changed transcript starts over and says so', () => {
-  const page = (entries: string[], extra: object = {}) => ({
-    epoch: 'e',
-    cursor: `c${entries.length}`,
-    reset: false,
-    hasMore: true,
-    partial: false,
-    entries: entries.map((text) => ({ kind: 'user' as const, text })),
-    ...extra,
-  });
-  const first = mergeHistory(null, page(['a']), true);
-  expect(first.entries.map((e) => e.text)).toEqual(['a']);
-  const second = mergeHistory(first, page(['b'], { partial: true }), false);
-  expect(second.entries.map((e) => e.text)).toEqual(['a', 'b']);
-  expect(second.partial).toBe(true);
-  expect(second.restarted).toBe(false);
-  const reset = mergeHistory(second, page(['x'], { reset: true }), false);
-  expect(reset.entries.map((e) => e.text)).toEqual(['x']);
-  expect(reset.restarted).toBe(true);
-  expect(reset.partial).toBe(false);
-  expect(mergeHistory(reset, page(['y'], { hasMore: false }), true)).toMatchObject({
-    restarted: false,
-    hasMore: false,
-  });
 });
 
 test('repository choices show credential presence and keep a vanished selection visible', () => {

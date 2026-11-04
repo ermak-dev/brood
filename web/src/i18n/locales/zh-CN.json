@@ -2842,6 +2842,7 @@
       "tabs_label": "Actor {{name}}",
       "tabs": {
         "overview": "概览",
+        "actions": "操作",
         "output": "输出",
         "history": "历史",
         "usage": "用量",

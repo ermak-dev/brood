@@ -1,31 +1,25 @@
 import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { actorsApi, type Actor } from '@/services/brood/substrate';
-import { managedActionGroups, sessionReadable, type ManagedActionId } from './actorActions';
+import { managedActionGroups, type ManagedActionId } from './actorActions';
 import type { ActionFailure, UnknownOutcome } from './actorOperations';
 import { ActorActionFailure } from './components/ActorActionFailure';
-import { ActorHistory } from './components/ActorHistory';
-import { ActorMessage } from './components/ActorMessage';
 import { ActorOutcomeNotices } from './components/ActorOutcomeNotices';
-import { ActorOutput } from './components/ActorOutput';
 import { ActorOverview } from './components/ActorOverview';
-import { ActorUsage } from './components/ActorUsage';
 import { EntityPanel, PanelActions } from './components/EntityPanel';
 import { StateBadge } from './components/StateBadge';
 import styles from './substrate.module.scss';
 
-const TABS = ['overview', 'output', 'history', 'usage', 'send'] as const;
+const TABS = ['overview', 'actions'] as const;
 type Tab = (typeof TABS)[number];
 
-/** Вкладки по образцу WAI-ARIA tabs: стрелки, Home/End, один tab stop. */
-function ConsoleTabs({
-  tabs,
+/** Стрелки и Home/End меняют вкладку; в Tab-порядке только активная. */
+function ActorTabs({
   active,
   ids,
   label,
   onChange,
 }: {
-  tabs: readonly Tab[];
   active: Tab;
   ids: (tab: Tab) => { tab: string; panel: string };
   label: string;
@@ -34,25 +28,25 @@ function ConsoleTabs({
   const { t } = useTranslation();
   const refs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   const onKey = (event: KeyboardEvent) => {
-    const index = tabs.indexOf(active);
+    const index = TABS.indexOf(active);
     const next =
       event.key === 'ArrowRight'
-        ? (index + 1) % tabs.length
+        ? (index + 1) % TABS.length
         : event.key === 'ArrowLeft'
-          ? (index - 1 + tabs.length) % tabs.length
+          ? (index - 1 + TABS.length) % TABS.length
           : event.key === 'Home'
             ? 0
             : event.key === 'End'
-              ? tabs.length - 1
+              ? TABS.length - 1
               : -1;
     if (next < 0) return;
     event.preventDefault();
-    onChange(tabs[next]);
-    refs.current[tabs[next]]?.focus();
+    onChange(TABS[next]);
+    refs.current[TABS[next]]?.focus();
   };
   return (
     <div role="tablist" aria-label={label} className={styles.consoleTabs}>
-      {tabs.map((tab) => (
+      {TABS.map((tab) => (
         <button
           key={tab}
           ref={(node) => {
@@ -75,15 +69,8 @@ function ConsoleTabs({
   );
 }
 
-/** brood: панель managed-актора (#157) — пульт: состояние, обзор с
- * действиями, вывод, история, расход, сообщение. Действия — во вкладке
- * обзора, она открыта первой: группы сверху, необратимые после сведений, как
- * в EntityPanel; вкладки сессии не сдвигаются кнопками вниз. Состояние,
- * идущее действие и неизвестные исходы — над вкладками, видны с любой.
- * Данные сессии и действия требуют прав owner/editor роя (сервер проверяет их
- * сам), поэтому viewer видит только обзор. Посещённые вкладки остаются
- * смонтированными: возврат не перечитывает их без запроса. После reset
- * (новое поколение) вкладки сессии читаются заново. */
+/** Сведения и операции разделены; ошибки и неизвестные исходы видны на обеих
+ * вкладках. Viewer получает только сведения, без изменяющих действий. */
 export function ActorDetailsSheet({
   open,
   onClose,
@@ -116,40 +103,18 @@ export function ActorDetailsSheet({
   const { t } = useTranslation();
   const base = useId();
   const name = actor.metadata.name;
-  const tabs: readonly Tab[] = canManage ? TABS : ['overview'];
   const [tab, setTab] = useState<Tab>('overview');
-  const [visited, setVisited] = useState<ReadonlySet<Tab>>(() => new Set<Tab>(['overview']));
-  const select = (next: Tab) => {
-    setTab(next);
-    setVisited((previous) => new Set(previous).add(next));
-  };
   const ids = (id: Tab) => ({ tab: `${base}-tab-${id}`, panel: `${base}-panel-${id}` });
-  const readable = sessionReadable(actor);
-  const generation = `${actor.metadata.uid ?? name}:${actor.generation ?? ''}`;
   const groups = managedActionGroups(actor, {
     t,
     canManage,
     pending,
     terminal: actorsApi.terminal(swarm, name),
     onAction,
-  });
-
-  const panel = (id: Tab) => {
-    if (id === 'overview') {
-      return (
-        <div className={styles.panel}>
-          <PanelActions groups={groups.filter((group) => !group.danger)} />
-          <ActorOverview actor={actor} />
-          <PanelActions groups={groups.filter((group) => group.danger)} />
-        </div>
-      );
-    }
-    if (!readable) return <p className={styles.notice}>{t('actors.console.not_running')}</p>;
-    if (id === 'output') return <ActorOutput swarm={swarm} name={name} />;
-    if (id === 'history') return <ActorHistory swarm={swarm} name={name} />;
-    if (id === 'usage') return <ActorUsage swarm={swarm} name={name} />;
-    return <ActorMessage swarm={swarm} name={name} />;
-  };
+  }).map((group) => ({
+    ...group,
+    actions: group.actions.filter((action) => action.id !== 'terminal'),
+  }));
 
   return (
     <EntityPanel
@@ -160,7 +125,6 @@ export function ActorDetailsSheet({
       status={
         <>
           <StateBadge state={actor.phase ?? ''} namespace="actors.managed_state" />
-          {/* Живая область есть всегда: появление «Restarting…» объявляется. */}
           <span role="status" className={pending ? styles.pendingNote : undefined}>
             {pending && (
               <>
@@ -185,30 +149,34 @@ export function ActorDetailsSheet({
         items={unknown.filter((item) => item.name === name)}
         onDismiss={onDismissUnknown}
       />
-      {canManage ? (
-        <ConsoleTabs
-          tabs={tabs}
+      {canManage && (
+        <ActorTabs
           active={tab}
           ids={ids}
           label={t('actors.console.tabs_label', { name })}
-          onChange={select}
+          onChange={setTab}
         />
-      ) : (
-        <p className={styles.notice}>{t('actors.console.viewer_hint')}</p>
       )}
-      {/* Контейнер каждой вкладки есть всегда (aria-controls указывает на
-          существующий элемент); содержимое монтируется при первом открытии. */}
-      {tabs.map((id) => (
+      <div
+        role={canManage ? 'tabpanel' : undefined}
+        id={ids('overview').panel}
+        aria-labelledby={canManage ? ids('overview').tab : undefined}
+        hidden={canManage && tab !== 'overview'}
+      >
+        <ActorOverview actor={actor} />
+      </div>
+      {canManage && (
         <div
-          key={`${id}:${generation}`}
-          role={canManage ? 'tabpanel' : undefined}
-          id={ids(id).panel}
-          aria-labelledby={canManage ? ids(id).tab : undefined}
-          hidden={tab !== id}
+          role="tabpanel"
+          id={ids('actions').panel}
+          aria-labelledby={ids('actions').tab}
+          hidden={tab !== 'actions'}
         >
-          {visited.has(id) && panel(id)}
+          <div className={styles.panel}>
+            <PanelActions groups={groups} />
+          </div>
         </div>
-      ))}
+      )}
     </EntityPanel>
   );
 }

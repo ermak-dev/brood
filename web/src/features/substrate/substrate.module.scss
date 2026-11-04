@@ -177,6 +177,10 @@
   color: var(--text-secondary);
 }
 
+.actorTerminal {
+  min-height: 44px;
+}
+
 .cellActions {
   width: 1%;
   white-space: nowrap;
@@ -940,11 +944,6 @@
   }
 }
 
-.costNotice {
-  border-left-color: var(--amber-color);
-  color: var(--text-primary);
-}
-
 .confirmBody {
   display: flex;
   flex-direction: column;
@@ -977,6 +976,7 @@
 
 .consoleTab {
   @include button-reset;
+  min-height: 44px;
   flex-shrink: 0;
   padding: 9px 12px;
   border-bottom: 2px solid transparent;
@@ -1003,80 +1003,9 @@
   font-weight: 650;
 }
 
-.consoleControls {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-
-  :global(.form-group) {
-    margin-bottom: 0;
-    min-width: 200px;
-  }
-}
-
-.history {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 55vh;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.historyEntry {
-  padding: 8px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  background: var(--bg-secondary);
-}
-
-.historyMeta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.historyText {
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.messageArea {
-  min-height: 120px;
-  resize: vertical;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.checkRow {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.narrowInput {
-  max-width: 160px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .consoleTab {
     transition: none;
-  }
-}
-
-@include mobile {
-  .messageArea {
-    font-size: 16px;
   }
 }
 
