@@ -86,20 +86,36 @@ plugins, actors, templates, workers, worker pools и policy сохранены.
   Origin при создании подставляется из
   repository проекта; repository в деталях проекта выбирает администратор
   из remotes установки, токен в панель не приходит.
-- **Веб-терминал (#160, #161):** driftty v3.0.0, upstream commit
+- **Веб-терминал (#160, #161, #163):** driftty v3.0.0, upstream commit
   `a4b8b2b38ee29b8fa5b979e70d37e1565b09cb0e`. Go встраивает
   `go/brood/server/static/driftty.html` и подменяет только успешный корневой
   HTML-ответ managed actor-view; существующие CT получают интерфейс без
-  пересоздания и потери workspace. `/token` и WebSocket `/ws` остаются
-  у гостевого ttyd; tmux сохраняет сессию независимо от браузера. Прежние
-  ticket, ACL, generation и opaque-origin sandbox действуют без изменений.
-  Клиент — upstream single-file bundle с проверенной суммой
+  пересоздания и потери workspace. Это не обновляет исполняемый runtime старого
+  CT: прямой PTY обеспечивает гостевой runtime #162. `/token` и WebSocket
+  `/ws` остаются у гостевого ttyd. Прежние ticket, ACL, generation и
+  opaque-origin sandbox действуют без изменений; Node gateway не нужен.
+  Новый образ не содержит tmux. Локальная адаптация
+  `deploy/driftty-direct-pty.cjs` удаляет его действия и scroll-режим из меню,
+  quickbar и полной клавиатуры, а не скрывает CSS. Обычные клавиши, Ctrl-B,
+  native xterm scrollback и mouse reporting TUI сохранены. Первый визит на
+  телефоне использует Fit screen; сохранённый фиксированный размер остаётся
+  выбором пользователя. Для touch-scroll в Fit screen жест остаётся у xterm;
+  synthetic wheel использует стандартные delta*, без нулевых legacy-полей
+  Chromium. Копирование и явный выбор размеров остаются доступны.
+  Архив upstream закреплён SHA-256
+  `0822a62d5464245cc7eb8c9b7b4578785c96387340d4bf3b12e442f8c0080570`.
+  Build stage сначала проверяет неизменённый upstream bundle
   `e3e44e12e528578eef84e25d5e224823db4f8222dd2cf79a803fbb87042f2a15`,
-  после `<head>` добавлены MIT license upstream и `deploy/driftty-storage.js`.
-  Сумма итогового HTML
-  `ccaabee39a28e9ae8c4f810996c184760a0bce4a5da7521a4b76daad35d6f3ce`
+  затем применяет проверяемые точные замены и запускает поведенческие тесты,
+  upstream-тесты и typecheck/build без сети от непривилегированного пользователя.
+  Зависимости ставятся по lockfile без install scripts. Производный bundle
+  (`DRIFTTY_DIRECT_INDEX_SHA256`) имеет сумму
+  `be462fb451f4c1a47c332e5d4f6cbc3fcb1618541a051ab7502eba012f78ee65`.
+  После `<head>` добавляются MIT license upstream и `deploy/driftty-storage.js`.
+  Итоговый HTML в гостевом образе и Go совпадает; сумма
+  `aa7df400abe4d53aef4dbf3cf812273d3e4fd69a69d09cd141f93b166e2e384d`
   проверяется Go-тестом. Недоступный browser storage заменяется памятью
-  вкладки; `allow-same-origin` не добавляется. Node gateway не нужен.
+  вкладки; `allow-same-origin` не добавляется.
 - **Воркеры:** `DRAINING` показан как конечное «выведен из работы», не как
   продолжающийся процесс. Такой воркер сам не станет активным. «Восстановить
   ёмкость» с подтверждением удаляет только его pod по UID, затем Deployment
@@ -178,6 +194,19 @@ endpoint требует отдельно настроенных credentials и �
 автоматического public cutover или возврата Django нет.
 
 ## Терминалы и проверка
+
+Поведенческий тест локальной адаптации входит в driftty build stage вместе
+с upstream-тестами. Browser-регрессия запускается отдельно:
+
+```sh
+node deploy/driftty-direct-pty-browser.test.cjs go/brood/server/static/driftty.html /path/to/playwright
+```
+
+Второй аргумент — установленный модуль Playwright. Тест поднимает только
+локальный HTTP/ttyd protocol fake и Chromium с phone emulation: проверяет
+opaque origin, все три поверхности управления, Fit screen, сохранение явного
+размера при resize, ввод, wheel/touch scrollback и native mouse reporting в
+alternate screen. Это не проверка реального гостя или Safari на устройстве.
 
 Ссылка terminal идёт через авторизованный Go endpoint и короткоживущий
 actor-view ticket. Обязательный CSP sandbox без `allow-same-origin` не даёт

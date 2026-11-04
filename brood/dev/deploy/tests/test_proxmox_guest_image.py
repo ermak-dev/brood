@@ -43,7 +43,8 @@ class ProxmoxGuestImageTests(unittest.TestCase):
                    (ROOT / "deploy/Dockerfile.go").read_text().splitlines()
                    if line.startswith("FROM oven/bun:"))
         self.assertIn(bun, recipe)
-        for tool in ("tmux", "git", "busybox-static", "nftables", "iproute2",
+        self.assertNotIn(" tmux ", recipe)
+        for tool in ("git", "busybox-static", "nftables", "iproute2",
                      "ca-certificates", "curl", "tini"):
             self.assertIn(tool, recipe)
         self.assertIn('ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/brood-guest"]', recipe)
@@ -57,6 +58,25 @@ class ProxmoxGuestImageTests(unittest.TestCase):
         self.assertNotIn("COPY . ", recipe)
         self.assertNotIn("COPY go/", recipe)
         self.assertIn("DISABLE_AUTOUPDATER=1", recipe)
+
+    # FEATURE: #163: native PTY image with a locally adapted, audited client.
+    # SPEC: No tmux package; offline unprivileged source adaptation before build.
+    # IMPLEMENTATION: Allowlisted patch/test files, separate upstream and derived hashes.
+    # RESULT: IMPLEMENTED; captured context adds only the two required adaptation files.
+    # STATUS: DONE
+    def test_client_adaptation_precedes_offline_build_and_checks_derived_hash(self):
+        recipe = self.required(RECIPE).read_text()
+        self.assertIn("COPY driftty-direct-pty.cjs driftty-direct-pty.test.cjs /compat/", recipe)
+        self.assertIn("node /compat/driftty-direct-pty.cjs .", recipe)
+        self.assertIn("node /compat/driftty-direct-pty.test.cjs .", recipe)
+        self.assertLess(recipe.index("USER node"), recipe.index("node /compat/driftty-direct-pty.cjs ."))
+        adapted = recipe[recipe.index("RUN --network=none node /compat/driftty-direct-pty.cjs ."):]
+        self.assertLess(adapted.index("node /compat/driftty-direct-pty.test.cjs ."), adapted.index("npm run build"))
+        self.assertIn("RUN --network=none node /compat/driftty-direct-pty.cjs .", recipe)
+        self.assertIn("npm ci --ignore-scripts --no-audit --no-fund", recipe)
+        self.assertIn("ARG DRIFTTY_DIRECT_INDEX_SHA256", recipe)
+        self.assertIn('"$DRIFTTY_DIRECT_INDEX_SHA256" dist/index.html', recipe)
+        self.assertIn('fs.readFileSync("/source/LICENSE","utf8")', recipe)
 
     def test_recipe_installs_executable_bro_without_replacing_supervisor(self):
         recipe = self.required(RECIPE).read_text()
@@ -75,7 +95,8 @@ class ProxmoxGuestImageTests(unittest.TestCase):
         repo.mkdir()
         for name in (RECIPE, BUILD, DHCP, ".ci/go-download.sh", "brood/dev/pins.json",
                      "deploy/Dockerfile.go", "deploy/driftty-storage.js",
-                     "deploy/driftty-storage.test.cjs"):
+                     "deploy/driftty-storage.test.cjs", "deploy/driftty-direct-pty.cjs",
+                     "deploy/driftty-direct-pty.test.cjs"):
             original = self.required(name)
             target = repo / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +172,8 @@ exit 99
             self.assertIn("COPY --from=compile /out/bro /bro", recipe)
             self.assertEqual(names, {"Dockerfile", "bro", "brood-guest", "pins.json", "go-download.sh",
                                      "proxmox-guest-dhcp.sh", "seed/project.bundle",
-                                     "driftty-storage.js", "driftty-storage.test.cjs"})
+                                     "driftty-storage.js", "driftty-storage.test.cjs",
+                                     "driftty-direct-pty.cjs", "driftty-direct-pty.test.cjs"})
             for path in capture.rglob("*"):
                 if path.is_file():
                     self.assertNotIn(b"operator-secret-canary", path.read_bytes())

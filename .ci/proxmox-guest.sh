@@ -27,22 +27,24 @@ mkdir "$work/source" "$work/context" "$work/bin" "$work/context/seed"
 # Явный список файлов компилятора отделён от финального контекста образа.
 git -C "$root" archive "$commit" go .ci/go-download.sh brood/dev/pins.json \
     deploy/Dockerfile.proxmox-guest deploy/proxmox-guest-dhcp.sh \
-    deploy/driftty-storage.js deploy/driftty-storage.test.cjs | tar -x -C "$work/source"
+    deploy/driftty-storage.js deploy/driftty-storage.test.cjs \
+    deploy/driftty-direct-pty.cjs deploy/driftty-direct-pty.test.cjs | tar -x -C "$work/source"
 [[ -f $work/source/go/cmd/brood-guest/main.go ]] || fail 'Committed cmd/brood-guest is required; image build is pending integration'
 cp "$work/source/deploy/Dockerfile.proxmox-guest" "$work/context/Dockerfile"
 cp "$work/source/deploy/proxmox-guest-dhcp.sh" "$work/context/proxmox-guest-dhcp.sh"
-cp "$work/source/deploy/driftty-storage.js" "$work/source/deploy/driftty-storage.test.cjs" "$work/context/"
+cp "$work/source/deploy/driftty-storage.js" "$work/source/deploy/driftty-storage.test.cjs" \
+    "$work/source/deploy/driftty-direct-pty.cjs" "$work/source/deploy/driftty-direct-pty.test.cjs" "$work/context/"
 cp "$work/source/.ci/go-download.sh" "$work/context/go-download.sh"
 cp "$work/source/brood/dev/pins.json" "$work/context/pins.json"
 # pins.json имеет каноническую однострочную запись каждого строкового ключа.
 python_image=$(sed -nE 's/^  "PYTHON_IMAGE": "([^"]+)",?$/\1/p' "$work/context/pins.json")
 [[ $python_image =~ ^python:3\.12@sha256:[0-9a-f]{64}$ ]] || fail 'Invalid pinned Python image'
 driftty_args=()
-for pin in DRIFTTY_COMMIT DRIFTTY_SHA256 DRIFTTY_INDEX_SHA256 DRIFTTY_NODE_IMAGE; do
+for pin in DRIFTTY_COMMIT DRIFTTY_SHA256 DRIFTTY_INDEX_SHA256 DRIFTTY_DIRECT_INDEX_SHA256 DRIFTTY_NODE_IMAGE; do
     value=$(sed -nE "s/^  \"$pin\": \"([^\"]+)\",?$/\\1/p" "$work/context/pins.json")
     case $pin in
         DRIFTTY_COMMIT) [[ $value =~ ^[0-9a-f]{40}$ ]] ;;
-        DRIFTTY_SHA256|DRIFTTY_INDEX_SHA256) [[ $value =~ ^[0-9a-f]{64}$ ]] ;;
+        DRIFTTY_SHA256|DRIFTTY_INDEX_SHA256|DRIFTTY_DIRECT_INDEX_SHA256) [[ $value =~ ^[0-9a-f]{64}$ ]] ;;
         DRIFTTY_NODE_IMAGE) [[ $value =~ ^node:22\.12\.0-bookworm-slim@sha256:[0-9a-f]{64}$ ]] ;;
     esac || fail "Invalid pinned driftty setting: $pin"
     driftty_args+=(--build-arg "$pin=$value")

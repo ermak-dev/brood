@@ -25,7 +25,8 @@ class ProxmoxGuestBuildTests(unittest.TestCase):
             for name in (".ci/proxmox-guest.sh", ".ci/go-download.sh",
                          "deploy/Dockerfile.proxmox-guest", "deploy/proxmox-guest-dhcp.sh",
                          "brood/dev/pins.json", "deploy/driftty-storage.js",
-                         "deploy/driftty-storage.test.cjs"):
+                         "deploy/driftty-storage.test.cjs", "deploy/driftty-direct-pty.cjs",
+                         "deploy/driftty-direct-pty.test.cjs"):
                 target = source / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / name, target)
@@ -70,12 +71,13 @@ done
         result, log, pins = self.build({})
         self.assertEqual(result.returncode, 0, result.stderr)
         for name in ("DRIFTTY_COMMIT", "DRIFTTY_SHA256", "DRIFTTY_INDEX_SHA256",
-                     "DRIFTTY_NODE_IMAGE"):
+                     "DRIFTTY_DIRECT_INDEX_SHA256", "DRIFTTY_NODE_IMAGE"):
             self.assertIn(f"{name}={pins[name]}\n", log)
 
     def test_bad_pins_refuse_before_any_build(self):
         for key, value in (("DRIFTTY_COMMIT", "main"), ("DRIFTTY_SHA256", ""),
                            ("DRIFTTY_INDEX_SHA256", "bad"),
+                           ("DRIFTTY_DIRECT_INDEX_SHA256", "bad"),
                            ("DRIFTTY_NODE_IMAGE", "node:latest")):
             with self.subTest(key=key):
                 result, log, _ = self.build({key: value})

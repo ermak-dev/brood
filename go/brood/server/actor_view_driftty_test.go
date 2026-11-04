@@ -23,7 +23,12 @@ type observedViewBody struct {
 func (b *observedViewBody) Close() error { b.closed = true; return nil }
 
 func TestEmbeddedDrifttyProvenance(t *testing.T) {
-	if got := fmt.Sprintf("%x", sha256.Sum256(drifttyClient)); got != "ccaabee39a28e9ae8c4f810996c184760a0bce4a5da7521a4b76daad35d6f3ce" {
+	// FEATURE: #163: the embedded actor-view uses the same direct PTY client as the guest.
+	// SPEC: Keep MIT attribution and opaque-origin storage; no multiplexer actions.
+	if strings.Contains(strings.ToLower(string(drifttyClient)), "tmux") {
+		t.Fatal("embedded client still exposes multiplexer controls")
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(drifttyClient)); got != "aa7df400abe4d53aef4dbf3cf812273d3e4fd69a69d09cd141f93b166e2e384d" {
 		t.Fatalf("unexpected terminal client checksum: %s", got)
 	}
 	for _, required := range []string{"MIT License", "Copyright (c) 2026 Mark Percival", "memoryStorage"} {
