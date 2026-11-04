@@ -74,7 +74,8 @@ class ProxmoxGuestImageTests(unittest.TestCase):
         repo = Path(directory) / "repo"
         repo.mkdir()
         for name in (RECIPE, BUILD, DHCP, ".ci/go-download.sh", "brood/dev/pins.json",
-                     "deploy/Dockerfile.go"):
+                     "deploy/Dockerfile.go", "deploy/driftty-storage.js",
+                     "deploy/driftty-storage.test.cjs"):
             original = self.required(name)
             target = repo / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -149,7 +150,8 @@ exit 99
             self.assertIn('go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/bro ./cmd/bro', recipe)
             self.assertIn("COPY --from=compile /out/bro /bro", recipe)
             self.assertEqual(names, {"Dockerfile", "bro", "brood-guest", "pins.json", "go-download.sh",
-                                     "proxmox-guest-dhcp.sh", "seed/project.bundle"})
+                                     "proxmox-guest-dhcp.sh", "seed/project.bundle",
+                                     "driftty-storage.js", "driftty-storage.test.cjs"})
             for path in capture.rglob("*"):
                 if path.is_file():
                     self.assertNotIn(b"operator-secret-canary", path.read_bytes())

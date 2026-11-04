@@ -1,4 +1,27 @@
 ARG PYTHON_IMAGE
+ARG DRIFTTY_NODE_IMAGE
+FROM ${DRIFTTY_NODE_IMAGE} AS driftty
+ARG DRIFTTY_COMMIT
+ARG DRIFTTY_SHA256
+ARG DRIFTTY_INDEX_SHA256
+# Проверенный архив извлекается в отдельный пустой каталог; gateway не собираем.
+ADD --checksum=sha256:${DRIFTTY_SHA256} https://codeload.github.com/mdp/driftty/tar.gz/${DRIFTTY_COMMIT} /download/source.tar.gz
+RUN mkdir /source /home/node/build \
+    && tar -xzf /download/source.tar.gz -C /source --strip-components=1 \
+    && cp /source/package.json /source/package-lock.json /home/node/build/ \
+    && chown -R node:node /home/node/build
+USER node
+WORKDIR /home/node/build
+RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN cp -r /source/src . \
+    && cp /source/index.html /source/tsconfig.json /source/vite.config.ts .
+COPY driftty-storage.js driftty-storage.test.cjs /compat/
+# Только проверенная сборка UI, без сети и install/postinstall зависимостей.
+RUN --network=none npm run build \
+    && printf '%s  %s\n' "$DRIFTTY_INDEX_SHA256" dist/index.html | sha256sum -c - \
+    && node /compat/driftty-storage.test.cjs /compat/driftty-storage.js \
+    && node -e 'const fs=require("node:fs"); const path="dist/index.html"; const html=fs.readFileSync(path,"utf8"); if(!html.includes("<head>")) throw Error("Missing HTML head"); fs.writeFileSync(path,html.replace("<head>","<head><script>"+fs.readFileSync("/compat/driftty-storage.js","utf8")+"</script>"));'
+
 FROM oven/bun:1.3.14-slim@sha256:d56a2534ffd262e92c12fd3249d3924d296d97086da773f821d7d0477435ea04 AS bun
 FROM ${PYTHON_IMAGE}
 
@@ -38,6 +61,8 @@ RUN mkdir -p /tmp/ttyd/source \
 RUN groupadd --gid 1000 actor \
     && useradd --uid 1000 --gid 1000 --home-dir /workspace/home --no-create-home --shell /bin/bash actor \
     && mkdir -p /workspace /opt/seeds
+COPY --from=driftty /home/node/build/dist/index.html /usr/local/share/brood/driftty/index.html
+COPY --from=driftty /source/LICENSE /usr/local/share/brood/driftty/LICENSE
 COPY brood-guest /usr/local/bin/brood-guest
 COPY bro /usr/local/bin/bro
 COPY proxmox-guest-dhcp.sh /usr/local/libexec/proxmox-guest-dhcp.sh

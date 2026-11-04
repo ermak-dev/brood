@@ -30,8 +30,15 @@ func actorSpec(executable string) ActorSpec {
 func actorEnv() []string {
 	return []string{"HOME=/workspace/home", "PWD=/workspace/project", "USER=claude", "LOGNAME=claude", "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "GOTOOLCHAIN=local", "GOMAXPROCS=4", "GOFLAGS=-p=2", "DISABLE_AUTOUPDATER=1", "TERM=xterm-256color", "LANG=C.UTF-8", "HTTP_PROXY=http://127.0.0.1:3128", "HTTPS_PROXY=http://127.0.0.1:3128", "http_proxy=http://127.0.0.1:3128", "https_proxy=http://127.0.0.1:3128", "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost", "ANTHROPIC_BASE_URL=http://127.0.0.1:8317", "ANTHROPIC_AUTH_TOKEN=brood-local", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1", "BROOD_EXECUTION_MODE=guest"}
 }
-func actorArgs() []string {
-	return []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app"}
+
+const drifttyIndex = "/usr/local/share/brood/driftty/index.html"
+
+func actorArgs(driftty bool) []string {
+	args := []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin"}
+	if driftty {
+		args = append(args, "--index", drifttyIndex)
+	}
+	return append(args, "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app")
 }
 
 // RunActor is the dedicated --brood-guest-actor dispatch target. The parent must
@@ -57,7 +64,15 @@ func RunActor() error {
 		return errors.New("actor home directory unavailable")
 	}
 	unix.Umask(0077)
-	return syscall.Exec("/usr/bin/ttyd", append([]string{"ttyd"}, actorArgs()...), actorEnv())
+	// Bootstrap обновляет бинарь и в старых образах без driftty (#155).
+	index, err := os.Stat(drifttyIndex)
+	if err != nil && !os.IsNotExist(err) {
+		return errors.New("cannot inspect driftty terminal index")
+	}
+	if err == nil && !index.Mode().IsRegular() {
+		return errors.New("driftty terminal index is not a regular file")
+	}
+	return syscall.Exec("/usr/bin/ttyd", append([]string{"ttyd"}, actorArgs(err == nil)...), actorEnv())
 }
 func lockPrivileges() error {
 	runtime.LockOSThread()

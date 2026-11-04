@@ -196,6 +196,55 @@ OCI import в PVE заменяет env значениями образа. Поэ
 владение и digest конфигурации и меняет только bootstrap env через digest CAS.
 Перед каждым новым поколением токен и параметры relay задаются заново.
 
+## Браузерный терминал driftty
+
+Новый guest image содержит только браузерный клиент driftty v3.0.0
+(`mdp/driftty`, commit `a4b8b2b38ee29b8fa5b979e70d37e1565b09cb0e`).
+`brood/dev/pins.json` закрепляет commit, SHA-256 исходного архива,
+SHA-256 готового `index.html` и digest образа Node для сборки. Docker build
+проверяет архив до распаковки, ставит зависимости через upstream
+`package-lock.json` с `npm ci --ignore-scripts`, затем собирает UI без сети
+от непривилегированного пользователя. Итоговый образ получает только
+`dist/index.html` и MIT license в `/usr/local/share/brood/driftty/`;
+Node и gateway driftty из build stage в него не копируются.
+После проверки upstream HTML добавляется локальный `driftty-storage.js`:
+actor-view сохраняет `sandbox allow-scripts` с opaque origin, поэтому
+недоступные localStorage/sessionStorage заменяются памятью текущей вкладки.
+Ослаблять sandbox ради хранения настроек терминала не требуется. Тест
+совместимости исполняется в build stage до публикации HTML.
+
+Гостевой ttyd использует `--index /usr/local/share/brood/driftty/index.html`
+на прежнем `127.0.0.1:8080`, с `--writable` и `--check-origin`. Клиент
+обращается к прежним `/token` и `/ws` относительно пути терминала.
+Новых listeners, credentials, auth routes и разрешений relay не появляется.
+Tmux остаётся владельцем сессии `claude`: закрытие вкладки не останавливает
+приложение, повторное подключение присоединяется к той же сессии. Broker,
+MCP, restart/recycle и прочие backend-возможности не заменяются driftty.
+Если bootstrap обновил бинарь старого образа без index, он сохраняет штатный
+клиент ttyd; одна выкладка серверного бинаря не добавляет driftty в старые CT.
+
+Для приёмки после интеграции нужен новый committed guest image:
+
+```sh
+BUILDX_BUILDER=<builder> .ci/proxmox-guest.sh /tmp/brood-160-image
+```
+
+Каталог результата должен отсутствовать или быть пустым. Оператор публикует
+полученный OCI-архив под именем с его SHA-256, сверяет `metadata.json` и
+создаёт отдельное fixture-подключение через clone API с новыми `template` и
+`templateDigest` (см. выше). Существующие подключения, пулы и пользовательские
+акторы не обновляются и не reset-ятся ради этой проверки.
+
+В отдельном fixture-пуле проверить новый актор через настоящий Go actor-view:
+мобильную клавиатуру и resize, ввод/вывод команды с уникальным маркером,
+разрыв и повторное открытие вкладки с сохранением того же tmux pane и маркера,
+обычные restart/recycle и MCP agents/send. Проверить HTTP index, `/token` и
+WebSocket `/ws` под префиксом actor-view, отсутствие внешних JS/CSS/font
+загрузок и нового gateway, прежние отказы без ticket/сессии, при чужом ACL и
+после смены поколения. Проверка через прямой порт ttyd не заменяет эту
+приёмку CSP и прокси. Удалять можно только созданные fixture-ресурсы после
+отдельного подтверждения оператора, не чужие акторы.
+
 ## Терминал и сеть
 
 Гость сам открывает WSS на
