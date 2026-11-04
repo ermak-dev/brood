@@ -256,8 +256,21 @@ func TestActorEnvironmentAndPayload(t *testing.T) {
 	if spec.UID != 1000 || spec.GID != 1000 || spec.Dir != "/workspace/project" || !reflect.DeepEqual(spec.Args, []string{"--brood-guest-actor"}) {
 		t.Fatalf("%+v", spec)
 	}
-	if !reflect.DeepEqual(actorArgs(), []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin", "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app"}) {
-		t.Fatal(actorArgs())
+	// FEATURE: #160: driftty заменяет только браузерный клиент ttyd.
+	// SPEC: Индекс нового образа выбран явно; старые образы сохраняют ttyd UI.
+	// Loopback, origin check и общая tmux-сессия не меняются.
+	// IMPLEMENTATION: Флаг наличия index добавляет только фиксированную опцию ttyd.
+	// RESULT: IMPLEMENTED — оба поколения образов сохраняют прежний runtime.
+	// STATUS: DONE
+	for _, driftty := range []bool{false, true} {
+		want := []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin"}
+		if driftty {
+			want = append(want, "--index", "/usr/local/share/brood/driftty/index.html")
+		}
+		want = append(want, "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app")
+		if got := actorArgs(driftty); !reflect.DeepEqual(got, want) {
+			t.Fatalf("driftty=%t: got %q, want %q", driftty, got, want)
+		}
 	}
 }
 
