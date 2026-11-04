@@ -225,6 +225,7 @@ func (s *Server) actorViewResponse(r *http.Request, response *http.Response) err
 		return errors.New("actor redirects are not allowed")
 	}
 	if v, ok := r.Context().Value(actorViewKey{}).(actorView); ok {
+		useDrifttyClient(r, response, v)
 		prefix := v.origin + "/actor-view/" + v.token + "/" + v.swarm + "/" + v.actor + "/"
 		ws := "ws" + strings.TrimPrefix(prefix, "http")
 		h.Set("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' "+prefix+"; style-src 'unsafe-inline' "+prefix+"; connect-src "+prefix+" "+ws+"; img-src "+prefix+" data: blob:; font-src "+prefix+" data:; media-src "+prefix+" blob:; worker-src blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
