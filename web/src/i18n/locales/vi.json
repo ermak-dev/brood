@@ -2850,6 +2850,7 @@
       "tabs_label": "Actor {{name}}",
       "tabs": {
         "overview": "Tổng quan",
+        "actions": "Thao tác",
         "output": "Đầu ra",
         "history": "Lịch sử",
         "usage": "Mức dùng",

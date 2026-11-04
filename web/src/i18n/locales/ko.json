@@ -2844,6 +2844,7 @@
       "tabs_label": "Actor {{name}}",
       "tabs": {
         "overview": "개요",
+        "actions": "작업",
         "output": "출력",
         "history": "기록",
         "usage": "사용량",

@@ -195,7 +195,7 @@ test('managed deletion warns permanent workspace loss before submitting, native 
   }
 });
 
-test('managed details show real placement and limitations without service counters', async () => {
+test('managed details show real placement without service explanations or counters', async () => {
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
   const html = renderToStaticMarkup(
@@ -206,12 +206,11 @@ test('managed details show real placement and limitations without service counte
     '105',
     'pve-a',
     'limited',
-    'Docker',
-    'kind',
-    'memory checkpoint',
-    'workspace',
   ]) {
     expect(html).toContain(text);
+  }
+  for (const text of [en.actors.managed_limitations, en.actors.stop_hint, en.actors.suspend_unsupported]) {
+    expect(html).not.toContain(text);
   }
   // The incarnation counter is an internal reconciliation detail, not user data.
   expect(html).not.toContain('9007199254740995');

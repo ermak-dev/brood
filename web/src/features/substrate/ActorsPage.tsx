@@ -25,7 +25,7 @@ import {
   deleteConfirmation,
   nativeActionGroups,
 } from './actorLifecycle';
-import { confirmationOf, type ManagedActionId } from './actorActions';
+import { confirmationOf, sessionReadable, type ManagedActionId } from './actorActions';
 import { useActorOperations, type UnknownOutcome } from './actorOperations';
 import { useActions, useResource } from './hooks';
 import styles from './substrate.module.scss';
@@ -239,6 +239,7 @@ function Actors({
       ) : data && data.length > 0 ? (
         <ActorTable
           rows={data}
+          swarm={project}
           canManage={canManage}
           pending={ops.pending}
           unknown={ops.unknown}
@@ -273,7 +274,7 @@ function Actors({
                   terminal: actorsApi.terminal(project, editorActor.metadata.name),
                   onAction: (action) => void act(editorActor, action),
                   onRemove: () => remove(editorActor),
-                })
+                }).map((group) => ({ ...group, actions: group.actions.filter((action) => action.id !== 'terminal') }))
               : []
           }
           notice={
@@ -380,6 +381,7 @@ function ManagedActionDialog({
  * when an action is in flight or its outcome is unknown, with the panel closed. */
 export function ActorTable({
   rows,
+  swarm,
   canManage,
   pending = {},
   unknown = [],
@@ -387,6 +389,7 @@ export function ActorTable({
   onOpen,
 }: {
   rows: Actor[];
+  swarm: string;
   canManage: boolean;
   pending?: Record<string, ManagedActionId>;
   unknown?: UnknownOutcome[];
@@ -462,6 +465,23 @@ export function ActorTable({
       rowKey={(a) => a.metadata.uid ?? a.metadata.name}
       onRowClick={rows.some(openable) ? onOpen : undefined}
       canOpen={openable}
+      actionsLabel={t('actors.ops.terminal.label')}
+      actions={canManage ? (actor) => {
+        if (goldenOf(actor)) return null;
+        const available = actor.provider !== 'proxmox' || (
+          sessionReadable(actor) && actor.capabilities?.terminal && !pending[actor.metadata.name]
+        );
+        const label = t('actors.ops.terminal.label');
+        return available ? (
+          <a className={`btn btn-secondary btn-sm ${styles.actorTerminal}`} href={actorsApi.terminal(swarm, actor.metadata.name)} target="_blank" rel="noopener noreferrer">
+            {label}<span className={styles.srOnly}> {actor.metadata.name} {t('substrate.opens_new_tab')}</span>
+          </a>
+        ) : (
+          <Button variant="secondary" size="sm" disabled className={styles.actorTerminal} title={t(`actors.ops.reasons.${pending[actor.metadata.name] ? 'pending' : actor.capabilities?.terminal ? 'not_running' : 'no_terminal'}`)}>
+            {label}
+          </Button>
+        );
+      } : undefined}
     />
   );
 }

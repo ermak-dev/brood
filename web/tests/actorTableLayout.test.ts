@@ -76,6 +76,7 @@ async function table(rows: Actor[], canManage: boolean, extra: object = {}) {
       { i18n },
       createElement(actorsPage.ActorTable, {
         rows,
+        swarm: 'swarm',
         canManage,
         goldenOf: () => undefined,
         onOpen: () => {},
@@ -98,9 +99,8 @@ const ROW_ACTIONS = ['Open terminal', 'Suspend', 'Resume', 'Start', 'Stop', 'Det
 
 test('provider and pool/CTID fold into one placement column; rows hold no actions and open the panel', async () => {
   const { heads, lines, markup, body } = await table([running, suspended, managed], true);
-  // The last column is the row's open chevron, hidden from assistive technology.
-  expect(heads).toEqual(['Name', 'State', 'Template', 'Placement', 'Updated', '']);
-  expect(markup).toMatch(/<th[^>]*aria-hidden="true"[^>]*><\/th><\/tr><\/thead>/);
+  // Терминал — единственный прямой переход в строке; операции остаются в панели.
+  expect(heads).toEqual(['Name', 'State', 'Template', 'Placement', 'Updated', 'Open terminal']);
   for (const gone of ['Provider', 'Logical pool / CTID', '>Node<', 'fake-native-worker', '>Actions<']) {
     expect(markup).not.toContain(gone);
   }
@@ -117,15 +117,14 @@ test('provider and pool/CTID fold into one placement column; rows hold no action
     expect(messages.substrate.placement?.length).toBeGreaterThan(0);
   }
 
-  // No buttons, links or menus in any row: each row is one focusable control
-  // that opens the actor's panel, a chevron at its end.
-  expect(body).not.toMatch(/<(button|a)\b/);
+  expect(body).not.toMatch(/<button\b/);
   expect(body).not.toContain('aria-haspopup');
-  for (const action of ROW_ACTIONS) expect(body).not.toContain(`>${action}<`);
+  for (const action of ROW_ACTIONS.filter((action) => action !== 'Open terminal')) expect(body).not.toContain(`>${action}<`);
   for (const line of lines) {
     expect(line.row).toContain('tabindex="0"');
     expect(line.cells).toHaveLength(6);
-    expect(line.raw.at(-1)).toContain('<svg');
+    expect(line.raw.at(-1)).toContain('href="/api/swarms/swarm/proxy/actors/');
+    expect(line.raw.at(-1)).toContain('target="_blank"');
   }
   expect(lines.map((line) => line.cells.slice(0, 2))).toEqual([
     ['coding', 'running'],

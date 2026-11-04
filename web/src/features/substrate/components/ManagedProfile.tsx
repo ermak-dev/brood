@@ -25,9 +25,6 @@ export function ManagedProfile({ entity }: { entity: Actor | ActorTemplate }) {
           </>
         )}
       </dl>
-      <p className={styles.muted}>{t('actors.managed_limitations')}</p>
-      <p className={styles.muted}>{t('actors.stop_hint')}</p>
-      <p className={styles.muted}>{t('actors.suspend_unsupported')}</p>
       {actor?.status?.errorMessage && <p role="alert">{actor.status.errorMessage}</p>}
     </div>
   );
