@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -47,8 +48,8 @@ func workspaceFixture(t *testing.T) *workspaceEngine {
 	}
 	git("add", "tracked")
 	git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture")
-	return &workspaceEngine{root: root, git: func(ctx context.Context, args ...string) (string, error) { return runWorkspaceGit(ctx, root, args...) }, tmux: func(context.Context, ...string) (string, error) { return "$1\t%1\n", nil }, prove: func(context.Context) (identity, error) {
-		return identity{PID: 123, SessionID: "old", Process: "start"}, nil
+	return &workspaceEngine{root: root, git: func(ctx context.Context, args ...string) (string, error) { return runWorkspaceGit(ctx, root, args...) }, call: func(context.Context, ptysession.Request) (ptysession.Reply, error) { return liveReply(), nil }, prove: func(context.Context) (identity, error) {
+		return identity{PID: 123, SessionID: "old", Process: "start", HolderProof: "holder"}, nil
 	}, quiet: func(context.Context) (bool, error) { return true, nil }}
 }
 func TestWorkspaceFactsAndWipe(t *testing.T) {
@@ -169,34 +170,27 @@ func TestWorkspaceRestartAndRecycle(t *testing.T) {
 		t.Run(op, func(t *testing.T) {
 			e := workspaceFixture(t)
 			os.WriteFile(filepath.Join(e.root, "CLAUDE.md"), []byte("rules"), 0600)
-			var calls [][]string
+			var calls []ptysession.Request
 			stopped := false
-			e.tmux = func(_ context.Context, args ...string) (string, error) {
-				calls = append(calls, append([]string(nil), args...))
-				if args[0] == "list-panes" {
-					return "$1\t%1\n", nil
-				}
-				if args[0] == "kill-session" {
+			e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+				calls = append(calls, req)
+				if req.Action == "stop" {
 					stopped = true
 				}
-				return "", nil
+				return liveReply(), nil
 			}
 			e.prove = func(context.Context) (identity, error) {
 				if stopped {
 					return identity{PID: 124, SessionID: "new", Process: "new-start"}, nil
 				}
-				return identity{PID: 123, SessionID: "old", Process: "old-start"}, nil
+				return identity{PID: 123, SessionID: "old", Process: "old-start", HolderProof: "holder"}, nil
 			}
 			r := e.handle(context.Background(), workspaceRequest(op, `{"confirm":true}`))
 			if !r.OK {
 				t.Fatalf("%s: %+v", op, r)
 			}
-			if len(calls) != 3 || calls[0][0] != "list-panes" || calls[1][0] != "kill-session" || calls[1][2] != "$1" || calls[2][0] != "new-session" {
-				t.Fatalf("tmux calls: %#v", calls)
-			}
-			launch := strings.Join(calls[2], " ")
-			if strings.Contains(launch, "bypass") || !strings.Contains(launch, "/usr/local/bin/brood-guest --brood-guest-app") || strings.Contains(launch, "/usr/local/bin/claude") {
-				t.Fatalf("launch: %s", launch)
+			if len(calls) != 2 || calls[0].Action != "stop" || calls[0].Proof != "holder" || calls[1].Action != "ensure" || len(calls[1].Data) != 0 {
+				t.Fatalf("fixed PTY calls: %#v", calls)
 			}
 			_, err := os.Stat(filepath.Join(e.root, "CLAUDE.md"))
 			if op == "restart" && err != nil {
@@ -209,14 +203,11 @@ func TestWorkspaceRestartAndRecycle(t *testing.T) {
 	}
 	e := workspaceFixture(t)
 	n := 0
-	e.prove = func(context.Context) (identity, error) { n++; return identity{PID: n}, nil }
+	e.prove = func(context.Context) (identity, error) { n++; return identity{PID: n, HolderProof: "holder"}, nil }
 	calls := 0
-	e.tmux = func(_ context.Context, args ...string) (string, error) {
-		if args[0] == "list-panes" {
-			return "$1\t%1\n", nil
-		}
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
 		calls++
-		return "", nil
+		return liveReply(), nil
 	}
 	r := e.handle(context.Background(), workspaceRequest("restart", `{"confirm":true}`))
 	if r.OK || calls != 0 {

@@ -5,9 +5,9 @@ package sessionctl
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 	"unicode/utf8"
 
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -48,35 +48,33 @@ func (e *engine) terminal(ctx context.Context, raw []byte) relay.SessionResponse
 		return failure("terminal session proof is required")
 	}
 	before, err := e.prove(ctx)
-	if err != nil || (s.Proof != "" && terminalProof(before) != s.Proof) {
+	if err != nil || before.HolderProof == "" || (s.Proof != "" && terminalProof(before) != s.Proof) {
 		return failure("terminal session identity is no longer live")
 	}
 	result := TerminalResult{Proof: terminalProof(before)}
 	if s.Action == "open" {
 		return success(result)
 	}
-	var args []string
+	req := ptysession.Request{Proof: before.HolderProof}
 	mutation := s.Action != "read"
 	switch s.Action {
 	case "read":
-		args = []string{"capture-pane", "-p", "-t", target}
+		req.Action = "screen"
 	case "input":
 		if s.Data == "" {
 			return failure("terminal input must not be empty")
 		}
-		args = []string{"send-keys", "-t", target, "-l", "--", s.Data}
+		req.Action, req.Data = "input", []byte(s.Data)
 	case "interrupt":
-		args = []string{"send-keys", "-t", target, "Escape"}
+		req.Action, req.Data = "input", []byte{0x1b}
 	case "resize":
-		args = []string{"resize-window", "-t", "claude:0", "-x", strconv.Itoa(s.Cols), "-y", strconv.Itoa(s.Rows)}
+		req.Action, req.Columns, req.Rows = "resize", s.Cols, s.Rows
 	}
-	text, err := e.run(ctx, args...)
-	if err != nil {
-		if mutation {
-			return relay.SessionResponse{Outcome: "unknown", Text: "terminal delivery is unknown; writer disabled, do not retry automatically"}
-		}
-		return failure("terminal snapshot unavailable or exceeds output limit")
+	reply, err := e.call(ctx, req)
+	if err != nil || !reply.OK {
+		return ptyFailure(reply, err, mutation)
 	}
+	text := reply.Screen
 	after, err := e.prove(ctx)
 	if err != nil || before != after {
 		if mutation {

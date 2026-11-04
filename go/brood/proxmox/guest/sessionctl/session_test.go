@@ -3,7 +3,7 @@
 package sessionctl
 
 // FEATURE: Safe local session operations, never arbitrary commands or paths.
-// SPEC: Fixed tmux target and defaults; bounded, identity-bound transcript pages;
+// SPEC: Fixed PTY holder and defaults; bounded, identity-bound transcript pages;
 // incomplete JSON stays pending, symlinks fail, usage deduplicates message IDs.
 // IMPLEMENTATION: Bounded tail/history/stat, exact slash allowlist and live fences.
 // RESULT: IMPLEMENTED — bounded session reads and slash; destructive operations refuse.
@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -30,7 +31,7 @@ func fixture(t *testing.T) (*engine, string) {
 		t.Fatal(err)
 	}
 	e := &engine{config: root, now: func() time.Time { return time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC) }, prove: func(context.Context) (identity, error) {
-		return identity{SessionID: "abc", Process: "boot:12", PID: 123}, nil
+		return fixtureIdentity(), nil
 	}}
 	return e, filepath.Join(p, "abc.jsonl")
 }
@@ -107,13 +108,13 @@ func TestHistoryRefusesSymlinkAndBadCursor(t *testing.T) {
 }
 func TestTailAndSlashAreFixedAndValidated(t *testing.T) {
 	e, _ := fixture(t)
-	var calls [][]string
-	e.run = func(_ context.Context, args ...string) (string, error) {
-		calls = append(calls, args)
-		return "one\nneedle\nthree\n", nil
+	var calls []ptysession.Request
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+		calls = append(calls, req)
+		return ptysession.Reply{OK: true, Screen: "one\nneedle\nthree\n"}, nil
 	}
 	got := call(e, "tail", `{"name":";ignored","grep":"needle"}`)
-	if !got.OK || got.Text != "needle\n" || strings.Join(calls[0], " ") != "capture-pane -p -t claude:0.0 -S -40" {
+	if !got.OK || got.Text != "needle\n" || calls[0].Action != "tail" || calls[0].Lines != 40 || calls[0].Proof != fixtureIdentity().HolderProof {
 		t.Fatalf("%#v %v", got, calls)
 	}
 	for _, args := range []string{`{"command":"/status\n/clear"}`, `{"command":"/evil"}`, `{"command":"/model;id"}`, `{"command":"Escape\u001b"}`} {
@@ -125,13 +126,15 @@ func TestTailAndSlashAreFixedAndValidated(t *testing.T) {
 	if got := call(e, "slash", `{"command":"/status"}`); !got.OK || got.Outcome != "submitted" {
 		t.Fatal(got)
 	}
-	if len(calls) != 2 || strings.Join(calls[0], " ") != "send-keys -t claude:0.0 -l -- /status" || strings.Join(calls[1], " ") != "send-keys -t claude:0.0 Enter" {
+	if len(calls) != 1 || calls[0].Action != "input" || calls[0].Proof != fixtureIdentity().HolderProof || string(calls[0].Data) != "/status\r" {
 		t.Fatal(calls)
 	}
 }
 func TestTailReturnsRequestedLinesNotScrollbackPlusScreen(t *testing.T) {
 	e, _ := fixture(t)
-	e.run = func(context.Context, ...string) (string, error) { return "old\nolder\nline1\nline2\nline3\n", nil }
+	e.call = func(context.Context, ptysession.Request) (ptysession.Reply, error) {
+		return ptysession.Reply{OK: true, Screen: "old\nolder\nline1\nline2\nline3\n"}, nil
+	}
 	got := call(e, "tail", `{"lines":3}`)
 	if !got.OK || got.Text != "line1\nline2\nline3\n" {
 		t.Fatal(got)

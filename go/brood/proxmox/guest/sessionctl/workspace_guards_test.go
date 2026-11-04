@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 )
 
 func TestWorkspaceTraversalDepthBound(t *testing.T) {
@@ -25,21 +27,40 @@ func TestWorkspaceTraversalDepthBound(t *testing.T) {
 	}
 }
 
-func TestWorkspaceStopRefusesAdditionalPanes(t *testing.T) {
+func TestWorkspaceStopRefusesUnprovenHolder(t *testing.T) {
 	e := workspaceFixture(t)
-	killed := false
-	e.tmux = func(_ context.Context, args ...string) (string, error) {
-		if args[0] == "list-panes" {
-			return "$1\t%1\n$1\t%2\n", nil
-		}
-		if args[0] == "kill-session" {
-			killed = true
-		}
-		return "", nil
+	calls := 0
+	e.prove = func(context.Context) (identity, error) { return identity{PID: 123}, nil }
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+		calls++
+		return liveReply(), nil
 	}
 	r := e.handle(context.Background(), workspaceRequest("restart", `{"confirm":true}`))
-	if r.OK || killed {
-		t.Fatalf("unproven additional panes stopped: %+v killed=%v", r, killed)
+	if r.OK || calls != 0 {
+		t.Fatalf("unproven holder stopped: %+v calls=%d", r, calls)
+	}
+}
+
+func TestWorkspaceStopRefusalDoesNotCleanOrLaunch(t *testing.T) {
+	e := workspaceFixture(t)
+	effects := 0
+	git := e.git
+	e.git = func(ctx context.Context, args ...string) (string, error) {
+		if args[0] == "reset" || args[0] == "clean" {
+			t.Fatal("cleanup after refused stop")
+		}
+		return git(ctx, args...)
+	}
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+		effects++
+		if req.Action != "stop" || req.Proof != "holder" {
+			t.Fatalf("unexpected effect: %+v", req)
+		}
+		return ptysession.Reply{Outcome: "refused", Error: "browser writer conflict"}, nil
+	}
+	r := e.handle(context.Background(), workspaceRequest("recycle", `{"confirm":true}`))
+	if r.OK || r.Outcome == "unknown" || effects != 1 {
+		t.Fatalf("refused stop: %+v effects=%d", r, effects)
 	}
 }
 func TestWorkspaceCancellationAfterLaunchIsUnconfirmed(t *testing.T) {
@@ -50,18 +71,15 @@ func TestWorkspaceCancellationAfterLaunchIsUnconfirmed(t *testing.T) {
 	e.prove = func(context.Context) (identity, error) {
 		proofs++
 		if proofs < 3 {
-			return identity{PID: 1}, nil
+			return identity{PID: 1, HolderProof: "holder"}, nil
 		}
 		return identity{PID: 2}, nil
 	}
-	e.tmux = func(_ context.Context, args ...string) (string, error) {
-		if args[0] == "list-panes" {
-			return "$1\t%1\n", nil
-		}
-		if args[0] == "new-session" {
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+		if req.Action == "ensure" {
 			cancel()
 		}
-		return "", nil
+		return liveReply(), nil
 	}
 	r := e.handle(ctx, workspaceRequest("restart", `{"confirm":true}`))
 	if r.OK || r.Outcome != "unknown" {

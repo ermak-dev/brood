@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -28,7 +29,7 @@ const workspacePollInterval = 100 * time.Millisecond
 type workspaceEngine struct {
 	root  string
 	git   func(context.Context, ...string) (string, error)
-	tmux  func(context.Context, ...string) (string, error)
+	call  ptyCall
 	prove func(context.Context) (identity, error)
 	quiet func(context.Context) (bool, error)
 }
@@ -60,7 +61,7 @@ func RunWorkspace(ctx context.Context, req relay.SessionRequest) relay.SessionRe
 	defer cancel()
 	e := workspaceEngine{root: fixedWorkspace, git: func(ctx context.Context, args ...string) (string, error) {
 		return runWorkspaceGit(ctx, fixedWorkspace, args...)
-	}, tmux: runWorkspaceTMUX, prove: proveLive, quiet: workspaceQuiet}
+	}, call: callPTY, prove: proveLive, quiet: workspaceQuiet}
 	return e.handle(ctx, req)
 }
 
@@ -108,10 +109,8 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		if err != nil {
 			return failure("no proven live Claude session; nothing changed")
 		}
-		panes, err := e.tmux(ctx, "list-panes", "-s", "-t", "=claude", "-F", "#{session_id}\t#{pane_id}")
-		row := strings.Split(strings.TrimSuffix(panes, "\n"), "\t")
-		if err != nil || len(row) != 2 || !workspaceTMUXID(row[0], '$') || !workspaceTMUXID(row[1], '%') {
-			return failure("fixed tmux session must have exactly one proven pane; nothing changed")
+		if before.HolderProof == "" {
+			return failure("current PTY holder proof unavailable; nothing changed")
 		}
 		after, err := e.prove(ctx)
 		if err != nil || before != after {
@@ -120,10 +119,14 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		if ctx.Err() != nil {
 			return failure("workspace operation canceled before stop")
 		}
-		if _, err = e.tmux(ctx, "kill-session", "-t", row[0]); err != nil {
+		reply, err := e.call(ctx, ptysession.Request{Action: "stop", Proof: before.HolderProof})
+		if err != nil || !reply.OK {
+			if reply.Outcome == "refused" {
+				return ptyFailure(reply, err, true)
+			}
 			return workspaceUnknown("session stop result is unknown")
 		}
-		// kill-session подтверждает команду, но не завершение дерева процессов.
+		// Ответ holder не заменяет независимый scan всех процессов workspace.
 		if err = workspaceWait(ctx, workspaceStopTimeout, e.quiet); err != nil {
 			return workspaceUnknown("session stop is not yet confirmed; workspace is live or process inventory is unknown")
 		}
@@ -143,7 +146,7 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		if err = e.repository(ctx); err != nil {
 			return workspaceUnknown("session stopped; repository proof was lost")
 		}
-		if _, err = e.tmux(ctx, workspaceLaunchArgs()...); err != nil {
+		if reply, err = e.call(ctx, ptysession.Request{Action: "ensure"}); err != nil || !reply.OK {
 			return workspaceUnknown("session launch result is unknown")
 		}
 		if err = workspaceWait(ctx, workspaceStartTimeout, func(ctx context.Context) (bool, error) {
@@ -370,52 +373,17 @@ func workspaceExec(parent context.Context, root string, env []string, exe string
 	}
 	return output.String(), err
 }
-func workspaceTMUXID(s string, prefix byte) bool {
-	if len(s) < 2 || len(s) > 20 || s[0] != prefix {
-		return false
-	}
-	for _, ch := range s[1:] {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-	return true
-}
 
-// EnsureSession starts the fixed detached Claude session at guest boot unless
-// it exists. It never stops or replaces a session; ttyd attaches to it later.
-func EnsureSession(ctx context.Context) error { return ensureSession(ctx, runWorkspaceTMUX) }
+// EnsureSession asks the trusted PTY holder to ensure its fixed command exists.
+// The helper never launches a process or replaces an existing child itself.
+func EnsureSession(ctx context.Context) error { return ensureSession(ctx, callPTY) }
 
-func ensureSession(ctx context.Context, tmux func(context.Context, ...string) (string, error)) error {
-	if _, err := tmux(ctx, "has-session", "-t", "=claude"); err == nil {
-		return nil
+func ensureSession(ctx context.Context, call ptyCall) error {
+	reply, err := call(ctx, ptysession.Request{Action: "ensure"})
+	if err != nil || !reply.OK || !reply.State.Running || reply.Proof == "" {
+		return errors.New("fixed Claude PTY session could not be ensured; completion is unconfirmed")
 	}
-	if _, err := tmux(ctx, workspaceLaunchArgs()...); err == nil {
-		return nil
-	}
-	// Терминал мог создать ту же сессию между двумя командами.
-	if _, err := tmux(ctx, "has-session", "-t", "=claude"); err == nil {
-		return nil
-	}
-	return errors.New("fixed Claude tmux session could not be started")
-}
-
-func workspaceLaunchArgs() []string {
-	return []string{"new-session", "-d", "-s", "claude", "-c", fixedWorkspace, "-e", "HOME=/workspace/home", "-e", "PWD=/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app"}
-}
-func runWorkspaceTMUX(ctx context.Context, args ...string) (string, error) {
-	// Helper env задаёт root supervisor, не RPC. Передаём его также через -e:
-	// уже живущий tmux server иначе оставит старое окружение в новой сессии.
-	env := os.Environ()
-	if len(args) > 0 && args[0] == "new-session" {
-		launch := []string{"new-session"}
-		for _, item := range env {
-			launch = append(launch, "-e", item)
-		}
-		args = append(launch, args[1:]...)
-	}
-	// Новый tmux server наследует cwd клиента; он не должен удерживать clone live.
-	return workspaceExec(ctx, "/workspace/home", env, "/usr/bin/tmux", args...)
+	return nil
 }
 
 // workspaceQuiet deliberately refuses any other process rooted in the clone,

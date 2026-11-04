@@ -30,7 +30,10 @@ CI запускает `bash .ci/go-test.sh` на существующем Docker
 |---|---|
 | `golang.org/x/crypto` | Argon2id и SSH multiplexing гостевого Proxmox relay с закреплённым host key |
 | `golang.org/x/net` | WebSocket-транспорт исходящего WSS relay; существующий pin, без новой зависимости |
-| `golang.org/x/term` | Ввод пароля без эха с безопасным отказом |
+| `golang.org/x/term` | Ввод пароля без эха с безопасным отказом; raw TTY attach к сохраняемому гостевому PTY |
+| `github.com/charmbracelet/x/vt` | Headless VT для снимков MCP и восстановления экрана при reconnect (#162). Не преобразует live-поток браузера и не отвечает приложению; заменяет экранную зависимость от tmux без собственного VT emulator |
+| `github.com/charmbracelet/x/ansi` | Типы режимов и границы управляющих последовательностей того же VT-стека: согласованный reconnect без обрыва UTF-8/escape-последовательностей |
+| `golang.org/x/sys` | Уже использовался косвенно; прямая зависимость для Linux PTY ioctl, pidfd, UID/capability и Unix socket проверок |
 | `modernc.org/sqlite` | SQLite без cgo |
 | `gopkg.in/yaml.v3` | Broodfile |
 | `go.ate.dev/substrate` | Публичные protobuf/gRPC-типы |

@@ -70,7 +70,7 @@ func NewTerminalController(step func(context.Context, sessionctl.TerminalStep) r
 	return &TerminalController{attachments: make(map[string]*terminalAttachment), step: step, now: time.Now}
 }
 
-// Close drops all attachment metadata on disconnect without touching tmux.
+// Close drops attachment metadata without stopping the PTY host or its child.
 func (c *TerminalController) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

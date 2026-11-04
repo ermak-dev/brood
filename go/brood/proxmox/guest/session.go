@@ -57,7 +57,7 @@ func (b *sessionOutput) Write(p []byte) (int, error) {
 }
 
 // NewSessionHandler creates private attachment state for one relay connection.
-// Cancellation discards metadata only; no tmux or Claude process is stopped.
+// Cancellation discards metadata only; neither the PTY host nor Claude is stopped.
 func NewSessionHandler(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
 	return NewSessionHandlerWithSecrets(connection, nil)
 }

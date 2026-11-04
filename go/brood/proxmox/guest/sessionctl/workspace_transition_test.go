@@ -5,16 +5,14 @@ package sessionctl
 import (
 	"context"
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 )
 
 func TestWorkspaceTransitionWaitsForTeardownAndNewProof(t *testing.T) {
@@ -23,7 +21,7 @@ func TestWorkspaceTransitionWaitsForTeardownAndNewProof(t *testing.T) {
 			e := workspaceFixture(t)
 			stopped, launched := false, false
 			quietCalls, newProofs, resets := 0, 0, 0
-			old := identity{PID: 123, SessionID: "old", Process: "old-start"}
+			old := identity{PID: 123, SessionID: "old", Process: "old-start", HolderProof: "holder"}
 			e.prove = func(context.Context) (identity, error) {
 				if !launched {
 					return old, nil
@@ -45,22 +43,20 @@ func TestWorkspaceTransitionWaitsForTeardownAndNewProof(t *testing.T) {
 				quietCalls++
 				return quietCalls >= 3, nil
 			}
-			e.tmux = func(_ context.Context, args ...string) (string, error) {
-				switch args[0] {
-				case "list-panes":
-					return "$1\t%1\n", nil
-				case "kill-session":
+			e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+				switch req.Action {
+				case "stop":
 					if stopped {
 						t.Fatal("stop repeated")
 					}
 					stopped = true
-				case "new-session":
+				case "ensure":
 					if launched || quietCalls < 3 {
 						t.Fatal("launch before quiet or repeated")
 					}
 					launched = true
 				}
-				return "", nil
+				return liveReply(), nil
 			}
 			git := e.git
 			e.git = func(ctx context.Context, args ...string) (string, error) {
@@ -85,15 +81,15 @@ func TestWorkspaceTransitionWaitsForTeardownAndNewProof(t *testing.T) {
 func TestWorkspaceTransitionWaitsForNewProof(t *testing.T) {
 	e := workspaceFixture(t)
 	launched, proofs := false, 0
-	e.tmux = func(_ context.Context, args ...string) (string, error) {
-		if args[0] == "new-session" {
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+		if req.Action == "ensure" {
 			launched = true
 		}
-		return "$1\t%1\n", nil
+		return liveReply(), nil
 	}
 	e.prove = func(context.Context) (identity, error) {
 		if !launched {
-			return identity{PID: 123, SessionID: "old"}, nil
+			return identity{PID: 123, SessionID: "old", HolderProof: "holder"}, nil
 		}
 		proofs++
 		if proofs < 3 {
@@ -117,7 +113,7 @@ func TestWorkspaceTransitionTimeoutAndCancellation(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 350*time.Millisecond)
 				defer cancel()
 				stops, launches, attempts := 0, 0, 0
-				old := identity{PID: 123, SessionID: "old", Process: "old-start"}
+				old := identity{PID: 123, SessionID: "old", Process: "old-start", HolderProof: "holder"}
 				pending := func() {
 					attempts++
 					if cancelWait && attempts == 2 {
@@ -141,16 +137,14 @@ func TestWorkspaceTransitionTimeoutAndCancellation(t *testing.T) {
 					}
 					return identity{}, errors.New("not proven")
 				}
-				e.tmux = func(_ context.Context, args ...string) (string, error) {
-					switch args[0] {
-					case "list-panes":
-						return "$1\t%1\n", nil
-					case "kill-session":
+				e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+					switch req.Action {
+					case "stop":
 						stops++
-					case "new-session":
+					case "ensure":
 						launches++
 					}
-					return "", nil
+					return liveReply(), nil
 				}
 				start := time.Now()
 				r := e.handle(ctx, workspaceRequest("restart", `{"confirm":true}`))
@@ -181,11 +175,11 @@ func TestWorkspaceTransitionRechecksRepositoryAfterWaiting(t *testing.T) {
 		}
 		return true, nil
 	}
-	e.tmux = func(_ context.Context, args ...string) (string, error) {
-		if args[0] == "new-session" {
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+		if req.Action == "ensure" {
 			launches++
 		}
-		return "$1\t%1\n", nil
+		return liveReply(), nil
 	}
 	r := e.handle(context.Background(), workspaceRequest("restart", `{"confirm":true}`))
 	if r.OK || r.Outcome != "unknown" || quietCalls < 2 || launches != 0 || !strings.Contains(r.Text, "repository proof was lost") {
@@ -197,90 +191,14 @@ func TestWorkspaceTransitionInventoryErrorDoesNotLaunch(t *testing.T) {
 	e := workspaceFixture(t)
 	launches, scans := 0, 0
 	e.quiet = func(context.Context) (bool, error) { scans++; return false, errors.New("inventory unavailable") }
-	e.tmux = func(_ context.Context, args ...string) (string, error) {
-		if args[0] == "new-session" {
+	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
+		if req.Action == "ensure" {
 			launches++
 		}
-		return "$1\t%1\n", nil
+		return liveReply(), nil
 	}
 	r := e.handle(context.Background(), workspaceRequest("restart", `{"confirm":true}`))
 	if r.OK || r.Outcome != "unknown" || launches != 0 || scans != 1 {
 		t.Fatalf("unknown inventory: %+v launches=%d scans=%d", r, launches, scans)
-	}
-}
-
-func TestWorkspaceTMUXControlCWDContract(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), "workspace.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "runWorkspaceTMUX" {
-			continue
-		}
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			name, ok := call.Fun.(*ast.Ident)
-			if !ok || name.Name != "workspaceExec" {
-				return true
-			}
-			found = true
-			cwd, ok := call.Args[1].(*ast.BasicLit)
-			if !ok || cwd.Value != strconv.Quote("/workspace/home") {
-				t.Error("tmux control/server must start in fixed /workspace/home, not the clone")
-			}
-			return true
-		})
-	}
-	if !found {
-		t.Fatal("workspace tmux command not inspected")
-	}
-	args := workspaceLaunchArgs()
-	if len(args) < 6 || args[4] != "-c" || args[5] != fixedWorkspace {
-		t.Fatalf("pane must still start in project: %q", args)
-	}
-}
-
-func TestWorkspaceTMUXServerOutsidePaneCWD(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux is not installed")
-	}
-	root := t.TempDir()
-	home, project := filepath.Join(root, "home"), filepath.Join(root, "project")
-	for _, path := range []string{home, project} {
-		if err := os.Mkdir(path, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	socket := filepath.Join(root, "tmux.sock")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	run := func(args ...string) (string, error) {
-		return workspaceExec(ctx, home, []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8"}, "/usr/bin/tmux", append([]string{"-S", socket, "-f", "/dev/null"}, args...)...)
-	}
-	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		workspaceExec(cleanup, home, []string{"PATH=/usr/bin:/bin"}, "/usr/bin/tmux", "-S", socket, "kill-server")
-	})
-	if _, err := run("new-session", "-d", "-s", "fixture", "-c", project, "/bin/sleep", "60"); err != nil {
-		t.Fatal(err)
-	}
-	out, err := run("display-message", "-p", "-t", "fixture", "#{pid}\t#{pane_current_path}")
-	if err != nil {
-		t.Fatal(err)
-	}
-	parts := strings.Split(strings.TrimSpace(out), "\t")
-	if len(parts) != 2 || parts[1] != project {
-		t.Fatalf("pane cwd: %q", out)
-	}
-	serverCWD, err := os.Readlink("/proc/" + parts[0] + "/cwd")
-	if err != nil || serverCWD != home {
-		t.Fatalf("server cwd=%q want=%q err=%v", serverCWD, home, err)
 	}
 }

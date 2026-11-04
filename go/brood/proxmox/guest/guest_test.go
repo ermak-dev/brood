@@ -267,8 +267,8 @@ func TestActorEnvironmentAndPayload(t *testing.T) {
 		if driftty {
 			want = append(want, "--index", "/usr/local/share/brood/driftty/index.html")
 		}
-		want = append(want, "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app")
-		if got := actorArgs(driftty); !reflect.DeepEqual(got, want) {
+		want = append(want, "/opt/brood/bin/brood-guest", "--brood-guest-attach")
+		if got := actorArgs("/opt/brood/bin/brood-guest", driftty); !reflect.DeepEqual(got, want) {
 			t.Fatalf("driftty=%t: got %q, want %q", driftty, got, want)
 		}
 	}

@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"golang.org/x/sys/unix"
 )
 
@@ -32,6 +33,9 @@ func openSafe(path string, directory bool) (*os.File, error) {
 	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
+	}
+	if path == "/" && directory {
+		return os.NewFile(uintptr(fd), path), nil
 	}
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	for i, p := range parts {
@@ -125,9 +129,9 @@ func processInfo(pid int) (process, error) {
 }
 
 func proveLive(ctx context.Context) (identity, error) {
-	return proveIdentity(ctx, fixedConfig, "/workspace/project", runTMUX, true)
+	return proveIdentity(ctx, fixedConfig, "/workspace/project", callPTY, true)
 }
-func proveIdentity(ctx context.Context, config, cwd string, run func(context.Context, ...string) (string, error), requirePane bool) (identity, error) {
+func proveIdentity(ctx context.Context, config, cwd string, call ptyCall, requirePTY bool) (identity, error) {
 	dir, err := openSafe(filepath.Join(config, "sessions"), true)
 	if err != nil {
 		return identity{}, err
@@ -231,35 +235,18 @@ func proveIdentity(ctx context.Context, config, cwd string, run func(context.Con
 		if json.Unmarshal(key, &k) != nil || k.Start != proc.start {
 			return identity{}, errors.New("session process-start key mismatch")
 		}
-		if requirePane {
-			pane, err := run(ctx, "display-message", "-p", "-t", target, "#{pane_pid}")
-			if err != nil {
-				return identity{}, err
+		var holder ptysession.Reply
+		if requirePTY {
+			holder, err = call(ctx, ptysession.Request{Action: "status"})
+			if err != nil || !holder.OK || !holder.State.Running || holder.Proof == "" || holder.State.Epoch == "" || holder.State.PID != s.PID || holder.State.Start != proc.start {
+				return identity{}, errors.New("Claude process does not match the current PTY holder")
 			}
-			panePID, err := strconv.Atoi(strings.TrimSpace(pane))
-			if err != nil || panePID < 1 {
-				return identity{}, errors.New("tmux pane identity unavailable")
-			}
-			// Панель остаётся той же, даже если Claude умер и foreground стал shell.
-			// Нужен живой Claude PID в дереве pane и его foreground process group.
 			if proc.tty == "0" || proc.group != proc.foreground {
-				return identity{}, errors.New("Claude session is not foreground")
+				return identity{}, errors.New("Claude session is not foreground on its PTY")
 			}
-			current := s.PID
-			found := false
-			for i := 0; i < 64 && current > 1; i++ {
-				if current == panePID {
-					found = true
-					break
-				}
-				parent, err := processInfo(current)
-				if err != nil {
-					break
-				}
-				current = parent.parent
-			}
-			if !found {
-				return identity{}, errors.New("session is not in the fixed tmux pane")
+			current, err := call(ctx, ptysession.Request{Action: "status"})
+			if err != nil || !current.OK || current.State != holder.State || current.Proof != holder.Proof {
+				return identity{}, errors.New("PTY holder changed during identity proof")
 			}
 		}
 		final, err := processInfo(s.PID)
@@ -267,7 +254,7 @@ func proveIdentity(ctx context.Context, config, cwd string, run func(context.Con
 			return identity{}, errors.New("session process changed")
 		}
 		stat := after.Sys().(*syscall.Stat_t)
-		hits = append(hits, identity{SessionID: s.ID, Process: strings.TrimSpace(string(boot)) + ":" + proc.start, PID: s.PID, Socket: s.Socket, Device: uint64(stat.Dev), Inode: stat.Ino})
+		hits = append(hits, identity{SessionID: s.ID, Process: strings.TrimSpace(string(boot)) + ":" + proc.start, PID: s.PID, Socket: s.Socket, Device: uint64(stat.Dev), Inode: stat.Ino, HolderProof: holder.Proof, Epoch: holder.State.Epoch})
 	}
 	if len(hits) != 1 {
 		return identity{}, errors.New("no unique proven live Claude session")

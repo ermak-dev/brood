@@ -2,16 +2,22 @@
 
 package guest
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
-// FEATURE: Persistent ttyd does not keep the project workspace busy after Claude stops.
-// SPEC: The service starts outside the clone and tmux explicitly places Claude in the project.
-func TestActorTmuxExplicitProjectDirectory(t *testing.T) {
-	args := actorArgs(true)
-	for i, arg := range args {
-		if arg == "-c" && i+1 < len(args) && args[i+1] == "/workspace/project" {
-			return
+// FEATURE: Persistent PTY services must not hold the project cwd after Claude exits.
+// SPEC: The host lives in home; only the fixed app wrapper selects the project
+// and consumes project secrets. A browser attachment never launches an app.
+func TestActorPTYKeepsPersistentServiceOutsideProject(t *testing.T) {
+	cfg := actorPTYConfig("/opt/brood/bin/brood-guest")
+	if cfg.Dir != "/workspace/home" || !reflect.DeepEqual(cfg.Command, []string{"/opt/brood/bin/brood-guest", "--brood-guest-app"}) {
+		t.Fatalf("invalid PTY launch: %+v", cfg)
+	}
+	for _, arg := range actorArgs("/opt/brood/bin/brood-guest", true) {
+		if arg == "--brood-guest-app" {
+			t.Fatal("browser attach can create an app session")
 		}
 	}
-	t.Fatal("tmux inherits persistent ttyd cwd instead of selecting the project directory")
 }

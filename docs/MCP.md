@@ -69,7 +69,7 @@ MCP — 21. Перенос не подключает Brood к старой ус�
 | `agents` | `agents` | Managed-акторы выбранного роя; running не означает idle или чистый Git |
 | `send` | `send` | Сообщение и квитанция доставки, не ответ модели |
 | `dispatch` | `dispatch` | Явная аренда allocation с request ID; send/show/release |
-| `tail` | `tail` | Ограниченный снимок tmux-экрана |
+| `tail` | `tail` | Ограниченный снимок headless VT состояния PTY |
 | `slash` | `slash` | Белый список команд в доказанную сессию |
 | `session history` | `session_history` | Приватная история с cursor и epoch |
 | `session terminal` | `session_terminal` | Приватное ro/rw подключение со снимками экрана и последовательностями |
@@ -121,7 +121,7 @@ Claude»). Модель новой сессии выполняет инстру�
 разрешений; то же относится к `recycle`. Для `restart`,
 `wipe` и `recycle` нужен проверенный Git-клон строго в `/workspace/project`.
 Неизвестный Git state, неподходящая конфигурация, symlink/gitdir вне корня,
-живые процессы и дополнительные tmux panes дают отказ до очистки. Эти
+живые процессы и несовпадающая PTY identity дают отказ до очистки. Эти
 команды не загружают произвольный origin, bootstrap или shell из аргументов.
 `restart` и `recycle` ждут освобождения workspace до 4 секунд и нового session
 proof до 8 секунд в общем бюджете helper 15 секунд; timeout или отмена после
@@ -199,7 +199,7 @@ URL или actor-owned socket path.
 Root запускает фиксированный helper UID/GID 1000 с NoNewPrivs, очищенными
 capabilities и фиксированным окружением. Только helper открывает реестр и
 сокеты Claude. Он проверяет peer PID/UID, process-start identity, CWD,
-config home и связь с tmux pane. История читается из фиксированного корня
+config home, foreground TTY и точный PID/start/epoch текущего PTY child. История читается из фиксированного корня
 без symlink traversal; неполная строка остаётся pending, слишком большая
 или неверная запись даёт notice. История ограничена 8 MiB prefix scan и
 явно сообщает partial/reset.
@@ -211,7 +211,7 @@ config home и связь с tmux pane. История читается из ф�
 с тем же seq отвергается. Неизвестная запись отключает writer. Cursor —
 непрозрачная строка снимка, `read --wait` ограничен 15 секундами, `data` —
 буквальный UTF-8 ввод до 4096 байт, не base64. `close` отсоединяет только
-подключение, не останавливает Claude/tmux. Disconnect уничтожает metadata.
+подключение, не останавливает Claude или PTY holder. Disconnect уничтожает metadata.
 
 Максимум четыре подключения, idle TTL 60 секунд, writer TTL 30 секунд.
 Slash и workspace mutations используют тот же writer gate. Белый список
@@ -230,7 +230,7 @@ Claude -> bro --guest mcp (UID 1000)
        -> /run/brood/swarm.sock (root:1000, 0660)
        -> supervisor -> аутентифицированный relay
        -> сервер: текущие identity/generation/swarm/delegation
-       -> relay получателя -> fixed helper UID 1000 -> Claude/tmux/transcripts
+       -> relay получателя -> fixed helper UID 1000 -> Claude/PTY/transcripts
 ```
 
 Broker проверяет SO_PEERCRED, держит exclusive lock в root-owned каталоге и
@@ -240,7 +240,12 @@ reconnect не используется. Legacy agents/add/send envelopes под
 и ответы relay ограничены 128 KiB; одновременно не более восьми RPC/IPC.
 Машинные credentials остаются у root supervisor. Ключ CLIProxyAPI остаётся
 на сервере; helper использует тот же fixed-loopback gateway, что исходная
-Claude-сессия. ttyd живёт вне клона, tmux получает явный `-c /workspace/project`.
+Claude-сессия. Ttyd и Go PTY holder живут вне клона; только app wrapper
+выбирает `/workspace/project`. Browser writer владеет вводом и размером PTY;
+пока он подключён, конфликтующие input/resize и restart/recycle с остановкой
+сессии получают отказ, без принудительного захвата. Это не меняет семантику
+явных lifecycle stop/reset/delete всей CT. Чтение снимков и transcript доступно по прежним
+правам. Приватный holder-сокет root-owned и не выбирается аргументами модели.
 
 MCP tools-only `2025-03-26`: initialize, notifications/initialized, ping,
 tools/list, tools/call. Ошибка возвращается с причиной и `isError: true`;
