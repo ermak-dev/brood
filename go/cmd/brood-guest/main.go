@@ -58,6 +58,7 @@ type dependencies struct {
 	app     func() error
 	secrets func(context.Context, relay.ClientConfig) error
 	actor   func() error
+	attach  func(context.Context) error
 	message func(context.Context) error
 	session func(context.Context) error
 	mcp     func(context.Context) error
@@ -169,6 +170,9 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	}
 	if len(args) == 1 && args[0] == "--brood-guest-actor" {
 		return d.actor()
+	}
+	if len(args) == 1 && args[0] == "--brood-guest-attach" {
+		return d.attach(ctx)
 	}
 	if len(args) == 1 && args[0] == "--brood-guest-message" {
 		return d.message(ctx)
@@ -495,7 +499,7 @@ func main() {
 	defer stop()
 	d := dependencies{app: func() error { return guest.RunProjectApp(os.Stderr) }, boot: guest.RunSessionAutostart, autorun: func(ctx context.Context) {
 		guest.AutostartSession(ctx, func(err error) { fmt.Fprintln(os.Stderr, err) })
-	}, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+	}, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, attach: guest.RunPTYAttach, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 		return guest.StartModelGateway(ctx, cfg)
 	}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 		return guest.StartGitGateway(ctx, cfg)

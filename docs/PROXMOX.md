@@ -13,7 +13,7 @@ Brood Go API + SQLite
   -> проверенный HTTPS API Proxmox
      -> отдельная unprivileged CT для каждого актора
         -> доверенный root supervisor
-           -> Claude Code/ttyd/tmux от UID/GID 1000
+           -> Go PTY holder + Claude Code/ttyd от UID/GID 1000
 ```
 
 В этом пути нет фиктивного Kubernetes worker или `workerAssignment`.
@@ -216,12 +216,34 @@ actor-view сохраняет `sandbox allow-scripts` с opaque origin, поэт
 Гостевой ttyd использует `--index /usr/local/share/brood/driftty/index.html`
 на прежнем `127.0.0.1:8080`, с `--writable` и `--check-origin`. Клиент
 обращается к прежним `/token` и `/ws` относительно пути терминала.
-Новых listeners, credentials, auth routes и разрешений relay не появляется.
-Tmux остаётся владельцем сессии `claude`: закрытие вкладки не останавливает
-приложение, повторное подключение присоединяется к той же сессии. Broker,
-MCP, restart/recycle и прочие backend-возможности не заменяются driftty.
+Новых публичных listeners, credentials, auth routes и разрешений relay нет.
+Go PTY holder (#162) держит процесс Claude независимо от браузера. Ttyd
+запускает только фиксированный `brood-guest --brood-guest-attach`; исходные
+байты PTY доходят до driftty без промежуточного терминального эмулятора.
+Закрытие вкладки отсоединяет клиента, не останавливая Claude. Headless VT
+наблюдает поток только для снимков MCP и восстановления состояния экрана
+при reconnect; его ответы терминалу не отправляются приложению.
+Root создаёт `/run/brood/pty.sock` (root:1000, 0660) в защищённом каталоге и
+передаёт listening FD 3 фиксированному UID 1000 процессу. Модель не выбирает
+путь, команду или окружение holder. Writer и источник размера один:
+второй browser writer, конфликтующие MCP input/resize и workspace-операции
+с остановкой сессии отвергаются; read-only наблюдатели не меняют размер PTY.
+Явные lifecycle stop/reset/delete CT сохраняют прежнюю семантику. Broker и внешние MCP/API
+контракты сохранены; tmux больше не участвует в новом guest runtime.
+При выходе приложения holder завершает оставшихся участников его группы
+процессов до освобождения PID лидера. Если подтвердить очистку нельзя, он
+возвращает `unknown`, удерживает идентичность и запрещает новый сеанс;
+клиент и supervisor получают причину, а не успешное завершение.
 Если bootstrap обновил бинарь старого образа без index, он сохраняет штатный
 клиент ttyd; одна выкладка серверного бинаря не добавляет driftty в старые CT.
+
+Выкладка сервера не заменяет уже работающий гостевой runtime. Переход
+существующего актора с tmux требует согласованного перезапуска его сессии:
+переноса живого Claude из PTY tmux в другой PTY нет. Простого stop/start
+также недостаточно, если `/opt/brood/bin` содержит отличающиеся артефакты:
+bootstrap отказывает в их перезаписи. Нужна отдельная контролируемая
+процедура обновления гостевых бинарей с сохранением home и workspace,
+не reset или удаление пользовательского актора.
 
 Для приёмки после интеграции нужен новый committed guest image:
 
@@ -237,7 +259,7 @@ BUILDX_BUILDER=<builder> .ci/proxmox-guest.sh /tmp/brood-160-image
 
 В отдельном fixture-пуле проверить новый актор через настоящий Go actor-view:
 мобильную клавиатуру и resize, ввод/вывод команды с уникальным маркером,
-разрыв и повторное открытие вкладки с сохранением того же tmux pane и маркера,
+разрыв и повторное открытие вкладки с сохранением PID/start/epoch и маркера,
 обычные restart/recycle и MCP agents/send. Проверить HTTP index, `/token` и
 WebSocket `/ws` под префиксом actor-view, отсутствие внешних JS/CSS/font
 загрузок и нового gateway, прежние отказы без ticket/сессии, при чужом ACL и
@@ -278,14 +300,15 @@ Private, loopback, link-local, multicast и unspecified targets не стано�
 Claude стартует без человека у терминала. При загрузке, после DHCP, секретов,
 origin, gateway и сервисов актора, root supervisor запускает собственный
 бинарник с фиксированным `--brood-guest-autostart` от UID/GID 1000 с
-NoNewPrivs и фиксированным env. Helper поднимает detached tmux-сессию
-`claude` тем же launch, что и `restart`: сервер tmux в `/workspace/home`,
-pane в `/workspace/project`, команда `brood-guest --brood-guest-app`. Если
-сессия уже есть, ничего не меняется; ttyd по-прежнему выполняет
-`tmux new-session -A` и подключается к ней. Отказ helper пишется одной
-строкой в stderr supervisor и повторяется с паузой от 1 до 30 секунд до
-успеха или остановки; supervisor от него не падает. Секреты в env и argv tmux
-не попадают: их читает только wrapper.
+NoNewPrivs и фиксированным env. Helper выполняет idempotent `ensure` через
+защищённый сокет Go PTY holder. Живая сессия не заменяется; новую запускает
+holder фиксированной командой `brood-guest --brood-guest-app`, как restart.
+Сам holder и ttyd остаются в `/workspace/home`; только app wrapper выбирает
+`/workspace/project`. Browser attach не создаёт и не оживляет сессию после
+её явной остановки. Отказ helper пишется одной строкой в stderr supervisor
+и повторяется с паузой от 1 до 30 секунд до успеха или остановки; supervisor
+от него не падает. Проектные секреты читает только app wrapper, а не holder
+или browser attach.
 
 Wrapper запускает `claude --dangerously-skip-permissions --mcp-config ...`,
 как mop. Перед exec он сливает в `~/.claude.json`
@@ -321,7 +344,7 @@ DNS-имя и лимит 1024 байта. Direct host обязан входит�
 но не клонирует origin. Для clone нужен новый образ; наличие origin в панели
 само по себе не подтверждает, что старый образ создал checkout.
 
-Origin не секрет, но env приложения фиксирован и в tmux не расширяется.
+Origin не секрет, но env приложения фиксирован и не расширяется из browser attach.
 Поэтому root supervisor до запуска актора пишет пару в
 `/run/brood/workspace-origin.json` (root:1000, 0440, рядом с проекцией
 секретов), а UID 1000 wrapper `--brood-guest-app` читает его без symlink и с

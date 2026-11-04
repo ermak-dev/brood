@@ -33,17 +33,17 @@ func actorEnv() []string {
 
 const drifttyIndex = "/usr/local/share/brood/driftty/index.html"
 
-func actorArgs(driftty bool) []string {
+func actorArgs(executable string, driftty bool) []string {
 	args := []string{"--interface", "127.0.0.1", "--port", "8080", "--writable", "--check-origin"}
 	if driftty {
 		args = append(args, "--index", drifttyIndex)
 	}
-	return append(args, "tmux", "new-session", "-A", "-s", "claude", "-c", "/workspace/project", "/usr/local/bin/brood-guest", "--brood-guest-app")
+	return append(args, executable, "--brood-guest-attach")
 }
 
 // RunActor is the dedicated --brood-guest-actor dispatch target. The parent must
 // dispatch it before reading supervisor configuration or opening root services.
-// It accepts no actor-controlled arguments and replaces itself with ttyd.
+// It accepts no actor-controlled arguments and owns the raw PTY host and ttyd.
 func RunActor() error {
 	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
 		return errors.New("actor requires UID and GID 1000")
@@ -72,7 +72,11 @@ func RunActor() error {
 	if err == nil && !index.Mode().IsRegular() {
 		return errors.New("driftty terminal index is not a regular file")
 	}
-	return syscall.Exec("/usr/bin/ttyd", append([]string{"ttyd"}, actorArgs(err == nil)...), actorEnv())
+	self, locateErr := os.Executable()
+	if locateErr != nil {
+		return errors.New("cannot locate trusted PTY executable")
+	}
+	return runActorPTY(self, err == nil)
 }
 func lockPrivileges() error {
 	runtime.LockOSThread()
@@ -148,7 +152,10 @@ type Process interface {
 	Wait() error
 	Close() error
 }
-type actorProcess struct{ cmd *exec.Cmd }
+type actorProcess struct {
+	cmd    *exec.Cmd
+	socket *actorSocket
+}
 
 func (p *actorProcess) Wait() error { return p.cmd.Wait() }
 func (p *actorProcess) Close() error {
@@ -157,7 +164,11 @@ func (p *actorProcess) Close() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return drainActorProcesses(ctx, sweepActorUID)
+	err := drainActorProcesses(ctx, sweepActorUID)
+	if p.socket != nil {
+		err = errors.Join(err, p.socket.Close())
+	}
+	return err
 }
 func guestHelperCommand(spec ActorSpec) (*exec.Cmd, error) {
 	// Only the current trusted executable can implement the privilege gate.
@@ -187,15 +198,33 @@ func guestHelperCommand(spec ActorSpec) (*exec.Cmd, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000, Groups: []uint32{}}, Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	return cmd, nil
 }
-func launchActor(_ context.Context, spec ActorSpec) (Process, error) {
+func launchActor(ctx context.Context, spec ActorSpec) (Process, error) {
+	if os.Geteuid() != 0 || len(spec.Args) != 1 || spec.Args[0] != "--brood-guest-actor" {
+		return nil, errors.New("PTY actor launch requires the fixed supervisor target")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cmd, err := guestHelperCommand(spec)
 	if err != nil {
 		return nil, err
 	}
+	socket, err := createProductionPTYSocket()
+	if err != nil {
+		return nil, err
+	}
+	file, err := socket.listener.File()
+	if err != nil {
+		socket.Close()
+		return nil, errors.New("cannot inherit PTY listener")
+	}
+	defer file.Close()
+	cmd.ExtraFiles = []*os.File{file}
 	if err := cmd.Start(); err != nil {
+		socket.Close()
 		return nil, fmt.Errorf("actor helper start failed: %s", safeExecError(err))
 	}
-	return &actorProcess{cmd}, nil
+	return &actorProcess{cmd: cmd, socket: socket}, nil
 }
 func safeExecError(err error) string {
 	if errors.Is(err, os.ErrPermission) {

@@ -10,33 +10,32 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
 const fixedConfig = "/workspace/home/.claude"
-const target = "claude:0.0"
 const pageBudget = 24 * 1024
 
 type identity struct {
-	SessionID string
-	Process   string
-	PID       int
-	Socket    string
-	Device    uint64
-	Inode     uint64
+	SessionID   string
+	Process     string
+	PID         int
+	Socket      string
+	Device      uint64
+	Inode       uint64
+	HolderProof string
+	Epoch       string
 }
 type engine struct {
 	config string
 	prove  func(context.Context) (identity, error)
-	run    func(context.Context, ...string) (string, error)
+	call   ptyCall
 	now    func() time.Time
 }
 
@@ -72,7 +71,7 @@ func Run(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	e := engine{config: fixedConfig, prove: proveLive, run: runTMUX, now: time.Now}
+	e := engine{config: fixedConfig, prove: proveLive, call: callPTY, now: time.Now}
 	return e.handle(ctx, req)
 }
 
@@ -123,13 +122,14 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 			return failure("invalid tail arguments")
 		}
 		before, err := e.prove(ctx)
-		if err != nil {
-			return failure("no proven live Claude session")
+		if err != nil || before.HolderProof == "" {
+			return failure("no proven live Claude session and PTY holder")
 		}
-		text, err := e.run(ctx, "capture-pane", "-p", "-t", target, "-S", "-"+strconv.Itoa(a.Lines))
-		if err != nil {
-			return failure("tmux screen unavailable or output exceeds size limit")
+		reply, err := e.call(ctx, ptysession.Request{Action: "tail", Proof: before.HolderProof, Lines: a.Lines})
+		if err != nil || !reply.OK {
+			return ptyFailure(reply, err, false)
 		}
+		text := reply.Screen
 		after, err := e.prove(ctx)
 		if err != nil || before != after {
 			return failure("live session changed during screen read")
@@ -174,24 +174,20 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 			return failure("slash command is not allowlisted")
 		}
 		before, err := e.prove(ctx)
-		if err != nil {
-			return failure("no proven live Claude session")
+		if err != nil || before.HolderProof == "" {
+			return failure("no proven live Claude session and PTY holder")
 		}
-		args := []string{"send-keys", "-t", target, "-l", "--", a.Command}
+		data := []byte(a.Command + "\r")
 		if a.Command == "Escape" {
-			args = []string{"send-keys", "-t", target, "Escape"}
+			data = []byte{0x1b}
 		}
-		if _, err = e.run(ctx, args...); err != nil {
-			return relay.SessionResponse{Text: "input delivery is unknown; do not retry automatically", Outcome: "unknown"}
+		reply, err := e.call(ctx, ptysession.Request{Action: "input", Proof: before.HolderProof, Data: data})
+		if err != nil || !reply.OK {
+			return ptyFailure(reply, err, true)
 		}
 		after, err := e.prove(ctx)
 		if err != nil || before != after {
 			return relay.SessionResponse{Text: "session changed after input; delivery is unknown", Outcome: "unknown"}
-		}
-		if a.Command != "Escape" {
-			if _, err = e.run(ctx, "send-keys", "-t", target, "Enter"); err != nil {
-				return relay.SessionResponse{Text: "command submission is unknown; do not retry automatically", Outcome: "unknown"}
-			}
 		}
 		return relay.SessionResponse{OK: true, Text: "input submitted; command completion is not confirmed", Outcome: "submitted"}
 	case "session_history":
@@ -231,24 +227,4 @@ func (b *cappedOutput) Write(p []byte) (int, error) {
 		return 0, errors.New("process output exceeds limit")
 	}
 	return b.Buffer.Write(p)
-}
-func runTMUX(parent context.Context, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "/usr/bin/tmux", args...)
-	cmd.Env = []string{"HOME=/workspace/home", "PATH=/usr/bin:/bin", "LANG=C.UTF-8"}
-	cmd.Dir = "/workspace/project"
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
-	output := &cappedOutput{cancel: cancel}
-	cmd.Stdout = output
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = time.Second
-	err := cmd.Run()
-	return output.String(), err
 }

@@ -15,7 +15,7 @@ import (
 )
 
 // autostartHelperSpec fixes executable, argv, env and credentials like the
-// session helper; it starts outside the clone, as restart's tmux client does.
+// session helper; persistent service processes stay outside the clone.
 func autostartHelperSpec() ActorSpec {
 	spec := actorSpec("/proc/self/exe")
 	spec.Args = []string{"--brood-guest-autostart"}

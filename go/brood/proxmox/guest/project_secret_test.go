@@ -278,7 +278,7 @@ func TestProjectSecretProjectionSafety(t *testing.T) {
 }
 
 func TestProjectSecretAppLaunchContract(t *testing.T) {
-	if !strings.Contains(strings.Join(actorArgs(true), " "), "/usr/local/bin/brood-guest --brood-guest-app") {
+	if !strings.Contains(strings.Join(actorPTYConfig("/opt/brood/bin/brood-guest").Command, " "), "/opt/brood/bin/brood-guest --brood-guest-app") {
 		t.Fatal("cold start bypasses app secret entry")
 	}
 	env, err := projectAppEnvironment(projectsecret.Bundle{Vars: map[string]string{"HOME": "/evil"}})

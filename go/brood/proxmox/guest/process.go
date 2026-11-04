@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// UID 1000 is exclusive to this actor in the dedicated CT. tmux may setsid, so
+// UID 1000 is exclusive to this actor in the dedicated CT. A child may setsid, so
 // killing a process group alone cannot establish that actor networking stopped.
 func drainActorProcesses(ctx context.Context, sweep func() (bool, error)) error {
 	for {
