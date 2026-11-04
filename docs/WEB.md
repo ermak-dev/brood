@@ -86,6 +86,20 @@ plugins, actors, templates, workers, worker pools и policy сохранены.
   Origin при создании подставляется из
   repository проекта; repository в деталях проекта выбирает администратор
   из remotes установки, токен в панель не приходит.
+- **Веб-терминал (#160, #161):** driftty v3.0.0, upstream commit
+  `a4b8b2b38ee29b8fa5b979e70d37e1565b09cb0e`. Go встраивает
+  `go/brood/server/static/driftty.html` и подменяет только успешный корневой
+  HTML-ответ managed actor-view; существующие CT получают интерфейс без
+  пересоздания и потери workspace. `/token` и WebSocket `/ws` остаются
+  у гостевого ttyd; tmux сохраняет сессию независимо от браузера. Прежние
+  ticket, ACL, generation и opaque-origin sandbox действуют без изменений.
+  Клиент — upstream single-file bundle с проверенной суммой
+  `e3e44e12e528578eef84e25d5e224823db4f8222dd2cf79a803fbb87042f2a15`,
+  после `<head>` добавлены MIT license upstream и `deploy/driftty-storage.js`.
+  Сумма итогового HTML
+  `ccaabee39a28e9ae8c4f810996c184760a0bce4a5da7521a4b76daad35d6f3ce`
+  проверяется Go-тестом. Недоступный browser storage заменяется памятью
+  вкладки; `allow-same-origin` не добавляется. Node gateway не нужен.
 - **Воркеры:** `DRAINING` показан как конечное «выведен из работы», не как
   продолжающийся процесс. Такой воркер сам не станет активным. «Восстановить
   ёмкость» с подтверждением удаляет только его pod по UID, затем Deployment
