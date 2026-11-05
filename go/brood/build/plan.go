@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
+
+	"brood.dev/go/brood/gitorigin"
 )
 
 const (
@@ -482,6 +484,23 @@ func init() {
 		typ: "object", addlFalse: true, required: []string{"template"},
 		props: schemaProperties("template", name),
 	}
+	capacityLimit := &schemaNode{anyOf: []*schemaNode{
+		{typ: "null"},
+		{typ: "string", maxLen: 19, pattern: regexp.MustCompile(`^(0|[1-9][0-9]*)$`)},
+	}}
+	projectCapacity := &schemaNode{
+		typ: "object", addlFalse: true, required: []string{"worker_selector"},
+		props: schemaProperties(
+			"worker_selector", &schemaNode{typ: "object", minProps: 1, addlProps: &schemaNode{typ: "string"}},
+			"max_swarms", capacityLimit, "max_actors", capacityLimit,
+			"max_cpu_millicores", capacityLimit, "max_memory_bytes", capacityLimit,
+		),
+	}
+	projectConfig := &schemaNode{typ: "object", addlFalse: true, props: schemaProperties(
+		"repository", &schemaNode{typ: "string", maxLen: gitorigin.MaxLength},
+		"description", &schemaNode{typ: "string", maxLen: 4096},
+		"capacity", projectCapacity,
+	)}
 	apiVersion := &schemaNode{typ: "string", constV: "brood.dev/v1alpha1", constSet: true}
 	schemaRoot = &schemaNode{
 		typ: "object", addlFalse: true,
@@ -490,6 +509,7 @@ func init() {
 		props: schemaProperties(
 			"apiVersion", apiVersion,
 			"name", name,
+			"project", projectConfig,
 			"defaultTarget", name,
 			"pinsFile", path,
 			"sources", sources,
@@ -509,6 +529,8 @@ type schemaError struct {
 // schemaTypeMatches проверяет json-тип значения.
 func schemaTypeMatches(typ string, value any) bool {
 	switch typ {
+	case "null":
+		return value == nil
 	case "object":
 		_, ok := value.(map[string]any)
 		return ok
@@ -1310,10 +1332,45 @@ func checkDefinitions(document map[string]any, filename string) error {
 	return nil
 }
 
+// planProjectConfig сохраняет присутствие необязательных полей серверного проекта.
+func planProjectConfig(document map[string]any, filename string) (map[string]any, error) {
+	config := map[string]any{"name": document["name"], "repository": ""}
+	declaration, _ := asMap(document["project"])
+	if repository, ok := declaration["repository"].(string); ok && repository != "" {
+		canonical, err := checked(filename, "project.repository", repository, gitorigin.FromRemote)
+		if err != nil {
+			return nil, err
+		}
+		config["repository"] = canonical
+	}
+	if description, present := declaration["description"]; present {
+		if hasControl(description.(string)) {
+			return nil, failure(filename, "project.description", -1, "control characters are forbidden")
+		}
+		config["description"] = description
+	}
+	if capacity, present := declaration["capacity"]; present {
+		limits, _ := asMap(capacity)
+		for _, key := range []string{"max_swarms", "max_actors", "max_cpu_millicores", "max_memory_bytes"} {
+			if text, ok := limits[key].(string); ok {
+				if _, err := strconv.ParseInt(text, 10, 64); err != nil {
+					return nil, failure(filename, "project.capacity."+key, -1, "expected a nonnegative decimal string within int64")
+				}
+			}
+		}
+		config["capacity"] = deepCopyValue(capacity)
+	}
+	return config, nil
+}
+
 // MakePlan проверяет весь документ и возвращает независимый план выбранной цели.
 func MakePlan(document map[string]any, pins map[string]string, target string,
 	registry string, atespace string, filename string) (map[string]any, error) {
 	if err := validateSchema(document, filename, nil); err != nil {
+		return nil, err
+	}
+	projectConfig, err := planProjectConfig(document, filename)
+	if err != nil {
 		return nil, err
 	}
 	resolvedPins, err := pinValues(pins, filename)
@@ -1396,7 +1453,8 @@ func MakePlan(document map[string]any, pins map[string]string, target string,
 	networkName, _ := asString(template["network"])
 	return map[string]any{
 		"apiVersion": document["apiVersion"], "project": document["name"],
-		"target": target, "environment": environment,
+		"projectConfig": projectConfig,
+		"target":        target, "environment": environment,
 		"sources": planSourcesMap, "build": builds[environment],
 		"actor":    deepCopyValue(template["actor"]),
 		"network":  deepCopyValue(networks[networkName]),

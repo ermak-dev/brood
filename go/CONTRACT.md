@@ -226,10 +226,26 @@ UpdateActor с исходными UID/version, затем ResumeActor. Это д
 
 ## Сборка и push
 
-`bro build [target]` читает текущий `./Broodfile`, не требует login/registry и
-сохраняет OCI-архив с JSON-артефактами атомарно. `--project NAME`/`BUILD_PROJECT`
-задаёт логическое назначение, не путь. `--ref`, `--registry`, `--atespace` удалены.
+`bro build [target]` читает текущий `./Broodfile`, синхронизирует декларацию
+проекта через текущую bro login сессию до Docker, затем сохраняет OCI-архив
+с JSON-артефактами атомарно. Registry для сборки не нужен. `--plan`/`--export`
+остаются офлайн без синхронизации; обычная сборка в guest-режиме не использует
+операторскую сессию и отказывает. `--project NAME`/`BUILD_PROJECT` задаёт имя
+серверного проекта, не путь. `--ref`, `--registry`, `--atespace` удалены.
 Справка опций — `bro build --help`, не корневая справка.
+
+`PUT /api/projects/sync` принимает `{name, repository, description?, capacity?}`.
+Repository — канонический HTTPS URL либо явная пустая строка. На клиенте
+отсутствующее поле Broodfile разрешается из Git origin; обычные SSH/SCP origins
+нормализуются в HTTPS. Capacity имеет тот же wire shape, что API ёмкости.
+Пропущенные description/capacity сохраняются, явная capacity заменяется
+полностью. Создание — 201, обновление/no-op — 200, тело
+`{id,name,repository,created,changed,origin_mode}`. Создание и изменения требуют
+администратора, no-op допускает участника проекта; сессия/права перепроверяются
+в транзакции. Идентичный повтор не записывает строки БД и не создаёт дубликаты.
+Членство, секреты, рои и существующие checkout акторов не меняются.
+Назначение repository не ограничено BROOD_GIT_REMOTES и не выдаёт сетевых прав:
+режимы gateway/direct по-прежнему проверяются отдельно.
 
 `bro push [target] --project NAME` использует текущую bro login сессию. Назначение
 разрешается в доступный активный swarm; сервер всегда назначает atespace сам.

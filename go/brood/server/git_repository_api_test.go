@@ -111,7 +111,7 @@ func TestProjectRepositoryAPI(t *testing.T) {
 	if r.StatusCode != http.StatusForbidden {
 		t.Fatalf("member write: %d", r.StatusCode)
 	}
-	for _, origin := range []string{"https://git.example.com/group/other.git", "https://brood-bot:" + gitTokenSentinel + "@git.example.com/group/repo.git", "http://git.example.com/group/repo.git"} {
+	for _, origin := range []string{"https://brood-bot:" + gitTokenSentinel + "@git.example.com/group/repo.git", "http://git.example.com/group/repo.git"} {
 		r, _, raw := ts.do(admin, "PUT", path, ts.csrf(admin), map[string]string{"origin": origin})
 		if r.StatusCode != http.StatusUnprocessableEntity || strings.Contains(raw, gitTokenSentinel) || strings.Contains(raw, origin) {
 			t.Fatalf("invalid repository: %d %s", r.StatusCode, raw)

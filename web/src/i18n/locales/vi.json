@@ -134,7 +134,8 @@
     },
     "repository": {
       "title": "Kho mã",
-      "hint": "Actor mới trong dự án này clone kho qua cổng Git của brood. Thông tin xác thực ở lại máy chủ, không đến actor hay trang này.",
+      "hint": "Actor mới clone kho này. Thông tin xác thực truy cập được giữ trên máy chủ.",
+      "declaration_hint": "Khai báo trong Broodfile và đồng bộ bằng bro build. Mặc định dùng Git origin của dự án hiện tại.",
       "select": "Kho của dự án",
       "select_hint": "Chọn từ các Git remote của bản cài đặt.",
       "no_remotes": "Bản cài đặt chưa có Git remote; quản trị viên thêm chúng vào BROOD_GIT_REMOTES.",

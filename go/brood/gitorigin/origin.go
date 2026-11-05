@@ -82,6 +82,39 @@ func Canonical(raw string) (string, error) {
 	return canonical, nil
 }
 
+// FromRemote converts a credential-free checkout remote to a runtime HTTPS
+// origin. SSH conversion supports Git's conventional user and default port only;
+// a custom SSH port cannot be inferred as an HTTPS endpoint.
+func FromRemote(raw string) (string, error) {
+	if len(raw) > MaxLength {
+		return "", errLength
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] < 0x21 || raw[i] > 0x7e {
+			return "", errText
+		}
+	}
+	if strings.HasPrefix(raw, "git@") {
+		host, path, found := strings.Cut(strings.TrimPrefix(raw, "git@"), ":")
+		if !found {
+			return "", errMalformed
+		}
+		return Canonical("https://" + host + "/" + path)
+	}
+	if strings.HasPrefix(raw, "ssh://git@") {
+		authority, path, found := strings.Cut(strings.TrimPrefix(raw, "ssh://git@"), "/")
+		if !found {
+			return "", errPath
+		}
+		host, port, hasPort := strings.Cut(authority, ":")
+		if hasPort && port != "22" {
+			return "", errors.New("origin SSH port must be 22")
+		}
+		return Canonical("https://" + host + "/" + path)
+	}
+	return Canonical(raw)
+}
+
 // Host returns the hostname of a canonical origin, or "" for any other input.
 func Host(origin string) string {
 	canonical, err := Canonical(origin)

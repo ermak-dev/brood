@@ -10,15 +10,19 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"brood.dev/go/brood/gitorigin"
 )
 
 // Project — загруженный проект: корень, commit, грязнота и план.
 type Project struct {
-	Root        string
-	Revision    string
-	WorkingTree bool
-	Dirty       bool
-	Plan        map[string]any
+	// RepositoryResolved distinguishes an explicit empty repository from no source.
+	RepositoryResolved bool
+	Root               string
+	Revision           string
+	WorkingTree        bool
+	Dirty              bool
+	Plan               map[string]any
 }
 
 // parsePinsJSON читает JSON-объект пинов, отвергая дубликаты ключей и глубину.
@@ -182,7 +186,42 @@ func LoadWorkingProject(path, target, projectName string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Project{Root: absolute, WorkingTree: true, Plan: plan}, nil
+	config, _ := asMap(plan["projectConfig"])
+	config["name"] = projectName
+	resolved, err := resolveProjectRepository(absolute, document, plan)
+	if err != nil {
+		return nil, err
+	}
+	return &Project{Root: absolute, WorkingTree: true, Plan: plan, RepositoryResolved: resolved}, nil
+}
+
+// resolveProjectRepository не наследует origin родителя выбранного каталога.
+// Явное значение, включая пустое, не требует наличия или проверки Git.
+func resolveProjectRepository(root string, document, plan map[string]any) (bool, error) {
+	declaration, _ := asMap(document["project"])
+	if _, present := declaration["repository"]; present {
+		return true, nil
+	}
+	toplevel, missing, err := gitRun(root, true, "rev-parse", "--show-toplevel")
+	if err != nil || missing {
+		// Git is optional for local/offline planning.
+		return false, nil
+	}
+	actual, err := filepath.EvalSymlinks(strings.TrimSpace(toplevel))
+	if err != nil || actual != root {
+		return false, nil
+	}
+	remote, present, err := Origin(root, false)
+	if err != nil || !present {
+		return false, err
+	}
+	canonical, err := gitorigin.FromRemote(remote)
+	if err != nil {
+		return false, fmt.Errorf("project.repository: %w", err)
+	}
+	config, _ := asMap(plan["projectConfig"])
+	config["repository"] = canonical
+	return true, nil
 }
 
 // LoadProject не читает рабочие Broodfile и pins, даже если они изменены.
@@ -254,5 +293,9 @@ func LoadProject(path, ref, target, registry, atespace string) (*Project, error)
 	if err != nil {
 		return nil, err
 	}
-	return &Project{Root: root, Revision: sha, Dirty: status != "", Plan: resolved}, nil
+	repositoryResolved, err := resolveProjectRepository(root, document, resolved)
+	if err != nil {
+		return nil, err
+	}
+	return &Project{Root: root, Revision: sha, Dirty: status != "", Plan: resolved, RepositoryResolved: repositoryResolved}, nil
 }

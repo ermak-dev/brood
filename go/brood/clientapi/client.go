@@ -283,13 +283,13 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 	}
 	// Отказ не меняет cookie. Диагностика сервера недоверенная и может
 	// содержать пароль или сессию, поэтому тело ошибки не включаем в отказ.
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
 		c.absorbCookies(resp)
 	}
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	if (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted) && out != nil {
+	if (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted) && out != nil {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
 			if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
 				return fmt.Errorf("command outcome is unconfirmed; check before retrying: malformed response from %s: %w", c.origin, err)

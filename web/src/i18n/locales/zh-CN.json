@@ -134,7 +134,8 @@
     },
     "repository": {
       "title": "仓库",
-      "hint": "此项目中的新 actor 通过 brood Git 网关克隆该仓库。凭据保留在服务器上，不会发送给 actor 或此页面。",
+      "hint": "新 actor 克隆此仓库。访问凭据保留在服务器上。",
+      "declaration_hint": "在 Broodfile 中定义，由 bro build 同步。默认使用当前项目的 Git origin。",
       "select": "项目仓库",
       "select_hint": "从安装的 Git remotes 中选择。",
       "no_remotes": "安装中没有 Git remotes；管理员需将其添加到 BROOD_GIT_REMOTES。",

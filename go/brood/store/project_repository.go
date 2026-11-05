@@ -18,7 +18,7 @@ func storedOrigin(origin string) bool {
 	return err == nil && canonical == origin
 }
 
-// ProjectRepository returns the project's selected installation remote, or ""
+// ProjectRepository returns the project's declared repository, or ""
 // when none is selected. A missing project is ErrNotFound.
 // One statement reads both facts from the same snapshot, without a write lock.
 func (s *Store) ProjectRepository(ctx context.Context, projectID string) (string, error) {
@@ -31,8 +31,8 @@ func (s *Store) ProjectRepository(ctx context.Context, projectID string) (string
 }
 
 // SetProjectRepository replaces the project's repository; "" clears it.
-// Callers authorize and check the origin against installation remotes; the
-// store accepts only canonical origins and existing projects.
+// Callers authorize the declaration; the store accepts only canonical origins
+// and existing projects. Declaration does not grant gateway or egress access.
 func (s *Store) SetProjectRepository(ctx context.Context, projectID, origin string) error {
 	if !storedOrigin(origin) {
 		return fmt.Errorf("project repository must be empty or a canonical HTTPS origin")

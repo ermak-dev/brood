@@ -28,6 +28,7 @@ type projectRepositoryJSON struct {
 
 func (s *Server) mountGitRepositories() {
 	s.mux.HandleFunc("GET /api/git-remotes", s.handleGitRemotes)
+	s.mux.HandleFunc("PUT /api/projects/sync", s.handleProjectSync)
 	s.mux.HandleFunc("GET /api/projects/{id}/repository", s.handleProjectRepository)
 	s.mux.HandleFunc("PUT /api/projects/{id}/repository", s.handleProjectRepositoryUpdate)
 }
@@ -86,7 +87,7 @@ func (s *Server) handleProjectRepository(w http.ResponseWriter, r *http.Request)
 }
 
 // handleProjectRepositoryUpdate — PUT /api/projects/{id}/repository: только
-// администратор (CSRF проверяет middleware) выбирает настроенный remote или "".
+// администратор (CSRF проверяет middleware) задаёт канонический HTTPS origin или "".
 // Сессию и роль транзакция перечитывает после чтения тела, до записи.
 func (s *Server) handleProjectRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
@@ -113,10 +114,6 @@ func (s *Server) handleProjectRepositoryUpdate(w http.ResponseWriter, r *http.Re
 		canonical, err := gitorigin.Canonical(origin)
 		if err != nil {
 			writeDetail(w, http.StatusUnprocessableEntity, "invalid project repository: "+err.Error())
-			return
-		}
-		if !s.git.remotes.has(canonical) {
-			writeDetail(w, http.StatusUnprocessableEntity, "project repository must be a remote configured in BROOD_GIT_REMOTES")
 			return
 		}
 		origin = canonical

@@ -1,4 +1,4 @@
-import type { AccessUser, GitRemote } from '@/services/brood/access';
+import type { AccessUser } from '@/services/brood/access';
 
 /** Подпись пользователя в списке выбора: username решает, отображаемое имя
  * лишь помогает узнать человека. */
@@ -71,24 +71,4 @@ export function swarmTone(state: string): BadgeTone {
   if (state === 'provisioning' || state === 'deleting') return 'warning';
   if (state === 'error') return 'danger';
   return 'muted';
-}
-
-/** Варианты выбора: «нет» и remotes установки. Текущий выбор, которого уже
- * нет в настройке, остаётся видимым и помеченным, а не исчезает молча. */
-export function repositoryOptions(
-  remotes: GitRemote[],
-  current: string,
-  label: { none: string; credentials: string; public: string; missing: string }
-) {
-  const options = [{ value: '', label: label.none }];
-  for (const remote of remotes) {
-    options.push({
-      value: remote.origin,
-      label: `${remote.origin} · ${remote.credentialConfigured ? label.credentials : label.public}`,
-    });
-  }
-  if (current && !remotes.some((remote) => remote.origin === current)) {
-    options.push({ value: current, label: `${current} · ${label.missing}` });
-  }
-  return options;
 }

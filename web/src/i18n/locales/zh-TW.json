@@ -134,7 +134,8 @@
     },
     "repository": {
       "title": "儲存庫",
-      "hint": "此專案中的新 actor 透過 brood Git 閘道複製此儲存庫。憑證保留在伺服器上，不會傳給 actor 或此頁面。",
+      "hint": "新 actor 複製此儲存庫。存取憑證保留在伺服器上。",
+      "declaration_hint": "在 Broodfile 中定義，由 bro build 同步。預設使用目前專案的 Git origin。",
       "select": "專案儲存庫",
       "select_hint": "從安裝的 Git remotes 中選擇。",
       "no_remotes": "安裝中沒有 Git remotes；管理員需將其加入 BROOD_GIT_REMOTES。",

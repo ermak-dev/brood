@@ -1,9 +1,61 @@
 # Build
 
-Broodfile описывает сборочные входы и шаблоны проекта. Версия первой схемы —
+Broodfile описывает серверный проект, сборочные входы и шаблоны. Версия первой схемы —
 `brood.dev/v1alpha1`; строгий parser/validator — `go/brood/build/plan.go`. Backend первой
 версии — Dockerfile/BuildKit. Bootstrap внутри актора не конфигурирует runtime
 Substrate и не выполняется при сборке.
+
+## Декларация проекта
+
+Верхний `name` задаёт имя проекта по умолчанию; `--project NAME` или
+`BUILD_PROJECT` меняет имя назначения. Дополнительные поля задаются в
+необязательном блоке `project`:
+
+```yaml
+name: my-project
+project:
+  description: Coding workspace
+  # Если repository не задан, используется Git origin текущего checkout.
+  repository: https://git.example.com/team/my-project.git
+  capacity:
+    worker_selector: {brood.dev/purpose: development}
+    max_swarms: '4'
+    max_actors: '12'
+    max_cpu_millicores: '16000'
+    max_memory_bytes: '34359738368'
+```
+
+Repository разрешает клиент из текущей рабочей копии, не из checkout сервера
+и не из `BROOD_GIT_REMOTES`. Обычные `git@host:path` и
+`ssh://git@host/path` (без нестандартного порта) нормализуются в HTTPS.
+Явный `repository` переопределяет origin; `repository: ""` явно отключает
+клонирование. Нет Git/origin и явного значения — обычная сборка отказывает
+до обращения к серверу и Docker, не очищая ранее выбранный repository.
+Офлайн plan/export при этом разрешены. Userinfo, токены в URL, query,
+fragment, локальные пути и IP-адреса не принимаются; секреты в декларацию
+не входят.
+
+Обычный `bro build` перед Docker вызывает `PUT /api/projects/sync`.
+Администратор создаёт отсутствующий проект или меняет объявленные поля.
+Повтор неизменной декларации не записывает строки в БД; его может выполнить
+участник проекта без административных прав. Права проверяются сервером
+повторно в транзакции. Ошибка авторизации/синхронизации останавливает сборку.
+Успешная синхронизация сохраняется, даже если последующая сборка образа
+завершилась ошибкой.
+
+Отсутствующие description/capacity сохраняют существующие значения. Явная
+capacity полностью заменяет selector и пределы: пропущенные или null пределы
+означают unlimited; ноль запрещает новое выделение. Значения — десятичные
+строки int64, а не JSON/YAML numbers. Новому проекту без capacity назначается
+обычная начальная ёмкость сервера. Членство, секреты и рои не изменяются.
+Существующие рабочие копии акторов не очищаются и не переключаются.
+
+Синхронизация repository не выдаёт сетевого доступа. Credentials и разрешённые
+направления Git gateway остаются серверной настройкой. Для repository без
+доступного режима Git клиент печатает предупреждение; разрешение URL не
+превращается в право сервера обращаться к нему. Панель показывает repository
+для чтения и указывает Broodfile как источник настройки. Разрешённая
+конфигурация проекта сохраняется в `build.json` как `projectConfig`.
 
 ## Использование
 
@@ -11,16 +63,20 @@ Substrate и не выполняется при сборке.
 Изменённые и новые исходники входят в сборку без commit. `--project NAME`
 (или `BUILD_PROJECT`) — имя назначения, не путь к Git checkout. По умолчанию
 используется `name` из Broodfile. Флагов `--ref`, `--registry` и `--atespace` нет.
-Login, кластер и registry для локальной сборки не нужны.
+Перед обычной сборкой клиент синхронизирует декларацию проекта с сервером
+через текущую `bro login` сессию. Docker собирает образ локально; registry
+и публикация по-прежнему не требуются. `--plan` и `--export` работают офлайн:
+не читают сессию и не меняют сервер. Обычная сборка в guest-режиме отказывает,
+а не использует операторские credentials; plan/export доступны и там.
 
 ```sh
 bro --help
 bro build --help
 bro build --plan
-bro build
-bro build coding
 bro build coding --export /new/context
 bro login https://brood.example.org
+bro build
+bro build coding
 bro push coding --project my-workspace
 ```
 

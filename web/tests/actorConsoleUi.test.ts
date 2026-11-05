@@ -5,7 +5,7 @@
 // description; идущее — статус и блокировка остальных; неизвестный исход
 // виден до закрытия. Viewer видит только обзор, без вкладок сессии и действий.
 // Детали показывают origin, режим клона, поколение и роль. Repository
-// выбирается из remotes без токенов; исчезнувший из настройки выбор помечен.
+// читается с сервера, меняется декларацией Broodfile, без второго редактора.
 // Новые строки есть во всех локалях с теми же подстановками.
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -16,7 +16,6 @@ import { I18nextProvider } from 'react-i18next';
 import { actionDialogText } from '@/features/substrate/actorLifecycle';
 import { ActorDetailsSheet } from '@/features/substrate/ActorDetailsSheet';
 import { ConfirmDialog } from '@/features/substrate/components/ConfirmDialog';
-import { repositoryOptions } from '@/features/access/state';
 import type { Actor } from '@/services/brood/substrate';
 import en from '../src/i18n/locales/en.json';
 
@@ -229,34 +228,17 @@ test('viewers get the overview without session tabs or actions; managers get the
   }
 });
 
-test('repository choices show credential presence and keep a vanished selection visible', () => {
-  const labels = { none: 'None', credentials: 'credentials', public: 'public', missing: 'gone' };
-  expect(
-    repositoryOptions(
-      [
-        { origin: 'https://git.example.com/a', credentialConfigured: true },
-        { origin: 'https://git.example.com/b', credentialConfigured: false },
-      ],
-      'https://old.example.com/c',
-      labels
-    )
-  ).toEqual([
-    { value: '', label: 'None' },
-    { value: 'https://git.example.com/a', label: 'https://git.example.com/a · credentials' },
-    { value: 'https://git.example.com/b', label: 'https://git.example.com/b · public' },
-    { value: 'https://old.example.com/c', label: 'https://old.example.com/c · gone' },
-  ]);
-  expect(repositoryOptions([], '', labels)).toEqual([{ value: '', label: 'None' }]);
-});
-
-test('project details show the repository; only administrators edit it', () => {
+test('project details display the Broodfile repository without a second editor', () => {
   const source = (path: string) =>
     readFileSync(new URL(`../src/features/access/${path}`, import.meta.url), 'utf8');
-  expect(source('ProjectDetailPage.tsx')).toContain('<ProjectRepository project={project} admin={admin} />');
+  expect(source('ProjectDetailPage.tsx')).toContain('<ProjectRepository project={project} />');
   const repository = source('ProjectRepository.tsx');
-  expect(repository).toContain('admin ? accessApi.gitRemotes()');
-  expect(repository).toMatch(/\{admin \? \(/);
-  expect(repository).toContain('accessApi.setRepository(project.id, selected)');
+  expect(repository).toContain('accessApi.repository(project.id)');
+  expect(repository).toContain("t('access.repository.declaration_hint')");
+  expect(repository).not.toContain('accessApi.gitRemotes');
+  expect(repository).not.toContain('accessApi.setRepository');
+  expect(repository).not.toContain('<Select');
+  expect(repository).not.toContain('<form');
   expect(repository).not.toMatch(/token/i);
 });
 

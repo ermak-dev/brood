@@ -296,6 +296,7 @@ func TestCLIBuildPlanAndExportWithoutLogin(t *testing.T) {
 func TestCLIBuildPublishesSameBuildDigest(t *testing.T) {
 	isolateState(t)
 	root := gitProject(t)
+	prepareBuildSync(t, root)
 	archive, digest := cliOCIArchive(t)
 	t.Setenv("FAKE_OCI_ARCHIVE", archive)
 	t.Setenv("FAKE_OCI_DIGEST", digest)
@@ -335,6 +336,7 @@ printf '{"containerimage.digest":"%s"}' "$FAKE_OCI_DIGEST" > "$metadata"
 func TestCLIBuildFailureHasDiagnosticsAndNoArtifacts(t *testing.T) {
 	isolateState(t)
 	root := gitProject(t)
+	prepareBuildSync(t, root)
 	fakeDocker(t, "printf 'Dockerfile: invalid instruction\\n' >&2\nexit 42\n")
 	t.Chdir(root)
 	code, out, diagnostic := invoke(t, "", "build", "--project", "dev")
