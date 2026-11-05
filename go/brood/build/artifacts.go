@@ -253,6 +253,9 @@ func Render(plan map[string]any, image string, sourceReports map[string]any) (ma
 	}
 	provenance["output"] = map[string]any{"owner": artifactOwner, "target": plan["target"]}
 	provenance["sources"] = sources
+	if config, present := plan["projectConfig"]; present {
+		provenance["projectConfig"] = deepCopyValue(config)
+	}
 	provenance["build"] = deepCopyValue(plan["build"])
 	provenance["pins"] = deepCopyValue(plan["pins"])
 	provenance["image"] = image

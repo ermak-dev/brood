@@ -166,6 +166,84 @@
       "minLength": 1,
       "type": "string"
     },
+    "project": {
+      "additionalProperties": false,
+      "properties": {
+        "capacity": {
+          "additionalProperties": false,
+          "properties": {
+            "max_actors": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "maxLength": 19,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                }
+              ]
+            },
+            "max_cpu_millicores": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "maxLength": 19,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                }
+              ]
+            },
+            "max_memory_bytes": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "maxLength": 19,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                }
+              ]
+            },
+            "max_swarms": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "maxLength": 19,
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "type": "string"
+                }
+              ]
+            },
+            "worker_selector": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "minProperties": 1,
+              "type": "object"
+            }
+          },
+          "required": [
+            "worker_selector"
+          ],
+          "type": "object"
+        },
+        "description": {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        "repository": {
+          "maxLength": 1024,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "sources": {
       "additionalProperties": {
         "additionalProperties": false,

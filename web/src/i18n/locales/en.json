@@ -134,7 +134,8 @@
     },
     "repository": {
       "title": "Repository",
-      "hint": "New actors in this project clone the repository through the brood Git gateway. Credentials stay on the server and never reach actors or this page.",
+      "hint": "New actors clone this repository. Access credentials stay on the server.",
+      "declaration_hint": "Defined in Broodfile and synchronized by bro build. By default, it uses the current project's Git origin.",
       "select": "Project repository",
       "select_hint": "Chosen from the installation's Git remotes.",
       "no_remotes": "The installation has no Git remotes; an administrator adds them to BROOD_GIT_REMOTES.",

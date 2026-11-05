@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,7 +18,8 @@ import (
 func buildUsage(w io.Writer) {
 	fmt.Fprint(w, `usage: bro build [target] [options]
 
-Read ./Broodfile and current working files. Build locally without login or a registry.
+Read ./Broodfile and current working files. Synchronize the project, then build locally.
+A normal build requires bro login. Registry publication remains separate.
 
 options:
   --project NAME   destination project (or BUILD_PROJECT; default: Broodfile name)
@@ -26,11 +28,13 @@ options:
 
 Artifacts are saved under .brood/build/<target>, including image.oci.tar.
 Use bro push [target] to upload a completed build to the logged-in server.
---plan and --export are mutually exclusive. No actors are created.
+--plan and --export are offline, mutually exclusive, and do not synchronize.
+Normal builds synchronize the Broodfile project declaration idempotently.
+No actors are created. Existing actor checkouts are not changed.
 `)
 }
 
-func (c command) build(args []string) error {
+func (c command) build(ctx context.Context, args []string, guest bool) error {
 	flags := flag.NewFlagSet("build", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	project := flags.String("project", os.Getenv("BUILD_PROJECT"), "destination project")
@@ -99,6 +103,30 @@ func (c command) build(args []string) error {
 		}
 		fmt.Fprintln(c.out, *export)
 		return nil
+	}
+	if guest {
+		return errors.New("project synchronization requires operator mode; use --plan or --export in guest mode")
+	}
+	if !selected.RepositoryResolved {
+		return errors.New("project repository is unresolved; configure Git origin or set project.repository in Broodfile (an explicit empty string disables cloning)")
+	}
+	client, sessions, err := newClient("", "")
+	if err != nil {
+		return err
+	}
+	if client.Stored().Session == "" {
+		return errors.New("not logged in; run: bro login <server>")
+	}
+	declaration, _ := selected.Plan["projectConfig"].(map[string]any)
+	synchronized, err := client.ProjectSync(ctx, declaration)
+	if err != nil {
+		return fmt.Errorf("project synchronization: %w", sessionError(err))
+	}
+	if synchronized.Repository != "" && synchronized.OriginMode == "" {
+		fmt.Fprintln(c.diagnostic, "project synchronized; no Git access mode is configured for its repository")
+	}
+	if err := sessions.Save(client.Origin(), client.Stored()); err != nil {
+		return err
 	}
 	temporary, err := os.MkdirTemp("", "bro-build-image-")
 	if err != nil {

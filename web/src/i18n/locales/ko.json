@@ -134,7 +134,8 @@
     },
     "repository": {
       "title": "저장소",
-      "hint": "이 프로젝트의 새 actor는 brood Git 게이트웨이를 통해 이 저장소를 클론합니다. 자격 증명은 서버에 남으며 actor나 이 페이지로 전달되지 않습니다.",
+      "hint": "새 actor는 이 저장소를 클론합니다. 접근 자격 증명은 서버에 보관됩니다.",
+      "declaration_hint": "Broodfile에 정의하고 bro build로 동기화합니다. 기본값은 현재 프로젝트의 Git origin입니다.",
       "select": "프로젝트 저장소",
       "select_hint": "설치의 Git remote 중에서 선택합니다.",
       "no_remotes": "설치에 Git remote가 없습니다. 관리자가 BROOD_GIT_REMOTES에 추가합니다.",

@@ -1,5 +1,7 @@
 apiVersion: brood.dev/v1alpha1
 name: brood
+project:
+  description: Agent pool on Agent Substrate
 defaultTarget: development
 pinsFile: brood/dev/pins.json
 sources:

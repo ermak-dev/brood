@@ -54,7 +54,7 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 		}
 		err = c.auth(ctx, "projects", rest)
 	case "build":
-		err = c.build(args[1:])
+		err = c.build(ctx, args[1:], options.guest)
 	case "push":
 		err = c.push(ctx, args[1:])
 	case "secret":

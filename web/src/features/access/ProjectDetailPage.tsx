@@ -122,7 +122,7 @@ function ProjectDetail({ project }: { project: AccessProject }) {
           </section>
         )}
       </LoadState>
-      <ProjectRepository project={project} admin={admin} />
+      <ProjectRepository project={project} />
       <ProjectMembers project={project} />
       {editing && admin && (
         <CapacityEditor
