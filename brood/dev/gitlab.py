@@ -10,6 +10,8 @@
 
 Секрет один: `GITLAB_TOKEN`, личный токен с правом api, из `.env`.
 """
+import contextlib
+import contextvars
 import json
 import re
 import subprocess
@@ -76,14 +78,77 @@ def parse_origin(url):
 
 
 def site():
-    s = config.get("GITLAB_SITE") or parse_origin(origin())[0]
+    url = origin()
+    host = parse_origin(url)[0]
+    try:
+        parsed = urllib.parse.urlsplit(url) if _SCHEME.match(url) else None
+        if parsed and parsed.scheme.lower() in ("http", "https") and parsed.port:
+            default = 80 if parsed.scheme.lower() == "http" else 443
+            if parsed.port != default:
+                host += f":{parsed.port}"
+    except ValueError:
+        host = ""
+    s = config.get("GITLAB_SITE") or host
     if not s:
         raise RuntimeError("no GitLab site: set GITLAB_SITE in .env or add a git origin")
     return s
 
 
+_project_scope = contextvars.ContextVar("gitlab_project", default=None)
+
+
+@contextlib.contextmanager
+def project_scope(path):
+    """Ограничить координаты одним вызовом; вложенные вызовы восстанавливают их."""
+    if not isinstance(path, str) or not re.fullmatch(
+            r"[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+", path):
+        raise RuntimeError("invalid GitLab project path: expected group/project")
+    token = _project_scope.set(path)
+    try:
+        yield
+    finally:
+        _project_scope.reset(token)
+
+
+def require_local_project():
+    """Выбрать совпадающий worktree из cwd, иначе настроенную рабочую копию.
+
+    Если ни одна не совпадает с координатами трекера, отказать до записи.
+    """
+    result = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                            capture_output=True, text=True)
+    candidates = ([result.stdout.strip()] if result.returncode == 0 else []) + [config.PROJECT]
+    try:
+        target = urllib.parse.urlsplit("https://" + site())
+        target_port = target.port if target.port is not None else 443
+        selected_project = project()
+        for checkout in candidates:
+            result = subprocess.run(["git", "-C", checkout, "remote", "get-url", "origin"],
+                                    capture_output=True, text=True)
+            url = result.stdout.strip() if result.returncode == 0 else ""
+            host, path = parse_origin(url)
+            parsed = urllib.parse.urlsplit(url) if _SCHEME.match(url) else None
+            scheme = parsed.scheme.lower() if parsed else "ssh"
+            if parsed:
+                if parsed.netloc.endswith(":"):
+                    continue
+                parsed.port  # Проверить порт даже у SSH, хотя к API он не относится.
+            if scheme in ("http", "https"):
+                port = parsed.port if parsed.port is not None else (80 if scheme == "http" else 443)
+                same_site = scheme == target.scheme and port == target_port
+            else:
+                # Порт SSH относится к git, а не к API.
+                same_site = target_port == 443 and scheme == "ssh"
+            if (same_site and host.lower() == (target.hostname or "").lower()
+                    and path and path == selected_project):
+                return checkout
+    except ValueError:
+        pass
+    raise RuntimeError("local git origin does not match the selected GitLab project")
+
+
 def project():
-    p = config.get("GITLAB_PROJECT") or parse_origin(origin())[1]
+    p = _project_scope.get() or config.get("GITLAB_PROJECT") or parse_origin(origin())[1]
     if not p:
         raise RuntimeError("no GitLab project: set GITLAB_PROJECT in .env or add a git origin")
     return p

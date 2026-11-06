@@ -1,6 +1,7 @@
 """brood dev bug evidence <iid>: remote issue branches and verified integration merges
 
-Fetches origin first (updates local remote-tracking refs). Inspects at most
+Fetches origin with --prune first (updates and deletes remote-tracking refs).
+Inspects at most
 500 listed remote refs, the integration branch (origin's default, else main),
 40 integration refs and 80 first-parent merges per ref. A branch mention or
 #iid in a commit message is not evidence of integration; a merge needs a
@@ -9,6 +10,9 @@ second parent on that branch. Missing/deleted branch tips cannot be verified.
 import re
 import subprocess
 
+from functools import partial
+
+from brood.dev import gitlab
 from brood.dev.cli._common import default_branch, git
 from brood.dev.cli.bug._common import parser
 
@@ -30,10 +34,10 @@ def merge_source(subject):
     return match.group(1) if match else None
 
 
-def _ancestor(older, newer):
+def _ancestor(older, newer, cwd):
     """Родство коммитов: код 1 означает не-предка, и это обычный ответ."""
     r = subprocess.run(["git", "merge-base", "--is-ancestor", older, newer],
-                       capture_output=True, text=True)
+                       cwd=cwd, capture_output=True, text=True)
     if r.returncode not in (0, 1):
         raise RuntimeError(f"git merge-base: {r.stderr.strip()}")
     return r.returncode == 0
@@ -46,19 +50,22 @@ def main(argv):
     if not a.iid.isascii() or not a.iid.isdecimal() or len(a.iid) > 10 or int(a.iid) < 1:
         p.error("iid must be a positive decimal number")
     iid = str(int(a.iid))
-    git("fetch", "--prune", "origin")
-    raw = git("for-each-ref", f"--count={REF_LIMIT + 1}",
+    checkout = gitlab.require_local_project()
+    local_git = partial(git, cwd=checkout)
+    ancestor = partial(_ancestor, cwd=checkout)
+    local_git("fetch", "--prune", "origin")
+    raw = local_git("for-each-ref", f"--count={REF_LIMIT + 1}",
               "--format=%(refname:short)%09%(objectname)", "refs/remotes/origin")
     refs = [line.split("\t", 1) for line in raw.splitlines()]
     clipped = len(refs) > REF_LIMIT
     refs = refs[:REF_LIMIT]
     branches = {ref: sha for ref, sha in refs if evidence_branch(ref, iid)}
-    main_ref = default_branch()
+    main_ref = default_branch(cwd=checkout)
     integrations = [ref for ref, _ in refs
                     if ref != main_ref and ref.startswith(INTEGRATION_PREFIXES)]
     # Отдельным запросом, а не из списка: список обрезан по REF_LIMIT, и
     # интеграционная ветка могла в него не попасть.
-    exact = git("for-each-ref", "--format=%(refname:short)", f"refs/remotes/{main_ref}")
+    exact = local_git("for-each-ref", "--format=%(refname:short)", f"refs/remotes/{main_ref}")
     if main_ref in exact.splitlines():
         integrations.insert(0, main_ref)
     else:
@@ -74,7 +81,7 @@ def main(argv):
     seen = set()
     matches = 0
     for ref in integrations:
-        raw = git("log", f"-n{MERGE_LIMIT + 1}", "--first-parent", "--merges",
+        raw = local_git("log", f"-n{MERGE_LIMIT + 1}", "--first-parent", "--merges",
                   "--format=%H%x09%P%x09%s", ref)
         rows = raw.splitlines()
         if len(rows) > MERGE_LIMIT:
@@ -92,8 +99,8 @@ def main(argv):
             if sha in seen:
                 continue
             seen.add(sha)
-            if tip and not _ancestor(second, first) and not _ancestor(tip, first) and \
-                    (_ancestor(second, tip) or _ancestor(tip, second)):
+            if tip and not ancestor(second, first) and not ancestor(tip, first) and \
+                    (ancestor(second, tip) or ancestor(tip, second)):
                 print(f"  {ref} {sha} merged {source} at {second} (verified ancestry)")
             else:
                 print(f"  {ref} {sha} names {source} at {second} (branch ancestry unverified)")

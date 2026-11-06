@@ -13,9 +13,15 @@
   brood dev bug relabel <iid> [--status S]           change labels; live, wip, parked reopen
   brood dev bug labels                               the label vocabulary
 
-Coordinates come from the working copy's git origin; credentials are
-GITLAB_TOKEN, a personal access token, in .env. Titles, bodies
-and comments are in Russian; branch names and commits stay English.
+Select a project with --project group/project, immediately after `bug` or
+anywhere after the verb (also --project=group/project). It overrides
+GITLAB_PROJECT in .env, then the working copy's git origin. GITLAB_SITE and
+GITLAB_TOKEN still come from .env; --project never changes the GitLab site.
+`start` with a branch and `evidence` verify the selected site and project
+against the checkout's origin. For an explicit project different from the
+default, run inside that project's worktree; otherwise the brood checkout is
+used from any directory. `start --no-branch` only updates the tracker.
+Titles, bodies and comments are in Russian; branch names and commits stay English.
 """
 from brood.dev.cli._common import usage
 

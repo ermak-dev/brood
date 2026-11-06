@@ -17,21 +17,21 @@ def usage(doc):
     sys.exit(doc.strip())
 
 
-def git(*args):
+def git(*args, cwd=None):
     """git в текущей рабочей копии. Отказ -- строкой, а не трассировкой: она
     здесь ничего не добавляет, а скрывает единственное, что нужно знать."""
-    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"git {' '.join(args)}: {(r.stderr or r.stdout).strip()}")
     return r.stdout.strip()
 
 
-def default_branch():
+def default_branch(cwd=None):
     """Интеграционная ветка как `origin/<имя>`. origin/HEAD выставлен не в
     каждом клоне -- откат на origin/main: отказ здесь означал бы «не могу
     завести ветку» там, где ветку завести можно."""
     r = subprocess.run(["git", "rev-parse", "--abbrev-ref", "origin/HEAD"],
-                       capture_output=True, text=True)
+                       cwd=cwd, capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 else "origin/main"
 
 
