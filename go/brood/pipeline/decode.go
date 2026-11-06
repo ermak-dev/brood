@@ -5,6 +5,7 @@ package pipeline
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,8 +26,7 @@ var allowedTags = map[string]bool{
 }
 
 // decodeDocument разбирает и структурно проверяет YAML. Неизвестные
-// поля отвергаются: KnownFields(true) на втором проходе по тому же
-// тексту, после проверки дерева на якоря и дубликаты ключей.
+// поля отвергаются при обходе уже проверенного дерева узлов YAML.
 func decodeDocument(text, filename string, limitSize bool) (*Document, error) {
 	fail := func(reason string, line int) error {
 		if line > 0 {
@@ -53,17 +53,111 @@ func decodeDocument(text, filename string, limitSize bool) (*Document, error) {
 	if err := checkYAMLNodes(&root, 0); err != nil {
 		return nil, fail(err.Error(), rootLine(&root))
 	}
-	strict := yaml.NewDecoder(strings.NewReader(text))
-	// Опечатка в имени поля не должна молча терять значение.
-	strict.KnownFields(true)
 	document := &Document{}
-	if err := strict.Decode(document); err != nil {
+	if err := decodeCheckedYAML(root.Content[0], document); err != nil {
 		return nil, fail("invalid pipeline document: "+err.Error(), yamlErrorLine(err))
 	}
 	if document.APIVersion != "brood.dev/v1alpha1" {
 		return nil, fail("apiVersion must be brood.dev/v1alpha1", 1)
 	}
 	return document, nil
+}
+
+// decodeCheckedYAML вызывается только после проверки структуры и тегов дерева.
+func decodeCheckedYAML(node *yaml.Node, document *Document) error {
+	var errors []string
+	var walk func(*yaml.Node, reflect.Value) (bool, error)
+	walk = func(n *yaml.Node, out reflect.Value) (bool, error) {
+		decode := func(node *yaml.Node) (bool, error) {
+			err := node.Decode(out.Addr().Interface())
+			if err == nil {
+				if node.Kind == yaml.ScalarNode && node.ShortTag() == "!!null" {
+					return out.Kind() == reflect.Pointer || out.Kind() == reflect.Map || out.Kind() == reflect.Slice || out.Kind() == reflect.Interface, nil
+				}
+				return true, nil
+			}
+			if typed, ok := err.(*yaml.TypeError); ok {
+				errors = append(errors, typed.Errors...)
+				return false, nil
+			}
+			return false, err
+		}
+		if n.Kind == yaml.ScalarNode {
+			return decode(n)
+		}
+		if out.Kind() == reflect.Pointer && n.ShortTag() != "!!null" {
+			if out.IsNil() {
+				out.Set(reflect.New(out.Type().Elem()))
+			}
+			out = out.Elem()
+		}
+		switch {
+		case n.Kind == yaml.MappingNode && out.Kind() == reflect.Struct:
+			fields := make(map[string]int, out.NumField())
+			for i := 0; i < out.NumField(); i++ {
+				field := out.Type().Field(i)
+				name := strings.Split(field.Tag.Get("yaml"), ",")[0]
+				if name == "" || name == "-" {
+					return false, fmt.Errorf("unsupported YAML struct field %s", field.Name)
+				}
+				fields[name] = i
+			}
+			for i := 0; i < len(n.Content); i += 2 {
+				key := n.Content[i]
+				field, ok := fields[key.Value]
+				if !ok {
+					errors = append(errors, fmt.Sprintf("line %d: field %s not found in type %s", key.Line, key.Value, out.Type()))
+					continue
+				}
+				if _, err := walk(n.Content[i+1], out.Field(field)); err != nil {
+					return false, err
+				}
+			}
+			return true, nil
+		case n.Kind == yaml.MappingNode && out.Kind() == reflect.Map && out.Type().Key().Kind() == reflect.String:
+			if out.IsNil() {
+				out.Set(reflect.MakeMap(out.Type()))
+			}
+			for i := 0; i < len(n.Content); i += 2 {
+				value := reflect.New(out.Type().Elem()).Elem()
+				ok, err := walk(n.Content[i+1], value)
+				if err != nil {
+					return false, err
+				}
+				if ok || n.Content[i+1].ShortTag() == "!!null" {
+					out.SetMapIndex(reflect.ValueOf(n.Content[i].Value).Convert(out.Type().Key()), value)
+				}
+			}
+			return true, nil
+		case n.Kind == yaml.SequenceNode && out.Kind() == reflect.Slice:
+			out.Set(reflect.MakeSlice(out.Type(), 0, len(n.Content)))
+			for _, item := range n.Content {
+				value := reflect.New(out.Type().Elem()).Elem()
+				ok, err := walk(item, value)
+				if err != nil {
+					return false, err
+				}
+				if ok {
+					out.Set(reflect.Append(out, value))
+				}
+			}
+			return true, nil
+		default:
+			// Неверный тип коллекции: пустая копия сохраняет сообщение yaml.v3
+			// без повторной квадратичной проверки ключей.
+			copy := *n
+			copy.Content = nil
+			return decode(&copy)
+		}
+	}
+	_, err := walk(node, reflect.ValueOf(document).Elem())
+	if err != nil {
+		return err
+	}
+	if len(errors) > 0 {
+		return &yaml.TypeError{Errors: errors}
+	}
+	return nil
 }
 
 // rootLine возвращает строку корневого узла для сообщений.
@@ -107,6 +201,9 @@ func checkYAMLNodes(node *yaml.Node, depth int) error {
 			}
 			if seen[key.Value] {
 				return fmt.Errorf("duplicate mapping key %q", key.Value)
+			}
+			if key.Anchor != "" {
+				return fmt.Errorf("YAML anchors and aliases are forbidden")
 			}
 			seen[key.Value] = true
 			if err := checkYAMLNodes(value, depth+1); err != nil {
