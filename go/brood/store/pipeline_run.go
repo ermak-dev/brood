@@ -21,6 +21,23 @@ type PipelineRun struct {
 	ID, SwarmID, OwnerID string
 	Graph                []byte
 	Status               string
+	// Origin is filled by reads; CreatePipelineRun ignores it.
+	Origin PipelineRunOrigin
+}
+
+// PipelineRunOrigin names the run's own swarm, its project and the run owner.
+type PipelineRunOrigin struct {
+	SwarmName, ProjectID, ProjectName, OwnerUsername string
+}
+
+// pipelineRunSelect joins only rows referenced by the run itself; the foreign
+// keys guarantee they exist.
+const pipelineRunSelect = `SELECT r.id,r.swarm_id,r.owner_id,r.graph,r.status,w.name,w.project_id,p.name,u.username FROM pipeline_runs r JOIN swarms w ON w.id=r.swarm_id JOIN projects p ON p.id=w.project_id JOIN users u ON u.id=r.owner_id`
+
+func scanPipelineRun(row interface{ Scan(...any) error }) (PipelineRun, error) {
+	var r PipelineRun
+	err := row.Scan(&r.ID, &r.SwarmID, &r.OwnerID, &r.Graph, &r.Status, &r.Origin.SwarmName, &r.Origin.ProjectID, &r.Origin.ProjectName, &r.Origin.OwnerUsername)
+	return r, err
 }
 
 // PipelineVisit identifies one visit to a node within a run.
@@ -32,6 +49,9 @@ type PipelineVisit struct {
 	ActorUID         string
 	ActorIncarnation int64
 	RequestID        string
+	// ActorName is filled by reads when the stage actor is known: the reserved
+	// native name, else the managed actor with ActorUID in the run's swarm.
+	ActorName string
 	// Replay means the request was already reserved and must not be sent again.
 	Replay bool
 }
@@ -59,8 +79,7 @@ func (s *Store) CreatePipelineRun(ctx context.Context, r PipelineRun) error {
 
 // GetPipelineRun retrieves a run only within the supplied swarm.
 func (s *Store) GetPipelineRun(ctx context.Context, swarmID, id string) (PipelineRun, error) {
-	var r PipelineRun
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT id,swarm_id,owner_id,graph,status FROM pipeline_runs WHERE swarm_id=? AND id=?`, swarmID, id).Scan(&r.ID, &r.SwarmID, &r.OwnerID, &r.Graph, &r.Status)
+	r, err := scanPipelineRun(s.conn(ctx).QueryRowContext(ctx, pipelineRunSelect+` WHERE r.swarm_id=? AND r.id=?`, swarmID, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -69,15 +88,15 @@ func (s *Store) GetPipelineRun(ctx context.Context, swarmID, id string) (Pipelin
 
 // ListPipelineRuns lists the runs of a swarm in ID order.
 func (s *Store) ListPipelineRuns(ctx context.Context, swarmID string) ([]PipelineRun, error) {
-	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT id,swarm_id,owner_id,graph,status FROM pipeline_runs WHERE swarm_id=? ORDER BY id`, swarmID)
+	rows, err := s.conn(ctx).QueryContext(ctx, pipelineRunSelect+` WHERE r.swarm_id=? ORDER BY r.id`, swarmID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := []PipelineRun{}
 	for rows.Next() {
-		var r PipelineRun
-		if err = rows.Scan(&r.ID, &r.SwarmID, &r.OwnerID, &r.Graph, &r.Status); err != nil {
+		r, err := scanPipelineRun(rows)
+		if err != nil {
 			return nil, err
 		}
 		result = append(result, r)
@@ -187,25 +206,48 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID, id string, v P
 	return v, err
 }
 
+// pipelineVisitSelect resolves managed names by UID within the run's swarm,
+// including deleted actors whose names may since have been reused.
+const pipelineVisitSelect = `SELECT s.run_id,s.sequence,s.node_id,s.state,s.answer,s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.native_actor_name,m.name,'') FROM pipeline_steps s JOIN pipeline_runs r ON r.id=s.run_id LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=r.swarm_id WHERE r.swarm_id=?`
+
+// listPipelineVisits calls visit for each row in query order.
+func (s *Store) listPipelineVisits(ctx context.Context, query string, args []any, visit func(run string, v PipelineVisit)) error {
+	rows, err := s.conn(ctx).QueryContext(ctx, pipelineVisitSelect+query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var run string
+		var v PipelineVisit
+		if err = rows.Scan(&run, &v.Sequence, &v.NodeID, &v.State, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.ActorName); err != nil {
+			return err
+		}
+		visit(run, v)
+	}
+	return rows.Err()
+}
+
 // ListPipelineVisits returns visits in sequence order, scoped by swarm.
 func (s *Store) ListPipelineVisits(ctx context.Context, swarmID, id string) ([]PipelineVisit, error) {
 	if _, err := s.GetPipelineRun(ctx, swarmID, id); err != nil {
 		return nil, err
 	}
-	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT s.sequence,s.node_id,s.state,s.answer,s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,'') FROM pipeline_steps s JOIN pipeline_runs r ON r.id=s.run_id WHERE r.swarm_id=? AND r.id=? ORDER BY s.sequence`, swarmID, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	result := []PipelineVisit{}
-	for rows.Next() {
-		var v PipelineVisit
-		if err = rows.Scan(&v.Sequence, &v.NodeID, &v.State, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID); err != nil {
-			return nil, err
-		}
+	err := s.listPipelineVisits(ctx, ` AND r.id=? ORDER BY s.sequence`, []any{swarmID, id}, func(_ string, v PipelineVisit) {
 		result = append(result, v)
-	}
-	return result, rows.Err()
+	})
+	return result, err
+}
+
+// ListSwarmPipelineVisits returns the visits of every run in a swarm in one
+// read, keyed by run ID; runs without visits are absent.
+func (s *Store) ListSwarmPipelineVisits(ctx context.Context, swarmID string) (map[string][]PipelineVisit, error) {
+	result := map[string][]PipelineVisit{}
+	err := s.listPipelineVisits(ctx, ` ORDER BY s.run_id,s.sequence`, []any{swarmID}, func(run string, v PipelineVisit) {
+		result[run] = append(result[run], v)
+	})
+	return result, err
 }
 
 // AnswerPipelineVisit accepts one answer only for the latest waiting human visit.
