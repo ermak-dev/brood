@@ -3,6 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+
+	"brood.dev/go/brood/app"
 
 	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/relay"
@@ -23,6 +26,44 @@ func commandSwarmResponse(result command.Result) relay.SwarmResponse {
 
 func (m *managedProvider) handleActorCommand(ctx context.Context, from store.ManagedActor, inv command.Invocation) relay.SwarmResponse {
 	switch inv.Name {
+	case "pipeline_visit_complete":
+		validated, err := command.ParseTool(inv.Name, inv.Arguments)
+		if err != nil {
+			return relay.SwarmResponse{Text: "invalid pipeline completion", Outcome: "refused"}
+		}
+		var args struct {
+			RunID     string `json:"run_id"`
+			Sequence  int64  `json:"sequence"`
+			RequestID string `json:"request_id"`
+			Outcome   string `json:"outcome"`
+		}
+		if err := json.Unmarshal(validated.Arguments, &args); err != nil {
+			return relay.SwarmResponse{Text: "invalid pipeline completion", Outcome: "refused"}
+		}
+		actor, checkedSwarm, err := m.authorizeCommandActor(ctx, from)
+		if err == nil {
+			err = m.server.store.WithTx(ctx, func(ctx context.Context) error {
+				current, swarm, err := m.authorizeCommandActorDurable(ctx, actor)
+				if err != nil {
+					return err
+				}
+				if swarm.AtespaceName != checkedSwarm.AtespaceName || swarm.AtespaceUID != checkedSwarm.AtespaceUID {
+					return app.ErrConflict
+				}
+				return m.server.store.CompletePipelineActorVisit(ctx, current.SwarmID, args.RunID, args.Sequence, args.RequestID, current.UID, current.Incarnation, args.Outcome)
+			})
+		}
+		if err != nil {
+			switch {
+			case errors.Is(err, app.ErrNotAllowed):
+				return relay.SwarmResponse{Text: "pipeline completion not authorized", Outcome: "refused"}
+			case errors.Is(err, app.ErrConflict), errors.Is(err, store.ErrPipelineVisitConflict):
+				return relay.SwarmResponse{Text: "pipeline completion conflict", Outcome: "refused"}
+			default:
+				return relay.SwarmResponse{Text: "pipeline completion unavailable", Outcome: "failed"}
+			}
+		}
+		return relay.SwarmResponse{OK: true, Text: "pipeline visit completed", Outcome: "completed"}
 	case "profile":
 		data, _ := json.Marshal(map[string]any{"self": from.Name, "role": from.Role, "swarm_id": from.SwarmID, "provider": "proxmox", "integration_branch": nil})
 		return relay.SwarmResponse{OK: true, Text: string(data)}

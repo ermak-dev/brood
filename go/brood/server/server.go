@@ -269,6 +269,7 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("POST /api/swarms/{id}/transfer", s.handleSwarmTransfer)
 	s.mountWorkerPools()
 	s.mountAccessAPI()
+	s.mountPipelineAPI()
 	// Actor/template/policy роя, воркеры и глобальная политика — тонкий
 	// прокси к ateapi с проверкой владения роем (#32); он же подключает
 	// маршруты proxy под /api/swarms/{id}/proxy/.

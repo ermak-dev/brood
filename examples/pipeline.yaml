@@ -1,0 +1,22 @@
+# Standalone pipeline syntax; validation and planning do not execute this graph.
+apiVersion: brood.dev/v1alpha1
+name: demo-pipeline
+start: inspect
+exit: done
+nodes:
+  inspect:
+    type: actor
+    template: coding
+    prompt: Summarize the current checkout without modifying files.
+  review:
+    type: human
+    question: Review the summary.
+    options:
+      - label: Continue
+        outcome: success
+  done:
+    type: exit
+edges:
+  - {from: inspect, to: review}
+  - {from: review, to: done}
+goalGates: [done]

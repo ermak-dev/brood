@@ -13,6 +13,8 @@ import { PolicyPage } from '@/features/substrate/PolicyPage';
 import { TemplatesPage } from '@/features/substrate/TemplatesPage';
 import { WorkersPage } from '@/features/substrate/WorkersPage';
 import { WorkerPoolsPage } from '@/features/substrate/WorkerPoolsPage';
+import { PipelinesPage } from '@/features/pipelines/PipelinesPage';
+import { RunDetailPage } from '@/features/pipelines/RunDetailPage';
 import { ProvidersWorkbenchPage } from '@/features/providers/ProvidersWorkbenchPage';
 import { AuthFilesPage } from '@/features/authFiles/AuthFilesPage';
 import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
@@ -68,6 +70,8 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
   { path: '/worker-pools', element: <WorkerPoolsPage /> },
+  { path: '/pipelines', element: <PipelinesPage /> },
+  { path: '/pipelines/:id', element: <RunDetailPage /> },
   { path: '/policy', element: <LegacyProjectRoute section="members" /> },
   { path: '/substrate-policy', element: <PolicyPage /> },
   { path: '/settings', element: <Navigate to="/config" replace /> },

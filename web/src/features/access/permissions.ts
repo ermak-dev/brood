@@ -1,6 +1,6 @@
-// Обычному пользователю видны только четыре ресурсных раздела. Сервер
+// Обычному пользователю видны только ресурсные разделы. Сервер
 // повторно проверяет членство и владение при каждом запросе.
-const memberPaths = ['/projects', '/swarms', '/actors', '/templates'];
+const memberPaths = ['/projects', '/swarms', '/actors', '/templates', '/pipelines'];
 
 export function visibleAccessPath(path: string, isSuperuser: boolean): boolean {
   if (isSuperuser) return true;

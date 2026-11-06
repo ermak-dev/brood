@@ -1,0 +1,25 @@
+digraph pipeline {
+  rankdir=LR;
+  build [label="build", shape=box];
+  check [label="ci ok?", shape=diamond];
+  exit [label="exit", shape=Msquare];
+  fanin [label="fan in", shape=tripleoctagon];
+  fanout [label="fan out", shape=component];
+  land [label="land", shape=house];
+  lint [label="lint", shape=box];
+  review [label="review", shape=hexagon];
+  start [label="start", shape=Mdiamond];
+  test [label="test", shape=box];
+  vet [label="vet", shape=box];
+  build -> check;
+  check -> land [label="no w=3"];
+  check -> test [label="yes"];
+  fanin -> exit;
+  fanout -> lint;
+  fanout -> vet [label="w=2"];
+  lint -> fanin;
+  review -> fanout;
+  start -> build;
+  test -> review [label="tests pass"];
+  vet -> fanin;
+}

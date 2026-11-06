@@ -26,7 +26,7 @@ func initializeProjectSecrets(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, projectSecretSchema+`PRAGMA user_version=9`); err != nil {
 			return errors.New("cannot extend project secret schema")
 		}
-	} else if version != 9 && version != 10 {
+	} else if version != 9 && version != 10 && version != 11 {
 		return errors.New("incompatible database schema: unsupported project secret version")
 	}
 	return checkSchema(ctx, tx, projectSecretSchema)

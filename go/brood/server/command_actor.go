@@ -59,19 +59,38 @@ func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 // Only UID, generation and binding from the supplied snapshot are used as identity;
 // role and delegation always come from the durable row.
 func (m *managedProvider) authorizeCommandActor(ctx context.Context, original store.ManagedActor) (store.ManagedActor, app.Swarm, error) {
-	a, err := m.server.store.GetManagedActor(ctx, original.UID)
-	if err != nil || a.Incarnation != original.Incarnation || a.SwarmID != original.SwarmID || a.AtespaceUID != original.AtespaceUID || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
-		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+	a, swarm, err := m.authorizeCommandActorDurable(ctx, original)
+	if err != nil {
+		return store.ManagedActor{}, app.Swarm{}, err
 	}
-	sw, err := m.server.store.GetSwarm(ctx, a.SwarmID)
-	if err != nil || sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != a.AtespaceUID {
-		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
-	}
-	swarm := toAppSwarm(sw)
 	if err := m.server.checkSwarmNamespace(ctx, swarm); err != nil {
 		return store.ManagedActor{}, app.Swarm{}, err
 	}
 	return a, swarm, nil
+}
+
+func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, original store.ManagedActor) (store.ManagedActor, app.Swarm, error) {
+	a, err := m.server.store.GetManagedActor(ctx, original.UID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+		}
+		return store.ManagedActor{}, app.Swarm{}, err
+	}
+	if a.Incarnation != original.Incarnation || a.SwarmID != original.SwarmID || a.AtespaceUID != original.AtespaceUID || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
+		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+	}
+	sw, err := m.server.store.GetSwarm(ctx, a.SwarmID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+		}
+		return store.ManagedActor{}, app.Swarm{}, err
+	}
+	if sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != a.AtespaceUID {
+		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+	}
+	return a, toAppSwarm(sw), nil
 }
 
 // authorizeCommandTarget is shared with session command adapters. Workers may
