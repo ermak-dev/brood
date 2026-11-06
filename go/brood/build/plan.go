@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"brood.dev/go/brood/gitorigin"
+	"brood.dev/go/brood/pipeline"
 )
 
 const (
@@ -262,6 +263,9 @@ func ParseDocument(text, filename string) (map[string]any, error) {
 	if !ok {
 		return nil, failure(filename, "document", 1, "invalid document structure")
 	}
+	if err := validateWorkflows(typed, filename); err != nil {
+		return nil, err
+	}
 	return typed, nil
 }
 
@@ -484,6 +488,17 @@ func init() {
 		typ: "object", addlFalse: true, required: []string{"template"},
 		props: schemaProperties("template", name),
 	}
+	text := &schemaNode{typ: "string"}
+	option := &schemaNode{typ: "object", addlFalse: true, required: []string{"label", "outcome"}, props: schemaProperties("label", text, "outcome", text)}
+	node := &schemaNode{typ: "object", addlFalse: true, required: []string{"type"}, props: schemaProperties(
+		"type", &schemaNode{typ: "string", enum: []any{"actor", "human", "condition", "land", "exit", "parallel", "fan_in"}}, "template", text, "prompt", text, "question", text,
+		"options", &schemaNode{typ: "array", items: option}, "target", text, "branches", &schemaNode{typ: "array", items: text})}
+	edge := &schemaNode{typ: "object", addlFalse: true, required: []string{"from", "to"}, props: schemaProperties("from", text, "to", text, "condition", text, "label", text, "weight", &schemaNode{typ: "integer"})}
+	style := &schemaNode{typ: "object", addlFalse: true, required: []string{"selectors"}, props: schemaProperties("selectors", &schemaNode{typ: "array", items: text}, "template", text)}
+	workflow := &schemaNode{typ: "object", addlFalse: true, required: []string{"start", "exit", "nodes", "edges", "goalGates"}, props: schemaProperties(
+		"start", text, "exit", text, "nodes", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: node},
+		"edges", &schemaNode{typ: "array", items: edge}, "goalGates", &schemaNode{typ: "array", items: text},
+		"styles", &schemaNode{typ: "array", items: style}, "retry", &schemaNode{typ: "object", addlFalse: true, required: []string{"maxRetries"}, props: schemaProperties("maxRetries", &schemaNode{typ: "integer", minP: numberPtr(0)})})}
 	capacityLimit := &schemaNode{anyOf: []*schemaNode{
 		{typ: "null"},
 		{typ: "string", maxLen: 19, pattern: regexp.MustCompile(`^(0|[1-9][0-9]*)$`)},
@@ -517,6 +532,7 @@ func init() {
 			"templates", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: template},
 			"networks", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: network},
 			"targets", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: targetEntry},
+			"workflows", &schemaNode{typ: "object", propNames: name, addlProps: workflow},
 		),
 	}
 }
@@ -1332,6 +1348,56 @@ func checkDefinitions(document map[string]any, filename string) error {
 	return nil
 }
 
+// Workflow returns a named workflow from a validated Broodfile document.
+func Workflow(document map[string]any, name, filename string) (*pipeline.Document, error) {
+	workflows, _ := asMap(document["workflows"])
+	graph, ok := asMap(workflows[name])
+	if !ok {
+		return nil, fmt.Errorf("%s: unknown workflow %q (available: %s)", filename, name, strings.Join(sortedKeys(workflows), ", "))
+	}
+	copyGraph := make(map[string]any, len(graph)+2)
+	for key, value := range graph {
+		copyGraph[key] = value
+	}
+	copyGraph["apiVersion"] = "brood.dev/v1alpha1"
+	copyGraph["name"] = name
+	return pipeline.ParseEmbedded(copyGraph, filename+": workflows."+name)
+}
+
+// validateWorkflows использует общий validator конвейеров и проверяет ссылки на шаблоны.
+func validateWorkflows(document map[string]any, filename string) error {
+	workflows, _ := asMap(document["workflows"])
+	templates, _ := asMap(document["templates"])
+	for _, name := range sortedKeys(workflows) {
+		graph, _ := asMap(workflows[name])
+		parsed, err := Workflow(document, name, filename)
+		if err != nil {
+			return err
+		}
+		if err := parsed.Validate(); err != nil {
+			return fmt.Errorf("%s: workflows.%s: %w", filename, name, err)
+		}
+		for _, nodeName := range sortedKeys(graphNodes(graph)) {
+			node := parsed.Nodes[nodeName]
+			if node.Template != "" {
+				if _, ok := templates[node.Template]; !ok {
+					return fmt.Errorf("%s: workflows.%s.nodes.%s.template: unknown template %q", filename, name, nodeName, node.Template)
+				}
+			}
+		}
+		for i, style := range parsed.Styles {
+			if style.Template != "" {
+				if _, ok := templates[style.Template]; !ok {
+					return fmt.Errorf("%s: workflows.%s.styles.%d.template: unknown template %q", filename, name, i, style.Template)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func graphNodes(graph map[string]any) map[string]any { nodes, _ := asMap(graph["nodes"]); return nodes }
+
 // planProjectConfig сохраняет присутствие необязательных полей серверного проекта.
 func planProjectConfig(document map[string]any, filename string) (map[string]any, error) {
 	config := map[string]any{"name": document["name"], "repository": ""}
@@ -1367,6 +1433,9 @@ func planProjectConfig(document map[string]any, filename string) (map[string]any
 func MakePlan(document map[string]any, pins map[string]string, target string,
 	registry string, atespace string, filename string) (map[string]any, error) {
 	if err := validateSchema(document, filename, nil); err != nil {
+		return nil, err
+	}
+	if err := validateWorkflows(document, filename); err != nil {
 		return nil, err
 	}
 	projectConfig, err := planProjectConfig(document, filename)

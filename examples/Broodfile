@@ -1,0 +1,54 @@
+apiVersion: brood.dev/v1alpha1
+name: example
+defaultTarget: development
+sources:
+  project:
+    type: project
+    destination: project
+environments:
+  python:
+    sources: [project]
+    build:
+      dockerfile: project/environment/Dockerfile
+      platform: linux/amd64
+templates:
+  python:
+    environment: python
+    network: offline
+    actor:
+      resources:
+        limits:
+          cpuMillicores: '1000'
+          memoryBytes: '1073741824'
+      containers:
+        - name: main
+          command: [python3]
+          args: [--version]
+networks:
+  offline: {}
+targets:
+  development:
+    template: python
+
+workflows:
+  inspect:
+    start: inspect
+    exit: done
+    nodes:
+      inspect:
+        type: actor
+        template: python
+        prompt: Summarize the current checkout without modifying files.
+      review:
+        type: human
+        question: Is the read-only summary satisfactory?
+        options:
+          - {label: Accept summary, outcome: success}
+          - {label: Reject summary, outcome: fail}
+      done:
+        type: exit
+    edges:
+      - {from: inspect, to: review, condition: "outcome=success"}
+      - {from: review, to: done, label: Accept summary}
+      - {from: review, to: done, label: Reject summary}
+    goalGates: [done]

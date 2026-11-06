@@ -91,8 +91,17 @@ func (s Spec) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 }
 
+var pipelineVisitCompleteSpec = spec("pipeline_visit_complete", "Report the outcome of your assigned pipeline visit.", false, false, true,
+	Arg{Name: "run_id", Type: "string", Required: true, MaxLength: 4096},
+	Arg{Name: "sequence", Type: "integer", Required: true, Min: number(1)},
+	Arg{Name: "request_id", Type: "string", Required: true, MaxLength: 4096},
+	choice(Arg{Name: "outcome", Type: "string", Required: true}, "success", "fail"),
+)
+
+func number(n float64) *float64 { return &n }
+
 var catalog = []Spec{
-	agentsSpec, sendSpec, dispatchSpec, tailSpec, slashSpec,
+	agentsSpec, sendSpec, dispatchSpec, pipelineVisitCompleteSpec, tailSpec, slashSpec,
 	sessionHistorySpec, sessionTerminalSpec, addSpec, deleteSpec,
 	stopSpec, startSpec, restartSpec, updateSpec, recycleSpec, wipeSpec, resetSpec,
 	projectAddSpec, projectLimitSpec, landingSpec, nodeSpec,

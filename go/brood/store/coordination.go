@@ -218,7 +218,7 @@ func initializeCoordination(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, coordinationSchema+`PRAGMA user_version=8`); err != nil {
 			return fmt.Errorf("extend coordination schema: %w", err)
 		}
-	} else if version != 8 && version != 9 && version != 10 {
+	} else if version != 8 && version != 9 && version != 10 && version != 11 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
 	return checkSchema(ctx, tx, coordinationSchema)

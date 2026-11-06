@@ -1,0 +1,125 @@
+/* Pipeline runs (#169): gate form, graph container and node timeline. */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.graph {
+  width: 100%;
+  overflow-x: auto;
+
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+
+.timeline-node {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+%timelineDot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--border-primary);
+  transform: translateY(-1px);
+}
+
+.timeline-pending {
+  @extend %timelineDot;
+}
+
+.timeline-done {
+  @extend %timelineDot;
+  background: var(--viz-success);
+}
+
+.timeline-active {
+  @extend %timelineDot;
+  background: var(--viz-success);
+}
+
+.timeline-failed {
+  @extend %timelineDot;
+  background: var(--viz-failure);
+}
+
+.timeline-skipped {
+  @extend %timelineDot;
+  background: var(--text-quaternary);
+}
+
+.timeline-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.timeline-outcome {
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.timeline-kind {
+  color: var(--text-tertiary);
+}
+
+.gateQuestion {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.gateDeadline {
+  margin: 0 0 12px;
+  color: var(--amber-color);
+}
+
+.gateOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gateAccelerator {
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+.gateFreeform {
+  width: 100%;
+  min-height: 96px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  resize: vertical;
+}
+
+.gateHint {
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+}
+
+.gateError {
+  margin: 8px 0 0;
+  color: var(--viz-failure);
+}

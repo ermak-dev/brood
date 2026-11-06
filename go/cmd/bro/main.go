@@ -59,6 +59,8 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 		err = c.push(ctx, args[1:])
 	case "secret":
 		err = c.secret(ctx, args[1:])
+	case "pipeline":
+		err = c.pipeline(args[1:])
 	case "help", "-h", "--help":
 		if len(args) != 1 {
 			err = errors.New("help accepts no arguments")
@@ -88,6 +90,8 @@ commands:
   projects list [server] [--ca FILE]  list accessible projects
   build [target] [options]       build current files into local OCI artifacts
   push [target] [options]        upload built images and template to the current server
+  secret [options]                manage project secrets on the current server
+  pipeline <sub> FILE             validate, plan or render a pipeline document
   mcp                           serve catalog tools over stdio
   <catalog command>             execute a scoped orchestration command
 

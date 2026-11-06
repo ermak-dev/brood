@@ -285,7 +285,8 @@
     "templates": "Mẫu",
     "workers": "Worker",
     "policy": "Chính sách truy cập",
-    "worker_pools": "Nhóm worker"
+    "worker_pools": "Nhóm worker",
+    "pipelines": "Pipeline"
   },
   "nav_groups": {
     "operate": "Vận hành",
@@ -311,7 +312,8 @@
     "templates": "ActorTemplate: image của actor",
     "workers": "Pool chứa actor",
     "policy": "Vai trò và chủ thể",
-    "worker_pools": "Tạo nhóm để cung cấp tài nguyên worker."
+    "worker_pools": "Tạo nhóm để cung cấp tài nguyên worker.",
+    "pipelines": "Các lần chạy pipeline và cổng xác nhận của chúng"
   },
   "dashboard": {
     "hero_verdict_good": "Mọi hệ thống ổn định",
@@ -3081,5 +3083,36 @@
     "edit_hint": "Thay đổi số bản sao, nhãn và tài nguyên mỗi worker. Lớp sandbox và ảnh giữ nguyên như lúc tạo.",
     "delete_hint": "Xóa nhóm và các pod worker của nó. Actor đang chạy trong mọi dự án có thể bị gián đoạn.",
     "delete_unversioned": "Máy chủ không trả về uid và resourceVersion nên không thể đối chiếu việc xóa với phiên bản này. Hãy làm mới danh sách."
+  },
+  "pipelines": {
+    "title": "Pipeline",
+    "name": "Tên",
+    "status": "Trạng thái",
+    "started": "Bắt đầu",
+    "current_node": "Nút hiện tại",
+    "empty": "Chưa có lần chạy pipeline nào",
+    "statuses": {
+      "running": "Đang chạy",
+      "waiting_human": "Chờ người quyết định",
+      "succeeded": "Thành công",
+      "failed": "Thất bại"
+    },
+    "kind": {
+      "actor": "actor",
+      "human": "người",
+      "condition": "điều kiện",
+      "land": "hạ cánh",
+      "exit": "thoát",
+      "start": "bắt đầu"
+    },
+    "timeline": "Các nút",
+    "graph_label": "Đồ thị lần chạy",
+    "gate_title": "Quyết định của người",
+    "gate_deadline": "Trả lời trước {{deadline}}",
+    "gate_freeform_hint": "Nhập câu trả lời của bạn",
+    "gate_submit": "Gửi",
+    "gate_confirm": "Xác nhận",
+    "gate_confirm_hint": "Câu trả lời sẽ được gửi vào lần chạy và không thể thu hồi. Xác nhận để gửi.",
+    "gate_no_options": "Cổng không đưa ra lựa chọn nào; máy chủ đã không gửi tùy chọn nào."
   }
 }

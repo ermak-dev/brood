@@ -285,7 +285,8 @@
     "templates": "Templates",
     "workers": "Workers",
     "policy": "Access Policy",
-    "worker_pools": "Worker pools"
+    "worker_pools": "Worker pools",
+    "pipelines": "Pipelines"
   },
   "nav_groups": {
     "operate": "Operate",
@@ -311,7 +312,8 @@
     "templates": "ActorTemplate: actor images",
     "workers": "The pool hosting actors",
     "policy": "Roles and principals",
-    "worker_pools": "Create a pool to provide worker capacity."
+    "worker_pools": "Create a pool to provide worker capacity.",
+    "pipelines": "Pipeline runs and their human gates"
   },
   "dashboard": {
     "hero_verdict_good": "All systems steady",
@@ -3075,5 +3077,36 @@
     "edit_hint": "Change replicas, labels and resources per worker. The sandbox class and image stay as created.",
     "delete_hint": "Removes the pool and its worker pods. Running actors in every project can be interrupted.",
     "delete_unversioned": "The server did not return uid and resourceVersion, so deletion cannot be checked against this version. Refresh the list."
+  },
+  "pipelines": {
+    "title": "Pipelines",
+    "name": "Name",
+    "status": "Status",
+    "started": "Started",
+    "current_node": "Current node",
+    "empty": "No pipeline runs yet",
+    "statuses": {
+      "running": "Running",
+      "waiting_human": "Waiting for human",
+      "succeeded": "Succeeded",
+      "failed": "Failed"
+    },
+    "kind": {
+      "actor": "actor",
+      "human": "human",
+      "condition": "condition",
+      "land": "land",
+      "exit": "exit",
+      "start": "start"
+    },
+    "timeline": "Nodes",
+    "graph_label": "Run graph",
+    "gate_title": "Human decision",
+    "gate_deadline": "Answer before {{deadline}}",
+    "gate_freeform_hint": "Type your answer",
+    "gate_submit": "Submit",
+    "gate_confirm": "Confirm",
+    "gate_confirm_hint": "The answer goes to the run and cannot be taken back. Confirm to send it.",
+    "gate_no_options": "The gate offers no options; the server sent none."
   }
 }

@@ -712,6 +712,168 @@
         "type": "string"
       },
       "type": "object"
+    },
+    "workflows": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "condition": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "weight": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "exit": {
+            "type": "string"
+          },
+          "goalGates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "nodes": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "branches": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "options": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "label": {
+                        "type": "string"
+                      },
+                      "outcome": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "outcome"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "prompt": {
+                  "type": "string"
+                },
+                "question": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                },
+                "template": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "actor",
+                    "human",
+                    "condition",
+                    "land",
+                    "exit",
+                    "parallel",
+                    "fan_in"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            "minProperties": 1,
+            "propertyNames": {
+              "maxLength": 63,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "retry": {
+            "additionalProperties": false,
+            "properties": {
+              "maxRetries": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "maxRetries"
+            ],
+            "type": "object"
+          },
+          "start": {
+            "type": "string"
+          },
+          "styles": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "selectors": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "template": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "selectors"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "start",
+          "exit",
+          "nodes",
+          "edges",
+          "goalGates"
+        ],
+        "type": "object"
+      },
+      "propertyNames": {
+        "maxLength": 63,
+        "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+        "type": "string"
+      },
+      "type": "object"
     }
   },
   "required": [

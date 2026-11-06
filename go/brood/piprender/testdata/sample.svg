@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1728 176" role="img">
+<polyline class="edge edge-active" points="312,44 408,44 408,44" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-active" points="408,44 398,39 398,49" fill="black"/>
+<text class="edge-label" x="552" y="38" text-anchor="middle">no w=3</text>
+<polyline class="edge edge-pending" points="504,44 600,44 600,44" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="600,44 590,39 590,49" fill="black"/>
+<text class="edge-label" x="552" y="38" text-anchor="middle">yes</text>
+<polyline class="edge edge-pending" points="504,44 600,44 600,112" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="600,112 595,102 605,102" fill="black"/>
+<polyline class="edge edge-pending" points="1464,44 1560,44 1560,44" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="1560,44 1550,39 1550,49" fill="black"/>
+<polyline class="edge edge-pending" points="1080,44 1176,44 1176,44" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="1176,44 1166,39 1166,49" fill="black"/>
+<text class="edge-label" x="1128" y="38" text-anchor="middle">w=2</text>
+<polyline class="edge edge-pending" points="1080,44 1176,44 1176,112" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="1176,112 1171,102 1181,102" fill="black"/>
+<polyline class="edge edge-pending" points="1272,44 1368,44 1368,44" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="1368,44 1358,39 1358,49" fill="black"/>
+<polyline class="edge edge-pending" points="888,44 984,44 984,44" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="984,44 974,39 974,49" fill="black"/>
+<polyline class="edge edge-done" points="120,44 216,44 216,44" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-done" points="216,44 206,39 206,49" fill="black"/>
+<text class="edge-label" x="744" y="126" text-anchor="middle">tests pass</text>
+<polyline class="edge edge-pending" points="696,132 792,132 792,64" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="792,64 787,74 797,74" fill="black"/>
+<polyline class="edge edge-pending" points="1272,132 1368,132 1368,64" fill="none" stroke="black"/>
+<polygon class="edge-arrow edge-pending" points="1368,64 1363,74 1373,74" fill="black"/>
+<g class="node node-start state-done"><rect x="24" y="24" width="96" height="40" rx="20" fill="white" stroke="black"/><text x="72" y="49" text-anchor="middle">start</text></g>
+<g class="node node-actor state-done"><rect x="216" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="264" y="49" text-anchor="middle">build</text></g>
+<g class="node node-condition state-active"><rect x="408" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="456" y="49" text-anchor="middle">ci ok?</text></g>
+<g class="node node-land state-pending"><rect x="600" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="648" y="49" text-anchor="middle">land</text></g>
+<g class="node node-actor state-pending"><rect x="600" y="112" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="648" y="137" text-anchor="middle">test</text></g>
+<g class="node node-human state-pending"><rect x="792" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="840" y="49" text-anchor="middle">review</text></g>
+<g class="node node-parallel state-pending"><rect x="984" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="1032" y="49" text-anchor="middle">fan out</text></g>
+<g class="node node-actor state-pending"><rect x="1176" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="1224" y="49" text-anchor="middle">lint</text></g>
+<g class="node node-actor state-pending"><rect x="1176" y="112" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="1224" y="137" text-anchor="middle">vet</text></g>
+<g class="node node-fan_in state-pending"><rect x="1368" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="1416" y="49" text-anchor="middle">fan in</text></g>
+<g class="node node-exit state-pending"><rect x="1560" y="24" width="96" height="40" rx="0" fill="white" stroke="black"/><text x="1608" y="49" text-anchor="middle">exit</text></g>
+</svg>

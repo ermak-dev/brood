@@ -285,7 +285,8 @@
     "templates": "模板",
     "workers": "工作节点",
     "policy": "访问策略",
-    "worker_pools": "工作节点池"
+    "worker_pools": "工作节点池",
+    "pipelines": "流水线"
   },
   "nav_groups": {
     "operate": "运行",
@@ -311,7 +312,8 @@
     "templates": "ActorTemplate：actor 镜像",
     "workers": "承载 actor 的池",
     "policy": "角色与主体",
-    "worker_pools": "创建池以提供工作节点容量。"
+    "worker_pools": "创建池以提供工作节点容量。",
+    "pipelines": "流水线运行及其人工确认"
   },
   "dashboard": {
     "hero_verdict_good": "运行平稳",
@@ -3072,5 +3074,36 @@
     "edit_hint": "修改副本数、标签和每个工作节点的资源。沙箱类别和镜像保持创建时的设置。",
     "delete_hint": "删除该池及其工作节点 Pod。所有项目中运行的 Actor 可能被中断。",
     "delete_unversioned": "服务器未返回 uid 和 resourceVersion，无法按此版本校验删除。请刷新列表。"
+  },
+  "pipelines": {
+    "title": "流水线",
+    "name": "名称",
+    "status": "状态",
+    "started": "开始时间",
+    "current_node": "当前节点",
+    "empty": "还没有流水线运行",
+    "statuses": {
+      "running": "运行中",
+      "waiting_human": "等待人工",
+      "succeeded": "已成功",
+      "failed": "已失败"
+    },
+    "kind": {
+      "actor": "Actor",
+      "human": "人工",
+      "condition": "条件",
+      "land": "落地",
+      "exit": "退出",
+      "start": "开始"
+    },
+    "timeline": "节点",
+    "graph_label": "运行图",
+    "gate_title": "人工决策",
+    "gate_deadline": "请在 {{deadline}} 前回答",
+    "gate_freeform_hint": "输入你的回答",
+    "gate_submit": "提交",
+    "gate_confirm": "确认",
+    "gate_confirm_hint": "回答会发送到运行且无法撤回。确认发送。",
+    "gate_no_options": "该关卡未提供选项；服务器没有发送任何选项。"
   }
 }
