@@ -9,6 +9,7 @@ import { Section } from '@/features/substrate/components/form';
 import { useResource } from '@/features/substrate/hooks';
 import { gateVisitKey, openGate, runIsLive, runTone } from './state';
 import { HumanGatePanel } from './HumanGatePanel';
+import { WORKFLOWS_PATH } from './routes';
 import styles from '@/features/substrate/substrate.module.scss';
 import graphStyles from './pipelines.module.scss';
 
@@ -74,7 +75,7 @@ export function RunDetailPage() {
       <PageHeader
         title={detail?.name ?? id}
         meta={[
-          <Link key="back" to="/pipelines">
+          <Link key="back" to={WORKFLOWS_PATH}>
             {t('pipelines.title')}
           </Link>,
           detail?.startedAt && new Date(detail.startedAt).toLocaleString(i18n.language),

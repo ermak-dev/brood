@@ -57,10 +57,10 @@ test('legacy project routes bind the global project before opening a section', (
   }
   // Каталог роёв — самостоятельный ресурс выбранного проекта; управление
   // участниками остаётся администраторским действием.
-  const layout = source('components/layout/MainLayout.tsx');
-  expect(layout).toContain(`path: '/swarms'`);
-  expect(layout).not.toContain(`path: '/permissions'`);
-  expect(layout).toContain(`path: '/projects'`);
+  const navigation = source('components/layout/navigation.ts');
+  expect(navigation).toContain(`path: '/swarms'`);
+  expect(navigation).not.toContain(`path: '/permissions'`);
+  expect(navigation).toContain(`path: '/projects'`);
   // Участник проходит во вложенный маршрут, админское остаётся закрытым.
   expect(source('features/access/permissions.ts')).toContain('startsWith');
 });

@@ -286,9 +286,15 @@
     "workers": "Worker",
     "policy": "Chính sách truy cập",
     "worker_pools": "Nhóm worker",
-    "pipelines": "Pipeline"
+    "workflows": "Quy trình",
+    "project": "Dự án",
+    "overview": "Tổng quan"
   },
   "nav_groups": {
+    "project": "Dự án",
+    "infrastructure": "Hạ tầng",
+    "administration": "Quản trị",
+    "system": "Hệ thống",
     "operate": "Vận hành",
     "gateway": "Gateway",
     "observe": "Giám sát",
@@ -313,7 +319,8 @@
     "workers": "Pool chứa actor",
     "policy": "Vai trò và chủ thể",
     "worker_pools": "Tạo nhóm để cung cấp tài nguyên worker.",
-    "pipelines": "Các lần chạy pipeline và cổng xác nhận của chúng"
+    "workflows": "Các lần chạy quy trình và bước xác nhận",
+    "project": "Chi tiết dự án hiện tại"
   },
   "dashboard": {
     "hero_verdict_good": "Mọi hệ thống ổn định",
@@ -3085,7 +3092,7 @@
     "delete_unversioned": "Máy chủ không trả về uid và resourceVersion nên không thể đối chiếu việc xóa với phiên bản này. Hãy làm mới danh sách."
   },
   "pipelines": {
-    "title": "Pipeline",
+    "title": "Quy trình",
     "name": "Tên",
     "status": "Trạng thái",
     "started": "Bắt đầu",

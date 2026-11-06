@@ -11,31 +11,14 @@ import {
   type MouseEvent as ReactMouseEvent,
   type SyntheticEvent,
 } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { Link, matchPath, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { PageTransition } from '@/components/common/PageTransition';
 import { MainRoutes } from '@/router/MainRoutes';
 import { authFilesApi, pluginsApi } from '@/services/api';
-import {
-  IconSidebarAuthFiles,
-  IconSidebarConfig,
-  IconSidebarDashboard,
-  IconSidebarLogs,
-  IconSidebarOauth,
-  IconSidebarPlugins,
-  IconSidebarProjects,
-  IconSidebarActors,
-  IconSidebarTemplates,
-  IconSidebarWorkers,
-  IconSidebarPipelines,
-  IconSidebarPolicy,
-  IconSidebarProviders,
-  IconSidebarQuota,
-  IconSidebarStore,
-  IconSidebarSystem,
-  IconChevronDown,
-} from '@/components/ui/icons';
+import { IconChevronDown, IconSidebarPlugins } from '@/components/ui/icons';
+import { isNavigationActive, navSections } from './navigation';
 import { INLINE_LOGO } from '@/assets/logoInline';
 import {
   useAuthStore,
@@ -59,25 +42,6 @@ import { ProjectSwitcher } from '@/features/substrate/components/ProjectSwitcher
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
 import type { Theme } from '@/types';
-
-const sidebarIcons: Record<string, ReactNode> = {
-  dashboard: <IconSidebarDashboard size={18} />,
-  projects: <IconSidebarProjects size={18} />,
-  actors: <IconSidebarActors size={18} />,
-  templates: <IconSidebarTemplates size={18} />,
-  workers: <IconSidebarWorkers size={18} />,
-  pipelines: <IconSidebarPipelines size={18} />,
-  policy: <IconSidebarPolicy size={18} />,
-  aiProviders: <IconSidebarProviders size={18} />,
-  authFiles: <IconSidebarAuthFiles size={18} />,
-  oauth: <IconSidebarOauth size={18} />,
-  quota: <IconSidebarQuota size={18} />,
-  plugins: <IconSidebarPlugins size={18} />,
-  pluginStore: <IconSidebarStore size={18} />,
-  config: <IconSidebarConfig size={18} />,
-  logs: <IconSidebarLogs size={18} />,
-  system: <IconSidebarSystem size={18} />,
-};
 
 interface SidebarNavLinkItem {
   kind?: 'link';
@@ -597,153 +561,23 @@ export function MainLayout() {
     : [];
 
   const navGroups: SidebarNavGroup[] = [
-    {
-      id: 'operate',
-      labelKey: 'nav_groups.operate',
-      items: [
-        {
-          path: '/',
-          labelKey: 'nav.dashboard',
-          metaKey: 'nav_meta.dashboard',
-          icon: sidebarIcons.dashboard,
-        },
-        // Глобальный контекст — проект. Рои, акторы и шаблоны перечисляют
-        // все доступные объекты этого проекта; матрица видимости ниже
-        // оставляет обычному пользователю только четыре ресурсных раздела.
-        {
-          path: '/projects',
-          labelKey: 'access.projects',
-          metaKey: 'nav_meta.projects',
-          icon: sidebarIcons.projects,
-        },
-        {
-          path: '/swarms',
-          labelKey: 'access.swarms',
-          icon: sidebarIcons.projects,
-        },
-        {
-          path: '/users',
-          labelKey: 'access.users',
-          icon: sidebarIcons.system,
-        },
-        {
-          path: '/actors',
-          labelKey: 'nav.actors',
-          metaKey: 'nav_meta.actors',
-          icon: sidebarIcons.actors,
-        },
-        {
-          path: '/templates',
-          labelKey: 'nav.templates',
-          metaKey: 'nav_meta.templates',
-          icon: sidebarIcons.templates,
-        },
-        {
-          path: '/workers',
-          labelKey: 'nav.workers',
-          metaKey: 'nav_meta.workers',
-          icon: sidebarIcons.workers,
-        },
-        {
-          path: '/worker-pools',
-          labelKey: 'nav.worker_pools',
-          metaKey: 'nav_meta.worker_pools',
-          icon: sidebarIcons.workers,
-        },
-        {
-          path: '/pipelines',
-          labelKey: 'nav.pipelines',
-          metaKey: 'nav_meta.pipelines',
-          icon: sidebarIcons.pipelines,
-        },
-      ],
-    },
-    {
-      id: 'gateway',
-      labelKey: 'nav_groups.gateway',
-      items: [
-        {
-          path: '/ai-providers',
-          labelKey: 'nav.ai_providers',
-          metaKey: 'nav_meta.ai_providers',
-          icon: sidebarIcons.aiProviders,
-        },
-        {
-          path: '/auth-files',
-          labelKey: 'nav.auth_files',
-          metaKey: 'nav_meta.auth_files',
-          badge: authFilesCount ?? undefined,
-          badgeLabel:
-            typeof authFilesCount === 'number'
-              ? t('sidebar.auth_files_count', { count: authFilesCount })
-              : undefined,
-          icon: sidebarIcons.authFiles,
-        },
-        {
-          path: '/oauth',
-          labelKey: 'nav.oauth',
-          metaKey: 'nav_meta.oauth',
-          icon: sidebarIcons.oauth,
-        },
-      ],
-    },
-    {
-      id: 'observe',
-      labelKey: 'nav_groups.observe',
-      items: [
-        {
-          path: '/quota',
-          labelKey: 'nav.quota_management',
-          metaKey: 'nav_meta.quota_management',
-          icon: sidebarIcons.quota,
-        },
-        {
-          path: '/logs',
-          labelKey: 'nav.logs',
-          metaKey: 'nav_meta.logs',
-          icon: sidebarIcons.logs,
-        },
-      ],
-    },
-    {
-      id: 'control',
-      labelKey: 'nav_groups.control',
-      items: [
-        {
-          path: '/substrate-policy',
-          labelKey: 'access.substrate_policy',
-          icon: sidebarIcons.policy,
-        },
-        {
-          path: '/config',
-          labelKey: 'nav.config_management',
-          metaKey: 'nav_meta.config_management',
-          icon: sidebarIcons.config,
-        },
-        ...(supportsPlugin
-          ? [
-              {
-                path: '/plugins',
-                labelKey: 'nav.plugins',
-                metaKey: 'nav_meta.plugins',
-                icon: sidebarIcons.plugins,
-              },
-              {
-                path: '/plugin-store',
-                labelKey: 'nav.plugin_store',
-                metaKey: 'nav_meta.plugin_store',
-                icon: sidebarIcons.pluginStore,
-              },
-            ]
-          : []),
-        {
-          path: '/system',
-          labelKey: 'nav.system_info',
-          metaKey: 'nav_meta.system_info',
-          icon: sidebarIcons.system,
-        },
-      ],
-    },
+    ...navSections({ administrator: isSuperuser, plugins: supportsPlugin }).map((section) => ({
+      id: section.id,
+      labelKey: section.labelKey,
+      items: section.entries.map(({ icon: Icon, ...entry }) => ({
+        ...entry,
+        icon: <Icon size={18} />,
+        ...(entry.path === '/auth-files'
+          ? {
+              badge: authFilesCount ?? undefined,
+              badgeLabel:
+                typeof authFilesCount === 'number'
+                  ? t('sidebar.auth_files_count', { count: authFilesCount })
+                  : undefined,
+            }
+          : {}),
+      })),
+    })),
     ...(pluginPageNavItems.length > 0
       ? [
           {
@@ -918,12 +752,18 @@ export function MainLayout() {
     const itemLabel = item.label ?? (item.labelKey ? t(item.labelKey) : '');
     const itemMeta = item.meta ?? (item.metaKey ? t(item.metaKey) : '');
     const accessibleLabel = item.badgeLabel ? `${itemLabel}, ${item.badgeLabel}` : itemLabel;
+    const routeMatches = !!matchPath(
+      { path: item.path, end: item.path === '/' },
+      location.pathname
+    );
+    const active = isNavigationActive(item.path, location.pathname, routeMatches);
 
     return (
-      <NavLink
+      <Link
         key={item.path}
         to={item.path}
-        className={({ isActive }) => `${className} ${isActive ? 'active' : ''}`}
+        className={`${className} ${active ? 'active' : ''}`}
+        aria-current={active ? 'page' : undefined}
         onClick={() => {
           focusedRailItemRef.current = null;
           setSidebarOpen(false);
@@ -963,7 +803,7 @@ export function MainLayout() {
         ) : (
           renderNavBadge(item.badge)
         )}
-      </NavLink>
+      </Link>
     );
   };
 

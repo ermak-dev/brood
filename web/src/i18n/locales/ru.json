@@ -286,9 +286,16 @@
     "workers": "Воркеры",
     "policy": "Политика доступа",
     "worker_pools": "Пулы воркеров",
-    "pipelines": "Пайплайны"
+    "workflows": "Workflow",
+    "project": "Проект",
+    "overview": "Обзор"
   },
   "nav_groups": {
+    "project": "Проект",
+    "infrastructure": "Инфраструктура",
+    "administration": "Администрирование",
+    "system": "Система",
+    "plugin_pages": "Плагины",
     "operate": "Работа",
     "gateway": "Шлюз",
     "observe": "Наблюдение",
@@ -312,7 +319,8 @@
     "workers": "Пул: где живут акторы",
     "policy": "Роли и принципалы",
     "worker_pools": "Создайте пул, чтобы добавить воркеры.",
-    "pipelines": "Проходы пайплайнов и их вопросы"
+    "workflows": "Прогоны workflow и их вопросы",
+    "project": "Данные текущего проекта"
   },
   "dashboard": {
     "hero_verdict_good": "Всё стабильно",
@@ -3075,7 +3083,7 @@
     "delete_unversioned": "Сервер не вернул uid и resourceVersion, поэтому удаление не сверить с этой версией. Обновите список."
   },
   "pipelines": {
-    "title": "Пайплайны",
+    "title": "Workflow",
     "name": "Имя",
     "status": "Статус",
     "started": "Начат",

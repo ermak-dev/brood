@@ -7,6 +7,7 @@ import { useAccessResource } from '@/features/access/shared';
 import { pipelinesApi, type PipelineRun, type RunGraph as Graph } from '@/services/brood/pipelines';
 import { RunGraph } from './RunDetailPage';
 import { sortRuns } from './state';
+import { workflowRunPath } from './routes';
 
 type ViewProps = {
   runs: PipelineRun[] | null;
@@ -56,7 +57,7 @@ export function SwarmWorkflowView({
                 </select>
               </label>
               <p>
-                <Link to={`/pipelines/${encodeURIComponent(selected.id)}`}>{selected.name}</Link>
+                <Link to={workflowRunPath(selected.id)}>{selected.name}</Link>
               </p>
               <LoadState
                 loading={!!graphLoading}

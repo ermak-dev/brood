@@ -90,9 +90,8 @@ describe('run table logic', () => {
     expect(html).toContain('lint');
     expect(html).toContain('Running');
     // Static render cannot fire the click; the handler in the source names the route.
-    expect(source('features/pipelines/PipelinesPage.tsx')).toContain(
-      'encodeURIComponent(run.id)'
-    );
+    expect(source('features/pipelines/PipelinesPage.tsx')).toContain('workflowRunPath(run.id)');
+    expect(source('features/pipelines/routes.ts')).toContain('encodeURIComponent(id)');
   });
 });
 
@@ -167,13 +166,14 @@ describe('run detail pieces', () => {
 });
 
 describe('navigation and access', () => {
-  test('routes and the sidebar entry exist under the operate group', () => {
+  test('workflow routes and the project sidebar entry preserve legacy addresses', () => {
     const routes = source('router/MainRoutes.tsx');
-    expect(routes).toContain("path: '/pipelines', element: <PipelinesPage />");
-    expect(routes).toContain("path: '/pipelines/:id', element: <RunDetailPage />");
-    const layout = source('components/layout/MainLayout.tsx');
-    expect(layout).toContain("path: '/pipelines'");
-    expect(layout).toContain("labelKey: 'nav.pipelines'");
+    expect(routes).toContain("path: '/workflows', element: <PipelinesPage />");
+    expect(routes).toContain("path: '/workflows/runs/:id', element: <RunDetailPage />");
+    expect(routes).toContain("path: '/pipelines/:id', element: <LegacyPipelineRoute />");
+    const navigation = source('components/layout/navigation.ts');
+    expect(navigation).toContain('path: WORKFLOWS_PATH');
+    expect(navigation).toContain("labelKey: 'nav.workflows'");
   });
 
   test('pipeline listing uses the selected project and accessible swarm sections', () => {

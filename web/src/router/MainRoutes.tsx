@@ -15,6 +15,7 @@ import { WorkersPage } from '@/features/substrate/WorkersPage';
 import { WorkerPoolsPage } from '@/features/substrate/WorkerPoolsPage';
 import { PipelinesPage } from '@/features/pipelines/PipelinesPage';
 import { RunDetailPage } from '@/features/pipelines/RunDetailPage';
+import { legacyPipelinePath } from '@/features/pipelines/routes';
 import { ProvidersWorkbenchPage } from '@/features/providers/ProvidersWorkbenchPage';
 import { AuthFilesPage } from '@/features/authFiles/AuthFilesPage';
 import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
@@ -54,10 +55,18 @@ function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' | 'deta
   return section === 'swarms' ? <SwarmsPage /> : <ProjectDetailPage />;
 }
 
+function LegacyPipelineRoute() {
+  const { id } = useParams();
+  const [params] = useSearchParams();
+  const search = params.toString() ? `?${params.toString()}` : '';
+  return <Navigate to={legacyPipelinePath(id, search)} replace />;
+}
+
 const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/', element: <DashboardPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
   // Проект — глобальный контекст; прежние адреса сохраняют выбор проекта.
+  { path: '/project', element: <ProjectDetailPage /> },
   { path: '/projects', element: <AccessProjectsPage /> },
   { path: '/projects/:project', element: <LegacyProjectRoute section="detail" /> },
   { path: '/projects/:project/swarms', element: <LegacyProjectRoute section="swarms" /> },
@@ -70,8 +79,10 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
   { path: '/worker-pools', element: <WorkerPoolsPage /> },
-  { path: '/pipelines', element: <PipelinesPage /> },
-  { path: '/pipelines/:id', element: <RunDetailPage /> },
+  { path: '/workflows', element: <PipelinesPage /> },
+  { path: '/workflows/runs/:id', element: <RunDetailPage /> },
+  { path: '/pipelines', element: <LegacyPipelineRoute /> },
+  { path: '/pipelines/:id', element: <LegacyPipelineRoute /> },
   { path: '/policy', element: <LegacyProjectRoute section="members" /> },
   { path: '/substrate-policy', element: <PolicyPage /> },
   { path: '/settings', element: <Navigate to="/config" replace /> },
