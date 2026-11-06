@@ -15,11 +15,12 @@ import (
 )
 
 type pipelineNodeJSON struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind"`
-	Status  string `json:"status"`
-	Label   string `json:"label"`
-	Outcome string `json:"outcome,omitempty"`
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	Label     string `json:"label"`
+	Outcome   string `json:"outcome,omitempty"`
+	ActorName string `json:"actorName,omitempty"`
 }
 type pipelineOptionJSON struct {
 	ID    string `json:"id"`
@@ -37,6 +38,11 @@ type pipelineRunJSON struct {
 	ID          string             `json:"id"`
 	Name        string             `json:"name"`
 	Status      string             `json:"status"`
+	SwarmID     string             `json:"swarmId"`
+	SwarmName   string             `json:"swarmName"`
+	ProjectID   string             `json:"projectId"`
+	ProjectName string             `json:"projectName"`
+	Owner       string             `json:"owner"`
 	StartedAt   *string            `json:"startedAt"`
 	CurrentNode string             `json:"currentNode,omitempty"`
 	Nodes       []pipelineNodeJSON `json:"nodes"`
@@ -70,9 +76,19 @@ func (s *Server) pipelineList(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
+	visits, err := s.store.ListSwarmPipelineVisits(r.Context(), id)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	manage, err := s.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(id))
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
 	out := make([]pipelineRunJSON, 0, len(runs))
 	for _, run := range runs {
-		v, err := s.pipelineView(r, run)
+		v, err := pipelineView(run, visits[run.ID], manage)
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -116,19 +132,34 @@ func (s *Server) pipelineFind(w http.ResponseWriter, r *http.Request, action app
 	return store.PipelineRun{}, false
 }
 
-func (s *Server) pipelineView(r *http.Request, run store.PipelineRun) (pipelineRunJSON, error) {
-	d, err := pipeline.Parse(string(run.Graph), "pipeline")
-	if err != nil {
-		return pipelineRunJSON{}, err
-	}
+// pipelineRunView renders a run found by pipelineFind for the request user.
+func (s *Server) pipelineRunView(r *http.Request, run store.PipelineRun) (pipelineRunJSON, error) {
 	visits, err := s.store.ListPipelineVisits(r.Context(), run.SwarmID, run.ID)
 	if err != nil {
 		return pipelineRunJSON{}, err
 	}
-	result := pipelineRunJSON{ID: run.ID, Name: d.Name, Status: run.Status, Nodes: []pipelineNodeJSON{}}
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		return pipelineRunJSON{}, errors.New("authentication required")
+	}
+	manage, err := s.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(run.SwarmID))
+	if err != nil {
+		return pipelineRunJSON{}, err
+	}
+	return pipelineView(run, visits, manage)
+}
+
+// pipelineView renders a run and its visits; manage offers the waiting human gate.
+func pipelineView(run store.PipelineRun, visits []store.PipelineVisit, manage bool) (pipelineRunJSON, error) {
+	d, err := pipeline.Parse(string(run.Graph), "pipeline")
+	if err != nil {
+		return pipelineRunJSON{}, err
+	}
+	o := run.Origin
+	result := pipelineRunJSON{ID: run.ID, Name: d.Name, Status: run.Status, SwarmID: run.SwarmID, SwarmName: o.SwarmName, ProjectID: o.ProjectID, ProjectName: o.ProjectName, Owner: o.OwnerUsername, Nodes: []pipelineNodeJSON{}}
 	for _, v := range visits {
 		n := d.Nodes[v.NodeID]
-		row := pipelineNodeJSON{ID: v.NodeID, Kind: n.Type, Label: v.NodeID, Status: v.State}
+		row := pipelineNodeJSON{ID: v.NodeID, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName}
 		switch v.State {
 		case "waiting", "inflight":
 			row.Status = "active"
@@ -152,18 +183,7 @@ func (s *Server) pipelineView(r *http.Request, run store.PipelineRun) (pipelineR
 		v := visits[len(visits)-1]
 		result.CurrentNode = v.NodeID
 		n := d.Nodes[v.NodeID]
-		if v.State == "waiting" && n.Type == "human" && (run.Status == "running" || run.Status == "waiting_human") {
-			user, ok := auth.UserFromContext(r.Context())
-			if !ok {
-				return pipelineRunJSON{}, errors.New("authentication required")
-			}
-			allowed, err := s.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(run.SwarmID))
-			if err != nil {
-				return pipelineRunJSON{}, err
-			}
-			if !allowed {
-				return result, nil
-			}
+		if manage && v.State == "waiting" && n.Type == "human" && (run.Status == "running" || run.Status == "waiting_human") {
 			gate := &pipelineGateJSON{RunID: run.ID, NodeID: v.NodeID, Sequence: v.Sequence, Question: n.Question, Kind: "multiple_choice", Options: []pipelineOptionJSON{}}
 			for _, o := range n.Options {
 				gate.Options = append(gate.Options, pipelineOptionJSON{ID: o.Outcome, Label: o.Label})
@@ -183,7 +203,12 @@ func (s *Server) pipelineGraph(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	view, err := s.pipelineView(r, run)
+	visits, err := s.store.ListPipelineVisits(r.Context(), run.SwarmID, run.ID)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	view, err := pipelineView(run, visits, false)
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -206,7 +231,7 @@ func (s *Server) pipelineDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view, err := s.pipelineView(r, run)
+	view, err := s.pipelineRunView(r, run)
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -284,7 +309,7 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	view, err := s.pipelineView(r, run)
+	view, err := s.pipelineRunView(r, run)
 	if err != nil {
 		apiError(w, r, err)
 		return
