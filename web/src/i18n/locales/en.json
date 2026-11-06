@@ -286,9 +286,15 @@
     "workers": "Workers",
     "policy": "Access Policy",
     "worker_pools": "Worker pools",
-    "pipelines": "Pipelines"
+    "workflows": "Workflows",
+    "project": "Project",
+    "overview": "Overview"
   },
   "nav_groups": {
+    "project": "Project",
+    "infrastructure": "Infrastructure",
+    "administration": "Administration",
+    "system": "System",
     "operate": "Operate",
     "gateway": "Gateway",
     "observe": "Observe",
@@ -313,7 +319,8 @@
     "workers": "The pool hosting actors",
     "policy": "Roles and principals",
     "worker_pools": "Create a pool to provide worker capacity.",
-    "pipelines": "Pipeline runs and their human gates"
+    "workflows": "Workflow runs and their human gates",
+    "project": "Current project details"
   },
   "dashboard": {
     "hero_verdict_good": "All systems steady",
@@ -3079,12 +3086,12 @@
     "delete_unversioned": "The server did not return uid and resourceVersion, so deletion cannot be checked against this version. Refresh the list."
   },
   "pipelines": {
-    "title": "Pipelines",
+    "title": "Workflows",
     "name": "Name",
     "status": "Status",
     "started": "Started",
     "current_node": "Current node",
-    "empty": "No pipeline runs yet",
+    "empty": "No workflow runs yet",
     "statuses": {
       "running": "Running",
       "waiting_human": "Waiting for human",

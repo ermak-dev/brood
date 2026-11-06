@@ -286,9 +286,15 @@
     "workers": "워커",
     "policy": "접근 정책",
     "worker_pools": "워커 풀",
-    "pipelines": "파이프라인"
+    "workflows": "워크플로",
+    "project": "프로젝트",
+    "overview": "개요"
   },
   "nav_groups": {
+    "project": "프로젝트",
+    "infrastructure": "인프라",
+    "administration": "관리",
+    "system": "시스템",
     "operate": "운영",
     "gateway": "게이트웨이",
     "observe": "모니터링",
@@ -313,7 +319,8 @@
     "workers": "actor를 호스팅하는 풀",
     "policy": "역할과 주체",
     "worker_pools": "워커 용량을 제공할 풀을 만드세요.",
-    "pipelines": "파이프라인 실행과 사람의 승인"
+    "workflows": "워크플로 실행과 사람의 승인",
+    "project": "현재 프로젝트 정보"
   },
   "dashboard": {
     "hero_verdict_good": "모든 시스템 정상",
@@ -3079,7 +3086,7 @@
     "delete_unversioned": "서버가 uid 및 resourceVersion을 반환하지 않아 이 버전 기준으로 삭제를 확인할 수 없습니다. 목록을 새로 고치세요."
   },
   "pipelines": {
-    "title": "파이프라인",
+    "title": "워크플로",
     "name": "이름",
     "status": "상태",
     "started": "시작",

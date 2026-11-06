@@ -286,9 +286,15 @@
     "workers": "工作節點",
     "policy": "存取政策",
     "worker_pools": "工作節點池",
-    "pipelines": "流水線"
+    "workflows": "工作流程",
+    "project": "專案",
+    "overview": "總覽"
   },
   "nav_groups": {
+    "project": "專案",
+    "infrastructure": "基礎設施",
+    "administration": "管理",
+    "system": "系統",
     "operate": "運行",
     "gateway": "閘道",
     "observe": "觀測",
@@ -313,7 +319,8 @@
     "workers": "承載 actor 的池",
     "policy": "角色與主體",
     "worker_pools": "建立池以提供工作節點容量。",
-    "pipelines": "流水線執行及其人工確認"
+    "workflows": "工作流程執行及其人工確認",
+    "project": "目前專案詳情"
   },
   "dashboard": {
     "hero_verdict_good": "運行平穩",
@@ -3104,7 +3111,7 @@
     "delete_unversioned": "伺服器未傳回 uid 和 resourceVersion，無法依此版本核對刪除。請重新整理清單。"
   },
   "pipelines": {
-    "title": "流水線",
+    "title": "工作流程",
     "name": "名稱",
     "status": "狀態",
     "started": "開始時間",

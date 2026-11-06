@@ -10,6 +10,7 @@ import { SwarmSections } from '@/features/substrate/components/SwarmSections';
 import { useResource } from '@/features/substrate/hooks';
 import { DASH } from '@/features/substrate/format';
 import { runTone, sortRuns } from './state';
+import { workflowRunPath } from './routes';
 import styles from '@/features/substrate/substrate.module.scss';
 
 /** Таблица проходов отдельным компонентом: страница грузит список, таблица
@@ -81,7 +82,7 @@ function SwarmRuns({ swarmId, name }: { swarmId: string; name: string }) {
       <LoadState loading={loading} error={error ?? ''} retry={refresh}>
         <RunTable
           runs={sortRuns(data ?? [])}
-          onOpen={(run) => navigate(`/pipelines/${encodeURIComponent(run.id)}`)}
+          onOpen={(run) => navigate(workflowRunPath(run.id))}
         />
         {data?.length === 0 && <p>{t('pipelines.empty')}</p>}
       </LoadState>

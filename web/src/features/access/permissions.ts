@@ -1,6 +1,16 @@
-// Обычному пользователю видны только ресурсные разделы. Сервер
-// повторно проверяет членство и владение при каждом запросе.
-const memberPaths = ['/projects', '/swarms', '/actors', '/templates', '/pipelines'];
+// Обычному пользователю видны выбранный проект, его ресурсные разделы и
+// каталог проектов. /pipelines открыт, чтобы старые ссылки участника дошли
+// до переадресации на /workflows. Сервер повторно проверяет членство и
+// владение при каждом запросе.
+const memberPaths = [
+  '/project',
+  '/projects',
+  '/swarms',
+  '/actors',
+  '/templates',
+  '/workflows',
+  '/pipelines',
+];
 
 export function visibleAccessPath(path: string, isSuperuser: boolean): boolean {
   if (isSuperuser) return true;
