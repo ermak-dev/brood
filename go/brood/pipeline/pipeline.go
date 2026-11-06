@@ -210,14 +210,15 @@ func (d *Document) Validate() error {
 		}
 	}
 	// Достижимость всех узлов от start.
-	reachable := d.reachableFrom(d.Start)
+	forward, reverse := graphAdjacency(d.Edges)
+	reachable := graphReachable(forward, d.Start)
 	for _, name := range d.sortedNodeNames() {
 		if !reachable[name] {
 			return fmt.Errorf("pipeline: node %q is not reachable from start %q", name, d.Start)
 		}
 	}
 	// Выход достижим из каждого узла, кроме самого выхода.
-	toExit := d.reachableReverse(d.Exit)
+	toExit := graphReachable(reverse, d.Exit)
 	for _, name := range d.sortedNodeNames() {
 		if name == d.Exit || toExit[name] {
 			continue
@@ -276,34 +277,28 @@ func (d *Document) sortedNodeNames() []string {
 	return names
 }
 
-// reachableFrom обходит граф вперёд от узла.
-func (d *Document) reachableFrom(start string) map[string]bool {
+// graphAdjacency строит оба направления, включая ссылки на неизвестные узлы.
+func graphAdjacency(edges []Edge) (map[string][]string, map[string][]string) {
+	forward := make(map[string][]string)
+	reverse := make(map[string][]string)
+	for _, edge := range edges {
+		forward[edge.From] = append(forward[edge.From], edge.To)
+		reverse[edge.To] = append(reverse[edge.To], edge.From)
+	}
+	return forward, reverse
+}
+
+// graphReachable обходит каждую достижимую вершину и её рёбра один раз.
+func graphReachable(adjacency map[string][]string, start string) map[string]bool {
 	seen := map[string]bool{start: true}
 	queue := []string{start}
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		for _, edge := range d.Edges {
-			if edge.From == current && !seen[edge.To] {
-				seen[edge.To] = true
-				queue = append(queue, edge.To)
-			}
-		}
-	}
-	return seen
-}
-
-// reachableReverse обходит граф назад от узла: кто может в него попасть.
-func (d *Document) reachableReverse(target string) map[string]bool {
-	seen := map[string]bool{target: true}
-	queue := []string{target}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, edge := range d.Edges {
-			if edge.To == current && !seen[edge.From] {
-				seen[edge.From] = true
-				queue = append(queue, edge.From)
+		for _, next := range adjacency[current] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
 			}
 		}
 	}
@@ -349,14 +344,15 @@ func (d *Document) Diagnostics() ([]Diagnostic, error) {
 	}
 	if len(d.Nodes) > 0 {
 		if _, ok := d.Nodes[d.Start]; ok {
-			reachable := d.reachableFrom(d.Start)
+			forward, reverse := graphAdjacency(d.Edges)
+			reachable := graphReachable(forward, d.Start)
 			for _, name := range d.sortedNodeNames() {
 				if !reachable[name] {
 					appendf(ERROR, "node %q is not reachable from start %q", name, d.Start)
 				}
 			}
 			if _, ok := d.Nodes[d.Exit]; ok {
-				toExit := d.reachableReverse(d.Exit)
+				toExit := graphReachable(reverse, d.Exit)
 				for _, name := range d.sortedNodeNames() {
 					if name != d.Exit && !toExit[name] {
 						appendf(ERROR, "exit %q is not reachable from node %q", d.Exit, name)
