@@ -3107,6 +3107,7 @@
     },
     "timeline": "Các nút",
     "graph_label": "Đồ thị lần chạy",
+    "graph_empty": "Không có đồ thị",
     "gate_title": "Quyết định của người",
     "gate_deadline": "Trả lời trước {{deadline}}",
     "gate_freeform_hint": "Nhập câu trả lời của bạn",

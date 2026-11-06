@@ -3101,6 +3101,7 @@
     },
     "timeline": "Nodes",
     "graph_label": "Run graph",
+    "graph_empty": "No graph available",
     "gate_title": "Human decision",
     "gate_deadline": "Answer before {{deadline}}",
     "gate_freeform_hint": "Type your answer",
