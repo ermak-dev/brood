@@ -136,12 +136,23 @@ def main(argv):
     if not argv or argv[0] in ("help", "-h", "--help"):
         print(help_text(modules))
         return 0
-    found = resolve(argv, groups(modules=modules), modules)
-    if found is None:
-        print(f"brood: unknown command {argv[0]!r}; run 'brood help'", file=sys.stderr)
-        return 1
-    modname, rest = found
-    return run(lambda a: importlib.import_module(modname).main(a), rest)
+    def dispatch(args):
+        found = resolve(args, groups(modules=modules), modules)
+        if found is None:
+            print(f"brood: unknown command {args[0]!r}; run 'brood help'", file=sys.stderr)
+            return 1
+        modname, rest = found
+        return importlib.import_module(modname).main(rest)
+
+    def invoke(args):
+        if args[0] in modules:
+            package = importlib.import_module(modules[args[0]])
+            wrapper = getattr(package, "dispatch", None)
+            if wrapper:
+                return wrapper(args, dispatch)
+        return dispatch(args)
+
+    return run(invoke, argv)
 
 
 def run(fn, argv):

@@ -15,8 +15,11 @@
                                          create or update protected CI/CD variables
   brood dev ci vars                      CI/CD variables with type and flags, without values
 
-Coordinates and credentials are those of `brood dev bug`: the working copy's
-git origin, GITLAB_TOKEN in .env.
+Select a project with --project group/project, immediately after `ci` or
+anywhere after the verb (also --project=group/project). It overrides
+GITLAB_PROJECT in .env, then the working copy's git origin. GITLAB_SITE and
+GITLAB_TOKEN still come from .env; --project never changes the GitLab site.
+Lint reads the local working copy by default; pass a file for another project.
 """
 import importlib
 
