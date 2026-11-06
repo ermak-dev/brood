@@ -3097,6 +3097,7 @@
     },
     "timeline": "Узлы",
     "graph_label": "Граф прохода",
+    "graph_empty": "Граф недоступен",
     "gate_title": "Решение человека",
     "gate_deadline": "Ответить до {{deadline}}",
     "gate_freeform_hint": "Введите ответ",

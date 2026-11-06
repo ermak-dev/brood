@@ -3098,6 +3098,7 @@
     },
     "timeline": "节点",
     "graph_label": "运行图",
+    "graph_empty": "暂无图表",
     "gate_title": "人工决策",
     "gate_deadline": "请在 {{deadline}} 前回答",
     "gate_freeform_hint": "输入你的回答",

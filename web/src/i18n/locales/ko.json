@@ -3101,6 +3101,7 @@
     },
     "timeline": "노드",
     "graph_label": "실행 그래프",
+    "graph_empty": "그래프가 없습니다",
     "gate_title": "사람의 결정",
     "gate_deadline": "{{deadline}}까지 답하세요",
     "gate_freeform_hint": "답을 입력하세요",

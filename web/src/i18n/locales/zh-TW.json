@@ -3126,6 +3126,7 @@
     },
     "timeline": "節點",
     "graph_label": "執行圖",
+    "graph_empty": "暫無圖表",
     "gate_title": "人工決策",
     "gate_deadline": "請在 {{deadline}} 前回答",
     "gate_freeform_hint": "輸入你的回答",

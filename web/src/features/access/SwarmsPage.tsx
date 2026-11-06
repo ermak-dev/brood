@@ -19,6 +19,7 @@ import {
 import { ownerCandidates, swarmTone } from './state';
 import { retainedSwarm, swarmCapabilities } from './shardState';
 import { SwarmAccess } from './SwarmAccess';
+import { SwarmWorkflow } from '@/features/pipelines/SwarmWorkflow';
 import { ProjectScope } from '@/features/substrate/components/ProjectScope';
 import styles from '@/features/substrate/substrate.module.scss';
 
@@ -243,13 +244,16 @@ function SwarmPanel({
       actions={swarm ? panelGroups(swarmPlan(swarm, admin), actions(swarm), t) : []}
     >
       {swarm && (
-        <PanelDetails
-          details={[
-            { label: t('access.role'), value: t(`access.swarm_roles.${swarm.role}`) },
-            { label: t('access.owner'), value: swarm.owner_username, title: swarm.owner_id },
-            { label: t('access.id'), value: swarm.id, mono: true },
-          ]}
-        />
+        <>
+          <PanelDetails
+            details={[
+              { label: t('access.role'), value: t(`access.swarm_roles.${swarm.role}`) },
+              { label: t('access.owner'), value: swarm.owner_username, title: swarm.owner_id },
+              { label: t('access.id'), value: swarm.id, mono: true },
+            ]}
+          />
+          <SwarmWorkflow key={swarm.id} swarmId={swarm.id} />
+        </>
       )}
     </EntityPanel>
   );
