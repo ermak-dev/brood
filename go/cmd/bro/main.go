@@ -60,7 +60,11 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 	case "secret":
 		err = c.secret(ctx, args[1:])
 	case "pipeline":
-		err = c.pipeline(args[1:])
+		if options.guest {
+			err = c.catalogCommand(ctx, options)
+		} else {
+			err = c.pipeline(args[1:])
+		}
 	case "help", "-h", "--help":
 		if len(args) != 1 {
 			err = errors.New("help accepts no arguments")

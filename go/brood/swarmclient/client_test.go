@@ -36,6 +36,29 @@ func TestExchangeFramedRequest(t *testing.T) {
 	}
 }
 
+func TestPipelineVisitCompleteWire(t *testing.T) {
+	invocation, err := command.ParseCLI([]string{"pipeline", "visit", "complete", "--run-id", "run1", "--sequence", "1", "--request-id", "req1", "--outcome", "success"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	defer client.Close()
+	done := make(chan Request, 1)
+	go func() {
+		defer server.Close()
+		var request Request
+		_ = json.NewDecoder(server).Decode(&request)
+		done <- request
+		_, _ = io.WriteString(server, "{\"ok\":true,\"text\":\"completed\",\"outcome\":\"completed\"}\n")
+	}()
+	result, err := exchange(context.Background(), client, invocation)
+	request := <-done
+	var args map[string]any
+	if json.Unmarshal(request.Arguments, &args) != nil || request.Tool != "pipeline_visit_complete" || args["run_id"] != "run1" || args["sequence"] != float64(1) || args["request_id"] != "req1" || args["outcome"] != "success" || err != nil || result.Outcome != "completed" {
+		t.Fatalf("request=%+v args=%v result=%+v err=%v", request, args, result, err)
+	}
+}
+
 func TestCanonicalWaitDeadline(t *testing.T) {
 	if got := requestTimeout(Request{Arguments: json.RawMessage(`{"wait":120}`)}); got != 135*time.Second {
 		t.Fatalf("deadline=%v", got)

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,6 +30,28 @@ func TestCLIHelpUsesCatalog(t *testing.T) {
 		if !strings.Contains(out, "  "+strings.Join(spec.Path, " ")+" ") {
 			t.Errorf("help missing %v", spec.Path)
 		}
+	}
+}
+
+// BUG: Guest pipeline visit completion is intercepted by the local pipeline command.
+// HYPOTHESIS: Pipeline dispatch ignores the selected execution mode.
+// SOLUTION: Route guest pipeline commands through the catalog.
+// RESULT: FIXED — guest dispatch reaches the broker without operator fallback.
+// STATUS: FIXED
+func TestCLIGuestPipelineVisitComplete(t *testing.T) {
+	isolateState(t)
+	t.Setenv("BROOD_EXECUTION_MODE", "")
+	t.Setenv("BROOD_SWARM", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Never connect to a real guest broker.
+	var out, diagnostic bytes.Buffer
+	code := runWithIO(ctx, []string{"--guest", "pipeline", "visit", "complete", "--run-id", "run1", "--sequence", "1", "--request-id", "req1", "--outcome", "success"}, strings.NewReader(""), &out, &diagnostic)
+	if code == 0 || !strings.Contains(diagnostic.String(), "swarm broker unavailable") {
+		t.Fatalf("expected guest broker attempt, code=%d err=%q", code, diagnostic.String())
+	}
+	code, _, err := invoke(t, "", "--guest", "pipeline", "validate", "nonexistent")
+	if code == 0 || !strings.Contains(err, "unknown") {
+		t.Fatalf("unsupported guest operation: code=%d err=%q", code, err)
 	}
 }
 
