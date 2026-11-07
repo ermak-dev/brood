@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +14,97 @@ import (
 	"testing"
 
 	"brood.dev/go/brood/auth"
+	"brood.dev/go/brood/pipeline"
 )
+
+// FEATURE: Explain workflow project limits.
+// SPEC: A merged definition limit rejection identifies the exceeded limit.
+// IMPLEMENTATION: Return the store limit error to the client.
+// RESULT: IMPLEMENTED — the workflow endpoint reports the limit.
+// STATUS: DONE
+func TestWorkflowLimitResponse(t *testing.T) {
+	ts, admin, _, _, id := gitRepositorySetup(t)
+	for i := 0; i < pipeline.MaxWorkflowDefinitions; i++ {
+		if _, err := ts.srv.catalog.db.Exec(`INSERT INTO workflow_definitions(project_id,name,yaml,version) VALUES (?,?,?,1)`, id, fmt.Sprintf("old%d", i), workflowDocument("test")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/api/projects/" + id + "/workflows"
+	r, _, raw := ts.do(admin, "PUT", path, ts.csrf(admin), map[string]any{"workflows": map[string]string{"test": workflowDocument("test")}})
+	if r.StatusCode != http.StatusBadRequest || !strings.Contains(raw, "too many workflow definitions") {
+		t.Fatalf("workflow limit: status=%d body=%s", r.StatusCode, raw)
+	}
+}
 
 // FEATURE: Декларативная синхронизация проекта #172.
 // SPEC: Атомарное создание/изменение администратором, noop для участника,
 // строгий JSON, сохранение отсутствующих свойств и отсутствие побочных эффектов.
+// BUG: Project and workflow publication can commit different declarations.
+// HYPOTHESIS: They are sent and committed in separate requests.
+func TestProjectSyncWorkflowAtomicity(t *testing.T) {
+	ts, admin, _, _, _ := gitRepositorySetup(t)
+	workflow := "apiVersion: brood.dev/v1alpha1\nname: demo\nstart: s\nexit: e\nnodes:\n  s: {type: actor, prompt: go}\n  l: {type: land, target: main}\n  e: {type: exit}\nedges:\n  - {from: s, to: l}\n  - {from: l, to: e}\ngoalGates: [l]\n"
+	declaration := map[string]any{"name": "atomic", "repository": "", "description": "before", "workflows": map[string]string{"demo": workflow}}
+	r, b, _ := ts.do(admin, "PUT", "/api/projects/sync", ts.csrf(admin), declaration)
+	expectStatus(t, "initial sync", r, b, 201)
+	id := b["id"].(string)
+	_, err := ts.srv.catalog.db.Exec(`CREATE TRIGGER reject_workflow_update BEFORE UPDATE ON workflow_definitions BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration["description"] = "after"
+	declaration["workflows"] = map[string]string{"demo": workflow + "\n"}
+	r, _, _ = ts.do(admin, "PUT", "/api/projects/sync", ts.csrf(admin), declaration)
+	if r.StatusCode < 400 {
+		t.Fatalf("expected workflow failure, got %d", r.StatusCode)
+	}
+	var description string
+	if err := ts.srv.catalog.db.QueryRow(`SELECT description FROM command_project_details WHERE project_id=?`, id).Scan(&description); err != nil || description != "before" {
+		t.Fatalf("partial project commit: description=%q err=%v", description, err)
+	}
+}
+
+// BUG: Concurrent syncs can leave a project paired with another request's workflow.
+// HYPOTHESIS: Separate project and workflow commits can interleave.
+func TestProjectSyncWorkflowConcurrent(t *testing.T) {
+	ts, admin, _, _, _ := gitRepositorySetup(t)
+	csrf := ts.csrf(admin)
+	workflow := "apiVersion: brood.dev/v1alpha1\nname: demo\nstart: s\nexit: e\nnodes:\n  s: {type: actor, prompt: VALUE}\n  l: {type: land, target: main}\n  e: {type: exit}\nedges:\n  - {from: s, to: l}\n  - {from: l, to: e}\ngoalGates: [l]\n"
+	request := func(value string) map[string]any {
+		return map[string]any{"name": "concurrent-workflow", "repository": "", "description": value, "workflows": map[string]string{"demo": strings.ReplaceAll(workflow, "VALUE", value)}}
+	}
+	r, b, _ := ts.do(admin, "PUT", "/api/projects/sync", csrf, request("initial"))
+	expectStatus(t, "initial", r, b, 201)
+	id := b["id"].(string)
+	var wg sync.WaitGroup
+	codes := make(chan int, 2)
+	for _, value := range []string{"first", "second"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, _, _ := ts.do(admin, "PUT", "/api/projects/sync", csrf, request(value))
+			codes <- r.StatusCode
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	for code := range codes {
+		if code != 200 {
+			t.Fatalf("sync returned %d", code)
+		}
+	}
+	var description, text string
+	if err := ts.srv.catalog.db.QueryRow(`SELECT description FROM command_project_details WHERE project_id=?`, id).Scan(&description); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.srv.catalog.db.QueryRow(`SELECT yaml FROM workflow_definitions WHERE project_id=? AND name='demo'`, id).Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	if text != strings.ReplaceAll(workflow, "VALUE", description) {
+		t.Fatalf("mismatched project %q and workflow %q", description, text)
+	}
+}
+
 func TestProjectSyncLifecycle(t *testing.T) {
 	ts, admin, alice, carol, existing := gitRepositorySetup(t)
 	ctx := context.Background()

@@ -23,6 +23,7 @@ type Project struct {
 	WorkingTree        bool
 	Dirty              bool
 	Plan               map[string]any
+	Document           map[string]any
 }
 
 // parsePinsJSON читает JSON-объект пинов, отвергая дубликаты ключей и глубину.
@@ -192,7 +193,7 @@ func LoadWorkingProject(path, target, projectName string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Project{Root: absolute, WorkingTree: true, Plan: plan, RepositoryResolved: resolved}, nil
+	return &Project{Root: absolute, WorkingTree: true, Plan: plan, Document: document, RepositoryResolved: resolved}, nil
 }
 
 // resolveProjectRepository не наследует origin родителя выбранного каталога.

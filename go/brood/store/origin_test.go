@@ -41,7 +41,7 @@ func TestOriginSchemaUpgradeFromV9PreservesData(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version int
-		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 11 {
+		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 12 {
 			t.Fatalf("version=%d err=%v", version, err)
 		}
 		a, err := s.GetManagedActor(ctx, "legacy")
@@ -68,7 +68,7 @@ func downgradeOriginSchema(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; PRAGMA user_version=9`); err != nil {
+	if _, err := db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; PRAGMA user_version=9`); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -108,7 +108,7 @@ func TestOriginSchemaDamageRefusedWithoutMutation(t *testing.T) {
 		`ALTER TABLE managed_actors DROP COLUMN origin`,
 		`DROP TABLE project_repositories`,
 		`DROP TABLE project_repositories; CREATE TABLE project_repositories (project_id TEXT PRIMARY KEY, origin TEXT)`,
-		`PRAGMA user_version=12`,
+		`PRAGMA user_version=13`,
 	} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()

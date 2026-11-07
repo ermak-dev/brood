@@ -20,6 +20,7 @@ type ProjectDeclaration struct {
 	Repository  string
 	Description *string
 	Capacity    *ProjectCapacity
+	Workflows   map[string]string
 }
 
 // ProjectSyncResult describes the committed inventory change.
