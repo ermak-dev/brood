@@ -85,6 +85,104 @@ func TestWorkflowPublicationDelete(t *testing.T) {
 // IMPLEMENTATION: Add scoped catalog and graph routes and nullable publication timestamps.
 // RESULT: IMPLEMENTED — existing snapshot and legacy timestamps are preserved.
 // STATUS: DONE
+func TestWorkflowGraphRevisionRequired(t *testing.T) {
+	ts, admin, member, _, id := gitRepositorySetup(t)
+	path := "/api/projects/" + id + "/workflows"
+	workflowPut(t, ts, admin, path, map[string]string{"test": workflowDocument("test")})
+	r, body, _ := ts.do(member, "GET", path+"/test/graph?version=1", "", nil)
+	if r.StatusCode != http.StatusBadRequest || body["svg"] != nil {
+		t.Fatalf("missing revision: status %d, body %v", r.StatusCode, body)
+	}
+}
+
+func TestWorkflowGraphVersion(t *testing.T) {
+	ts, admin, member, outsider, id := gitRepositorySetup(t)
+	path := "/api/projects/" + id + "/workflows"
+	graph := path + "/test/graph"
+	doc := workflowDocument("test")
+	workflowPut(t, ts, admin, path, map[string]string{"test": doc})
+	r, body, _ := ts.do(member, "GET", "/api/projects/"+id+"/workflow-catalog", "", nil)
+	expectStatus(t, "catalog", r, body, http.StatusOK)
+	item := body["workflows"].([]any)[0].(map[string]any)
+	if item["version"] != float64(1) {
+		t.Fatalf("unexpected catalog: %v", body)
+	}
+	revision, ok := item["revision"].(string)
+	if !ok || len(revision) != 32 {
+		t.Fatalf("missing revision: %v", item)
+	}
+	workflowPut(t, ts, admin, path, map[string]string{"test": strings.Replace(doc, "Continue?", "Proceed?", 1)})
+	r, body, _ = ts.do(member, "GET", graph+"?version=1&revision="+revision, "", nil)
+	if r.StatusCode != http.StatusConflict || body["svg"] != nil {
+		t.Fatalf("stale graph: status %d, body %v", r.StatusCode, body)
+	}
+	r, body, _ = ts.do(member, "GET", "/api/projects/"+id+"/workflow-catalog", "", nil)
+	expectStatus(t, "updated catalog", r, body, http.StatusOK)
+	updatedRevision := body["workflows"].([]any)[0].(map[string]any)["revision"].(string)
+	r, body, _ = ts.do(member, "GET", graph+"?version=2&revision="+revision, "", nil)
+	if r.StatusCode != http.StatusConflict || body["svg"] != nil {
+		t.Fatalf("wrong revision: status %d, body %v", r.StatusCode, body)
+	}
+	r, body, _ = ts.do(member, "GET", graph+"?version=2&revision="+updatedRevision, "", nil)
+	expectStatus(t, "current graph", r, body, http.StatusOK)
+	if !strings.Contains(body["svg"].(string), "<svg") {
+		t.Fatal("missing graph")
+	}
+	r, body, _ = ts.do(member, "GET", graph, "", nil)
+	expectStatus(t, "legacy graph", r, body, http.StatusOK)
+	r, _, _ = ts.do(outsider, "GET", graph+"?version=1", "", nil)
+	if r.StatusCode != http.StatusNotFound {
+		t.Fatalf("outsider: %d", r.StatusCode)
+	}
+	for _, query := range []string{"?version=", "?version=0", "?version=x", "?version=1&version=2"} {
+		r, _, _ = ts.do(member, "GET", graph+query, "", nil)
+		if r.StatusCode != http.StatusBadRequest {
+			t.Errorf("invalid %s: %d", query, r.StatusCode)
+		}
+	}
+}
+
+func TestWorkflowRevisionChangesAfterIdenticalRecreate(t *testing.T) {
+	ts, admin, member, _, id := gitRepositorySetup(t)
+	path := "/api/projects/" + id + "/workflows"
+	catalog := "/api/projects/" + id + "/workflow-catalog"
+	doc := workflowDocument("test")
+	workflowPut(t, ts, admin, path, map[string]string{"test": doc})
+	r, body, _ := ts.do(member, "GET", catalog, "", nil)
+	expectStatus(t, "catalog", r, body, http.StatusOK)
+	first := body["workflows"].([]any)[0].(map[string]any)["revision"].(string)
+	r, body, _ = ts.do(admin, "DELETE", path+"/test", ts.csrf(admin), nil)
+	expectStatus(t, "delete", r, body, http.StatusNoContent)
+	workflowPut(t, ts, admin, path, map[string]string{"test": doc})
+	r, body, _ = ts.do(member, "GET", catalog, "", nil)
+	expectStatus(t, "catalog after recreate", r, body, http.StatusOK)
+	second := body["workflows"].([]any)[0].(map[string]any)["revision"].(string)
+	if first == second {
+		t.Fatal("identical recreated workflow reused its revision identity")
+	}
+}
+
+func TestWorkflowGraphVersionAfterRecreate(t *testing.T) {
+	ts, admin, member, _, id := gitRepositorySetup(t)
+	path := "/api/projects/" + id + "/workflows"
+	doc := workflowDocument("test")
+	workflowPut(t, ts, admin, path, map[string]string{"test": doc})
+	r, body, _ := ts.do(member, "GET", "/api/projects/"+id+"/workflow-catalog", "", nil)
+	expectStatus(t, "catalog", r, body, http.StatusOK)
+	item := body["workflows"].([]any)[0].(map[string]any)
+	if item["version"] != float64(1) {
+		t.Fatalf("unexpected catalog: %v", body)
+	}
+	revision := item["revision"].(string)
+	r, body, _ = ts.do(admin, "DELETE", path+"/test", ts.csrf(admin), nil)
+	expectStatus(t, "delete", r, body, http.StatusNoContent)
+	workflowPut(t, ts, admin, path, map[string]string{"test": strings.Replace(doc, "Continue?", "Proceed?", 1)})
+	r, body, _ = ts.do(member, "GET", path+"/test/graph?version=1&revision="+revision, "", nil)
+	if r.StatusCode != http.StatusConflict || body["svg"] != nil {
+		t.Fatalf("stale version accepted after recreation: status %d, body %v", r.StatusCode, body)
+	}
+}
+
 func TestWorkflowCatalog(t *testing.T) {
 	ts, admin, member, outsider, id := gitRepositorySetup(t)
 	path := "/api/projects/" + id + "/workflows"

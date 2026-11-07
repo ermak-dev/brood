@@ -3,10 +3,12 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -46,6 +48,7 @@ func (s *Server) handleWorkflowCatalog(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		Name        string  `json:"name"`
 		Version     int64   `json:"version"`
+		Revision    string  `json:"revision"`
 		PublishedAt *string `json:"publishedAt"`
 	}
 	items := make([]item, 0, len(definitions))
@@ -54,7 +57,7 @@ func (s *Server) handleWorkflowCatalog(w http.ResponseWriter, r *http.Request) {
 		if d.PublishedAt.Valid {
 			published = &d.PublishedAt.String
 		}
-		items = append(items, item{d.Name, d.Version, published})
+		items = append(items, item{d.Name, d.Version, d.Revision, published})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workflows": items})
 }
@@ -63,6 +66,36 @@ func (s *Server) handleWorkflowGraph(w http.ResponseWriter, r *http.Request) {
 	if !s.workflowProjectVisible(w, r) {
 		return
 	}
+	var expected int64
+	var revision string
+	versions, hasVersion := r.URL.Query()["version"]
+	revisions, hasRevision := r.URL.Query()["revision"]
+	if hasVersion != hasRevision {
+		writeDetail(w, http.StatusBadRequest, "workflow version and revision must be supplied together")
+		return
+	}
+	if hasVersion {
+		var err error
+		if len(versions) != 1 {
+			writeDetail(w, http.StatusBadRequest, "invalid workflow version")
+			return
+		}
+		expected, err = strconv.ParseInt(versions[0], 10, 64)
+		if err != nil || expected < 1 {
+			writeDetail(w, http.StatusBadRequest, "invalid workflow version")
+			return
+		}
+		if len(revisions) != 1 {
+			writeDetail(w, http.StatusBadRequest, "invalid workflow revision")
+			return
+		}
+		revision = revisions[0]
+		decoded, err := hex.DecodeString(revision)
+		if err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != revision {
+			writeDetail(w, http.StatusBadRequest, "invalid workflow revision")
+			return
+		}
+	}
 	definition, err := s.store.GetWorkflowDefinition(r.Context(), r.PathValue("id"), r.PathValue("name"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeDetail(w, http.StatusNotFound, "workflow not found")
@@ -70,6 +103,10 @@ func (s *Server) handleWorkflowGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeDetail(w, http.StatusServiceUnavailable, "workflows unavailable")
+		return
+	}
+	if hasVersion && (expected != definition.Version || revision != definition.Revision) {
+		writeDetail(w, http.StatusConflict, "workflow version changed")
 		return
 	}
 	doc, err := pipeline.Parse(definition.YAML, definition.Name+".yaml")
