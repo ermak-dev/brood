@@ -163,7 +163,7 @@ func TestPipelineSourceLegacyMigration(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES ('legacy','s','u',?,'running')`, []byte(actorStartGraph)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; PRAGMA user_version=14`); err != nil {
+	if _, err := s.db.Exec(`DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; PRAGMA user_version=14`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initializeSchema(ctx); err != nil {

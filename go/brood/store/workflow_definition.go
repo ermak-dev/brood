@@ -73,7 +73,7 @@ func initializeWorkflowDefinitions(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE workflow_definitions ADD COLUMN published_at TEXT; PRAGMA user_version=13`); err != nil {
 			return fmt.Errorf("extend workflow schema: %w", err)
 		}
-	} else if version != 13 && version != 14 && version != 15 {
+	} else if version != 13 && version != 14 && version != 15 && version != 16 {
 		return errors.New("incompatible database schema: unsupported workflow version")
 	}
 	if version < 14 {
