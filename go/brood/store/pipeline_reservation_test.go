@@ -32,7 +32,7 @@ func TestPipelineNativeReservationRaces(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+			if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
 			r := PipelineNativeReservation{SwarmID: "s", RunID: "r", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
@@ -94,7 +94,7 @@ func TestPipelineNativeReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+	if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	req := PipelineNativeReservation{SwarmID: "s", RunID: "r", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
@@ -168,7 +168,7 @@ func TestPipelineNativeReservation(t *testing.T) {
 	if err = s.BindPipelineNativeActor(ctx, req, "uid", 1); err == nil {
 		t.Fatal("bound uncertain creation")
 	}
-	if err = s.CreatePipelineRun(ctx, PipelineRun{ID: "bind", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+	if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "bind", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	req.RunID = "bind"

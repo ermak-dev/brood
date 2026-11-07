@@ -47,7 +47,7 @@ func TestPipelineRunOriginWire(t *testing.T) {
 		{ID: "alpha-run", SwarmID: swarm, OwnerID: user("alice").ID, Graph: []byte(pipelineAPIGraph), Status: "waiting_human"},
 		{ID: "beta-run", SwarmID: beta, OwnerID: user("bob").ID, Graph: []byte(pipelineAPIGraph), Status: "waiting_human"},
 	} {
-		if err := ts.srv.store.CreatePipelineRun(ctx, run); err != nil {
+		if err := insertLegacyPipelineRun(ctx, ts.testServer, run); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ts.srv.store.AppendPipelineVisit(ctx, run.SwarmID, run.ID, store.PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
@@ -140,7 +140,7 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 		{ID: "cross", SwarmID: "foreign"},
 	} {
 		run.OwnerID, run.Graph, run.Status = master.DelegatorID, []byte(actorVisitGraph), "running"
-		if err := s.CreatePipelineRun(ctx, run); err != nil {
+		if err := insertLegacyPipelineRun(ctx, ts.testServer, run); err != nil {
 			t.Fatal(err)
 		}
 	}

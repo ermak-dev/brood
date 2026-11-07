@@ -76,7 +76,7 @@ func TestExampleWorkflowRoutes(t *testing.T) {
 	}
 	for _, outcome := range []string{"success", "fail", "actor-fail"} {
 		t.Run(outcome, func(t *testing.T) {
-			if err := s.CreatePipelineRun(ctx, PipelineRun{ID: outcome, SwarmID: "s", OwnerID: "u", Graph: snapshot, Status: "running"}); err != nil {
+			if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: outcome, SwarmID: "s", OwnerID: "u", Graph: snapshot, Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.AppendPipelineVisit(ctx, "s", outcome, PipelineVisit{NodeID: "inspect", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "req"}); err != nil {
@@ -150,7 +150,7 @@ goalGates: [done]
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
+			if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.AppendPipelineVisit(ctx, "s", "r", PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
@@ -215,7 +215,7 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 		{"unmatched", strings.Replace(actorStartGraph, "from: actor, to: done}", "from: actor, to: done, condition: \"outcome=success\"}", 1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := s.CreatePipelineRun(ctx, PipelineRun{ID: tc.name, SwarmID: "s", OwnerID: "u", Graph: []byte(tc.graph), Status: "running"}); err != nil {
+			if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: tc.name, SwarmID: "s", OwnerID: "u", Graph: []byte(tc.graph), Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.AppendPipelineVisit(ctx, "s", tc.name, PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "req"}); err != nil {
@@ -239,7 +239,7 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 	t.Run("human option cannot fall through", func(t *testing.T) {
 		graph := strings.Replace(runGraph, "- {label: yes, outcome: success}", "- {label: yes, outcome: success}\n      - {label: no, outcome: fail}", 1)
 		graph = strings.Replace(graph, "- {from: ask, to: actor}", "- {from: ask, to: actor, label: no}", 1)
-		if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "human", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err == nil {
+		if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "human", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running", Source: &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}}); err == nil {
 			t.Error("accepted human option with no matching route")
 		}
 	})
@@ -247,7 +247,7 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 		graph := strings.Replace(runGraph, "- {label: yes, outcome: success}", "- {label: yes, outcome: success}\n      - {label: no, outcome: fail}", 1)
 		graph = strings.Replace(graph, "- {from: ask, to: actor}", "- {from: ask, to: actor, label: yes}\n  - {from: ask, to: done, label: no}", 1)
 		for _, tc := range []struct{ answer, next string }{{"success", "actor"}, {"fail", "done"}} {
-			if err := s.CreatePipelineRun(ctx, PipelineRun{ID: tc.answer, SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
+			if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: tc.answer, SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.AppendPipelineVisit(ctx, "s", tc.answer, PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
@@ -265,7 +265,7 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 	t.Run("other exit", func(t *testing.T) {
 		graph := strings.Replace(actorStartGraph, "  done: {type: exit}", "  done: {type: exit}\n  other: {type: exit}", 1)
 		graph = strings.Replace(graph, "from: actor, to: done}", "from: actor, to: other}", 1)
-		if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "exit", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err == nil {
+		if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "exit", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running", Source: &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}}); err == nil {
 			t.Error("accepted non-designated exit")
 		}
 	})
@@ -282,7 +282,7 @@ func TestPipelineDistinctActorReservations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+	if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -327,7 +327,7 @@ func TestPipelineVisitValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+	if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, v := range []PipelineVisit{{NodeID: "missing", State: "waiting"}, {NodeID: "actor", State: "inflight"}, {NodeID: "actor", State: "inflight", ActorUID: "a", RequestID: "x"}, {NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: -1, RequestID: "x"}, {NodeID: "ask", State: "waiting", ActorUID: "actor"}, {NodeID: "ask", State: "invented"}} {
@@ -353,7 +353,7 @@ func TestPipelineReservationAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+	if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	v := PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "key"}
@@ -432,7 +432,7 @@ func TestCompletePipelineActorVisit(t *testing.T) {
 	}
 	newRun := func(id string) {
 		t.Helper()
-		if err := s.CreatePipelineRun(ctx, PipelineRun{ID: id, SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+		if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: id, SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.AppendPipelineVisit(ctx, "s", id, PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 2, RequestID: "req"}); err != nil {
@@ -527,7 +527,7 @@ func TestPipelineAtomicProgression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
+	if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = s.AppendPipelineVisit(ctx, "s", "r", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "x"}); err == nil {
@@ -563,7 +563,7 @@ func TestPipelineProgressionRollbackAndLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	graph := strings.Replace(runGraph, "  - {from: actor, to: done}", "  - {from: actor, to: done, condition: \"outcome=success\"}\n  - {from: actor, to: actor, condition: \"outcome=fail\"}", 1)
-	if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
+	if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.AppendPipelineVisit(ctx, "s", "r", PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
@@ -633,11 +633,11 @@ func TestPipelineRunOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, graph := range []string{"", "garbage", strings.Repeat("x", MaxPipelineGraphBytes+1), strings.Replace(runGraph, "exit: done", "exit: missing", 1)} {
-		if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "bad", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err == nil {
+		if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "bad", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running", Source: &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}}); err == nil {
 			t.Fatal("invalid graph accepted")
 		}
 	}
-	if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
+	if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.GetPipelineRun(ctx, "other", "r"); !errors.Is(err, ErrNotFound) {
@@ -733,7 +733,7 @@ func TestPipelineTerminalRunRejectsVisits(t *testing.T) {
 	}
 	for _, status := range []string{"succeeded", "failed"} {
 		t.Run(status, func(t *testing.T) {
-			if err := s.CreatePipelineRun(ctx, PipelineRun{ID: status, SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
+			if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: status, SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.AppendPipelineVisit(ctx, "s", status, PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
@@ -789,7 +789,7 @@ func TestPipelineReplacementCannotInterleave(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
+			if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(runGraph), Status: "running"}); err != nil {
 				t.Fatal(err)
 			}
 			if operation == "answer" {

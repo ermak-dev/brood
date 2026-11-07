@@ -53,7 +53,7 @@ func TestPipelineWireContract(t *testing.T) {
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
 	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, template: development, prompt: work}\n", 1)
 	graph = strings.Replace(graph, "  - {from: ask, to: done}", "  - {from: entry, to: ask}\n  - {from: ask, to: ask, condition: \"outcome=success\"}\n  - {from: ask, to: done, condition: \"outcome=fail\"}", 1)
-	if err := ts.srv.store.CreatePipelineRun(ctx, store.PipelineRun{ID: "wire", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(graph), Status: "running"}); err != nil {
+	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "wire", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(graph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	entry, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, "wire", store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
@@ -147,7 +147,7 @@ func TestPipelineActorStates(t *testing.T) {
 	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, template: development, prompt: work}\n", 1)
 	graph = strings.Replace(graph, "  - {from: ask, to: done}", "  - {from: entry, to: ask}\n  - {from: ask, to: done}", 1)
 	for _, tc := range []struct{ id, want string }{{"failure", "failed"}, {"uncertain", "unconfirmed"}} {
-		if err := ts.srv.store.CreatePipelineRun(ctx, store.PipelineRun{ID: tc.id, SwarmID: swarm, OwnerID: user.ID, Graph: []byte(graph), Status: "running"}); err != nil {
+		if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: tc.id, SwarmID: swarm, OwnerID: user.ID, Graph: []byte(graph), Status: "running"}); err != nil {
 			t.Fatal(err)
 		}
 		v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, tc.id, store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
@@ -185,7 +185,7 @@ func TestPipelineCompletedExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.srv.store.CreatePipelineRun(ctx, store.PipelineRun{ID: "exit-test", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(pipelineAPIGraph), Status: "running"}); err != nil {
+	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "exit-test", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(pipelineAPIGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, "exit-test", store.PipelineVisit{NodeID: "ask", State: "waiting"})
@@ -216,7 +216,7 @@ func TestPipelineHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ts.srv.store.CreatePipelineRun(context.Background(), store.PipelineRun{ID: "pipeline-test", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(pipelineAPIGraph), Status: "waiting_human"})
+	err = insertLegacyPipelineRun(context.Background(), ts.testServer, store.PipelineRun{ID: "pipeline-test", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(pipelineAPIGraph), Status: "waiting_human"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -53,7 +53,7 @@ func TestPipelineCompletionNamespaceOutsideTransaction(t *testing.T) {
 	ts, master, worker := coordinationServerSetup(t)
 	ctx := context.Background()
 	s := ts.srv.store
-	if err := s.CreatePipelineRun(ctx, store.PipelineRun{ID: "probe-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "probe-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, "probe-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
@@ -77,7 +77,7 @@ func TestPipelineCompletionReauthorizesAfterNamespaceLookup(t *testing.T) {
 	ts, master, worker := coordinationServerSetup(t)
 	ctx := context.Background()
 	s := ts.srv.store
-	if err := s.CreatePipelineRun(ctx, store.PipelineRun{ID: "race-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "race-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, "race-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
@@ -105,7 +105,7 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	ts, master, worker := coordinationServerSetup(t)
 	ctx := context.Background()
 	s := ts.srv.store
-	if err := s.CreatePipelineRun(ctx, store.PipelineRun{ID: "visit-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "visit-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, "visit-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
@@ -119,7 +119,7 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	if err := s.CreateSwarm(ctx, store.Swarm{ID: "foreign", ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, Name: "foreign", AtespaceName: "foreign", AtespaceUID: strPtr("foreign-namespace"), State: "active"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreatePipelineRun(ctx, store.PipelineRun{ID: "foreign-run", SwarmID: "foreign", OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "foreign-run", SwarmID: "foreign", OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.AppendPipelineVisit(ctx, "foreign", "foreign-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"}); err != nil {

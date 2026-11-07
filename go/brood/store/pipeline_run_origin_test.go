@@ -64,7 +64,7 @@ func TestPipelineRunOrigin(t *testing.T) {
 		{ID: "r2", SwarmID: "two", OwnerID: "u", Graph: []byte(stageGraph), Status: "running"},
 		{ID: "r3", SwarmID: "one", OwnerID: "u", Graph: []byte(stageGraph), Status: "running"},
 	} {
-		if err := s.CreatePipelineRun(ctx, r); err != nil {
+		if err := createLegacyPipelineRun(ctx, s, r); err != nil {
 			t.Fatal(err)
 		}
 	}

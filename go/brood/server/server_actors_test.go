@@ -522,7 +522,7 @@ func newSubstrateServer(t *testing.T, fake *fakeAteapi, configure ...func(*Confi
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	base := &testServer{t: t, srv: srv}
+	base := &testServer{t: t, srv: srv, dbPath: cfg.DBPath}
 	base.http = httptest.NewServer(srv.Handler())
 	t.Cleanup(func() {
 		base.http.Close()

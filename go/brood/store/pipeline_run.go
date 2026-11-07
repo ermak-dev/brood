@@ -21,6 +21,7 @@ type PipelineRun struct {
 	ID, SwarmID, OwnerID string
 	Graph                []byte
 	Status               string
+	Source               *PipelineSource
 	// Origin is filled by reads; CreatePipelineRun ignores it.
 	Origin PipelineRunOrigin
 }
@@ -32,11 +33,15 @@ type PipelineRunOrigin struct {
 
 // pipelineRunSelect joins only rows referenced by the run itself; the foreign
 // keys guarantee they exist.
-const pipelineRunSelect = `SELECT r.id,r.swarm_id,r.owner_id,r.graph,r.status,w.name,w.project_id,p.name,u.username FROM pipeline_runs r JOIN swarms w ON w.id=r.swarm_id JOIN projects p ON p.id=w.project_id JOIN users u ON u.id=r.owner_id`
+const pipelineRunSelect = `SELECT r.id,r.swarm_id,r.owner_id,r.graph,r.status,w.name,w.project_id,p.name,u.username,src.origin,src.commit_sha FROM pipeline_runs r JOIN swarms w ON w.id=r.swarm_id JOIN projects p ON p.id=w.project_id JOIN users u ON u.id=r.owner_id LEFT JOIN pipeline_sources src ON src.run_id=r.id`
 
 func scanPipelineRun(row interface{ Scan(...any) error }) (PipelineRun, error) {
 	var r PipelineRun
-	err := row.Scan(&r.ID, &r.SwarmID, &r.OwnerID, &r.Graph, &r.Status, &r.Origin.SwarmName, &r.Origin.ProjectID, &r.Origin.ProjectName, &r.Origin.OwnerUsername)
+	var origin, commit sql.NullString
+	err := row.Scan(&r.ID, &r.SwarmID, &r.OwnerID, &r.Graph, &r.Status, &r.Origin.SwarmName, &r.Origin.ProjectID, &r.Origin.ProjectName, &r.Origin.OwnerUsername, &origin, &commit)
+	if err == nil && origin.Valid && commit.Valid {
+		r.Source = &PipelineSource{Origin: origin.String, Commit: commit.String}
+	}
 	return r, err
 }
 
@@ -73,8 +78,31 @@ func (s *Store) CreatePipelineRun(ctx context.Context, r PipelineRun) error {
 	if err = supportedPipeline(d); err != nil {
 		return err
 	}
-	_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_runs (id,swarm_id,owner_id,graph,status) VALUES (?,?,?,?,?)`, r.ID, r.SwarmID, r.OwnerID, r.Graph, r.Status)
-	return err
+	source, err := canonicalPipelineSource(r.Source)
+	if err != nil {
+		return err
+	}
+	return s.WithTx(ctx, func(ctx context.Context) (err error) {
+		if _, err = s.conn(ctx).ExecContext(ctx, `SAVEPOINT pipeline_run_create`); err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				cleanup := context.WithoutCancel(ctx)
+				_, rollbackErr := s.conn(cleanup).ExecContext(cleanup, `ROLLBACK TO pipeline_run_create`)
+				_, releaseErr := s.conn(cleanup).ExecContext(cleanup, `RELEASE pipeline_run_create`)
+				err = errors.Join(err, rollbackErr, releaseErr)
+			}
+		}()
+		if _, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_runs (id,swarm_id,owner_id,graph,status) VALUES (?,?,?,?,?)`, r.ID, r.SwarmID, r.OwnerID, r.Graph, r.Status); err != nil {
+			return err
+		}
+		if _, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_sources(run_id,origin,commit_sha) VALUES (?,?,?)`, r.ID, source.Origin, source.Commit); err != nil {
+			return err
+		}
+		_, err = s.conn(ctx).ExecContext(ctx, `RELEASE pipeline_run_create`)
+		return err
+	})
 }
 
 // GetPipelineRun retrieves a run only within the supplied swarm.
@@ -122,6 +150,9 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID, id string, v P
 	r, err := s.GetPipelineRun(ctx, swarmID, id)
 	if err != nil {
 		return v, err
+	}
+	if r.Source != nil && v.State == "inflight" {
+		return v, ErrPipelineSourceUnverified
 	}
 	if v.State == "inflight" && v.RequestID != "" {
 		var node, actor, state string
@@ -310,6 +341,9 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, id stri
 		r, err := s.GetPipelineRun(ctx, swarmID, id)
 		if err != nil {
 			return err
+		}
+		if r.Source != nil {
+			return ErrPipelineSourceUnverified
 		}
 		var node, state, request, actor string
 		var inc int64
