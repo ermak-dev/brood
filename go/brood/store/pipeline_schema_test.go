@@ -64,7 +64,7 @@ func TestPipelineSchema(t *testing.T) {
 				t.Fatal(err)
 			}
 			if upgrade {
-				if _, err = s.db.Exec(`DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; PRAGMA user_version=10`); err != nil {
+				if _, err = s.db.Exec(`DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; PRAGMA user_version=10`); err != nil {
 					t.Fatal(err)
 				}
 				s.Close()
@@ -75,7 +75,7 @@ func TestPipelineSchema(t *testing.T) {
 			}
 			defer s.Close()
 			var version, count int
-			if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 15 {
+			if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 16 {
 				t.Fatalf("version = %d, error = %v", version, err)
 			}
 			if err = s.db.QueryRow(`SELECT count(*) FROM swarms WHERE id='s'`).Scan(&count); err != nil || count != 1 {

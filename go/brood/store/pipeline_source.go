@@ -47,7 +47,7 @@ func initializePipelineSources(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, pipelineSourceSchema+`;`+pipelineSourceImmutable+`;`+pipelineSourceNoReplace+`;`+pipelineSourceNoDelete+`;`+pipelineRunNoReplace+`; PRAGMA user_version=15`); err != nil {
 			return fmt.Errorf("extend pipeline source schema: %w", err)
 		}
-	} else if version != 15 {
+	} else if version != 15 && version != 16 {
 		return errors.New("incompatible database schema: unsupported pipeline source version")
 	}
 	if err := checkSchema(ctx, tx, pipelineSourceSchema); err != nil {
