@@ -24,7 +24,7 @@ func TestWorkflowExpandedYAML(t *testing.T) {
 	doc["workflows"] = map[string]any{"check": map[string]any{
 		"start": "work", "exit": "done",
 		"nodes": map[string]any{
-			"work": map[string]any{"type": "actor", "prompt": strings.Repeat("x\n", 110000)},
+			"work": map[string]any{"type": "actor", "template": "python", "prompt": strings.Repeat("x\n", 110000)},
 			"done": map[string]any{"type": "exit"},
 		},
 		"edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"},
@@ -163,6 +163,80 @@ func TestWorkflows(t *testing.T) {
 			_, err := ParseDocument(marshal(t, d), "Broodfile")
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected %q error, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// FEATURE: Embedded workflow actors may name external managed pools.
+// SPEC: Pool names are not Broodfile template references; malformed sources are rejected.
+// IMPLEMENTATION: Validate actor sources without resolving external pools.
+// RESULT: IMPLEMENTED — legacy templates and managed pools are supported.
+// STATUS: DONE
+// BUG: Embedded workflows reject actors using matching style templates.
+// HYPOTHESIS: The Broodfile schema requires a source before styles can be checked.
+// SOLUTION: Defer source selection to shared graph validation.
+// RESULT: FIXED — embedded workflows use the same effective source rules.
+// STATUS: FIXED
+func TestStyledWorkflowSources(t *testing.T) {
+	for _, tc := range []struct {
+		name, selector string
+		node           map[string]any
+		valid          bool
+	}{
+		{"name", "work", map[string]any{"type": "actor"}, true},
+		{"type", "type:actor", map[string]any{"type": "actor"}, true},
+		{"wildcard", "*", map[string]any{"type": "actor"}, true},
+		{"mismatch legacy", "other", map[string]any{"type": "actor"}, true},
+		{"pool overrides style", "work", map[string]any{"type": "actor", "managedPool": "pool"}, true},
+		{"both", "work", map[string]any{"type": "actor", "template": "python", "managedPool": "pool"}, false},
+		{"null template", "work", map[string]any{"type": "actor", "template": nil, "managedPool": "pool"}, false},
+		{"null pool", "work", map[string]any{"type": "actor", "template": "python", "managedPool": nil}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := minimal(t)
+			doc["workflows"] = map[string]any{"check": map[string]any{"start": "work", "exit": "done", "nodes": map[string]any{"work": tc.node, "done": map[string]any{"type": "exit"}}, "edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"}, "styles": []any{map[string]any{"selectors": []any{tc.selector}, "template": "python"}}}}
+			_, err := ParseDocument(marshal(t, doc), "Broodfile")
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+		})
+	}
+}
+
+// BUG: The published schema accepts an actor with conflicting explicit sources.
+// HYPOTHESIS: Its managedPool condition does not constrain template.
+// SOLUTION: Restrict explicit template to empty when managedPool is present.
+// RESULT: FIXED — schema and compiler reject conflicting sources.
+// STATUS: FIXED
+func TestManagedPoolSchemaRejectsConflictingSources(t *testing.T) {
+	doc := minimal(t)
+	doc["workflows"] = map[string]any{"check": map[string]any{"start": "work", "exit": "done", "nodes": map[string]any{"work": map[string]any{"type": "actor", "template": "python", "managedPool": "pool"}, "done": map[string]any{"type": "exit"}}, "edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"}}}
+	if err := evalSchema(schemaRoot, doc, nil); err == nil {
+		t.Fatal("schema accepted conflicting explicit actor sources")
+	}
+}
+
+func TestManagedPoolWorkflow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		node  map[string]any
+		valid bool
+	}{
+		{"external pool", map[string]any{"type": "actor", "managedPool": "external-pool"}, true},
+		{"template", map[string]any{"type": "actor", "template": "python"}, true},
+		{"missing template", map[string]any{"type": "actor", "template": "absent"}, false},
+		{"both", map[string]any{"type": "actor", "template": "python", "managedPool": "pool"}, false},
+		{"neither legacy", map[string]any{"type": "actor"}, true},
+		{"bad pool", map[string]any{"type": "actor", "managedPool": "Bad_Pool"}, false},
+		{"nonactor", map[string]any{"type": "condition", "managedPool": "pool"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := minimal(t)
+			doc["workflows"] = map[string]any{"check": map[string]any{"start": "work", "exit": "done", "nodes": map[string]any{"work": tc.node, "done": map[string]any{"type": "exit"}}, "edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"}}}
+			_, err := ParseDocument(marshal(t, doc), "Broodfile")
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
 			}
 		})
 	}

@@ -194,6 +194,29 @@ edges:
 goalGates: [done]
 `
 
+// BUG: Runs accept actor sources that the runner cannot safely dispatch.
+// HYPOTHESIS: Execution validation accepts managed pools without a dispatcher.
+// SOLUTION: Reject managed pools until dispatch can verify pool identities.
+// RESULT: FIXED — unsupported runs are rejected without persistence.
+// STATUS: FIXED
+func TestPipelineUnsupportedActorSources(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct{ name, graph string }{
+		{"managed pool", strings.Replace(actorStartGraph, "template: development", "managedPool: pool", 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := sourceTestStore(t)
+			err := s.CreatePipelineRun(ctx, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(tc.graph), Status: "running", Source: &PipelineSource{Origin: "https://example.com/group/repo.git", Commit: strings.Repeat("a", 40)}})
+			if err == nil {
+				t.Error("unsupported actor source accepted for execution")
+			}
+			if _, err := s.GetPipelineRun(ctx, "s", "r"); err == nil {
+				t.Error("unsupported run was persisted")
+			}
+		})
+	}
+}
+
 // BUG: Pipeline routing can lose failures or choose an unrelated option or exit.
 // HYPOTHESIS: Generic edge selection falls back without validating execution semantics.
 // SOLUTION: Validate routes and restrict selection, persisting unmatched outcomes as failure.

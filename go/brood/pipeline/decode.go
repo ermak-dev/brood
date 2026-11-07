@@ -53,6 +53,9 @@ func decodeDocument(text, filename string, limitSize bool) (*Document, error) {
 	if err := checkYAMLNodes(&root, 0); err != nil {
 		return nil, fail(err.Error(), rootLine(&root))
 	}
+	if err := checkManagedPoolFields(&root); err != nil {
+		return nil, fail(err.Error(), rootLine(&root))
+	}
 	document := &Document{}
 	if err := decodeCheckedYAML(root.Content[0], document); err != nil {
 		return nil, fail("invalid pipeline document: "+err.Error(), yamlErrorLine(err))
@@ -61,6 +64,45 @@ func decodeDocument(text, filename string, limitSize bool) (*Document, error) {
 		return nil, fail("apiVersion must be brood.dev/v1alpha1", 1)
 	}
 	return document, nil
+}
+
+// checkManagedPoolFields сохраняет различие между отсутствующим и пустым полем.
+func checkManagedPoolFields(root *yaml.Node) error {
+	if len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+	doc := root.Content[0]
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if doc.Content[i].Value != "nodes" || doc.Content[i+1].Kind != yaml.MappingNode {
+			continue
+		}
+		nodes := doc.Content[i+1]
+		for j := 0; j+1 < len(nodes.Content); j += 2 {
+			node := nodes.Content[j+1]
+			if node.Kind != yaml.MappingNode {
+				continue
+			}
+			var pool, template *yaml.Node
+			kind := ""
+			for k := 0; k+1 < len(node.Content); k += 2 {
+				switch node.Content[k].Value {
+				case "type":
+					kind = node.Content[k+1].Value
+				case "managedPool":
+					pool = node.Content[k+1]
+				case "template":
+					template = node.Content[k+1]
+				}
+			}
+			if pool != nil && template != nil && (template.Kind != yaml.ScalarNode || template.Tag != "!!str") {
+				return fmt.Errorf("nodes.%s.template: must be a string with managedPool", nodes.Content[j].Value)
+			}
+			if pool != nil && (kind != "actor" || pool.Kind != yaml.ScalarNode || pool.Tag != "!!str" || !patternDNSName.MatchString(pool.Value)) {
+				return fmt.Errorf("nodes.%s.managedPool: must be a lowercase DNS label on an actor node", nodes.Content[j].Value)
+			}
+		}
+	}
+	return nil
 }
 
 // decodeCheckedYAML вызывается только после проверки структуры и тегов дерева.

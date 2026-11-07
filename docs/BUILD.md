@@ -127,7 +127,13 @@ Git-конфигурация не попадают в экспортирован
 `start`, `exit`, `nodes`, `edges`, `goalGates` и необязательные `styles`, `retry`,
 как в standalone-документе `go/brood/pipeline`, но без собственного `name` и
 `apiVersion`: имя задаётся ключом словаря, версия — версией Broodfile. Ссылки
-`template` в узлах и стилях указывают на `templates` того же Broodfile. Проверка
+`template` в узлах и стилях указывают на `templates` того же Broodfile. Actor
+может задать `template` или `managedPool`, но не оба одновременно; последний —
+DNS label внешнего управляемого пула сервера, не ссылка на `templates`. Старые
+графы без источника остаются допустимыми. Другие типы узлов не принимают
+`managedPool`. Его исполнение пока не поддерживается: разрешение имени в UID и
+ревизию, проверка прав и диспетчер относятся к будущему серверному запуску.
+Те же правила источника actor действуют в standalone-конвейере. Проверка
 использует parser и validator конвейера; существующая сборка не запускает граф и
 не меняет сборочный план. `bro pipeline validate --workflow inspect [Broodfile]`,
 `bro pipeline plan --workflow inspect [Broodfile]` и
