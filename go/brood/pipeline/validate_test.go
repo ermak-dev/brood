@@ -280,3 +280,147 @@ func readExample(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// FEATURE: Managed pool workflow actors.
+// SPEC: Actor sources cannot conflict; pool is a DNS label and belongs only to actors.
+// IMPLEMENTATION: Validate actor sources without resolving external pools.
+// RESULT: IMPLEMENTED — legacy templates and managed pools are supported.
+// STATUS: DONE
+func TestManagedPoolParsing(t *testing.T) {
+	for _, tc := range []struct {
+		name, node string
+		valid      bool
+	}{
+		{"pool", "type: actor, managedPool: external-pool", true},
+		{"legacy", "type: actor, template: python", true},
+		{"both", "type: actor, template: python, managedPool: pool", false},
+		{"neither (legacy)", "type: actor", true},
+		{"empty", "type: actor, managedPool: \"\"", false},
+		{"malformed", "type: actor, managedPool: Bad_Pool", false},
+		{"nonactor", "type: exit, managedPool: pool", false},
+		{"nonactor empty", "type: exit, managedPool: \"\"", false},
+		{"null", "type: actor, managedPool: null", false},
+		{"numeric", "type: actor, managedPool: 123", false},
+		{"empty template with pool", "type: actor, template: \"\", managedPool: pool", true},
+		{"wrong type", "type: actor, managedPool: [pool]", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := "apiVersion: brood.dev/v1alpha1\nname: test\nstart: work\nexit: work\nnodes:\n  work: {" + tc.node + "}\nedges: []\ngoalGates: []\n"
+			_, err := Parse(text, "test.yaml")
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+		})
+	}
+}
+
+// BUG: Style defaults and null execution fields are validated inconsistently.
+// HYPOTHESIS: Source validation ignores styles and YAML null decodes as an empty string.
+// SOLUTION: Validate effective style defaults and require string execution fields.
+// RESULT: FIXED — explicit sources override defaults and null is rejected.
+// STATUS: FIXED
+func TestStyledActorSources(t *testing.T) {
+	for _, tc := range []struct {
+		name, node, selector string
+		valid                bool
+	}{
+		{"name", "type: actor", "work", true},
+		{"type", "type: actor", "type:actor", true},
+		{"wildcard", "type: actor", "*", true},
+		{"mismatch (legacy source-less actor)", "type: actor", "other", true},
+		{"pool overrides style", "type: actor, managedPool: pool", "work", true},
+		{"both explicit", "type: actor, template: python, managedPool: pool", "work", false},
+		{"null template", "type: actor, template: null, managedPool: pool", "work", false},
+		{"null pool", "type: actor, template: python, managedPool: null", "work", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := "apiVersion: brood.dev/v1alpha1\nname: test\nstart: work\nexit: done\nnodes:\n  work: {" + tc.node + "}\n  done: {type: exit}\nedges: [{from: work, to: done}]\ngoalGates: [done]\nstyles:\n  - selectors: [\"" + tc.selector + "\"]\n    template: python\n"
+			d, err := Parse(text, "test.yaml")
+			if err == nil {
+				err = d.Validate()
+			}
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestEffectiveTemplatePrecedence(t *testing.T) {
+	d := &Document{Nodes: map[string]Node{"work": {Type: "actor"}}, Styles: []Style{
+		{Selectors: []string{"*"}, Template: "first"},
+		{Selectors: []string{"type:actor"}, Template: "last"},
+		{Selectors: []string{"other"}, Template: "unmatched"},
+	}}
+	if got := d.EffectiveTemplate("work"); got != "last" {
+		t.Fatalf("style default = %q", got)
+	}
+	d.Nodes["work"] = Node{Type: "actor", Template: "explicit"}
+	if got := d.EffectiveTemplate("work"); got != "explicit" {
+		t.Fatalf("explicit template = %q", got)
+	}
+	d.Nodes["work"] = Node{Type: "actor", ManagedPool: "pool"}
+	if got := d.EffectiveTemplate("work"); got != "" {
+		t.Fatalf("pool inherited template %q", got)
+	}
+}
+
+// BUG: Legacy workflow snapshots without actor sources cannot be read.
+// HYPOTHESIS: New source validation rejects formerly valid source-less actors.
+// SOLUTION: Permit absent sources while rejecting explicit conflicts.
+// RESULT: FIXED — legacy snapshots pass all validation paths.
+// STATUS: FIXED
+func TestLegacySnapshotWithoutActorSource(t *testing.T) {
+	text := "apiVersion: brood.dev/v1alpha1\nname: legacy\nstart: work\nexit: done\nnodes:\n  work: {type: actor, prompt: go}\n  done: {type: exit}\nedges: [{from: work, to: done}]\ngoalGates: [done]\n"
+	d, err := Parse(text, "legacy.yaml")
+	if err != nil {
+		t.Fatalf("parse legacy snapshot: %v", err)
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("validate legacy snapshot: %v", err)
+	}
+	if _, err := d.Diagnostics(); err != nil {
+		t.Fatalf("diagnose legacy snapshot: %v", err)
+	}
+}
+
+// BUG: Legacy null templates are rejected when reading old snapshots.
+// HYPOTHESIS: Source checking rejects YAML null before legacy decoding.
+// SOLUTION: Preserve legacy decoding unless a managed pool is also specified.
+// RESULT: FIXED — old null templates parse without allowing ambiguous sources.
+// STATUS: FIXED
+func TestLegacyNullTemplates(t *testing.T) {
+	text := "apiVersion: brood.dev/v1alpha1\nname: legacy\nstart: work\nexit: done\nnodes:\n  work: {type: actor, template: null}\n  done: {type: exit}\nedges: [{from: work, to: done}]\ngoalGates: [done]\nstyles:\n  - selectors: [work]\n    template: null\n"
+	d, err := Parse(text, "legacy.yaml")
+	if err != nil {
+		t.Fatalf("parse legacy null templates: %v", err)
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagedPoolProgrammaticValidation(t *testing.T) {
+
+	d := &Document{Name: "test", Start: "work", Exit: "done", Nodes: map[string]Node{"work": {Type: "actor"}, "done": {Type: "exit"}}, Edges: []Edge{{From: "work", To: "done"}}, GoalGates: []string{"done"}}
+
+	d.Nodes["work"] = Node{Type: "actor", Template: "python", ManagedPool: "external"}
+	if err := d.Validate(); err == nil {
+		t.Fatal("Validate accepted conflicting actor sources")
+	}
+
+	if _, err := d.Diagnostics(); err == nil {
+		t.Fatal("Diagnostics accepted conflicting actor sources")
+	}
+
+	d.Nodes["work"] = Node{Type: "actor", ManagedPool: "external"}
+
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.Diagnostics(); err != nil {
+		t.Fatal(err)
+	}
+
+}

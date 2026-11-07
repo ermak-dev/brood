@@ -393,6 +393,9 @@ func supportedPipeline(d *pipeline.Document) error {
 		}
 	}
 	for id, n := range d.Nodes {
+		if n.Type == "actor" && n.ManagedPool != "" {
+			return errors.New("managed pool pipeline execution is unsupported")
+		}
 		if n.Type != "actor" && n.Type != "human" && n.Type != "exit" {
 			return errors.New("pipeline node type is unsupported")
 		}

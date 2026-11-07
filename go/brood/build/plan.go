@@ -491,8 +491,11 @@ func init() {
 	text := &schemaNode{typ: "string"}
 	option := &schemaNode{typ: "object", addlFalse: true, required: []string{"label", "outcome"}, props: schemaProperties("label", text, "outcome", text)}
 	node := &schemaNode{typ: "object", addlFalse: true, required: []string{"type"}, props: schemaProperties(
-		"type", &schemaNode{typ: "string", enum: []any{"actor", "human", "condition", "land", "exit", "parallel", "fan_in"}}, "template", text, "prompt", text, "question", text,
-		"options", &schemaNode{typ: "array", items: option}, "target", text, "branches", &schemaNode{typ: "array", items: text})}
+		"type", &schemaNode{typ: "string", enum: []any{"actor", "human", "condition", "land", "exit", "parallel", "fan_in"}}, "template", text, "managedPool", name, "prompt", text, "question", text,
+		"options", &schemaNode{typ: "array", items: option}, "target", text, "branches", &schemaNode{typ: "array", items: text}),
+		allOf: []*schemaNode{
+			{ifS: &schemaNode{required: []string{"managedPool"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true}, "template", &schemaNode{constV: "", constSet: true})}},
+		}}
 	edge := &schemaNode{typ: "object", addlFalse: true, required: []string{"from", "to"}, props: schemaProperties("from", text, "to", text, "condition", text, "label", text, "weight", &schemaNode{typ: "integer"})}
 	style := &schemaNode{typ: "object", addlFalse: true, required: []string{"selectors"}, props: schemaProperties("selectors", &schemaNode{typ: "array", items: text}, "template", text)}
 	workflow := &schemaNode{typ: "object", addlFalse: true, required: []string{"start", "exit", "nodes", "edges", "goalGates"}, props: schemaProperties(

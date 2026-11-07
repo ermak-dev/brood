@@ -83,7 +83,7 @@ func (s *Store) ReservePipelineNativeActor(ctx context.Context, r PipelineNative
 			return err
 		}
 		n, ok := d.Nodes[r.NodeID]
-		if !ok || n.Type != "actor" || n.Template != r.TemplateName {
+		if !ok || n.Type != "actor" || n.ManagedPool != "" || d.EffectiveTemplate(r.NodeID) != r.TemplateName {
 			return ErrPipelineVisitConflict
 		}
 		var count, latest int64

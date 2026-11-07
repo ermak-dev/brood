@@ -82,6 +82,28 @@ func TestPipelineNativeReservationRaces(t *testing.T) {
 	}
 }
 
+// BUG: A styled native actor cannot reserve its effective template.
+// HYPOTHESIS: Reservation inspects only the explicit template field.
+// SOLUTION: Resolve the effective template and reject managed pool reservations.
+// RESULT: FIXED — styled native reservations bind the effective template.
+// STATUS: FIXED
+func TestPipelineStyledNativeReservation(t *testing.T) {
+	ctx := context.Background()
+	s := sourceTestStore(t)
+	graph := strings.Replace(actorStartGraph, "template: development, ", "", 1) + "styles:\n  - selectors: [actor]\n    template: development\n"
+	if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
+		t.Fatalf("create styled run: %v", err)
+	}
+	r := PipelineNativeReservation{SwarmID: "s", RunID: "r", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "wrong", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
+	if _, err := s.ReservePipelineNativeActor(ctx, r); err == nil {
+		t.Fatal("accepted wrong styled template")
+	}
+	r.TemplateName = "development"
+	if _, err := s.ReservePipelineNativeActor(ctx, r); err != nil {
+		t.Fatalf("reserve effective styled template: %v", err)
+	}
+}
+
 func TestPipelineNativeReservation(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "db")

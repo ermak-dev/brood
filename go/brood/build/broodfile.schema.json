@@ -757,12 +757,36 @@
           "nodes": {
             "additionalProperties": {
               "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "required": [
+                      "managedPool"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "template": {
+                        "const": ""
+                      },
+                      "type": {
+                        "const": "actor"
+                      }
+                    }
+                  }
+                }
+              ],
               "properties": {
                 "branches": {
                   "items": {
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "managedPool": {
+                  "maxLength": 63,
+                  "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+                  "type": "string"
                 },
                 "options": {
                   "items": {
