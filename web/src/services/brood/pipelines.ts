@@ -65,10 +65,48 @@ export interface RunGraph {
   svg: string;
 }
 
+export interface WorkflowDefinition {
+  name: string;
+  version: number;
+  revision: string;
+  publishedAt: string | null;
+}
+
 const segment = encodeURIComponent;
+const projectPath = (id: string) => `/api/projects/${segment(id)}`;
 const runPath = (id: string) => `/api/pipeline-runs/${segment(id)}`;
 
 export const pipelinesApi = {
+  listDefinitions: async (projectId: string) => {
+    const response = await request<{ workflows?: unknown }>(
+      'GET',
+      `${projectPath(projectId)}/workflow-catalog`
+    );
+    if (
+      !Array.isArray(response.workflows) ||
+      !response.workflows.every((item: unknown) => {
+        if (!item || typeof item !== 'object') return false;
+        const d = item as Record<string, unknown>;
+        return (
+          typeof d.name === 'string' &&
+          d.name.length > 0 &&
+          typeof d.version === 'number' &&
+          Number.isSafeInteger(d.version) &&
+          d.version > 0 &&
+          typeof d.revision === 'string' &&
+          /^[0-9a-f]{32}$/.test(d.revision) &&
+          (d.publishedAt === null || typeof d.publishedAt === 'string')
+        );
+      })
+    )
+      throw new Error('Invalid workflow catalog response');
+    return response.workflows as WorkflowDefinition[];
+  },
+  getDefinitionGraph: (projectId: string, name: string, version: number, revision: string) =>
+    request<RunGraph>(
+      'GET',
+      `${projectPath(projectId)}/workflows/${segment(name)}/graph?version=${version}&revision=${segment(revision)}`
+    ),
   listRuns: (swarmId: string) =>
     request<PipelineRun[]>('GET', `/api/swarms/${segment(swarmId)}/pipeline-runs`),
   getRun: (id: string) => request<PipelineRun>('GET', runPath(id)),

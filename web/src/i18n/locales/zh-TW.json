@@ -3111,6 +3111,11 @@
     "delete_unversioned": "伺服器未傳回 uid 和 resourceVersion，無法依此版本核對刪除。請重新整理清單。"
   },
   "pipelines": {
+    "definitions": "已發布的定義",
+    "definitions_empty": "沒有已發布的工作流程",
+    "definition_version": "版本 {{version}}",
+    "definition_graph": "定義圖：{{name}}",
+    "runs": "群組執行",
     "title": "工作流程",
     "name": "名稱",
     "status": "狀態",

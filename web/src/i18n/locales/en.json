@@ -3086,6 +3086,11 @@
     "delete_unversioned": "The server did not return uid and resourceVersion, so deletion cannot be checked against this version. Refresh the list."
   },
   "pipelines": {
+    "definitions": "Published definitions",
+    "definitions_empty": "No published workflows",
+    "definition_version": "Version {{version}}",
+    "definition_graph": "Definition graph: {{name}}",
+    "runs": "Swarm runs",
     "title": "Workflows",
     "name": "Name",
     "status": "Status",

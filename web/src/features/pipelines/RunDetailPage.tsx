@@ -13,13 +13,16 @@ import { WORKFLOWS_PATH } from './routes';
 import styles from '@/features/substrate/substrate.module.scss';
 import graphStyles from './pipelines.module.scss';
 
-export function RunGraph({ svg }: { svg: string }) {
+export function RunGraph({ svg, label }: { svg: string; label?: string }) {
   const { t } = useTranslation();
   return (
     <div className={graphStyles.graph}>
       {/* SVG может содержать пользовательский ввод; в контексте изображения
           браузер не исполняет скрипты и не загружает внешние ресурсы. */}
-      <img src={`data:image/svg+xml,${encodeURIComponent(svg)}`} alt={t('pipelines.graph_label')} />
+      <img
+        src={`data:image/svg+xml,${encodeURIComponent(svg)}`}
+        alt={label ?? t('pipelines.graph_label')}
+      />
     </div>
   );
 }
@@ -39,11 +42,11 @@ export function NodeTimeline({ nodes }: { nodes: RunNode[] }) {
             </span>
           </span>
           {node.status === 'unconfirmed' && (
-            <span className={graphStyles['timeline-outcome']}>{t('actors.ops.unconfirmed_badge')}</span>
+            <span className={graphStyles['timeline-outcome']}>
+              {t('actors.ops.unconfirmed_badge')}
+            </span>
           )}
-          {node.outcome && (
-            <span className={graphStyles['timeline-outcome']}>{node.outcome}</span>
-          )}
+          {node.outcome && <span className={graphStyles['timeline-outcome']}>{node.outcome}</span>}
         </li>
       ))}
     </ul>
@@ -97,7 +100,12 @@ export function RunDetailPage() {
                   key={gateVisitKey(gate)}
                   gate={gate}
                   submit={async (answer) => {
-                    await pipelinesApi.answerGate(detail.id, gate.nodeId, answer, gate.visitSequence);
+                    await pipelinesApi.answerGate(
+                      detail.id,
+                      gate.nodeId,
+                      answer,
+                      gate.visitSequence
+                    );
                     await Promise.all([run.refresh(), graph.refresh()]);
                   }}
                 />

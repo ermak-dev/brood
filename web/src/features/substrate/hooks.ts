@@ -8,8 +8,12 @@ import { errorMessage } from '@/services/brood/http';
  * memoized loader; null waits -- e.g. until a project is chosen. */
 export function useResource<T>(
   load: (() => Promise<T>) | null,
-  { headerRefresh = true }: { headerRefresh?: boolean } = {}
+  {
+    headerRefresh = true,
+    trackRefresh = false,
+  }: { headerRefresh?: boolean; trackRefresh?: boolean } = {}
 ) {
+  const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Номер последнего запроса: ответ на прежний (другой проект, другой скоуп),
@@ -19,6 +23,7 @@ export function useResource<T>(
   const refresh = useCallback(async () => {
     if (!load) return;
     const request = ++latest.current;
+    if (trackRefresh) setRefreshing(true);
     try {
       const loaded = await load();
       if (request !== latest.current) return;
@@ -27,8 +32,10 @@ export function useResource<T>(
     } catch (e) {
       if (request !== latest.current) return;
       setError(errorMessage(e));
+    } finally {
+      if (trackRefresh && request === latest.current) setRefreshing(false);
     }
-  }, [load]);
+  }, [load, trackRefresh]);
 
   useEffect(() => {
     setData(null);
@@ -38,7 +45,7 @@ export function useResource<T>(
 
   useHeaderRefresh(refresh, Boolean(load) && headerRefresh);
 
-  return { data, error, loading: data === null && error === null, refresh };
+  return { data, error, loading: refreshing || (data === null && error === null), refresh };
 }
 
 interface ConfirmedAction {

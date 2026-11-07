@@ -3083,6 +3083,11 @@
     "delete_unversioned": "服务器未返回 uid 和 resourceVersion，无法按此版本校验删除。请刷新列表。"
   },
   "pipelines": {
+    "definitions": "已发布的定义",
+    "definitions_empty": "没有已发布的工作流",
+    "definition_version": "版本 {{version}}",
+    "definition_graph": "定义图：{{name}}",
+    "runs": "群组运行",
     "title": "工作流",
     "name": "名称",
     "status": "状态",
