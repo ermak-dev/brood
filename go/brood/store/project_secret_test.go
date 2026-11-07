@@ -258,7 +258,7 @@ func TestProjectSecretSchemaMigration(t *testing.T) {
 				defer reopened.Close()
 				var v int
 				reopened.db.QueryRow(`PRAGMA user_version`).Scan(&v)
-				if v != 12 {
+				if v != 13 {
 					t.Fatal("schema version", v)
 				}
 				if _, e = reopened.GetProject(ctx, "p"); e != nil {
@@ -285,7 +285,7 @@ func TestProjectSecretSchemaMigration(t *testing.T) {
 				want = 7
 			}
 			if damage == "versioned" {
-				want = 12
+				want = 13
 			}
 			if v != want {
 				t.Fatal("failed migration changed version")

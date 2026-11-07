@@ -254,7 +254,7 @@ func TestManagedSchemaUpgrade(t *testing.T) {
 				t.Fatal(err)
 			}
 			var v int
-			if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != 12 {
+			if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != 13 {
 				t.Fatalf("version=%d err=%v", v, err)
 			}
 			user, err := st.GetUser(ctx, "u1")

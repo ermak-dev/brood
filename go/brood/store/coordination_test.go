@@ -408,7 +408,7 @@ func TestCoordinationMigrationAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 12 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
 		t.Fatalf("version %d: %v", version, err)
 	}
 	if _, err = s.db.Exec(`ALTER TABLE coordination_claims ADD COLUMN unexpected TEXT`); err != nil {

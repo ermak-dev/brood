@@ -45,7 +45,7 @@ func initializeOrigins(ctx context.Context, tx *sql.Tx) error {
 				return errors.New("cannot extend actor origin schema")
 			}
 		}
-	} else if version != 10 && version != 11 && version != 12 {
+	} else if version != 10 && version != 11 && version != 12 && version != 13 {
 		return errors.New("incompatible database schema: unsupported actor origin version")
 	}
 	if err := checkSchema(ctx, tx, projectRepositorySchema); err != nil {

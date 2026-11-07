@@ -75,7 +75,7 @@ func TestPipelineSchema(t *testing.T) {
 			}
 			defer s.Close()
 			var version, count int
-			if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 12 {
+			if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
 				t.Fatalf("version = %d, error = %v", version, err)
 			}
 			if err = s.db.QueryRow(`SELECT count(*) FROM swarms WHERE id='s'`).Scan(&count); err != nil || count != 1 {

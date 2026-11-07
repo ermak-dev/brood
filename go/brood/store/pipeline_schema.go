@@ -50,7 +50,7 @@ func initializePipelines(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, pipelineSchema+`; PRAGMA user_version=11`); err != nil {
 			return errors.New("cannot extend pipeline schema")
 		}
-	} else if version != 11 && version != 12 {
+	} else if version != 11 && version != 12 && version != 13 {
 		return errors.New("incompatible database schema: unsupported pipeline version")
 	}
 	return checkSchema(ctx, tx, pipelineSchema)
