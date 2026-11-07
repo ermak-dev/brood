@@ -306,6 +306,11 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 		statusErr = fmt.Errorf("%w", ErrSessionExpired)
 	default:
 		statusErr = fmt.Errorf("%s %s: server error (status %d): %s", method, path, resp.StatusCode, http.StatusText(resp.StatusCode))
+		if method == http.MethodPut && path == "/api/projects/sync" && resp.StatusCode == http.StatusBadRequest {
+			if detail := publicProjectSyncError(resp.Body); detail != "" {
+				statusErr = fmt.Errorf("%w: %s", statusErr, detail)
+			}
+		}
 	}
 	if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
 		outcome := resp.Header.Get("X-Brood-Command-Outcome")

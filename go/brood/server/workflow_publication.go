@@ -1,0 +1,146 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"time"
+	"unicode/utf8"
+
+	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/pipeline"
+	"brood.dev/go/brood/store"
+)
+
+func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	user, ok := currentUser(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(id))
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	if !allowed {
+		writeDetail(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if r.Method == http.MethodGet {
+		definitions, err := s.store.ListWorkflowDefinitions(r.Context(), id)
+		if err != nil {
+			writeDetail(w, http.StatusServiceUnavailable, "workflows unavailable")
+			return
+		}
+		result := make(map[string]string, len(definitions))
+		for _, d := range definitions {
+			result[d.Name] = d.YAML
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"workflows": result})
+		return
+	}
+	definitions, err := readWorkflows(w, r)
+	if err != nil {
+		writeDetail(w, http.StatusBadRequest, "invalid or oversized workflow request")
+		return
+	}
+	_, err = s.store.SyncWorkflowDefinitions(r.Context(), id, user.ID, definitions, func(ctx context.Context) bool {
+		return secretRequestSession(ctx, s, r, user.ID)
+	})
+	switch {
+	case errors.Is(err, store.ErrProjectSyncDenied):
+		writeDetail(w, http.StatusForbidden, "workflow authorization changed or access denied")
+	case errors.Is(err, store.ErrNotFound):
+		writeDetail(w, http.StatusNotFound, "project not found")
+	case errors.Is(err, store.ErrWorkflowLimit):
+		writeDetail(w, http.StatusBadRequest, err.Error())
+	case err != nil:
+		writeDetail(w, http.StatusServiceUnavailable, "workflow sync failed")
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (s *Server) handleWorkflowDelete(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	user, ok := currentUser(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(id))
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	if !allowed {
+		writeDetail(w, http.StatusNotFound, "project not found")
+		return
+	}
+	err = s.store.DeleteWorkflowDefinition(r.Context(), id, user.ID, r.PathValue("name"), func(ctx context.Context) bool {
+		return secretRequestSession(ctx, s, r, user.ID)
+	})
+	switch {
+	case errors.Is(err, store.ErrProjectSyncDenied):
+		writeDetail(w, http.StatusForbidden, "workflow authorization changed or access denied")
+	case errors.Is(err, store.ErrNotFound):
+		writeDetail(w, http.StatusNotFound, "workflow not found")
+	case errors.Is(err, store.ErrWorkflowRunsExist):
+		writeDetail(w, http.StatusConflict, err.Error())
+	case err != nil:
+		writeDetail(w, http.StatusServiceUnavailable, "workflow deletion failed")
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func readWorkflows(w http.ResponseWriter, r *http.Request) (map[string]string, error) {
+	invalid := errors.New("invalid workflows")
+	control := http.NewResponseController(w)
+	_ = control.SetReadDeadline(time.Now().Add(15 * time.Second))
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, pipeline.MaxWorkflowBodyBytes))
+	_ = control.SetReadDeadline(time.Time{})
+	if err != nil || !utf8.Valid(data) {
+		return nil, invalid
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
+	if uniqueSyncJSON(d) != nil {
+		return nil, invalid
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, invalid
+	}
+	body, err := syncObject(data, map[string]bool{"workflows": true})
+	if err != nil || len(body) != 1 {
+		return nil, invalid
+	}
+	raw := bytes.TrimSpace(body["workflows"])
+	var values map[string]json.RawMessage
+	if len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &values) != nil || values == nil || len(values) > pipeline.MaxWorkflowDefinitions {
+		return nil, invalid
+	}
+	definitions := make(map[string]string, len(values))
+	total := 0
+	for name, raw := range values {
+		var text string
+		if !syncString(raw, &text) {
+			return nil, invalid
+		}
+		total += len(name) + len(text)
+		if len(name) > pipeline.MaxWorkflowNameBytes || len(text) > pipeline.MaxWorkflowDefinitionBytes || total > pipeline.MaxWorkflowBatchBytes {
+			return nil, invalid
+		}
+		doc, err := pipeline.Parse(text, name+".yaml")
+		if err != nil || doc.Name != name || doc.Validate() != nil {
+			return nil, invalid
+		}
+		definitions[name] = text
+	}
+	return definitions, nil
+}

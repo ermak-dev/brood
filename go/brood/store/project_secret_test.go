@@ -232,7 +232,7 @@ func TestProjectSecretSchemaMigration(t *testing.T) {
 			}
 			seedProject(t, s, "p", "p")
 			if damage != "versioned" {
-				_, e = s.db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; PRAGMA user_version=8`)
+				_, e = s.db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; PRAGMA user_version=8`)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -258,7 +258,7 @@ func TestProjectSecretSchemaMigration(t *testing.T) {
 				defer reopened.Close()
 				var v int
 				reopened.db.QueryRow(`PRAGMA user_version`).Scan(&v)
-				if v != 11 {
+				if v != 12 {
 					t.Fatal("schema version", v)
 				}
 				if _, e = reopened.GetProject(ctx, "p"); e != nil {
@@ -285,7 +285,7 @@ func TestProjectSecretSchemaMigration(t *testing.T) {
 				want = 7
 			}
 			if damage == "versioned" {
-				want = 11
+				want = 12
 			}
 			if v != want {
 				t.Fatal("failed migration changed version")

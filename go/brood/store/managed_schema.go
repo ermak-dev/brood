@@ -50,7 +50,7 @@ func initializeManaged(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		version = 3
-	} else if version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11 {
+	} else if version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != 12 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
 	expectedSchema := managedSchema

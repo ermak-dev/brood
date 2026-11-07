@@ -13,6 +13,7 @@ import (
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/gitorigin"
+	"brood.dev/go/brood/pipeline"
 	"brood.dev/go/brood/store"
 )
 
@@ -42,6 +43,10 @@ func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusForbidden, "project sync authorization changed or access denied")
 		return
 	}
+	if errors.Is(err, store.ErrWorkflowLimit) {
+		writeDetail(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		writeDetail(w, http.StatusServiceUnavailable, "project sync failed")
 		return
@@ -62,14 +67,25 @@ func (s *Server) syncProject(ctx context.Context, userID string, declaration sto
 		}
 		project, err := s.store.ProjectByName(ctx, declaration.Name)
 		var result store.ProjectSyncResult
-		if errors.Is(err, store.ErrNotFound) {
-			result, err = s.store.SyncProject(ctx, userID, "", declaration, authorize)
-		} else if err == nil {
-			err = s.app.WithProjectConfiguration(userID, project.ID, func() error {
-				var writeErr error
-				result, writeErr = s.store.SyncProject(ctx, userID, project.ID, declaration, authorize)
-				return writeErr
+		write := func(expectedID string) error {
+			return s.store.WithTx(ctx, func(txCtx context.Context) error {
+				var err error
+				result, err = s.store.SyncProject(txCtx, userID, expectedID, declaration, authorize)
+				if err != nil {
+					return err
+				}
+				if declaration.Workflows != nil {
+					var changed bool
+					changed, err = s.store.SyncWorkflowDefinitions(txCtx, result.ID, userID, declaration.Workflows, authorize)
+					result.Changed = result.Changed || changed
+				}
+				return err
 			})
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			err = write("")
+		} else if err == nil {
+			err = s.app.WithProjectConfiguration(userID, project.ID, func() error { return write(project.ID) })
 		}
 		if errors.Is(err, store.ErrProjectSyncIdentityChanged) || errors.Is(err, app.ErrNotFound) {
 			continue
@@ -87,7 +103,7 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 	invalid := errors.New("invalid project declaration")
 	control := http.NewResponseController(w)
 	_ = control.SetReadDeadline(time.Now().Add(15 * time.Second))
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, projectSyncBodyLimit))
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, projectSyncBodyLimit+pipeline.MaxWorkflowBodyBytes))
 	_ = control.SetReadDeadline(time.Time{})
 	if err != nil || !utf8.Valid(data) {
 		return declaration, invalid
@@ -100,8 +116,24 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 	if _, err := decoder.Token(); err != io.EOF {
 		return declaration, invalid
 	}
-	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true})
+	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true, "workflows": true})
 	if err != nil {
+		return declaration, invalid
+	}
+	workflowBytes := 0
+	if raw, ok := body["workflows"]; ok {
+		workflowBytes = len(raw)
+		request, err := http.NewRequest(http.MethodPut, "/", bytes.NewReader(append(append([]byte(`{"workflows":`), raw...), '}')))
+		if err != nil {
+			return declaration, invalid
+		}
+		declaration.Workflows, err = readWorkflows(w, request)
+		if err != nil {
+			return declaration, invalid
+		}
+		delete(body, "workflows")
+	}
+	if len(data)-workflowBytes > projectSyncBodyLimit {
 		return declaration, invalid
 	}
 	if !syncString(body["name"], &declaration.Name) || strings.TrimSpace(declaration.Name) == "" || !syncString(body["repository"], &declaration.Repository) {

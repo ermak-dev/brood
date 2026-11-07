@@ -1364,6 +1364,27 @@ func Workflow(document map[string]any, name, filename string) (*pipeline.Documen
 	return pipeline.ParseEmbedded(copyGraph, filename+": workflows."+name)
 }
 
+// WorkflowSnapshots returns validated standalone YAML for declared workflows.
+func WorkflowSnapshots(document map[string]any, filename string) (map[string]string, error) {
+	workflows, _ := asMap(document["workflows"])
+	result := make(map[string]string, len(workflows))
+	for _, name := range sortedKeys(workflows) {
+		graph, err := Workflow(document, name, filename)
+		if err != nil {
+			return nil, err
+		}
+		data, err := yaml.Marshal(graph)
+		if err != nil {
+			return nil, fmt.Errorf("%s: workflow %q: could not encode snapshot", filename, name)
+		}
+		if _, err := pipeline.Parse(string(data), filename+": workflows."+name); err != nil {
+			return nil, err
+		}
+		result[name] = string(data)
+	}
+	return result, nil
+}
+
 // validateWorkflows использует общий validator конвейеров и проверяет ссылки на шаблоны.
 func validateWorkflows(document map[string]any, filename string) error {
 	workflows, _ := asMap(document["workflows"])
