@@ -399,7 +399,7 @@ func TestCoordinationMigrationAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; DROP TABLE coordination_claims; DROP TABLE command_project_details; PRAGMA user_version=7`); err != nil {
+	if _, err = db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; DROP TABLE coordination_claims; DROP TABLE command_project_details; PRAGMA user_version=7`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -408,7 +408,7 @@ func TestCoordinationMigrationAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 14 {
 		t.Fatalf("version %d: %v", version, err)
 	}
 	if _, err = s.db.Exec(`ALTER TABLE coordination_claims ADD COLUMN unexpected TEXT`); err != nil {

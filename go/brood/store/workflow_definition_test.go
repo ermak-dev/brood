@@ -216,7 +216,7 @@ func TestWorkflowPublicationTimeMigration(t *testing.T) {
 	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE workflow_definitions; CREATE TABLE workflow_definitions (project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, yaml TEXT NOT NULL, version INTEGER NOT NULL CHECK (version > 0), PRIMARY KEY (project_id, name)); INSERT INTO workflow_definitions VALUES ('p','demo',?,3); PRAGMA user_version=12`, workflowYAML); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; CREATE TABLE workflow_definitions (project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, yaml TEXT NOT NULL, version INTEGER NOT NULL CHECK (version > 0), PRIMARY KEY (project_id, name)); INSERT INTO workflow_definitions VALUES ('p','demo',?,3); PRAGMA user_version=12`, workflowYAML); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initializeSchema(ctx); err != nil {
@@ -252,11 +252,132 @@ func TestWorkflowPublicationTimeMigration(t *testing.T) {
 	}
 }
 
+func TestWorkflowVersionMigrationAndRecreate(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedProjectWithMember(t, s, "p", "member")
+	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE workflow_revision_counters; ALTER TABLE workflow_definitions DROP COLUMN revision; INSERT INTO workflow_definitions(project_id,name,yaml,version,published_at) VALUES ('p','demo',?,7,'then'); PRAGMA user_version=13`, workflowYAML); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.initializeSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.GetWorkflowDefinition(ctx, "p", "demo")
+	if err != nil || d.Version != 7 || d.YAML != workflowYAML || d.PublishedAt.String != "then" {
+		t.Fatalf("migration lost data: %+v %v", d, err)
+	}
+	yes := func(context.Context) bool { return true }
+	if changed, err := s.SyncWorkflowDefinitions(ctx, "p", "member", map[string]string{"demo": workflowYAML}, yes); err != nil || changed {
+		t.Fatalf("idempotent sync: %v %v", changed, err)
+	}
+	if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", "demo", yes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "member", map[string]string{"demo": workflowYAML}, yes); !errors.Is(err, ErrProjectSyncDenied) {
+		t.Fatalf("member recreation: %v", err)
+	}
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML}, yes); err != nil {
+		t.Fatal(err)
+	}
+	d, err = s.GetWorkflowDefinition(ctx, "p", "demo")
+	if err != nil || d.Version <= 7 {
+		t.Fatalf("reused version: %+v %v", d, err)
+	}
+}
+
+func TestWorkflowRevisionCounterBoundedPerProject(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedProject(t, s, "p", "project")
+	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	yes := func(context.Context) bool { return true }
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		doc := strings.Replace(workflowYAML, "name: demo", "name: "+name, 1)
+		if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{name: doc}, yes); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", name, yes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM workflow_revision_counters WHERE project_id='p'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("counter rows = %d, err = %v", count, err)
+	}
+}
+
+func TestWorkflowRevisionRejectsNonIntegerCounter(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedProject(t, s, "p", "project")
+	if _, err := s.db.ExecContext(ctx, `PRAGMA ignore_check_constraints=ON; INSERT INTO workflow_revision_counters(project_id,version) VALUES ('p','invalid'); PRAGMA ignore_check_constraints=OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.initializeSchema(ctx); err == nil {
+		t.Fatal("accepted a non-integer workflow revision counter")
+	}
+}
+
+func TestWorkflowRevisionRejectsNonIntegerDefinitionVersion(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedProject(t, s, "p", "project")
+	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	yes := func(context.Context) bool { return true }
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML}, yes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE workflow_definitions SET version=1.5 WHERE project_id='p'; UPDATE workflow_revision_counters SET version=7 WHERE project_id='p'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.initializeSchema(ctx); err == nil {
+		t.Fatal("accepted a non-integer workflow definition version")
+	}
+}
+
+func TestWorkflowVersionConcurrentSyncDelete(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedProject(t, s, "p", "project")
+	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	yes := func(context.Context) bool { return true }
+	defs := map[string]string{"demo": workflowYAML}
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", defs, yes); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() { <-start; _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", defs, yes); errs <- err }()
+	go func() { <-start; errs <- s.DeleteWorkflowDefinition(ctx, "p", "admin", "demo", yes) }()
+	close(start)
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", defs, yes); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.GetWorkflowDefinition(ctx, "p", "demo")
+	if err != nil || d.Version <= 1 {
+		t.Fatalf("reused version after concurrent operations: %+v %v", d, err)
+	}
+}
+
 func TestWorkflowDefinitionMigration(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	seedProject(t, s, "p", "preserved")
-	if _, err := s.db.ExecContext(ctx, `DROP TABLE workflow_definitions; PRAGMA user_version=11`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; PRAGMA user_version=11`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.initializeSchema(ctx); err != nil {
@@ -266,7 +387,7 @@ func TestWorkflowDefinitionMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 14 {
 		t.Fatalf("version %d: %v", version, err)
 	}
 }
