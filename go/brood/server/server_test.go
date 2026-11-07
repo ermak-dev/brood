@@ -78,6 +78,7 @@ type testServer struct {
 	http         *httptest.Server
 	provisioner  app.Provisioner
 	adminCreated bool
+	dbPath       string
 }
 
 // newTestServer — сервер с фейковым провижинером (Substrate работает).
@@ -100,7 +101,7 @@ func newTestServerWith(t *testing.T, provisioner app.Provisioner) *testServer {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	ts := &testServer{t: t, srv: srv, provisioner: provisioner}
+	ts := &testServer{t: t, srv: srv, provisioner: provisioner, dbPath: cfg.DBPath}
 	ts.http = httptest.NewServer(srv.Handler())
 	t.Cleanup(func() {
 		ts.http.Close()

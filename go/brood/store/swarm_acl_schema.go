@@ -38,7 +38,7 @@ func initializeACL(ctx context.Context, tx *sql.Tx) error {
 				return fmt.Errorf("extend swarm ACL schema: %w", err)
 			}
 		}
-	} else if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14 {
+	} else if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14 && version != 15 {
 		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
 	}
 	if err := checkSchema(ctx, tx, swarmMembersSchema); err != nil {

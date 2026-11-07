@@ -58,6 +58,9 @@ func (s *Store) ReservePipelineNativeActor(ctx context.Context, r PipelineNative
 		if err != nil {
 			return err
 		}
+		if run.Source != nil {
+			return ErrPipelineSourceUnverified
+		}
 		var seq int64
 		var node, name, tn, tu, td, state string
 		err = s.conn(ctx).QueryRowContext(ctx, `SELECT sequence,node_id,COALESCE(native_actor_name,''),COALESCE(native_template_name,''),COALESCE(native_template_uid,''),COALESCE(native_template_digest,''),state FROM pipeline_steps WHERE run_id=? AND request_id=?`, r.RunID, r.RequestID).Scan(&seq, &node, &name, &tn, &tu, &td, &state)
@@ -121,8 +124,12 @@ func (s *Store) BindPipelineNativeActor(ctx context.Context, r PipelineNativeRes
 		return errors.New("invalid native pipeline binding")
 	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
-		if _, err := s.GetPipelineRun(ctx, r.SwarmID, r.RunID); err != nil {
+		run, err := s.GetPipelineRun(ctx, r.SwarmID, r.RunID)
+		if err != nil {
 			return err
+		}
+		if run.Source != nil {
+			return ErrPipelineSourceUnverified
 		}
 		name := nativeActorName(r)
 		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET actor_uid=?,actor_incarnation=? WHERE run_id=? AND sequence=? AND node_id=? AND request_id=? AND native_actor_name=? AND native_template_name=? AND native_template_uid=? AND native_template_digest=? AND state='inflight' AND actor_uid IS NULL AND actor_incarnation IS NULL AND sequence=(SELECT MAX(sequence) FROM pipeline_steps WHERE run_id=?)`, uid, incarnation, r.RunID, r.Sequence, r.NodeID, r.RequestID, name, r.TemplateName, r.TemplateUID, r.TemplateDigest, r.RunID)
