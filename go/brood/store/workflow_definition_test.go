@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -206,6 +207,51 @@ func TestWorkflowDefinitionsSync(t *testing.T) {
 // IMPLEMENTATION: Store current YAML with a per-name revision in a transaction.
 // RESULT: IMPLEMENTED — authorization and validation precede writes.
 // STATUS: DONE
+// FEATURE: Publication timestamps for workflow versions.
+// SPEC: Migrated rows retain their data and unknown time; unchanged sync preserves it.
+func TestWorkflowPublicationTimeMigration(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	seedProject(t, s, "p", "preserved")
+	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TABLE workflow_definitions; CREATE TABLE workflow_definitions (project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, yaml TEXT NOT NULL, version INTEGER NOT NULL CHECK (version > 0), PRIMARY KEY (project_id, name)); INSERT INTO workflow_definitions VALUES ('p','demo',?,3); PRAGMA user_version=12`, workflowYAML); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.initializeSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	var version int
+	var published sql.NullString
+	read := func() {
+		t.Helper()
+		if err := s.db.QueryRowContext(ctx, `SELECT yaml,version,published_at FROM workflow_definitions WHERE project_id='p' AND name='demo'`).Scan(&text, &version, &published); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read()
+	if text != workflowYAML || version != 3 || published.Valid {
+		t.Fatalf("migrated: %q %d %+v", text, version, published)
+	}
+	yes := func(context.Context) bool { return true }
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML}, yes); err != nil {
+		t.Fatal(err)
+	}
+	read()
+	if published.Valid || version != 3 {
+		t.Fatal("unchanged legacy record was rewritten")
+	}
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML + "\n"}, yes); err != nil {
+		t.Fatal(err)
+	}
+	read()
+	if !published.Valid || version != 4 {
+		t.Fatalf("changed: %d %+v", version, published)
+	}
+}
+
 func TestWorkflowDefinitionMigration(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -220,7 +266,7 @@ func TestWorkflowDefinitionMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 12 {
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
 		t.Fatalf("version %d: %v", version, err)
 	}
 }

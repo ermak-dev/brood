@@ -66,7 +66,7 @@ func TestManagedConnectionV5Migration(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version int
-		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 12 {
+		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
 			t.Fatalf("version=%d err=%v", version, err)
 		}
 		rows, err := s.ListManagedConnections(ctx)

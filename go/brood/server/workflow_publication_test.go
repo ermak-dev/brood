@@ -80,6 +80,69 @@ func TestWorkflowPublicationDelete(t *testing.T) {
 	}
 }
 
+// FEATURE: Project workflow catalog and definition graph.
+// SPEC: Preserve the existing snapshot, expose version and publication time, and enforce project visibility.
+// IMPLEMENTATION: Add scoped catalog and graph routes and nullable publication timestamps.
+// RESULT: IMPLEMENTED — existing snapshot and legacy timestamps are preserved.
+// STATUS: DONE
+func TestWorkflowCatalog(t *testing.T) {
+	ts, admin, member, outsider, id := gitRepositorySetup(t)
+	path := "/api/projects/" + id + "/workflows"
+	catalog := "/api/projects/" + id + "/workflow-catalog"
+	graph := path + "/test/graph"
+	doc := workflowDocument("test")
+	workflowPut(t, ts, admin, path, map[string]string{"test": doc})
+	if got := workflowRead(t, ts, member, path); !reflect.DeepEqual(got, map[string]any{"test": doc}) {
+		t.Fatalf("legacy snapshot changed: %v", got)
+	}
+	r, body, _ := ts.do(member, "GET", catalog, "", nil)
+	expectStatus(t, "catalog", r, body, http.StatusOK)
+	items, ok := body["workflows"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("catalog: %v", body)
+	}
+	item := items[0].(map[string]any)
+	if item["name"] != "test" || item["version"] != float64(1) || item["publishedAt"] == nil {
+		t.Fatalf("catalog entry: %v", item)
+	}
+	timestamp := item["publishedAt"]
+	workflowPut(t, ts, admin, path, map[string]string{"test": doc})
+	_, body, _ = ts.do(member, "GET", catalog, "", nil)
+	if body["workflows"].([]any)[0].(map[string]any)["publishedAt"] != timestamp {
+		t.Fatal("idempotent sync changed timestamp")
+	}
+	if _, err := ts.srv.catalog.db.Exec(`UPDATE workflow_definitions SET published_at=NULL WHERE project_id=? AND name='test'`, id); err != nil {
+		t.Fatal(err)
+	}
+	_, body, _ = ts.do(member, "GET", catalog, "", nil)
+	item = body["workflows"].([]any)[0].(map[string]any)
+	if value, exists := item["publishedAt"]; !exists || value != nil {
+		t.Fatalf("unknown timestamp: %v", item)
+	}
+	workflowPut(t, ts, admin, path, map[string]string{"test": doc + "\n"})
+	_, body, _ = ts.do(member, "GET", catalog, "", nil)
+	item = body["workflows"].([]any)[0].(map[string]any)
+	if item["version"] != float64(2) || item["publishedAt"] == nil {
+		t.Fatalf("updated catalog entry: %v", item)
+	}
+	r, body, _ = ts.do(member, "GET", graph, "", nil)
+	expectStatus(t, "definition graph", r, body, http.StatusOK)
+	svg, ok := body["svg"].(string)
+	if !ok || !strings.Contains(svg, "<svg") || !strings.Contains(svg, ">ask</text>") || !strings.Contains(svg, ">done</text>") || strings.Contains(svg, "state-active") {
+		t.Fatalf("definition graph: %v", body)
+	}
+	for _, p := range []string{catalog, graph} {
+		r, _, _ = ts.do(outsider, "GET", p, "", nil)
+		if r.StatusCode != http.StatusNotFound {
+			t.Errorf("outsider %s: %d", p, r.StatusCode)
+		}
+	}
+	r, _, _ = ts.do(member, "GET", path+"/missing/graph", "", nil)
+	if r.StatusCode != http.StatusNotFound {
+		t.Errorf("missing workflow: %d", r.StatusCode)
+	}
+}
+
 func TestWorkflowPublicationLifecycle(t *testing.T) {
 	graph := workflowDocument("test")
 	if _, err := pipeline.Parse(graph, "test.yaml"); err != nil {

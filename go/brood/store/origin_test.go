@@ -41,7 +41,7 @@ func TestOriginSchemaUpgradeFromV9PreservesData(t *testing.T) {
 			t.Fatal(err)
 		}
 		var version int
-		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 12 {
+		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 13 {
 			t.Fatalf("version=%d err=%v", version, err)
 		}
 		a, err := s.GetManagedActor(ctx, "legacy")
@@ -108,7 +108,7 @@ func TestOriginSchemaDamageRefusedWithoutMutation(t *testing.T) {
 		`ALTER TABLE managed_actors DROP COLUMN origin`,
 		`DROP TABLE project_repositories`,
 		`DROP TABLE project_repositories; CREATE TABLE project_repositories (project_id TEXT PRIMARY KEY, origin TEXT)`,
-		`PRAGMA user_version=13`,
+		`PRAGMA user_version=14`,
 	} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()

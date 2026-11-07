@@ -12,8 +12,73 @@ import (
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/pipeline"
+	"brood.dev/go/brood/piprender"
 	"brood.dev/go/brood/store"
 )
+
+func (s *Server) workflowProjectVisible(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	user, ok := currentUser(w, r)
+	if !ok {
+		return false
+	}
+	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(r.PathValue("id")))
+	if err != nil {
+		apiError(w, r, err)
+		return false
+	}
+	if !allowed {
+		writeDetail(w, http.StatusNotFound, "project not found")
+		return false
+	}
+	return true
+}
+
+func (s *Server) handleWorkflowCatalog(w http.ResponseWriter, r *http.Request) {
+	if !s.workflowProjectVisible(w, r) {
+		return
+	}
+	definitions, err := s.store.ListWorkflowDefinitions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeDetail(w, http.StatusServiceUnavailable, "workflows unavailable")
+		return
+	}
+	type item struct {
+		Name        string  `json:"name"`
+		Version     int64   `json:"version"`
+		PublishedAt *string `json:"publishedAt"`
+	}
+	items := make([]item, 0, len(definitions))
+	for _, d := range definitions {
+		var published *string
+		if d.PublishedAt.Valid {
+			published = &d.PublishedAt.String
+		}
+		items = append(items, item{d.Name, d.Version, published})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workflows": items})
+}
+
+func (s *Server) handleWorkflowGraph(w http.ResponseWriter, r *http.Request) {
+	if !s.workflowProjectVisible(w, r) {
+		return
+	}
+	definition, err := s.store.GetWorkflowDefinition(r.Context(), r.PathValue("id"), r.PathValue("name"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeDetail(w, http.StatusNotFound, "workflow not found")
+		return
+	}
+	if err != nil {
+		writeDetail(w, http.StatusServiceUnavailable, "workflows unavailable")
+		return
+	}
+	doc, err := pipeline.Parse(definition.YAML, definition.Name+".yaml")
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"svg": piprender.SVG(piprender.RunView{Graph: doc.Graph()})})
+}
 
 func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")

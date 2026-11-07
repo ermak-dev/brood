@@ -6,24 +6,34 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"brood.dev/go/brood/pipeline"
 )
 
 // WorkflowDefinition is the current version of a project workflow.
 type WorkflowDefinition struct {
-	ProjectID string
-	Name      string
-	YAML      string
-	Version   int64
+	ProjectID   string
+	Name        string
+	YAML        string
+	Version     int64
+	PublishedAt sql.NullString
 }
+
+const legacyWorkflowDefinitionSchema = `CREATE TABLE workflow_definitions (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    yaml TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
+    PRIMARY KEY (project_id, name)
+)`
 
 const workflowDefinitionSchema = `CREATE TABLE workflow_definitions (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     yaml TEXT NOT NULL,
     version INTEGER NOT NULL CHECK (version > 0),
-    PRIMARY KEY (project_id, name)
+    published_at TEXT, PRIMARY KEY (project_id, name)
 )`
 
 func initializeWorkflowDefinitions(ctx context.Context, tx *sql.Tx) error {
@@ -39,10 +49,17 @@ func initializeWorkflowDefinitions(ctx context.Context, tx *sql.Tx) error {
 		if n != 0 {
 			return errors.New("incompatible database schema: unversioned workflow definitions")
 		}
-		if _, err := tx.ExecContext(ctx, workflowDefinitionSchema+`; PRAGMA user_version=12`); err != nil {
+		if _, err := tx.ExecContext(ctx, workflowDefinitionSchema+`; PRAGMA user_version=13`); err != nil {
 			return fmt.Errorf("extend workflow schema: %w", err)
 		}
-	} else if version != 12 {
+	} else if version == 12 {
+		if err := checkSchema(ctx, tx, legacyWorkflowDefinitionSchema); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE workflow_definitions ADD COLUMN published_at TEXT; PRAGMA user_version=13`); err != nil {
+			return fmt.Errorf("extend workflow schema: %w", err)
+		}
+	} else if version != 13 {
 		return errors.New("incompatible database schema: unsupported workflow version")
 	}
 	return checkSchema(ctx, tx, workflowDefinitionSchema)
@@ -51,7 +68,7 @@ func initializeWorkflowDefinitions(ctx context.Context, tx *sql.Tx) error {
 // GetWorkflowDefinition returns a named definition in a project.
 func (s *Store) GetWorkflowDefinition(ctx context.Context, projectID, name string) (WorkflowDefinition, error) {
 	var d WorkflowDefinition
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT project_id,name,yaml,version FROM workflow_definitions WHERE project_id=? AND name=?`, projectID, name).Scan(&d.ProjectID, &d.Name, &d.YAML, &d.Version)
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT project_id,name,yaml,version,published_at FROM workflow_definitions WHERE project_id=? AND name=?`, projectID, name).Scan(&d.ProjectID, &d.Name, &d.YAML, &d.Version, &d.PublishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound
 	}
@@ -60,7 +77,7 @@ func (s *Store) GetWorkflowDefinition(ctx context.Context, projectID, name strin
 
 // ListWorkflowDefinitions returns current definitions ordered by name.
 func (s *Store) ListWorkflowDefinitions(ctx context.Context, projectID string) ([]WorkflowDefinition, error) {
-	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT project_id,name,yaml,version FROM workflow_definitions WHERE project_id=? ORDER BY name`, projectID)
+	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT project_id,name,yaml,version,published_at FROM workflow_definitions WHERE project_id=? ORDER BY name`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +85,7 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context, projectID string) (
 	result := []WorkflowDefinition{}
 	for rows.Next() {
 		var d WorkflowDefinition
-		if err := rows.Scan(&d.ProjectID, &d.Name, &d.YAML, &d.Version); err != nil {
+		if err := rows.Scan(&d.ProjectID, &d.Name, &d.YAML, &d.Version, &d.PublishedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, d)
@@ -205,7 +222,7 @@ func (s *Store) SyncWorkflowDefinitions(ctx context.Context, projectID, actorID 
 			}
 		}
 		for _, name := range pending {
-			_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO workflow_definitions(project_id,name,yaml,version) VALUES (?,?,?,1) ON CONFLICT(project_id,name) DO UPDATE SET yaml=excluded.yaml, version=workflow_definitions.version+1`, projectID, name, definitions[name])
+			_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO workflow_definitions(project_id,name,yaml,version,published_at) VALUES (?,?,?,1,?) ON CONFLICT(project_id,name) DO UPDATE SET yaml=excluded.yaml, version=workflow_definitions.version+1, published_at=excluded.published_at`, projectID, name, definitions[name], time.Now().UTC().Format(time.RFC3339Nano))
 			if err != nil {
 				return err
 			}
