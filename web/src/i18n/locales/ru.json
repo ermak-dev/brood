@@ -3083,6 +3083,11 @@
     "delete_unversioned": "Сервер не вернул uid и resourceVersion, поэтому удаление не сверить с этой версией. Обновите список."
   },
   "pipelines": {
+    "definitions": "Опубликованные определения",
+    "definitions_empty": "Нет опубликованных workflow",
+    "definition_version": "Версия {{version}}",
+    "definition_graph": "Граф определения: {{name}}",
+    "runs": "Прогоны роёв",
     "title": "Workflow",
     "name": "Имя",
     "status": "Статус",

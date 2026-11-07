@@ -3092,6 +3092,11 @@
     "delete_unversioned": "Máy chủ không trả về uid và resourceVersion nên không thể đối chiếu việc xóa với phiên bản này. Hãy làm mới danh sách."
   },
   "pipelines": {
+    "definitions": "Định nghĩa đã xuất bản",
+    "definitions_empty": "Không có quy trình đã xuất bản",
+    "definition_version": "Phiên bản {{version}}",
+    "definition_graph": "Sơ đồ định nghĩa: {{name}}",
+    "runs": "Lượt chạy của nhóm",
     "title": "Quy trình",
     "name": "Tên",
     "status": "Trạng thái",

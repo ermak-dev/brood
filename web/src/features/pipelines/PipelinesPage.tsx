@@ -11,6 +11,7 @@ import { useResource } from '@/features/substrate/hooks';
 import { DASH } from '@/features/substrate/format';
 import { runTone, sortRuns } from './state';
 import { workflowRunPath } from './routes';
+import { WorkflowCatalog } from './WorkflowCatalog';
 import styles from '@/features/substrate/substrate.module.scss';
 
 /** Таблица проходов отдельным компонентом: страница грузит список, таблица
@@ -37,7 +38,8 @@ export function RunTable({
     {
       key: 'started',
       label: t('pipelines.started'),
-      render: (run) => run.startedAt ? new Date(run.startedAt).toLocaleString(i18n.language) : DASH,
+      render: (run) =>
+        run.startedAt ? new Date(run.startedAt).toLocaleString(i18n.language) : DASH,
     },
     {
       key: 'current',
@@ -45,9 +47,7 @@ export function RunTable({
       render: (run) => run.currentNode ?? DASH,
     },
   ];
-  return (
-    <EntityTable columns={columns} rows={runs} rowKey={(run) => run.id} onRowClick={onOpen} />
-  );
+  return <EntityTable columns={columns} rows={runs} rowKey={(run) => run.id} onRowClick={onOpen} />;
 }
 
 /** Проходы доступных роёв выбранного проекта обновляются независимо. */
@@ -56,9 +56,14 @@ export function PipelinesPage() {
   return (
     <ProjectScope title={t('pipelines.title')}>
       {(project) => (
-        <SwarmSections project={project} title={t('pipelines.title')}>
-          {(swarm) => <SwarmRuns key={swarm.id} swarmId={swarm.id} name={swarm.name} />}
-        </SwarmSections>
+        <>
+          <div className={styles.page}>
+            <WorkflowCatalog key={project.id} projectId={project.id} />
+          </div>
+          <SwarmSections project={project} title={t('pipelines.runs')}>
+            {(swarm) => <SwarmRuns key={swarm.id} swarmId={swarm.id} name={swarm.name} />}
+          </SwarmSections>
+        </>
       )}
     </ProjectScope>
   );
@@ -80,10 +85,7 @@ function SwarmRuns({ swarmId, name }: { swarmId: string; name: string }) {
     <div className={styles.page}>
       <h2>{name}</h2>
       <LoadState loading={loading} error={error ?? ''} retry={refresh}>
-        <RunTable
-          runs={sortRuns(data ?? [])}
-          onOpen={(run) => navigate(workflowRunPath(run.id))}
-        />
+        <RunTable runs={sortRuns(data ?? [])} onOpen={(run) => navigate(workflowRunPath(run.id))} />
         {data?.length === 0 && <p>{t('pipelines.empty')}</p>}
       </LoadState>
     </div>
