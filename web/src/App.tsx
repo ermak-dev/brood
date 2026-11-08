@@ -6,6 +6,7 @@ import { ConfirmationModal } from '@/components/common/ConfirmationModal';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { ProtectedRoute } from '@/router/ProtectedRoute';
 import { useLanguageStore, useThemeStore } from '@/stores';
+import { identifyInitialHistoryEntry } from '@/router/initialHistoryEntry';
 
 function RootShell() {
   return (
@@ -16,6 +17,8 @@ function RootShell() {
     </>
   );
 }
+
+identifyInitialHistoryEntry();
 
 const router = createHashRouter([
   {

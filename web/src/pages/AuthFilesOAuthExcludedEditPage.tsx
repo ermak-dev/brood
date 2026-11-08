@@ -274,9 +274,18 @@ export function AuthFilesOAuthExcludedEditPage() {
       allowNavigationTo(
         `${location.pathname}${nextSearch ? `?${nextSearch}` : ''}${location.hash}`
       );
-      setSearchParams(next, { replace: true });
+      // Замена записи сохраняет её state: «Назад» редактора по fromAuthFiles
+      // возвращается к списку той же записью истории.
+      setSearchParams(next, { replace: true, state: location.state });
     },
-    [allowNavigationTo, location.hash, location.pathname, searchParams, setSearchParams]
+    [
+      allowNavigationTo,
+      location.hash,
+      location.pathname,
+      location.state,
+      searchParams,
+      setSearchParams,
+    ]
   );
 
   const updateProvider = useCallback(
