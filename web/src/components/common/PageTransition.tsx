@@ -1,12 +1,19 @@
 import { ReactNode, useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { useLocation, type Location } from 'react-router-dom';
+import { useLocation, useNavigationType, type Location } from 'react-router-dom';
 import { animate } from 'motion/mini';
 import type { AnimationPlaybackControlsWithThen } from 'motion-dom';
 import {
   PAGE_TRANSITION_LAYER_CONTEXT_VALUES,
   PageTransitionLayerContext,
-  type LayerStatus,
 } from './PageTransitionLayer';
+import {
+  classifyLocationChange,
+  createLayerKey,
+  findLayerIndex,
+  historyEntryId,
+  updateCurrentLayerLocation,
+  type PageLayer as Layer,
+} from './pageTransitionLocation';
 import './PageTransition.scss';
 
 interface PageTransitionProps {
@@ -55,12 +62,6 @@ const clearLayerStyles = (element: HTMLElement | null) => {
   element.style.removeProperty('box-shadow');
 };
 
-type Layer = {
-  key: string;
-  location: Location;
-  status: LayerStatus;
-};
-
 type TransitionDirection = 'forward' | 'backward';
 
 type TransitionVariant = 'vertical' | 'ios';
@@ -72,6 +73,7 @@ export function PageTransition({
   scrollContainerRef,
 }: PageTransitionProps) {
   const location = useLocation();
+  const navigationType = useNavigationType();
   const currentLayerRef = useRef<HTMLDivElement>(null);
   const exitingLayerRef = useRef<HTMLDivElement>(null);
   const transitionDirectionRef = useRef<TransitionDirection>('forward');
@@ -79,6 +81,7 @@ export function PageTransition({
   const exitScrollOffsetRef = useRef(0);
   const enterScrollOffsetRef = useRef(0);
   const scrollPositionsRef = useRef(new Map<string, number>());
+  const pendingScrollRef = useRef<{ location: Location; offset: number } | null>(null);
   const nextLayersRef = useRef<Layer[] | null>(null);
 
   const [isAnimating, setIsAnimating] = useState(false);
@@ -91,8 +94,8 @@ export function PageTransition({
   ]);
   const currentLayer =
     layers.find((layer) => layer.status === 'current') ?? layers[layers.length - 1];
-  const currentLayerKey = currentLayer?.key ?? location.key;
-  const currentLayerPathname = currentLayer?.location.pathname;
+  const currentLayerLocation = currentLayer?.location;
+  const currentLayerPathname = currentLayerLocation?.pathname;
 
   const resolveScrollContainer = useCallback(() => {
     if (scrollContainerRef?.current) return scrollContainerRef.current;
@@ -102,14 +105,34 @@ export function PageTransition({
 
   useLayoutEffect(() => {
     if (isAnimating) return;
-    if (location.key === currentLayerKey) return;
-    if (currentLayerPathname === location.pathname) return;
+    const change = classifyLocationChange(currentLayerLocation, location);
+    if (change === 'none') return;
+    if (change === 'update') {
+      if (navigationType !== 'REPLACE' && currentLayerLocation?.key !== location.key) {
+        const scrollContainer = resolveScrollContainer();
+        const previousEntry = currentLayerLocation ? historyEntryId(currentLayerLocation) : null;
+        if (previousEntry !== null) {
+          scrollPositionsRef.current.set(previousEntry, scrollContainer?.scrollTop ?? 0);
+        }
+        const nextEntry = historyEntryId(location);
+        pendingScrollRef.current = {
+          location,
+          offset: nextEntry === null ? 0 : (scrollPositionsRef.current.get(nextEntry) ?? 0),
+        };
+      }
+      setLayers((prev) => updateCurrentLayerLocation(prev, location));
+      return;
+    }
     const scrollContainer = resolveScrollContainer();
     const exitScrollOffset = scrollContainer?.scrollTop ?? 0;
     exitScrollOffsetRef.current = exitScrollOffset;
-    scrollPositionsRef.current.set(currentLayerKey, exitScrollOffset);
+    const previousEntry = currentLayerLocation ? historyEntryId(currentLayerLocation) : null;
+    if (previousEntry !== null) {
+      scrollPositionsRef.current.set(previousEntry, exitScrollOffset);
+    }
 
-    enterScrollOffsetRef.current = scrollPositionsRef.current.get(location.key) ?? 0;
+    const nextEntry = historyEntryId(location);
+    enterScrollOffsetRef.current = nextEntry === null ? 0 : (scrollPositionsRef.current.get(nextEntry) ?? 0);
     const resolveOrderIndex = (pathname?: string) => {
       if (!getRouteOrder || !pathname) return null;
       const index = getRouteOrder(pathname);
@@ -130,7 +153,7 @@ export function PageTransition({
 
     // When using iOS-style stacking, history POP within the same "section" can have equal route order.
     // In that case, prefer treating navigation to an existing layer as a backward (pop) transition.
-    if (nextVariant === 'ios' && layers.some((layer) => layer.key === location.key)) {
+    if (nextVariant === 'ios' && findLayerIndex(layers, location) !== -1) {
       nextDirection = 'backward';
     }
 
@@ -161,7 +184,14 @@ export function PageTransition({
         .filter((_, idx) => idx !== resolvedCurrentIndex)
         .map((layer): Layer => ({ ...layer, status: 'stacked' }));
 
-      const nextCurrent: Layer = { key: location.key, location, status: 'current' };
+      const nextCurrent: Layer = {
+        key: createLayerKey(
+          location.key,
+          prev.map((layer) => layer.key)
+        ),
+        location,
+        status: 'current',
+      };
 
       if (!previousCurrent) {
         nextLayersRef.current = [nextCurrent];
@@ -177,7 +207,7 @@ export function PageTransition({
           return [...previousStack, exitingLayer, nextCurrent];
         }
 
-        const targetIndex = prev.findIndex((layer) => layer.key === location.key);
+        const targetIndex = findLayerIndex(prev, location);
         if (targetIndex !== -1) {
           const targetStack: Layer[] = prev.slice(0, targetIndex + 1).map((layer, idx): Layer => {
             const isTarget = idx === targetIndex;
@@ -213,13 +243,21 @@ export function PageTransition({
   }, [
     isAnimating,
     location,
-    currentLayerKey,
+    navigationType,
+    currentLayerLocation,
     currentLayerPathname,
     getRouteOrder,
     getTransitionVariant,
     resolveScrollContainer,
     layers,
   ]);
+
+  useLayoutEffect(() => {
+    const pending = pendingScrollRef.current;
+    if (!pending || currentLayerLocation !== pending.location) return;
+    pendingScrollRef.current = null;
+    resolveScrollContainer()?.scrollTo({ top: pending.offset, left: 0, behavior: 'auto' });
+  }, [currentLayerLocation, resolveScrollContainer]);
 
   // Run Motion animation when animating starts
   useLayoutEffect(() => {
