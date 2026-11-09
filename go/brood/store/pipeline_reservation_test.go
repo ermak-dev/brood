@@ -28,14 +28,14 @@ func TestPipelineNativeReservationRaces(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			_, err = s.db.Exec(`INSERT INTO users VALUES ('u','user',NULL,'hash',0,0,'now','now'); INSERT INTO projects VALUES ('p','project','now'); INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('s','p','u','swarm','space','now','now'); INSERT INTO swarm_members VALUES ('s','u','owner')`)
+			_, err = s.db.Exec(`INSERT INTO users VALUES ('u','user',NULL,'hash',0,0,'now','now'); INSERT INTO projects VALUES ('p','project','now'); INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('s','p','u','swarm','space','now','now'),('bind','p','u','bind','bind','now','now')`)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+			if err = attachTestGraph(ctx, s, "s", actorStartGraph); err != nil {
 				t.Fatal(err)
 			}
-			r := PipelineNativeReservation{SwarmID: "s", RunID: "r", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
+			r := PipelineNativeReservation{SwarmID: "s", RunID: "s", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
 			if _, err = s.ReservePipelineNativeActor(ctx, r); err != nil {
 				t.Fatal(err)
 			}
@@ -50,7 +50,7 @@ func TestPipelineNativeReservationRaces(t *testing.T) {
 					t.Error("late timeout accepted after bind")
 				}
 				var state string
-				if err = s.db.QueryRow(`SELECT state FROM pipeline_steps WHERE run_id='r' AND sequence=1`).Scan(&state); err != nil {
+				if err = s.db.QueryRow(`SELECT state FROM swarm_steps WHERE swarm_id='s' AND sequence=1`).Scan(&state); err != nil {
 					t.Fatal(err)
 				}
 				if state != "inflight" {
@@ -58,11 +58,11 @@ func TestPipelineNativeReservationRaces(t *testing.T) {
 				}
 				return
 			case "unconfirmed":
-				_, err = s.db.Exec(`UPDATE pipeline_steps SET state='unconfirmed' WHERE run_id='r'`)
+				_, err = s.db.Exec(`UPDATE swarm_steps SET state='unconfirmed' WHERE swarm_id='s'`)
 			case "terminal":
-				_, err = s.db.Exec(`UPDATE pipeline_steps SET state='completed' WHERE run_id='r'`)
+				_, err = s.db.Exec(`UPDATE swarm_steps SET state='completed' WHERE swarm_id='s'`)
 			case "superseded":
-				_, err = s.db.Exec(`INSERT INTO pipeline_steps(run_id,sequence,node_id,state) VALUES ('r',2,'actor','pending')`)
+				_, err = s.db.Exec(`DROP TRIGGER pipeline_preparations_step_no_replace; INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES ('s',2,'actor','pending')`)
 			case "recovery bound", "recovery unbound":
 				err = s.RecoverPipelineActions(ctx)
 				if err == nil {
@@ -91,10 +91,10 @@ func TestPipelineStyledNativeReservation(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
 	graph := strings.Replace(actorStartGraph, "template: development, ", "", 1) + "styles:\n  - selectors: [actor]\n    template: development\n"
-	if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(graph), Status: "running"}); err != nil {
-		t.Fatalf("create styled run: %v", err)
+	if err := attachTestGraph(ctx, s, "s", graph); err != nil {
+		t.Fatalf("attach styled graph: %v", err)
 	}
-	r := PipelineNativeReservation{SwarmID: "s", RunID: "r", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "wrong", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
+	r := PipelineNativeReservation{SwarmID: "s", RunID: "s", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "wrong", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
 	if _, err := s.ReservePipelineNativeActor(ctx, r); err == nil {
 		t.Fatal("accepted wrong styled template")
 	}
@@ -112,14 +112,14 @@ func TestPipelineNativeReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	_, err = s.db.Exec(`INSERT INTO users VALUES ('u','user',NULL,'hash',0,0,'now','now'); INSERT INTO projects VALUES ('p','project','now'); INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('s','p','u','swarm','space','now','now'); INSERT INTO swarm_members VALUES ('s','u','owner')`)
+	_, err = s.db.Exec(`INSERT INTO users VALUES ('u','user',NULL,'hash',0,0,'now','now'); INSERT INTO projects VALUES ('p','project','now'); INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at,graph,execution,definition_name,definition_version,definition_revision) VALUES ('s','p','u','swarm','space','now','now',NULL,'idle',NULL,NULL,NULL); INSERT INTO swarm_members VALUES ('s','u','owner')`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+	if err = attachTestGraph(ctx, s, "s", actorStartGraph); err != nil {
 		t.Fatal(err)
 	}
-	req := PipelineNativeReservation{SwarmID: "s", RunID: "r", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
+	req := PipelineNativeReservation{SwarmID: "s", RunID: "s", Sequence: 1, NodeID: "actor", RequestID: "req", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
 	var wg sync.WaitGroup
 	results := make(chan PipelineNativeReservation, 8)
 	errs := make(chan error, 8)
@@ -190,10 +190,13 @@ func TestPipelineNativeReservation(t *testing.T) {
 	if err = s.BindPipelineNativeActor(ctx, req, "uid", 1); err == nil {
 		t.Fatal("bound uncertain creation")
 	}
-	if err = createLegacyPipelineRun(ctx, s, PipelineRun{ID: "bind", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"}); err != nil {
+	if _, err = s.db.Exec(`INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('bind','p','u','bind','bind','now','now')`); err != nil {
 		t.Fatal(err)
 	}
-	req.RunID = "bind"
+	if err = attachTestGraph(ctx, s, "bind", actorStartGraph); err != nil {
+		t.Fatal(err)
+	}
+	req.SwarmID, req.RunID = "bind", "bind"
 	if _, err = s.ReservePipelineNativeActor(ctx, req); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +212,7 @@ func TestPipelineNativeReservation(t *testing.T) {
 	if err = s.BindPipelineNativeActor(ctx, req, "uid", 2); err == nil {
 		t.Fatal("rebound incarnation")
 	}
-	if err = s.CompletePipelineActorVisit(ctx, "s", "bind", 1, "req", "uid", 1, "success"); err != nil {
+	if err = s.CompletePipelineActorVisit(ctx, "bind", "bind", 1, "req", "uid", 1, "success"); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.ReservePipelineNativeActor(ctx, req)

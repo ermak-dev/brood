@@ -28,7 +28,7 @@ var schemaModules = []schemaModule{
 	{id: "coordination", create: func() string { return coordinationSchema }, verify: verifyCoordinationSchema},
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
-	{id: "pipelines", create: func() string { return pipelineSchema }, verify: verifyPipelinesSchema},
+	{id: "pipelines", create: func() string { return swarmStepsSchema }, verify: verifySwarmStepsSchema},
 	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},
 	{id: "pipeline-source", create: pipelineSourceFullSchema, verify: verifyPipelineSourcesSchema},
 	{id: "pipeline-preparation", create: pipelinePreparationFullSchema, verify: verifyPipelinePreparationsSchema},
@@ -57,11 +57,25 @@ func managedFullSchema() string {
 }
 
 // pipelineSourceFullSchema — таблица источников запусков и триггеры
-// неизменности источника и идентичности запуска (#158, #160).
+// неизменности источника (#158, #160). Идентичность запуска защищена
+// неизменностью снимка графа роя: у роя один снимок (#206).
 func pipelineSourceFullSchema() string {
 	return pipelineSourceSchema + ";" + pipelineSourceImmutable + ";" +
-		pipelineSourceNoReplace + ";" + pipelineSourceNoDelete + ";" + pipelineRunNoReplace
+		pipelineSourceNoReplace + ";" + pipelineSourceNoDelete + ";" +
+		swarmGraphImmutable + ";" + swarmNoReplace
 }
+
+// swarmNoReplace запрещает подмену строки роя целиком (INSERT OR REPLACE):
+// замена одной строки роя — это подмена прогона. Прямой дубликат ID
+// и так нарушает первичный ключ; триггер закрывает именно REPLACE.
+const swarmNoReplace = `CREATE TRIGGER swarms_no_replace BEFORE INSERT ON swarms WHEN EXISTS (SELECT 1 FROM swarms WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT, 'swarm already exists'); END`
+
+// swarmGraphImmutable делает снимок графа роя и личность определения
+// неизменяемыми после привязки (#206): пока graph IS NULL, привязка
+// возможна; после — любая правка или замена снимка и личности отказ.
+// Это и защита идентичности запуска вместо бывшего
+// pipeline_runs_no_replace: подменить строку роя — подменить прогон.
+const swarmGraphImmutable = `CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms WHEN OLD.graph IS NOT NULL AND (NEW.graph IS NOT OLD.graph OR NEW.definition_name IS NOT OLD.definition_name OR NEW.definition_version IS NOT OLD.definition_version OR NEW.definition_revision IS NOT OLD.definition_revision) BEGIN SELECT RAISE(ABORT, 'swarm graph is immutable'); END`
 
 // pipelinePreparationFullSchema — намерения выделения акторов и их
 // триггеры целостности (#163). Семантика оплачена ревью; регистрация
@@ -139,9 +153,9 @@ func verifyOriginSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkSchema(ctx, tx, managedOriginSchema())
 }
 
-// verifyPipelinesSchema сверяет запуски и посещения.
-func verifyPipelinesSchema(ctx context.Context, tx *sql.Tx) error {
-	return checkSchema(ctx, tx, pipelineSchema)
+// verifySwarmStepsSchema сверяет шаги роя.
+func verifySwarmStepsSchema(ctx context.Context, tx *sql.Tx) error {
+	return checkSchema(ctx, tx, swarmStepsSchema)
 }
 
 // verifyWorkflowSchema сверяет определения и счётчики ревизий, включая
@@ -173,7 +187,8 @@ func verifyPipelineSourcesSchema(ctx context.Context, tx *sql.Tx) error {
 		"pipeline_sources_immutable":  pipelineSourceImmutable,
 		"pipeline_sources_no_replace": pipelineSourceNoReplace,
 		"pipeline_sources_no_delete":  pipelineSourceNoDelete,
-		"pipeline_runs_no_replace":    pipelineRunNoReplace,
+		"swarm_graph_immutable":       swarmGraphImmutable,
+		"swarms_no_replace":           swarmNoReplace,
 	} {
 		if err := checkObject(ctx, tx, "trigger", name, expected); err != nil {
 			return err

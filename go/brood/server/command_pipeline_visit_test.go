@@ -53,10 +53,10 @@ func TestPipelineCompletionNamespaceOutsideTransaction(t *testing.T) {
 	ts, master, worker := coordinationServerSetup(t)
 	ctx := context.Background()
 	s := ts.srv.store
-	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "probe-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertSwarmGraph(ctx, ts.testServer, master.SwarmID, []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, "probe-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
+	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, master.SwarmID, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestPipelineCompletionNamespaceOutsideTransaction(t *testing.T) {
 		_, err := s.GetSwarm(probeCtx, master.SwarmID)
 		return err
 	}}
-	inv := coordinationInvocation("pipeline_visit_complete", map[string]any{"run_id": "probe-run", "sequence": visit.Sequence, "request_id": "req", "outcome": "success"})
+	inv := coordinationInvocation("pipeline_visit_complete", map[string]any{"run_id": master.SwarmID, "sequence": visit.Sequence, "request_id": "req", "outcome": "success"})
 	if r := ts.srv.managed.handleActorCommand(ctx, worker, inv); !r.OK {
 		t.Fatalf("namespace lookup blocked database access: %+v", r)
 	}
@@ -77,10 +77,10 @@ func TestPipelineCompletionReauthorizesAfterNamespaceLookup(t *testing.T) {
 	ts, master, worker := coordinationServerSetup(t)
 	ctx := context.Background()
 	s := ts.srv.store
-	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "race-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertSwarmGraph(ctx, ts.testServer, master.SwarmID, []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, "race-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
+	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, master.SwarmID, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,12 +90,12 @@ func TestPipelineCompletionReauthorizesAfterNamespaceLookup(t *testing.T) {
 		_, err := s.UpdateManagedActor(ctx, worker, worker.Revision)
 		return err
 	}}
-	inv := coordinationInvocation("pipeline_visit_complete", map[string]any{"run_id": "race-run", "sequence": visit.Sequence, "request_id": "req", "outcome": "success"})
+	inv := coordinationInvocation("pipeline_visit_complete", map[string]any{"run_id": master.SwarmID, "sequence": visit.Sequence, "request_id": "req", "outcome": "success"})
 	r := ts.srv.managed.handleActorCommand(ctx, worker, inv)
 	if r.OK || r.Text != "pipeline completion not authorized" {
 		t.Fatalf("revoked actor response: %+v", r)
 	}
-	visits, err := s.ListPipelineVisits(ctx, master.SwarmID, "race-run")
+	visits, err := s.SwarmSteps(ctx, master.SwarmID)
 	if err != nil || len(visits) != 1 || visits[0].State != "inflight" {
 		t.Fatalf("visit changed: %+v %v", visits, err)
 	}
@@ -105,10 +105,10 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	ts, master, worker := coordinationServerSetup(t)
 	ctx := context.Background()
 	s := ts.srv.store
-	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "visit-run", SwarmID: master.SwarmID, OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertSwarmGraph(ctx, ts.testServer, master.SwarmID, []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, "visit-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
+	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, master.SwarmID, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +119,14 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	if err := s.CreateSwarm(ctx, store.Swarm{ID: "foreign", ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, Name: "foreign", AtespaceName: "foreign", AtespaceUID: strPtr("foreign-namespace"), State: "active"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "foreign-run", SwarmID: "foreign", OwnerID: master.DelegatorID, Graph: []byte(actorVisitGraph), Status: "running"}); err != nil {
+	if err := insertSwarmGraph(ctx, ts.testServer, "foreign", []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AppendPipelineVisit(ctx, "foreign", "foreign-run", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"}); err != nil {
+	if _, err := s.AppendPipelineVisit(ctx, "foreign", "foreign", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"}); err != nil {
+		t.Fatal(err)
+	}
+	// Отдельный рой без графа: run_id на него — не прогон.
+	if err := s.CreateSwarm(ctx, store.Swarm{ID: "unrelated", ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, Name: "unrelated", AtespaceName: "unrelated", State: "active"}); err != nil {
 		t.Fatal(err)
 	}
 	call := func(uid string, generation int64, fields map[string]any) relay.SwarmResponse {
@@ -134,7 +138,7 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 		return ts.srv.managed.handleSwarmRequest(ctx, uid, generation, relay.SwarmRequest{Tool: "pipeline_visit_complete", Arguments: data})
 	}
 	base := func() map[string]any {
-		return map[string]any{"run_id": "visit-run", "sequence": visit.Sequence, "request_id": "req", "outcome": "success"}
+		return map[string]any{"run_id": master.SwarmID, "sequence": visit.Sequence, "request_id": "req", "outcome": "success"}
 	}
 	forged := base()
 	forged["actor_uid"] = worker.UID
@@ -142,7 +146,7 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	wrongRun := base()
 	wrongRun["run_id"] = "unrelated"
 	foreign := base()
-	foreign["run_id"] = "foreign-run"
+	foreign["run_id"] = "foreign"
 	wrongReq := base()
 	wrongReq["request_id"] = "other"
 	for _, tc := range []struct {
@@ -174,7 +178,7 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	if r := call(worker.UID, worker.Incarnation, conflict); r.OK {
 		t.Fatalf("conflicting replay accepted: %+v", r)
 	}
-	visits, err := s.ListPipelineVisits(ctx, master.SwarmID, "visit-run")
+	visits, err := s.SwarmSteps(ctx, master.SwarmID)
 	if err != nil || len(visits) != 2 {
 		t.Fatalf("visits: %+v %v", visits, err)
 	}
@@ -184,8 +188,8 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	if visits[1].Sequence != visit.Sequence+1 || visits[1].NodeID != "done" || visits[1].State != "completed" {
 		t.Fatalf("exit successor: %+v", visits[1])
 	}
-	run, err := s.GetPipelineRun(ctx, master.SwarmID, "visit-run")
-	if err != nil || run.Status != "succeeded" {
-		t.Fatalf("run: %+v %v", run, err)
+	sw, err = s.GetSwarm(ctx, master.SwarmID)
+	if err != nil || sw.Execution != "succeeded" {
+		t.Fatalf("swarm execution: %q %v", sw.Execution, err)
 	}
 }

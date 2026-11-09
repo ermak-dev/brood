@@ -52,18 +52,22 @@ func (s *Store) ReservePipelineNativeActor(ctx context.Context, r PipelineNative
 	if !validNativeReservation(r) {
 		return r, errors.New("invalid native pipeline reservation")
 	}
+	// Шаги принадлежат рою: расхождение ID означает устаревший вызов.
+	if r.RunID != r.SwarmID {
+		return r, ErrPipelineVisitConflict
+	}
 	r.ActorName = nativeActorName(r)
 	err := s.WithTx(ctx, func(ctx context.Context) error {
-		run, err := s.GetPipelineRun(ctx, r.SwarmID, r.RunID)
+		w, err := s.GetSwarm(ctx, r.SwarmID)
 		if err != nil {
 			return err
 		}
-		if run.Source != nil {
+		if w.Source != nil {
 			return ErrPipelineSourceUnverified
 		}
 		var seq int64
 		var node, name, tn, tu, td, state string
-		err = s.conn(ctx).QueryRowContext(ctx, `SELECT sequence,node_id,COALESCE(native_actor_name,''),COALESCE(native_template_name,''),COALESCE(native_template_uid,''),COALESCE(native_template_digest,''),state FROM pipeline_steps WHERE run_id=? AND request_id=?`, r.RunID, r.RequestID).Scan(&seq, &node, &name, &tn, &tu, &td, &state)
+		err = s.conn(ctx).QueryRowContext(ctx, `SELECT sequence,node_id,COALESCE(native_actor_name,''),COALESCE(native_template_name,''),COALESCE(native_template_uid,''),COALESCE(native_template_digest,''),state FROM swarm_steps WHERE swarm_id=? AND request_id=?`, r.SwarmID, r.RequestID).Scan(&seq, &node, &name, &tn, &tu, &td, &state)
 		if err == nil {
 			if seq != r.Sequence || node != r.NodeID || name != r.ActorName || tn != r.TemplateName || tu != r.TemplateUID || td != r.TemplateDigest {
 				return ErrPipelineVisitConflict
@@ -75,10 +79,10 @@ func (s *Store) ReservePipelineNativeActor(ctx context.Context, r PipelineNative
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if run.Status != "running" && run.Status != "waiting_human" {
+		if w.Graph == nil || !activeExecution(w.Execution) {
 			return ErrPipelineVisitConflict
 		}
-		d, err := pipeline.Parse(string(run.Graph), "pipeline")
+		d, err := pipeline.Parse(string(w.Graph), "pipeline")
 		if err != nil {
 			return err
 		}
@@ -87,20 +91,20 @@ func (s *Store) ReservePipelineNativeActor(ctx context.Context, r PipelineNative
 			return ErrPipelineVisitConflict
 		}
 		var count, latest int64
-		if err = s.conn(ctx).QueryRowContext(ctx, `SELECT count(*),COALESCE(MAX(sequence),0) FROM pipeline_steps WHERE run_id=?`, r.RunID).Scan(&count, &latest); err != nil {
+		if err = s.conn(ctx).QueryRowContext(ctx, `SELECT count(*),COALESCE(MAX(sequence),0) FROM swarm_steps WHERE swarm_id=?`, r.SwarmID).Scan(&count, &latest); err != nil {
 			return err
 		}
 		if count == 0 {
 			if r.Sequence != 1 || d.Start != r.NodeID {
 				return ErrPipelineVisitConflict
 			}
-			_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_steps(run_id,sequence,node_id,state,request_id,native_actor_name,native_template_name,native_template_uid,native_template_digest) VALUES(?,?,?,'inflight',?,?,?,?,?)`, r.RunID, r.Sequence, r.NodeID, r.RequestID, r.ActorName, r.TemplateName, r.TemplateUID, r.TemplateDigest)
+			_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,started_at,request_id,native_actor_name,native_template_name,native_template_uid,native_template_digest) VALUES(?,?,?,'inflight',?,?,?,?,?,?)`, r.SwarmID, r.Sequence, r.NodeID, nowRFC3339(), r.RequestID, r.ActorName, r.TemplateName, r.TemplateUID, r.TemplateDigest)
 		} else {
 			if latest != r.Sequence {
 				return ErrPipelineVisitConflict
 			}
 			var result sql.Result
-			result, err = s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state='inflight',request_id=?,native_actor_name=?,native_template_name=?,native_template_uid=?,native_template_digest=? WHERE run_id=? AND sequence=? AND node_id=? AND state='pending'`, r.RequestID, r.ActorName, r.TemplateName, r.TemplateUID, r.TemplateDigest, r.RunID, r.Sequence, r.NodeID)
+			result, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='inflight',started_at=CASE WHEN started_at IS NULL THEN ? ELSE started_at END,request_id=?,native_actor_name=?,native_template_name=?,native_template_uid=?,native_template_digest=? WHERE swarm_id=? AND sequence=? AND node_id=? AND state='pending'`, nowRFC3339(), r.RequestID, r.ActorName, r.TemplateName, r.TemplateUID, r.TemplateDigest, r.SwarmID, r.Sequence, r.NodeID)
 			if err == nil {
 				var changed int64
 				changed, err = result.RowsAffected()
@@ -123,16 +127,20 @@ func (s *Store) BindPipelineNativeActor(ctx context.Context, r PipelineNativeRes
 	if !validNativeReservation(r) || !validPipelineField(uid) || incarnation < 1 {
 		return errors.New("invalid native pipeline binding")
 	}
+	// Шаги принадлежат рою: расхождение ID означает устаревший вызов.
+	if r.RunID != r.SwarmID {
+		return ErrPipelineVisitConflict
+	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
-		run, err := s.GetPipelineRun(ctx, r.SwarmID, r.RunID)
+		w, err := s.GetSwarm(ctx, r.SwarmID)
 		if err != nil {
 			return err
 		}
-		if run.Source != nil {
+		if w.Source != nil {
 			return ErrPipelineSourceUnverified
 		}
 		name := nativeActorName(r)
-		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET actor_uid=?,actor_incarnation=? WHERE run_id=? AND sequence=? AND node_id=? AND request_id=? AND native_actor_name=? AND native_template_name=? AND native_template_uid=? AND native_template_digest=? AND state='inflight' AND actor_uid IS NULL AND actor_incarnation IS NULL AND sequence=(SELECT MAX(sequence) FROM pipeline_steps WHERE run_id=?)`, uid, incarnation, r.RunID, r.Sequence, r.NodeID, r.RequestID, name, r.TemplateName, r.TemplateUID, r.TemplateDigest, r.RunID)
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET actor_uid=?,actor_incarnation=? WHERE swarm_id=? AND sequence=? AND node_id=? AND request_id=? AND native_actor_name=? AND native_template_name=? AND native_template_uid=? AND native_template_digest=? AND state='inflight' AND actor_uid IS NULL AND actor_incarnation IS NULL AND sequence=(SELECT MAX(sequence) FROM swarm_steps WHERE swarm_id=?)`, uid, incarnation, r.SwarmID, r.Sequence, r.NodeID, r.RequestID, name, r.TemplateName, r.TemplateUID, r.TemplateDigest, r.RunID)
 		if err != nil {
 			return err
 		}
@@ -144,7 +152,7 @@ func (s *Store) BindPipelineNativeActor(ctx context.Context, r PipelineNativeRes
 			return nil
 		}
 		var count int
-		err = s.conn(ctx).QueryRowContext(ctx, `SELECT count(*) FROM pipeline_steps WHERE run_id=? AND sequence=? AND node_id=? AND request_id=? AND native_actor_name=? AND native_template_name=? AND native_template_uid=? AND native_template_digest=? AND actor_uid=? AND actor_incarnation=? AND state='inflight' AND sequence=(SELECT MAX(sequence) FROM pipeline_steps WHERE run_id=?)`, r.RunID, r.Sequence, r.NodeID, r.RequestID, name, r.TemplateName, r.TemplateUID, r.TemplateDigest, uid, incarnation, r.RunID).Scan(&count)
+		err = s.conn(ctx).QueryRowContext(ctx, `SELECT count(*) FROM swarm_steps WHERE swarm_id=? AND sequence=? AND node_id=? AND request_id=? AND native_actor_name=? AND native_template_name=? AND native_template_uid=? AND native_template_digest=? AND actor_uid=? AND actor_incarnation=? AND state='inflight' AND sequence=(SELECT MAX(sequence) FROM swarm_steps WHERE swarm_id=?)`, r.SwarmID, r.Sequence, r.NodeID, r.RequestID, name, r.TemplateName, r.TemplateUID, r.TemplateDigest, uid, incarnation, r.RunID).Scan(&count)
 		if err != nil {
 			return err
 		}
@@ -160,7 +168,11 @@ func (s *Store) MarkPipelineNativeActorUncertain(ctx context.Context, r Pipeline
 	if !validNativeReservation(r) {
 		return errors.New("invalid native pipeline reservation")
 	}
-	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state='unconfirmed' WHERE run_id=? AND sequence=? AND node_id=? AND request_id=? AND native_actor_name=? AND native_template_name=? AND native_template_uid=? AND native_template_digest=? AND state IN ('inflight','unconfirmed') AND actor_uid IS NULL AND actor_incarnation IS NULL AND run_id IN (SELECT id FROM pipeline_runs WHERE swarm_id=?)`, r.RunID, r.Sequence, r.NodeID, r.RequestID, nativeActorName(r), r.TemplateName, r.TemplateUID, r.TemplateDigest, r.SwarmID)
+	// Шаги принадлежат рою: расхождение ID означает устаревший вызов.
+	if r.RunID != r.SwarmID {
+		return ErrPipelineVisitConflict
+	}
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='unconfirmed' WHERE swarm_id=? AND sequence=? AND node_id=? AND request_id=? AND native_actor_name=? AND native_template_name=? AND native_template_uid=? AND native_template_digest=? AND state IN ('inflight','unconfirmed') AND actor_uid IS NULL AND actor_incarnation IS NULL`, r.SwarmID, r.Sequence, r.NodeID, r.RequestID, nativeActorName(r), r.TemplateName, r.TemplateUID, r.TemplateDigest)
 	if err != nil {
 		return err
 	}

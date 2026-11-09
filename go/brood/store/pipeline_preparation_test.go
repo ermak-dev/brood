@@ -18,19 +18,19 @@ func preparationFixture(t *testing.T) (*Store, PipelinePreparationRequest) {
 	}
 	graph := strings.Replace(actorStartGraph, "template: development", "managedPool: pve", 1)
 	source := PipelineSource{Origin: "https://git.example.org/team/repo", Commit: strings.Repeat("a", 40)}
-	if err := s.CreatePipelineRun(ctx, PipelineRun{ID: "unsupported", SwarmID: "one", OwnerID: "u", Graph: []byte(graph), Status: "running", Source: &source}); err == nil {
-		t.Fatal("managed run became executable before dispatcher support")
+	if err := s.AttachSwarmGraph(ctx, "one", []byte(graph), "release", 1, "rev", &source); err == nil {
+		t.Fatal("managed graph became executable before dispatcher support")
 	}
 	if err := s.WithTx(ctx, func(ctx context.Context) error {
-		if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES ('run','one','u',?,'running')`, []byte(graph)); err != nil {
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET graph=?,execution='running',definition_name='release',definition_version=1,definition_revision='rev',updated_at='now' WHERE id='one'`, []byte(graph)); err != nil {
 			return err
 		}
-		_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_sources(run_id,origin,commit_sha) VALUES ('run',?,?)`, source.Origin, source.Commit)
+		_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_sources(swarm_id,origin,commit_sha) VALUES ('one',?,?)`, source.Origin, source.Commit)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return s, PipelinePreparationRequest{SwarmID: "one", RunID: "run", NodeID: "actor", Sequence: 1, RequestID: "request", UserID: "u", Actor: managedRequest("dedicated", "one", 101)}
+	return s, PipelinePreparationRequest{SwarmID: "one", RunID: "one", NodeID: "actor", Sequence: 1, RequestID: "request", UserID: "u", Actor: managedRequest("dedicated", "one", 101)}
 }
 
 func TestPipelinePreparationReservesDedicatedActorOnce(t *testing.T) {
@@ -81,11 +81,11 @@ func TestPipelinePreparationReservesDedicatedActorOnce(t *testing.T) {
 	if err != nil || actor.SwarmID != "one" || actor.Origin != "https://git.example.org/team/repo" {
 		t.Fatalf("actor: %+v %v", actor, err)
 	}
-	visits, err := s.ListPipelineVisits(ctx, "one", "run")
+	visits, err := s.SwarmSteps(ctx, "one")
 	if err != nil || len(visits) != 1 || visits[0].State != "preparing" || visits[0].NodeID != req.NodeID || visits[0].Sequence != req.Sequence || visits[0].ActorUID != req.Actor.UID || visits[0].ActorIncarnation != 1 || visits[0].RequestID != req.RequestID {
 		t.Fatalf("preparation not bound to visit: %+v %v", visits, err)
 	}
-	if _, err := s.AppendPipelineVisit(ctx, "one", "run", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: req.Actor.UID, ActorIncarnation: 1, RequestID: req.RequestID}); !errors.Is(err, ErrPipelineSourceUnverified) {
+	if _, err := s.AppendPipelineVisit(ctx, "one", "one", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: req.Actor.UID, ActorIncarnation: 1, RequestID: req.RequestID}); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("preparation authorized dispatch: %v", err)
 	}
 }
@@ -100,7 +100,7 @@ func TestPipelinePreparationRefusesExistingActorAndChangedRequest(t *testing.T) 
 	if _, err := s.ReservePipelinePreparation(ctx, req, allow); err == nil {
 		t.Fatal("reused an existing actor")
 	}
-	if _, err := s.GetPipelineRun(ctx, "one", "run"); err != nil {
+	if _, err := s.GetSwarm(ctx, "one"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -157,13 +157,13 @@ func TestPipelinePreparationBindingIsImmutable(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, statement := range []string{
-			`DELETE FROM pipeline_preparations WHERE run_id='run'`,
-			`UPDATE pipeline_preparations SET request_digest='forged' WHERE run_id='run'`,
-			`INSERT OR REPLACE INTO pipeline_preparations SELECT run_id,sequence,node_id,request_id,actor_uid,actor_incarnation,pool_uid,pool_revision,request_digest,printf('%064d',0),state,created_at FROM pipeline_preparations WHERE run_id='run'`,
-			`DELETE FROM pipeline_steps WHERE run_id='run'`,
-			`UPDATE pipeline_steps SET actor_uid='other',node_id='other',state='completed' WHERE run_id='run' AND sequence=1`,
-			`INSERT INTO pipeline_steps(run_id,sequence,node_id,state) VALUES ('run',2,'actor','pending')`,
-			`INSERT OR REPLACE INTO pipeline_steps(run_id,sequence,node_id,state) VALUES ('run',1,'actor','pending')`,
+			`DELETE FROM pipeline_preparations WHERE swarm_id='one'`,
+			`UPDATE pipeline_preparations SET request_digest='forged' WHERE swarm_id='one'`,
+			`INSERT OR REPLACE INTO pipeline_preparations SELECT swarm_id,sequence,node_id,request_id,actor_uid,actor_incarnation,pool_uid,pool_revision,request_digest,printf('%064d',0),state,created_at FROM pipeline_preparations WHERE swarm_id='one'`,
+			`DELETE FROM swarm_steps WHERE swarm_id='one' AND sequence=1`,
+			`UPDATE swarm_steps SET actor_uid='other',node_id='other',state='completed' WHERE swarm_id='one' AND sequence=1`,
+			`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES ('one',2,'actor','pending')`,
+			`INSERT OR REPLACE INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES ('one',1,'actor','pending')`,
 			`INSERT OR REPLACE INTO managed_actors SELECT * FROM managed_actors WHERE uid='dedicated'`,
 		} {
 			if _, err := s.db.Exec(statement); err == nil {
@@ -171,11 +171,11 @@ func TestPipelinePreparationBindingIsImmutable(t *testing.T) {
 			}
 		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM pipeline_runs WHERE id='run'`); err == nil {
+	if _, err := s.db.Exec(`DELETE FROM swarms WHERE id='one'`); err == nil {
 		t.Fatal("deleted run while its actor reservation is unresolved")
 	}
-	if _, err := s.GetPipelineRun(ctx, "one", "run"); err != nil {
-		t.Fatalf("run lost after refused deletion: %v", err)
+	if _, err := s.GetSwarm(ctx, "one"); err != nil {
+		t.Fatalf("swarm lost after refused deletion: %v", err)
 	}
 	if _, err := s.GetManagedActor(ctx, req.Actor.UID); err != nil {
 		t.Fatalf("reserved actor lost: %v", err)
@@ -188,10 +188,10 @@ func TestPipelinePreparationBlocksParentDeletion(t *testing.T) {
 	if _, err := s.ReservePipelinePreparation(ctx, req, func(context.Context) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM pipeline_runs WHERE id='run'`); err == nil {
+	if _, err := s.db.Exec(`DELETE FROM swarms WHERE id='one'`); err == nil {
 		t.Fatal("deleted run while its actor reservation is unresolved")
 	}
-	if _, err := s.GetPipelineRun(ctx, "one", "run"); err != nil {
+	if _, err := s.GetSwarm(ctx, "one"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -206,7 +206,7 @@ func TestPipelinePreparationRejectsStaleVisitAndPoolRevision(t *testing.T) {
 				t.Fatal(err)
 			}
 			if scenario == "visit" {
-				if _, err := s.db.Exec(`DROP TRIGGER pipeline_preparations_step_update_fence; UPDATE pipeline_steps SET state='completed' WHERE run_id='run' AND sequence=1`); err != nil {
+				if _, err := s.db.Exec(`DROP TRIGGER swarm_graph_immutable; DROP TRIGGER pipeline_preparations_step_update_fence; UPDATE swarm_steps SET state='completed' WHERE swarm_id='one' AND sequence=1`); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -242,7 +242,7 @@ func TestPipelinePreparationRecoveryMarksUnconfirmed(t *testing.T) {
 	if _, err := s.ReservePipelinePreparation(ctx, req, allow); !errors.Is(err, ErrPipelinePreparationConflict) {
 		t.Fatalf("replay after recovery: %v", err)
 	}
-	visits, err := s.ListPipelineVisits(ctx, "one", "run")
+	visits, err := s.SwarmSteps(ctx, "one")
 	if err != nil || len(visits) != 1 || visits[0].State != "unconfirmed" {
 		t.Fatalf("recovered visit: %+v %v", visits, err)
 	}
@@ -250,9 +250,9 @@ func TestPipelinePreparationRecoveryMarksUnconfirmed(t *testing.T) {
 		t.Fatalf("reservation lost actor: %v", err)
 	}
 	for _, statement := range []string{
-		`UPDATE pipeline_preparations SET state='reserved' WHERE run_id='run'`,
-		`UPDATE pipeline_steps SET state='preparing' WHERE run_id='run'`,
-		`DELETE FROM pipeline_runs WHERE id='run'`,
+		`UPDATE pipeline_preparations SET state='reserved' WHERE swarm_id='one'`,
+		`UPDATE swarm_steps SET state='preparing' WHERE swarm_id='one'`,
+		`DELETE FROM swarms WHERE id='one'`,
 	} {
 		if _, err := s.db.Exec(statement); err == nil {
 			t.Fatalf("unconfirmed preparation could be revived or removed through %s", statement)

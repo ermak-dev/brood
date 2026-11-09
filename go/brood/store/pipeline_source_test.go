@@ -9,11 +9,6 @@ import (
 	"testing"
 )
 
-func createLegacyPipelineRun(ctx context.Context, s *Store, r PipelineRun) error {
-	_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES (?,?,?,?,?)`, r.ID, r.SwarmID, r.OwnerID, r.Graph, r.Status)
-	return err
-}
-
 func sourceTestStore(t *testing.T) *Store {
 	t.Helper()
 	s := newTestStore(t)
@@ -23,55 +18,143 @@ func sourceTestStore(t *testing.T) *Store {
 	return s
 }
 
+// FEATURE: Привязка снимка графа к рою со снимком источника (#206).
+// SPEC: AttachSwarmGraph валидирует граф и личность определения, источник
+// обязателен, привязка атомарна и одинока: второй граф не принимается.
+// RESULT: IMPLEMENTED — снимок и источник живут на рое.
+// STATUS: DONE
+func TestAttachSwarmGraph(t *testing.T) {
+	ctx := context.Background()
+	s := sourceTestStore(t)
+	source := &PipelineSource{Origin: "https://git.example.org/team/repo.git", Commit: strings.Repeat("a", 40)}
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 3, "cafebabedeadbeefcafebabedeadbeef", source); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetSwarm(ctx, "s")
+	if err != nil || string(got.Graph) != actorStartGraph || got.Execution != "idle" {
+		t.Fatalf("attached swarm: graph=%v execution=%q err=%v", got.Graph, got.Execution, err)
+	}
+	if got.DefinitionName != "release" || got.DefinitionVersion != 3 || got.DefinitionRevision != "cafebabedeadbeefcafebabedeadbeef" {
+		t.Fatalf("definition identity: %q %d %q", got.DefinitionName, got.DefinitionVersion, got.DefinitionRevision)
+	}
+	if got.Source == nil || got.Source.Origin != source.Origin || got.Source.Commit != source.Commit {
+		t.Fatalf("source snapshot: %+v", got.Source)
+	}
+	// Повторная привязка, в том числе с другим источником — отказ.
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 3, "cafebabedeadbeefcafebabedeadbeef", source); err == nil {
+		t.Fatal("second graph attached")
+	}
+	if err := s.AttachSwarmGraph(ctx, "missing", []byte(actorStartGraph), "release", 1, "rev", source); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing swarm: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		defName string
+		defVer  int64
+		defRev  string
+		source  *PipelineSource
+	}{
+		{"empty definition name", "", 1, "rev", source},
+		{"zero version", "release", 0, "rev", source},
+		{"nil source", "release", 1, "rev", nil},
+	} {
+		if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), tc.defName, tc.defVer, tc.defRev, tc.source); err == nil {
+			t.Errorf("%s accepted", tc.name)
+		}
+	}
+}
+
+// TestSwarmGraphImmutable: снимок графа и личность определения неизменяемы
+// после привязки — прямой SQL-запись ловят триггеры реестра (#206).
+func TestSwarmGraphImmutable(t *testing.T) {
+	ctx := context.Background()
+	s := sourceTestStore(t)
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`UPDATE swarms SET graph=x'00' WHERE id='s'`,
+		`UPDATE swarms SET graph=NULL WHERE id='s'`,
+		`UPDATE swarms SET definition_name='other' WHERE id='s'`,
+		`UPDATE swarms SET definition_version=2 WHERE id='s'`,
+		`UPDATE swarms SET definition_revision='other' WHERE id='s'`,
+	} {
+		if _, err := s.db.Exec(statement); err == nil {
+			t.Fatalf("graph snapshot was mutable through %s", statement)
+		}
+	}
+	got, err := s.GetSwarm(ctx, "s")
+	if err != nil || string(got.Graph) != actorStartGraph || got.DefinitionName != "release" {
+		t.Fatalf("graph survived: %+v %v", got, err)
+	}
+}
+
+// TestPipelineSourceSnapshot: снимок источника неизменяем на новом ключе роя,
+// включая удаление роя — оно запрещено, пока снимок жив (#206).
 func TestPipelineSourceSnapshot(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
 	source := &PipelineSource{Origin: "https://git.example.org/team/repo.git", Commit: strings.Repeat("a", 40)}
-	run := PipelineRun{ID: "bound", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running", Source: source}
-	if err := s.CreatePipelineRun(ctx, run); err != nil {
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", source); err != nil {
 		t.Fatal(err)
 	}
 	source.Origin = "https://other.example.org/repo"
-	got, err := s.GetPipelineRun(ctx, "s", "bound")
+	got, err := s.GetSwarm(ctx, "s")
 	if err != nil || got.Source == nil || got.Source.Origin != "https://git.example.org/team/repo.git" || got.Source.Commit != strings.Repeat("a", 40) {
 		t.Fatalf("snapshot: %+v %v", got.Source, err)
-	}
-	if _, err := s.GetPipelineRun(ctx, "other", "bound"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("cross-swarm lookup: %v", err)
-	}
-	list, err := s.ListPipelineRuns(ctx, "s")
-	if err != nil || len(list) != 1 || list[0].Source == nil || *list[0].Source != *got.Source {
-		t.Fatalf("list: %+v %v", list, err)
 	}
 	for _, recursive := range []int{0, 1} {
 		if _, err := s.db.Exec(fmt.Sprintf(`PRAGMA recursive_triggers=%d`, recursive)); err != nil {
 			t.Fatal(err)
 		}
 		for _, statement := range []string{
-			`UPDATE pipeline_sources SET origin='https://changed.example.org/repo' WHERE run_id='bound'`,
-			`DELETE FROM pipeline_sources WHERE run_id='bound'`,
-			`INSERT OR REPLACE INTO pipeline_sources(run_id,origin,commit_sha) VALUES ('bound','https://changed.example.org/repo','0000000000000000000000000000000000000000')`,
-			`INSERT OR REPLACE INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES ('bound','s','u',x'00','running')`,
+			`UPDATE pipeline_sources SET origin='https://changed.example.org/repo' WHERE swarm_id='s'`,
+			`DELETE FROM pipeline_sources WHERE swarm_id='s'`,
+			`INSERT OR REPLACE INTO pipeline_sources(swarm_id,origin,commit_sha) VALUES ('s','https://changed.example.org/repo','0000000000000000000000000000000000000000')`,
+			`INSERT OR REPLACE INTO swarms(id,project_id,owner_id,name,atespace_name,created_at,updated_at,graph) VALUES ('s','p','u','swarm','space','now','now',x'00')`,
 		} {
 			if _, err := s.db.Exec(statement); err == nil {
 				t.Fatalf("source snapshot was mutable through %s", statement)
 			}
 		}
 	}
-	if _, err := s.db.Exec(`DELETE FROM pipeline_runs WHERE id='bound'`); err != nil {
-		t.Fatalf("run cascade: %v", err)
-	}
 }
 
-func TestPipelineRunRequiresSource(t *testing.T) {
+// TestSwarmGraphSurvivesDefinitionDeletion: удаление определения из каталога
+// не меняет и не обнуляет снимок и записанную личность определения у роя (#206).
+func TestSwarmGraphSurvivesDefinitionDeletion(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
-	err := s.CreatePipelineRun(ctx, PipelineRun{ID: "new", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running"})
-	if err == nil {
-		t.Fatal("new run without a source was accepted")
+	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := s.GetPipelineRun(ctx, "s", "new"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unbound run persisted: %v", err)
+	yes := func(context.Context) bool { return true }
+	definition := strings.Replace(actorStartGraph, "name: actor-start", "name: release", 1)
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"release": definition}, yes); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetWorkflowDefinition(ctx, "p", "release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Пока рой несёт снимок — удаление определения запрещено.
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", "release", yes); err == nil {
+		t.Fatal("deleted definition while its snapshot lives on a swarm")
+	}
+	// Личность определена значениями: строку определения удаляем напрямую,
+	// как это сделала бы будущая политика удаления, снимок должен уцелеть.
+	if _, err := s.db.Exec(`DELETE FROM workflow_definitions WHERE project_id='p' AND name='release'`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetSwarm(ctx, "s")
+	if err != nil || got.Graph == nil || string(got.Graph) != actorStartGraph {
+		t.Fatalf("snapshot changed after definition deletion: %+v %v", got, err)
+	}
+	if got.DefinitionName != "release" || got.DefinitionVersion != stored.Version || got.DefinitionRevision != "rev" {
+		t.Fatalf("definition identity changed: %q %d %q", got.DefinitionName, got.DefinitionVersion, got.DefinitionRevision)
 	}
 }
 
@@ -81,12 +164,13 @@ func TestPipelineSourceInsertRollback(t *testing.T) {
 	if _, err := s.db.Exec(`CREATE TRIGGER reject_pipeline_source BEFORE INSERT ON pipeline_sources BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := s.CreatePipelineRun(ctx, PipelineRun{ID: "partial", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running", Source: &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}})
+	err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)})
 	if err == nil {
 		t.Fatal("source insert unexpectedly succeeded")
 	}
-	if _, err := s.GetPipelineRun(ctx, "s", "partial"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("partial run persisted: %v", err)
+	got, err := s.GetSwarm(ctx, "s")
+	if err != nil || got.Graph != nil {
+		t.Fatalf("partial attach persisted: %+v %v", got, err)
 	}
 }
 
@@ -97,7 +181,7 @@ func TestPipelineSourceNestedInsertRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
-		err := s.CreatePipelineRun(ctx, PipelineRun{ID: "partial", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running", Source: &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}})
+		err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)})
 		if err == nil {
 			return errors.New("source insert unexpectedly succeeded")
 		}
@@ -106,12 +190,13 @@ func TestPipelineSourceNestedInsertRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetPipelineRun(ctx, "s", "partial"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("partial run persisted after outer commit: %v", err)
+	got, err := s.GetSwarm(ctx, "s")
+	if err != nil || got.Graph != nil {
+		t.Fatalf("partial attach persisted after outer commit: %+v %v", got, err)
 	}
 }
 
-func TestPipelineSourceValidationAndNoPartialRun(t *testing.T) {
+func TestPipelineSourceValidationAndNoPartialAttach(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
 	for i, source := range []PipelineSource{
@@ -121,40 +206,143 @@ func TestPipelineSourceValidationAndNoPartialRun(t *testing.T) {
 		{Origin: "https://git.example.org/repo", Commit: strings.Repeat("A", 40)},
 		{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 39)},
 	} {
-		run := PipelineRun{ID: "bad", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running", Source: &source}
-		if err := s.CreatePipelineRun(ctx, run); err == nil || strings.Contains(err.Error(), "secret") {
+		if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &source); err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("case %d: %v", i, err)
 		}
-		if _, err := s.GetPipelineRun(ctx, "s", "bad"); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("case %d inserted run: %v", i, err)
+		got, err := s.GetSwarm(ctx, "s")
+		if err != nil || got.Graph != nil {
+			t.Fatalf("case %d attached graph: %v", i, err)
 		}
 	}
 }
 
-func TestBoundPipelineRefusesActorEffects(t *testing.T) {
+func TestBoundSwarmRefusesActorEffects(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
-	run := PipelineRun{ID: "bound", SwarmID: "s", OwnerID: "u", Graph: []byte(actorStartGraph), Status: "running", Source: &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}}
-	if err := s.CreatePipelineRun(ctx, run); err != nil {
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSwarmExecution(ctx, "s", "running"); err != nil {
 		t.Fatal(err)
 	}
 	visit := PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "uid", ActorIncarnation: 1, RequestID: "request"}
-	if _, err := s.AppendPipelineVisit(ctx, "s", "bound", visit); !errors.Is(err, ErrPipelineSourceUnverified) {
+	if _, err := s.AppendPipelineVisit(ctx, "s", "s", visit); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("inflight: %v", err)
 	}
-	reservation := PipelineNativeReservation{SwarmID: "s", RunID: "bound", Sequence: 1, NodeID: "actor", RequestID: "request", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
+	reservation := PipelineNativeReservation{SwarmID: "s", RunID: "s", Sequence: 1, NodeID: "actor", RequestID: "request", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
 	if _, err := s.ReservePipelineNativeActor(ctx, reservation); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("reservation: %v", err)
 	}
 	if err := s.BindPipelineNativeActor(ctx, reservation, "uid", 1); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("binding: %v", err)
 	}
-	if err := s.CompletePipelineActorVisit(ctx, "s", "bound", 1, "request", "uid", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
+	if err := s.CompletePipelineActorVisit(ctx, "s", "s", 1, "request", "uid", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("completion: %v", err)
 	}
-	visits, err := s.ListPipelineVisits(ctx, "s", "bound")
+	visits, err := s.SwarmSteps(ctx, "s")
 	if err != nil || len(visits) != 0 {
 		t.Fatalf("unexpected visit: %+v %v", visits, err)
+	}
+}
+
+// TestSwarmExecutionSeparateFromState: исполнение и инфраструктурное
+// состояние роя — разные поля; остановка графа не выглядит удалением
+// роя, а provisioning — запуском (#206). Падает, если значения начнут
+// писаться в одно поле или пересекаться словарём.
+func TestSwarmExecutionSeparateFromState(t *testing.T) {
+	ctx := context.Background()
+	s := sourceTestStore(t)
+	if _, err := s.db.Exec(`UPDATE swarms SET execution='running' WHERE id='s'`); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"provisioning", "active", "deleting", "error", "deleted"} {
+		if _, err := s.db.Exec(`UPDATE swarms SET state=? WHERE id='s'`, state); err != nil {
+			t.Fatalf("state %q: %v", state, err)
+		}
+		// Значение state не является значением execution и наоборот.
+		if _, err := s.db.Exec(`UPDATE swarms SET execution=? WHERE id='s'`, state); err == nil {
+			t.Fatalf("state value %q accepted as execution", state)
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE swarms SET execution='invented',state='active' WHERE id='s'`); err == nil {
+		t.Fatal("invented execution accepted")
+	}
+	if _, err := s.db.Exec(`UPDATE swarms SET state='active' WHERE id='s'`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetSwarm(ctx, "s")
+	if err != nil || got.State != "active" {
+		t.Fatalf("state: %q %v", got.State, err)
+	}
+	if err := s.SetSwarmExecution(ctx, "s", "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetSwarm(ctx, "s")
+	if err != nil || got.Execution != "stopped" || got.State != "active" {
+		t.Fatalf("execution stop changed infrastructure state: %+v %v", got, err)
+	}
+	if err := s.SetSwarmExecution(ctx, "s", "running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSwarmState(ctx, "s", "deleting"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetSwarm(ctx, "s")
+	if err != nil || got.Execution != "running" || got.State != "deleting" {
+		t.Fatalf("state change clobbered execution: %+v %v", got, err)
+	}
+}
+
+// TestSwarmStepTimestamps: started_at проставляется при начале шага,
+// finished_at — при завершении (#206). Падает, если поля перестанут
+// заполняться.
+func TestSwarmStepTimestamps(t *testing.T) {
+	ctx := context.Background()
+	s := swarmTestStore(t, "r")
+	if err := attachTestGraph(ctx, s, "r", runGraph); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
+		t.Fatal(err)
+	}
+	visits, err := s.SwarmSteps(ctx, "r")
+	if err != nil || len(visits) != 1 {
+		t.Fatalf("steps: %+v %v", visits, err)
+	}
+	if visits[0].StartedAt == nil || *visits[0].StartedAt == "" {
+		t.Fatalf("waiting step has no started_at: %+v", visits[0])
+	}
+	if visits[0].FinishedAt != nil {
+		t.Fatalf("unfinished step has finished_at: %+v", visits[0])
+	}
+	if err := s.AnswerPipelineVisit(ctx, "r", "r", 1, "success"); err != nil {
+		t.Fatal(err)
+	}
+	visits, err = s.SwarmSteps(ctx, "r")
+	if err != nil || len(visits) != 2 {
+		t.Fatalf("steps after answer: %+v %v", visits, err)
+	}
+	if visits[0].FinishedAt == nil || *visits[0].FinishedAt == "" {
+		t.Fatalf("answered step has no finished_at: %+v", visits[0])
+	}
+	// Актёрный шаг: started_at в момент перевода в inflight.
+	v, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "req"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	visits, err = s.SwarmSteps(ctx, "r")
+	if err != nil || len(visits) != 2 || visits[1].StartedAt == nil || *visits[1].StartedAt == "" {
+		t.Fatalf("inflight step has no started_at: %+v %v", visits, err)
+	}
+	if err := s.CompletePipelineActorVisit(ctx, "r", "r", v.Sequence, "req", "a", 1, "success"); err != nil {
+		t.Fatal(err)
+	}
+	visits, err = s.SwarmSteps(ctx, "r")
+	if err != nil || len(visits) != 3 {
+		t.Fatalf("steps after completion: %+v %v", visits, err)
+	}
+	if visits[1].FinishedAt == nil || *visits[1].FinishedAt == "" {
+		t.Fatalf("completed step has no finished_at: %+v", visits[1])
 	}
 }
 
@@ -168,7 +356,7 @@ func TestPipelineSourceForeignVersionRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`INSERT INTO users VALUES ('u','user',NULL,'hash',0,0,'now','now'); INSERT INTO projects VALUES ('p','project','now'); INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('s','p','u','swarm','space','now','now'); INSERT INTO swarm_members VALUES ('s','u','owner'); INSERT INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES ('legacy','s','u',?,'running')`, []byte(actorStartGraph)); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO users VALUES ('u','user',NULL,'hash',0,0,'now','now'); INSERT INTO projects VALUES ('p','project','now'); INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('s','p','u','swarm','space','now','now'); INSERT INTO swarm_members VALUES ('s','u','owner')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`PRAGMA user_version=14`); err != nil {

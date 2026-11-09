@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -45,43 +46,39 @@ goalGates: [done]
 func TestPipelineWireContract(t *testing.T) {
 	ts := newSubstrateServer(t, newFakeAteapi())
 	_, alice, bob, swarm := actorsSetup(t, ts.testServer)
-	user, err := ts.srv.store.GetUserByUsername(context.Background(), "alice")
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx := context.Background()
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
 	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, template: development, prompt: work}\n", 1)
 	graph = strings.Replace(graph, "  - {from: ask, to: done}", "  - {from: entry, to: ask}\n  - {from: ask, to: ask, condition: \"outcome=success\"}\n  - {from: ask, to: done, condition: \"outcome=fail\"}", 1)
-	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "wire", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(graph), Status: "running"}); err != nil {
+	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(graph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	entry, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, "wire", store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
+	entry, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, swarm, store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, "wire", entry.Sequence, "request", "worker", 1, "success"); err != nil {
+	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", "worker", 1, "success"); err != nil {
 		t.Fatal(err)
 	}
-	visits, err := ts.srv.store.ListPipelineVisits(ctx, swarm, "wire")
+	visits, err := ts.srv.store.SwarmSteps(ctx, swarm)
 	if err != nil || len(visits) != 2 || visits[1].NodeID != "ask" || visits[1].State != "waiting" {
 		t.Fatalf("first human visit: %+v %v", visits, err)
 	}
 	sequence := visits[1].Sequence
-	if err := ts.srv.store.AnswerPipelineVisit(ctx, swarm, "wire", sequence, "success"); err != nil {
+	if err := ts.srv.store.AnswerPipelineVisit(ctx, swarm, swarm, sequence, "success"); err != nil {
 		t.Fatal(err)
 	}
-	visits, err = ts.srv.store.ListPipelineVisits(ctx, swarm, "wire")
+	visits, err = ts.srv.store.SwarmSteps(ctx, swarm)
 	if err != nil || len(visits) != 3 {
 		t.Fatalf("visits: %+v %v", visits, err)
 	}
 	if visits[1].Sequence != sequence || visits[1].NodeID != "ask" || visits[1].State != "answered" || visits[1].Answer == nil || *visits[1].Answer != "success" || visits[2].Sequence != sequence+1 || visits[2].NodeID != "ask" || visits[2].State != "waiting" {
 		t.Fatalf("answer and successor: %+v", visits)
 	}
-	path := "/api/pipeline-runs/wire"
+	path := "/api/pipeline-runs/" + swarm
 	r, b, _ := ts.do(alice, "POST", path+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": sequence})
 	expectStatus(t, "retry before repeated gate", r, b, 200)
-	visits, err = ts.srv.store.ListPipelineVisits(ctx, swarm, "wire")
+	visits, err = ts.srv.store.SwarmSteps(ctx, swarm)
 	if err != nil || len(visits) != 3 || visits[2].State != "waiting" {
 		t.Fatalf("retry must not answer repeated gate: %+v %v", visits, err)
 	}
@@ -139,30 +136,35 @@ func TestPipelineActorStates(t *testing.T) {
 	ts := newSubstrateServer(t, newFakeAteapi())
 	_, alice, _, swarm := actorsSetup(t, ts.testServer)
 	ctx := context.Background()
-	user, err := ts.srv.store.GetUserByUsername(ctx, "alice")
-	if err != nil {
-		t.Fatal(err)
-	}
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
 	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, template: development, prompt: work}\n", 1)
 	graph = strings.Replace(graph, "  - {from: ask, to: done}", "  - {from: entry, to: ask}\n  - {from: ask, to: done}", 1)
+	// Каждый случай — отдельный рой проекта: один рой, один граф (#206).
+	sw, err := ts.srv.store.GetSwarm(ctx, swarm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := map[string]string{"failure": swarm}
+	r, b, _ := ts.do(alice, "POST", "/api/projects/"+sw.ProjectID+"/swarms", ts.csrf(alice), map[string]string{"name": "uncertain"})
+	expectStatus(t, "uncertain swarm", r, b, http.StatusCreated)
+	target["uncertain"], _ = b["id"].(string)
 	for _, tc := range []struct{ id, want string }{{"failure", "failed"}, {"uncertain", "unconfirmed"}} {
-		if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: tc.id, SwarmID: swarm, OwnerID: user.ID, Graph: []byte(graph), Status: "running"}); err != nil {
+		if err := insertSwarmGraph(ctx, ts.testServer, target[tc.id], []byte(graph), "running"); err != nil {
 			t.Fatal(err)
 		}
-		v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, tc.id, store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
+		v, err := ts.srv.store.AppendPipelineVisit(ctx, target[tc.id], target[tc.id], store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if tc.id == "failure" {
-			err = ts.srv.store.CompletePipelineActorVisit(ctx, swarm, tc.id, v.Sequence, "request", "worker", 1, "fail")
+			err = ts.srv.store.CompletePipelineActorVisit(ctx, target[tc.id], target[tc.id], v.Sequence, "request", "worker", 1, "fail")
 		} else {
 			err = ts.srv.store.RecoverPipelineActions(ctx)
 		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+tc.id, "", nil)
+		r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+target[tc.id], "", nil)
 		expectStatus(t, tc.id, r, b, 200)
 		nodes := b["nodes"].([]any)
 		node := nodes[0].(map[string]any)
@@ -181,21 +183,17 @@ func TestPipelineCompletedExit(t *testing.T) {
 	ts := newSubstrateServer(t, newFakeAteapi())
 	_, alice, _, swarm := actorsSetup(t, ts.testServer)
 	ctx := context.Background()
-	user, err := ts.srv.store.GetUserByUsername(ctx, "alice")
+	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(pipelineAPIGraph), "running"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, swarm, store.PipelineVisit{NodeID: "ask", State: "waiting"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := insertLegacyPipelineRun(ctx, ts.testServer, store.PipelineRun{ID: "exit-test", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(pipelineAPIGraph), Status: "running"}); err != nil {
+	if err := ts.srv.store.AnswerPipelineVisit(ctx, swarm, swarm, v.Sequence, "success"); err != nil {
 		t.Fatal(err)
 	}
-	v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, "exit-test", store.PipelineVisit{NodeID: "ask", State: "waiting"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ts.srv.store.AnswerPipelineVisit(ctx, swarm, "exit-test", v.Sequence, "success"); err != nil {
-		t.Fatal(err)
-	}
-	r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/exit-test", "", nil)
+	r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+swarm, "", nil)
 	expectStatus(t, "detail", r, b, 200)
 	nodes := b["nodes"].([]any)
 	node := nodes[len(nodes)-1].(map[string]any)
@@ -212,15 +210,11 @@ func TestPipelineCompletedExit(t *testing.T) {
 func TestPipelineHTTP(t *testing.T) {
 	ts := newSubstrateServer(t, newFakeAteapi())
 	_, alice, bob, swarm := actorsSetup(t, ts.testServer)
-	user, err := ts.srv.store.GetUserByUsername(context.Background(), "alice")
+	err := insertSwarmGraph(context.Background(), ts.testServer, swarm, []byte(pipelineAPIGraph), "waiting")
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = insertLegacyPipelineRun(context.Background(), ts.testServer, store.PipelineRun{ID: "pipeline-test", SwarmID: swarm, OwnerID: user.ID, Graph: []byte(pipelineAPIGraph), Status: "waiting_human"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	v, err := ts.srv.store.AppendPipelineVisit(context.Background(), swarm, "pipeline-test", store.PipelineVisit{NodeID: "ask", State: "waiting"})
+	v, err := ts.srv.store.AppendPipelineVisit(context.Background(), swarm, swarm, store.PipelineVisit{NodeID: "ask", State: "waiting"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +227,7 @@ func TestPipelineHTTP(t *testing.T) {
 	}
 	r, b, _ = ts.do(bob, "GET", list, "", nil)
 	expectStatus(t, "hidden list", r, b, 404)
-	path := "/api/pipeline-runs/pipeline-test"
+	path := "/api/pipeline-runs/" + swarm
 	r, b, _ = ts.do(bob, "GET", path, "", nil)
 	expectStatus(t, "hidden run", r, b, 404)
 	r, b, _ = ts.do(alice, "GET", path, "", nil)
@@ -257,9 +251,9 @@ func TestPipelineHTTP(t *testing.T) {
 	expectStatus(t, "csrf", r, b, 403)
 	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload)
 	expectStatus(t, "answer", r, b, 200)
-	stored, err := ts.srv.store.GetPipelineRun(context.Background(), swarm, "pipeline-test")
-	if err != nil || b["status"] != stored.Status {
-		t.Fatalf("answer response status %v, persisted status %q: %v", b["status"], stored.Status, err)
+	stored, err := ts.srv.store.GetSwarm(context.Background(), swarm)
+	if err != nil || b["status"] != legacyRunStatus(stored.Execution) {
+		t.Fatalf("answer response status %v, persisted execution %q: %v", b["status"], stored.Execution, err)
 	}
 	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload)
 	expectStatus(t, "viewer cannot replay", r, b, 404)
@@ -271,7 +265,7 @@ func TestPipelineHTTP(t *testing.T) {
 	expectStatus(t, "stale visit", r, b, 409)
 	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload)
 	expectStatus(t, "lost response retry", r, b, 200)
-	visits, err := ts.srv.store.ListPipelineVisits(context.Background(), swarm, "pipeline-test")
+	visits, err := ts.srv.store.SwarmSteps(context.Background(), swarm)
 	if err != nil || len(visits) != 2 {
 		t.Fatalf("retry must not create another visit: %+v %v", visits, err)
 	}

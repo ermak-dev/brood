@@ -1,7 +1,7 @@
 package server
 
 import (
-	"brood.dev/go/brood/piprender"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +10,7 @@ import (
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
 	"brood.dev/go/brood/pipeline"
+	"brood.dev/go/brood/piprender"
 	"brood.dev/go/brood/store"
 )
 
@@ -43,9 +44,22 @@ type pipelineRunJSON struct {
 	ProjectName string             `json:"projectName"`
 	Owner       string             `json:"owner"`
 	StartedAt   *string            `json:"startedAt"`
+	FinishedAt  *string            `json:"finishedAt,omitempty"`
 	CurrentNode string             `json:"currentNode,omitempty"`
 	Nodes       []pipelineNodeJSON `json:"nodes"`
 	Gate        *pipelineGateJSON  `json:"gate,omitempty"`
+}
+
+// legacyRunStatus переводит состояние исполнения роя (#206) в статус
+// прогона старого провода: маршруты /api/pipeline-runs остаются до
+// полной замены (#210/#211), но читают рой.
+func legacyRunStatus(execution string) string {
+	switch execution {
+	case "waiting":
+		return "waiting_human"
+	default:
+		return execution
+	}
 }
 
 func (s *Server) mountPipelineAPI() {
@@ -55,6 +69,9 @@ func (s *Server) mountPipelineAPI() {
 	s.mux.HandleFunc("POST /api/pipeline-runs/{run}/nodes/{node}/answer", s.pipelineAnswer)
 }
 
+// pipelineList отдаёт рои проекта как список «прогонов»: один рой с
+// графом — один прогон, рой без графа не попадает в список. Список
+// ограничен проектом роя из пути: чужой проект не виден.
 func (s *Server) pipelineList(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
@@ -70,12 +87,12 @@ func (s *Server) pipelineList(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, 404, "swarm not found")
 		return
 	}
-	runs, err := s.store.ListPipelineRuns(r.Context(), id)
+	target, err := s.store.GetSwarm(r.Context(), id)
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	visits, err := s.store.ListSwarmPipelineVisits(r.Context(), id)
+	swarms, err := s.store.ListSwarmsByProject(r.Context(), target.ProjectID)
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -85,9 +102,26 @@ func (s *Server) pipelineList(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	out := make([]pipelineRunJSON, 0, len(runs))
-	for _, run := range runs {
-		v, err := pipelineView(run, visits[run.ID], manage)
+	out := []pipelineRunJSON{}
+	for _, sw := range swarms {
+		if sw.Graph == nil {
+			continue
+		}
+		// Рой без права чтения для этого пользователя в список не попадает.
+		visible, err := s.app.Can(user.ID, app.ActionViewSwarm, app.SwarmRes(sw.ID))
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		if !visible {
+			continue
+		}
+		steps, err := s.store.SwarmSteps(r.Context(), sw.ID)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		v, err := s.pipelineView(r.Context(), sw, steps, manage)
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -97,43 +131,39 @@ func (s *Server) pipelineList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// pipelineFind scans swarm IDs because the store deliberately exposes only scoped run reads.
-func (s *Server) pipelineFind(w http.ResponseWriter, r *http.Request, action app.Action) (store.PipelineRun, bool) {
+// pipelineFind ищет рой-«прогон» по ID: до замены маршрутов (#210/#211)
+// {run} — это ID роя. Список роёв проходится явно: store намеренно не
+// даёт глобального чтения по произвольному ID без роя.
+func (s *Server) pipelineFind(w http.ResponseWriter, r *http.Request, action app.Action) (store.Swarm, bool) {
 	user, ok := currentUser(w, r)
 	if !ok {
-		return store.PipelineRun{}, false
+		return store.Swarm{}, false
 	}
-	swarms, err := s.gateway.Swarms()
+	id := r.PathValue("run")
+	target, err := s.store.GetSwarm(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) || err == nil && target.Graph == nil {
+		writeDetail(w, 404, "pipeline run not found")
+		return store.Swarm{}, false
+	}
 	if err != nil {
 		apiError(w, r, err)
-		return store.PipelineRun{}, false
+		return store.Swarm{}, false
 	}
-	for _, sw := range swarms {
-		allowed, e := s.app.Can(user.ID, action, app.SwarmRes(sw.ID))
-		if e != nil {
-			apiError(w, r, e)
-			return store.PipelineRun{}, false
-		}
-		if !allowed {
-			continue
-		}
-		run, e := s.store.GetPipelineRun(r.Context(), sw.ID, r.PathValue("run"))
-		if errors.Is(e, store.ErrNotFound) {
-			continue
-		}
-		if e != nil {
-			apiError(w, r, e)
-			return store.PipelineRun{}, false
-		}
-		return run, true
+	allowed, err := s.app.Can(user.ID, action, app.SwarmRes(target.ID))
+	if err != nil {
+		apiError(w, r, err)
+		return store.Swarm{}, false
 	}
-	writeDetail(w, 404, "pipeline run not found")
-	return store.PipelineRun{}, false
+	if !allowed {
+		writeDetail(w, 404, "pipeline run not found")
+		return store.Swarm{}, false
+	}
+	return target, true
 }
 
-// pipelineRunView renders a run found by pipelineFind for the request user.
-func (s *Server) pipelineRunView(r *http.Request, run store.PipelineRun) (pipelineRunJSON, error) {
-	visits, err := s.store.ListPipelineVisits(r.Context(), run.SwarmID, run.ID)
+// pipelineRunView renders a swarm for the request user.
+func (s *Server) pipelineRunView(r *http.Request, sw store.Swarm) (pipelineRunJSON, error) {
+	steps, err := s.store.SwarmSteps(r.Context(), sw.ID)
 	if err != nil {
 		return pipelineRunJSON{}, err
 	}
@@ -141,26 +171,35 @@ func (s *Server) pipelineRunView(r *http.Request, run store.PipelineRun) (pipeli
 	if !ok {
 		return pipelineRunJSON{}, errors.New("authentication required")
 	}
-	manage, err := s.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(run.SwarmID))
+	manage, err := s.app.Can(user.ID, app.ActionManageSwarm, app.SwarmRes(sw.ID))
 	if err != nil {
 		return pipelineRunJSON{}, err
 	}
-	return pipelineView(run, visits, manage)
+	return s.pipelineView(r.Context(), sw, steps, manage)
 }
 
-// pipelineView renders a run and its visits; manage offers the waiting human gate.
-func pipelineView(run store.PipelineRun, visits []store.PipelineVisit, manage bool) (pipelineRunJSON, error) {
-	d, err := pipeline.Parse(string(run.Graph), "pipeline")
+// pipelineView renders a swarm graph and its steps; manage offers the
+// waiting human gate. startedAt/finishedAt идут из реальных моментов
+// начала и завершения шагов (#206).
+func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store.PipelineVisit, manage bool) (pipelineRunJSON, error) {
+	d, err := pipeline.Parse(string(sw.Graph), "pipeline")
 	if err != nil {
 		return pipelineRunJSON{}, err
 	}
-	o := run.Origin
-	result := pipelineRunJSON{ID: run.ID, Name: d.Name, Status: run.Status, SwarmID: run.SwarmID, SwarmName: o.SwarmName, ProjectID: o.ProjectID, ProjectName: o.ProjectName, Owner: o.OwnerUsername, Nodes: []pipelineNodeJSON{}}
-	for _, v := range visits {
+	project, err := s.store.GetProject(ctx, sw.ProjectID)
+	if err != nil {
+		return pipelineRunJSON{}, err
+	}
+	owner, err := s.store.GetUser(ctx, sw.OwnerID)
+	if err != nil {
+		return pipelineRunJSON{}, err
+	}
+	result := pipelineRunJSON{ID: sw.ID, Name: d.Name, Status: legacyRunStatus(sw.Execution), SwarmID: sw.ID, SwarmName: sw.Name, ProjectID: project.ID, ProjectName: project.Name, Owner: owner.Username, Nodes: []pipelineNodeJSON{}}
+	for _, v := range steps {
 		n := d.Nodes[v.NodeID]
 		row := pipelineNodeJSON{ID: v.NodeID, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName}
 		switch v.State {
-		case "waiting", "inflight":
+		case "waiting", "inflight", "preparing":
 			row.Status = "active"
 		case "answered":
 			row.Status = "done"
@@ -178,12 +217,16 @@ func pipelineView(run store.PipelineRun, visits []store.PipelineVisit, manage bo
 		}
 		result.Nodes = append(result.Nodes, row)
 	}
-	if len(visits) > 0 {
-		v := visits[len(visits)-1]
+	if len(steps) > 0 {
+		v := steps[len(steps)-1]
 		result.CurrentNode = v.NodeID
+		if v.StartedAt != nil {
+			result.StartedAt = v.StartedAt
+		}
+		result.FinishedAt = lastFinishedAt(steps)
 		n := d.Nodes[v.NodeID]
-		if manage && v.State == "waiting" && n.Type == "human" && (run.Status == "running" || run.Status == "waiting_human") {
-			gate := &pipelineGateJSON{RunID: run.ID, NodeID: v.NodeID, Sequence: v.Sequence, Question: n.Question, Kind: "multiple_choice", Options: []pipelineOptionJSON{}}
+		if manage && v.State == "waiting" && n.Type == "human" && activeExecutionView(sw.Execution) {
+			gate := &pipelineGateJSON{RunID: sw.ID, NodeID: v.NodeID, Sequence: v.Sequence, Question: n.Question, Kind: "multiple_choice", Options: []pipelineOptionJSON{}}
 			for _, o := range n.Options {
 				gate.Options = append(gate.Options, pipelineOptionJSON{ID: o.Outcome, Label: o.Label})
 			}
@@ -192,22 +235,39 @@ func pipelineView(run store.PipelineRun, visits []store.PipelineVisit, manage bo
 	}
 	return result, nil
 }
+
+// activeExecutionView — прикладной взгляд сервера на активность графа.
+func activeExecutionView(execution string) bool {
+	return execution == "running" || execution == "waiting"
+}
+
+// lastFinishedAt возвращает момент завершения последнего завершённого
+// шага: время окончания прогона.
+func lastFinishedAt(steps []store.PipelineVisit) *string {
+	for i := len(steps) - 1; i >= 0; i-- {
+		if steps[i].FinishedAt != nil {
+			return steps[i].FinishedAt
+		}
+	}
+	return nil
+}
+
 func (s *Server) pipelineGraph(w http.ResponseWriter, r *http.Request) {
-	run, ok := s.pipelineFind(w, r, app.ActionViewSwarm)
+	sw, ok := s.pipelineFind(w, r, app.ActionViewSwarm)
 	if !ok {
 		return
 	}
-	d, err := pipeline.Parse(string(run.Graph), "pipeline")
+	d, err := pipeline.Parse(string(sw.Graph), "pipeline")
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	visits, err := s.store.ListPipelineVisits(r.Context(), run.SwarmID, run.ID)
+	steps, err := s.store.SwarmSteps(r.Context(), sw.ID)
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	view, err := pipelineView(run, visits, false)
+	view, err := s.pipelineView(r.Context(), sw, steps, false)
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -224,11 +284,11 @@ func (s *Server) pipelineGraph(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pipelineDetail(w http.ResponseWriter, r *http.Request) {
-	run, ok := s.pipelineFind(w, r, app.ActionViewSwarm)
+	sw, ok := s.pipelineFind(w, r, app.ActionViewSwarm)
 	if !ok {
 		return
 	}
-	view, err := s.pipelineRunView(r, run)
+	view, err := s.pipelineRunView(r, sw)
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -246,7 +306,7 @@ func pipelineAnswerError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
-	run, ok := s.pipelineFind(w, r, app.ActionManageSwarm)
+	sw, ok := s.pipelineFind(w, r, app.ActionManageSwarm)
 	if !ok {
 		return
 	}
@@ -265,15 +325,15 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, 400, "invalid pipeline answer")
 		return
 	}
-	visits, err := s.store.ListPipelineVisits(r.Context(), run.SwarmID, run.ID)
+	steps, err := s.store.SwarmSteps(r.Context(), sw.ID)
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
 	eligible := false
-	for i, visit := range visits {
+	for i, visit := range steps {
 		if visit.Sequence == input.Sequence && visit.NodeID == r.PathValue("node") {
-			eligible = (i == len(visits)-1 && visit.State == "waiting") ||
+			eligible = (i == len(steps)-1 && visit.State == "waiting") ||
 				(visit.State == "answered" && visit.Answer != nil && *visit.Answer == input.Answer)
 			break
 		}
@@ -282,7 +342,7 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, 409, "pipeline visit is no longer awaiting an answer")
 		return
 	}
-	d, err := pipeline.Parse(string(run.Graph), "pipeline")
+	d, err := pipeline.Parse(string(sw.Graph), "pipeline")
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -297,16 +357,16 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, 400, "answer is not a human option")
 		return
 	}
-	if err = s.store.AnswerPipelineVisit(r.Context(), run.SwarmID, run.ID, input.Sequence, input.Answer); err != nil {
+	if err = s.store.AnswerPipelineVisit(r.Context(), sw.ID, sw.ID, input.Sequence, input.Answer); err != nil {
 		pipelineAnswerError(w, r, err)
 		return
 	}
-	run, err = s.store.GetPipelineRun(r.Context(), run.SwarmID, run.ID)
+	current, err := s.store.GetSwarm(r.Context(), sw.ID)
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	view, err := s.pipelineRunView(r, run)
+	view, err := s.pipelineRunView(r, current)
 	if err != nil {
 		apiError(w, r, err)
 		return

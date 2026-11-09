@@ -40,15 +40,15 @@ type PipelinePreparation struct {
 
 const pipelinePreparationActorFence = `CREATE TRIGGER pipeline_preparations_actor_fence BEFORE UPDATE ON managed_actors WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE actor_uid=OLD.uid AND state IN ('reserved','unconfirmed')) BEGIN SELECT RAISE(ABORT, 'pipeline preparation actor is not verified'); END`
 const pipelinePreparationActorNoReplace = `CREATE TRIGGER pipeline_preparations_actor_no_replace BEFORE INSERT ON managed_actors WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE actor_uid=NEW.uid) BEGIN SELECT RAISE(ABORT, 'pipeline preparation actor is immutable'); END`
-const pipelinePreparationNoDelete = `CREATE TRIGGER pipeline_preparations_no_delete BEFORE DELETE ON pipeline_preparations WHEN EXISTS (SELECT 1 FROM pipeline_runs WHERE id=OLD.run_id) BEGIN SELECT RAISE(ABORT, 'pipeline preparation is immutable'); END`
-const pipelinePreparationNoReplace = `CREATE TRIGGER pipeline_preparations_no_replace BEFORE INSERT ON pipeline_preparations WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE (run_id=NEW.run_id AND (sequence=NEW.sequence OR request_id=NEW.request_id)) OR actor_uid=NEW.actor_uid OR challenge_digest=NEW.challenge_digest) BEGIN SELECT RAISE(ABORT, 'pipeline preparation is immutable'); END`
-const pipelinePreparationUpdateFence = `CREATE TRIGGER pipeline_preparations_update_fence BEFORE UPDATE ON pipeline_preparations WHEN NEW.run_id IS NOT OLD.run_id OR NEW.sequence IS NOT OLD.sequence OR NEW.node_id IS NOT OLD.node_id OR NEW.request_id IS NOT OLD.request_id OR NEW.actor_uid IS NOT OLD.actor_uid OR NEW.actor_incarnation IS NOT OLD.actor_incarnation OR NEW.pool_uid IS NOT OLD.pool_uid OR NEW.pool_revision IS NOT OLD.pool_revision OR NEW.request_digest IS NOT OLD.request_digest OR NEW.challenge_digest IS NOT OLD.challenge_digest OR NEW.created_at IS NOT OLD.created_at OR (OLD.state='unconfirmed' AND NEW.state!='unconfirmed') BEGIN SELECT RAISE(ABORT, 'pipeline preparation is immutable'); END`
-const pipelinePreparationStepNoReplace = `CREATE TRIGGER pipeline_preparations_step_no_replace BEFORE INSERT ON pipeline_steps WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE run_id=NEW.run_id) BEGIN SELECT RAISE(ABORT, 'pipeline preparation visit is unresolved'); END`
-const pipelinePreparationStepUpdateFence = `CREATE TRIGGER pipeline_preparations_step_update_fence BEFORE UPDATE ON pipeline_steps WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE run_id=OLD.run_id AND sequence=OLD.sequence) AND (NEW.run_id IS NOT OLD.run_id OR NEW.sequence IS NOT OLD.sequence OR NEW.node_id IS NOT OLD.node_id OR NEW.actor_uid IS NOT OLD.actor_uid OR NEW.actor_incarnation IS NOT OLD.actor_incarnation OR NEW.request_id IS NOT OLD.request_id OR NEW.answer IS NOT OLD.answer OR NEW.outcome IS NOT OLD.outcome OR NEW.native_actor_name IS NOT OLD.native_actor_name OR NEW.native_template_name IS NOT OLD.native_template_name OR NEW.native_template_uid IS NOT OLD.native_template_uid OR NEW.native_template_digest IS NOT OLD.native_template_digest OR NOT ((OLD.state='preparing' AND NEW.state IN ('preparing','unconfirmed')) OR (OLD.state='unconfirmed' AND NEW.state='unconfirmed'))) BEGIN SELECT RAISE(ABORT, 'pipeline preparation visit is immutable'); END`
-const pipelinePreparationRunNoDelete = `CREATE TRIGGER pipeline_preparations_run_no_delete BEFORE DELETE ON pipeline_runs WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE run_id=OLD.id) BEGIN SELECT RAISE(ABORT, 'pipeline preparation remains unresolved'); END`
+const pipelinePreparationNoDelete = `CREATE TRIGGER pipeline_preparations_no_delete BEFORE DELETE ON pipeline_preparations WHEN EXISTS (SELECT 1 FROM swarms WHERE id=OLD.swarm_id) BEGIN SELECT RAISE(ABORT, 'pipeline preparation is immutable'); END`
+const pipelinePreparationNoReplace = `CREATE TRIGGER pipeline_preparations_no_replace BEFORE INSERT ON pipeline_preparations WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE (swarm_id=NEW.swarm_id AND (sequence=NEW.sequence OR request_id=NEW.request_id)) OR actor_uid=NEW.actor_uid OR challenge_digest=NEW.challenge_digest) BEGIN SELECT RAISE(ABORT, 'pipeline preparation is immutable'); END`
+const pipelinePreparationUpdateFence = `CREATE TRIGGER pipeline_preparations_update_fence BEFORE UPDATE ON pipeline_preparations WHEN NEW.swarm_id IS NOT OLD.swarm_id OR NEW.sequence IS NOT OLD.sequence OR NEW.node_id IS NOT OLD.node_id OR NEW.request_id IS NOT OLD.request_id OR NEW.actor_uid IS NOT OLD.actor_uid OR NEW.actor_incarnation IS NOT OLD.actor_incarnation OR NEW.pool_uid IS NOT OLD.pool_uid OR NEW.pool_revision IS NOT OLD.pool_revision OR NEW.request_digest IS NOT OLD.request_digest OR NEW.challenge_digest IS NOT OLD.challenge_digest OR NEW.created_at IS NOT OLD.created_at OR (OLD.state='unconfirmed' AND NEW.state!='unconfirmed') BEGIN SELECT RAISE(ABORT, 'pipeline preparation is immutable'); END`
+const pipelinePreparationStepNoReplace = `CREATE TRIGGER pipeline_preparations_step_no_replace BEFORE INSERT ON swarm_steps WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE swarm_id=NEW.swarm_id) BEGIN SELECT RAISE(ABORT, 'pipeline preparation visit is unresolved'); END`
+const pipelinePreparationStepUpdateFence = `CREATE TRIGGER pipeline_preparations_step_update_fence BEFORE UPDATE ON swarm_steps WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE swarm_id=OLD.swarm_id AND sequence=OLD.sequence) AND (NEW.swarm_id IS NOT OLD.swarm_id OR NEW.sequence IS NOT OLD.sequence OR NEW.node_id IS NOT OLD.node_id OR NEW.actor_uid IS NOT OLD.actor_uid OR NEW.actor_incarnation IS NOT OLD.actor_incarnation OR NEW.request_id IS NOT OLD.request_id OR NEW.started_at IS NOT OLD.started_at OR NEW.answer IS NOT OLD.answer OR NEW.outcome IS NOT OLD.outcome OR NEW.native_actor_name IS NOT OLD.native_actor_name OR NEW.native_template_name IS NOT OLD.native_template_name OR NEW.native_template_uid IS NOT OLD.native_template_uid OR NEW.native_template_digest IS NOT OLD.native_template_digest OR NOT ((OLD.state='preparing' AND NEW.state IN ('preparing','unconfirmed')) OR (OLD.state='unconfirmed' AND NEW.state='unconfirmed'))) BEGIN SELECT RAISE(ABORT, 'pipeline preparation visit is immutable'); END`
+const pipelinePreparationSwarmNoDelete = `CREATE TRIGGER pipeline_preparations_swarm_no_delete BEFORE DELETE ON swarms WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE swarm_id=OLD.id) BEGIN SELECT RAISE(ABORT, 'pipeline preparation remains unresolved'); END`
 
 const pipelinePreparationSchema = `CREATE TABLE pipeline_preparations (
-    run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    swarm_id TEXT NOT NULL REFERENCES swarms(id) ON DELETE CASCADE,
     sequence INTEGER NOT NULL CHECK (sequence > 0),
     node_id TEXT NOT NULL,
     request_id TEXT NOT NULL,
@@ -60,15 +60,16 @@ const pipelinePreparationSchema = `CREATE TABLE pipeline_preparations (
     challenge_digest TEXT NOT NULL UNIQUE,
     state TEXT NOT NULL CHECK (state IN ('reserved','unconfirmed')),
     created_at TEXT NOT NULL,
-    FOREIGN KEY (run_id, sequence) REFERENCES pipeline_steps(run_id, sequence) ON DELETE CASCADE,
-    PRIMARY KEY (run_id, sequence),
-    UNIQUE (run_id, request_id),
+    FOREIGN KEY (swarm_id, sequence) REFERENCES swarm_steps(swarm_id, sequence) ON DELETE CASCADE,
+    PRIMARY KEY (swarm_id, sequence),
+    UNIQUE (swarm_id, request_id),
     UNIQUE (actor_uid)
 )`
 
-// Триггеры целостности намерений оплачены ревью (#163); регистрация
-// перенесена в общий список схемы: pipelinePreparationFullSchema и
-// verifyPipelinePreparationsSchema в registry.go (#205).
+// Триггеры целостности намерений оплачены ревью (#163); ключ перевешан
+// с запуска на рой без изменения смысла (#206). Регистрация — в общем
+// списке схемы: pipelinePreparationFullSchema и
+// verifyPipelinePreparationsSchema в registry.go.
 
 // pipelinePreparationTriggers — триггеры целостности намерений: актёр
 // неизменен до подтверждения, связка и посещения защищены от подмены и
@@ -82,7 +83,7 @@ func pipelinePreparationTriggers() []struct{ name, statement string } {
 		{"pipeline_preparations_update_fence", pipelinePreparationUpdateFence},
 		{"pipeline_preparations_step_no_replace", pipelinePreparationStepNoReplace},
 		{"pipeline_preparations_step_update_fence", pipelinePreparationStepUpdateFence},
-		{"pipeline_preparations_run_no_delete", pipelinePreparationRunNoDelete},
+		{"pipeline_preparations_swarm_no_delete", pipelinePreparationSwarmNoDelete},
 	}
 }
 
@@ -98,6 +99,9 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 	}
 	if !validPipelineField(req.SwarmID) || !validPipelineField(req.RunID) || !validPipelineField(req.NodeID) || !validPipelineField(req.RequestID) || !validPipelineField(req.UserID) || req.Sequence < 1 {
 		return PipelinePreparation{}, errors.New("invalid pipeline preparation identity")
+	}
+	if req.RunID != req.SwarmID {
+		return PipelinePreparation{}, errors.New("pipeline preparation is scoped to the run's own swarm")
 	}
 	input := req.Actor
 	if input.SwarmID != req.SwarmID || (input.Role != "" && input.Role != "worker") || input.DelegatorID != "" || input.ParentUID != "" {
@@ -136,18 +140,14 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 				return ErrPipelinePreparationDenied
 			}
 		}
-		run, err := s.GetPipelineRun(ctx, req.SwarmID, req.RunID)
-		if err != nil {
-			return err
-		}
-		if run.Source == nil || (run.Status != "running" && run.Status != "waiting_human") {
+		if swarm.Graph == nil || swarm.Source == nil || !activeExecution(swarm.Execution) {
 			return ErrPipelinePreparationConflict
 		}
-		if input.Origin != "" && input.Origin != run.Source.Origin {
+		if input.Origin != "" && input.Origin != swarm.Source.Origin {
 			return ErrPipelinePreparationConflict
 		}
-		actor.Origin = run.Source.Origin
-		doc, err := pipeline.Parse(string(run.Graph), "pipeline")
+		actor.Origin = swarm.Source.Origin
+		doc, err := pipeline.Parse(string(swarm.Graph), "pipeline")
 		if err != nil {
 			return err
 		}
@@ -177,7 +177,7 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 		digestBytes := sha256.Sum256(encoded)
 		digest := hex.EncodeToString(digestBytes[:])
 		var storedDigest, preparationState string
-		err = s.conn(ctx).QueryRowContext(ctx, `SELECT request_digest,actor_uid,actor_incarnation,pool_uid,pool_revision,state FROM pipeline_preparations WHERE run_id=? AND (sequence=? OR request_id=?)`, req.RunID, req.Sequence, req.RequestID).Scan(&storedDigest, &result.ActorUID, &result.Incarnation, &result.PoolUID, &result.PoolRevision, &preparationState)
+		err = s.conn(ctx).QueryRowContext(ctx, `SELECT request_digest,actor_uid,actor_incarnation,pool_uid,pool_revision,state FROM pipeline_preparations WHERE swarm_id=? AND (sequence=? OR request_id=?)`, req.SwarmID, req.Sequence, req.RequestID).Scan(&storedDigest, &result.ActorUID, &result.Incarnation, &result.PoolUID, &result.PoolRevision, &preparationState)
 		if err == nil {
 			if storedDigest != digest || preparationState != "reserved" || pool.UID != result.PoolUID || pool.Revision != result.PoolRevision {
 				return ErrPipelinePreparationConflict
@@ -187,7 +187,7 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 				return ErrPipelinePreparationConflict
 			}
 			var visitCurrent bool
-			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_steps WHERE run_id=? AND sequence=? AND sequence=(SELECT MAX(sequence) FROM pipeline_steps WHERE run_id=?) AND node_id=? AND state='preparing' AND actor_uid=? AND actor_incarnation=? AND request_id=?)`, req.RunID, req.Sequence, req.RunID, req.NodeID, result.ActorUID, result.Incarnation, req.RequestID).Scan(&visitCurrent); err != nil {
+			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarm_steps WHERE swarm_id=? AND sequence=? AND sequence=(SELECT MAX(sequence) FROM swarm_steps WHERE swarm_id=?) AND node_id=? AND state='preparing' AND actor_uid=? AND actor_incarnation=? AND request_id=?)`, req.SwarmID, req.Sequence, req.SwarmID, req.NodeID, result.ActorUID, result.Incarnation, req.RequestID).Scan(&visitCurrent); err != nil {
 				return err
 			}
 			if !visitCurrent {
@@ -200,7 +200,7 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 			return err
 		}
 		var count, latest int64
-		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT count(*),COALESCE(MAX(sequence),0) FROM pipeline_steps WHERE run_id=?`, req.RunID).Scan(&count, &latest); err != nil {
+		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT count(*),COALESCE(MAX(sequence),0) FROM swarm_steps WHERE swarm_id=?`, req.SwarmID).Scan(&count, &latest); err != nil {
 			return err
 		}
 		if count == 0 {
@@ -212,7 +212,7 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 			if latest != req.Sequence {
 				return ErrPipelinePreparationConflict
 			}
-			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state FROM pipeline_steps WHERE run_id=? AND sequence=?`, req.RunID, latest).Scan(&nodeID, &state); err != nil {
+			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state FROM swarm_steps WHERE swarm_id=? AND sequence=?`, req.SwarmID, latest).Scan(&nodeID, &state); err != nil {
 				return err
 			}
 			if nodeID != req.NodeID || state != "pending" {
@@ -224,10 +224,10 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 			return err
 		}
 		if count == 0 {
-			_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_steps(run_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id) VALUES (?,?,?,'preparing',?,?,?)`, req.RunID, req.Sequence, req.NodeID, reserved.UID, reserved.Incarnation, req.RequestID)
+			_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,started_at,actor_uid,actor_incarnation,request_id) VALUES (?,?,?,'preparing',?,?,?,?)`, req.SwarmID, req.Sequence, req.NodeID, nowRFC3339(), reserved.UID, reserved.Incarnation, req.RequestID)
 		} else {
 			var updated sql.Result
-			updated, err = s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state='preparing',actor_uid=?,actor_incarnation=?,request_id=? WHERE run_id=? AND sequence=? AND node_id=? AND state='pending' AND actor_uid IS NULL AND actor_incarnation IS NULL AND request_id IS NULL`, reserved.UID, reserved.Incarnation, req.RequestID, req.RunID, req.Sequence, req.NodeID)
+			updated, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='preparing',started_at=?,actor_uid=?,actor_incarnation=?,request_id=? WHERE swarm_id=? AND sequence=? AND node_id=? AND state='pending' AND actor_uid IS NULL AND actor_incarnation IS NULL AND request_id IS NULL`, nowRFC3339(), reserved.UID, reserved.Incarnation, req.RequestID, req.SwarmID, req.Sequence, req.NodeID)
 			if err == nil {
 				var n int64
 				n, err = updated.RowsAffected()
@@ -244,7 +244,7 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 			return errors.New("cannot generate pipeline preparation challenge")
 		}
 		hash := sha256.Sum256(challenge[:])
-		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_preparations(run_id,sequence,node_id,request_id,actor_uid,actor_incarnation,pool_uid,pool_revision,request_digest,challenge_digest,state,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,'reserved',?)`, req.RunID, req.Sequence, req.NodeID, req.RequestID, reserved.UID, reserved.Incarnation, pool.UID, pool.Revision, digest, hex.EncodeToString(hash[:]), nowRFC3339())
+		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_preparations(swarm_id,sequence,node_id,request_id,actor_uid,actor_incarnation,pool_uid,pool_revision,request_digest,challenge_digest,state,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,'reserved',?)`, req.SwarmID, req.Sequence, req.NodeID, req.RequestID, reserved.UID, reserved.Incarnation, pool.UID, pool.Revision, digest, hex.EncodeToString(hash[:]), nowRFC3339())
 		if err != nil {
 			return err
 		}
@@ -261,7 +261,7 @@ func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePrep
 // Call only with exclusive ownership after the previous server has stopped.
 func (s *Store) RecoverPipelinePreparations(ctx context.Context) error {
 	return s.WithTx(ctx, func(ctx context.Context) error {
-		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state='unconfirmed' WHERE state='preparing' AND EXISTS (SELECT 1 FROM pipeline_preparations p WHERE p.run_id=pipeline_steps.run_id AND p.sequence=pipeline_steps.sequence AND p.state='reserved')`); err != nil {
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='unconfirmed' WHERE state='preparing' AND EXISTS (SELECT 1 FROM pipeline_preparations p WHERE p.swarm_id=swarm_steps.swarm_id AND p.sequence=swarm_steps.sequence AND p.state='reserved')`); err != nil {
 			return err
 		}
 		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_preparations SET state='unconfirmed' WHERE state='reserved'`)
