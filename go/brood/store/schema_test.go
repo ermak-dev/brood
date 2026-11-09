@@ -42,7 +42,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_preparations", "pipeline_runs", "pipeline_sources", "pipeline_steps", "project_capacity", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "swarm_members", "swarms", "users", "workflow_definitions", "workflow_revision_counters"}
+	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_preparations", "pipeline_sources", "project_capacity", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "swarm_members", "swarm_steps", "swarms", "users", "workflow_definitions", "workflow_revision_counters"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}
@@ -186,7 +186,7 @@ func TestSchemaModulesCoverExpectedTables(t *testing.T) {
 			seen[table] = true
 		}
 	}
-	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "pipeline_runs", "pipeline_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "pipeline_preparations"}
+	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "pipeline_preparations"}
 	for _, table := range want {
 		if !seen[table] {
 			t.Errorf("table %s is missing from schemaModules DDL", table)
@@ -204,7 +204,7 @@ func TestSchemaModulesCoverExpectedTables(t *testing.T) {
 func TestOpenRejectsDamagedTriggers(t *testing.T) {
 	for name, change := range map[string]string{
 		"missing trigger":                     `DROP TRIGGER pipeline_sources_immutable`,
-		"different trigger":                   `DROP TRIGGER pipeline_runs_no_replace; CREATE TRIGGER pipeline_runs_no_replace BEFORE INSERT ON pipeline_runs BEGIN SELECT RAISE(ABORT, 'other'); END`,
+		"different trigger":                   `DROP TRIGGER swarm_graph_immutable; CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms BEGIN SELECT RAISE(ABORT, 'other'); END`,
 		"missing preparation trigger":         `DROP TRIGGER pipeline_preparations_actor_fence`,
 		"missing index":                       `DROP INDEX swarms_live_name`,
 		"missing live name index for managed": `DROP INDEX managed_pools_live_name`,

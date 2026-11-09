@@ -72,7 +72,9 @@ var ErrWorkflowRunsExist = errors.New("workflow deletion blocked: project has pi
 // ErrWorkflowLimit indicates that a workflow limit was exceeded.
 var ErrWorkflowLimit = errors.New("workflow limit exceeded")
 
-// DeleteWorkflowDefinition deletes a definition only when the project has no pipeline runs.
+// DeleteWorkflowDefinition deletes a definition only when no swarm of the
+// project carries a graph snapshot. Identity travels by value: deletion
+// never touches the snapshots of existing swarms (#206).
 func (s *Store) DeleteWorkflowDefinition(ctx context.Context, projectID, actorID, name string, authorize func(context.Context) bool) error {
 	return s.WithTx(ctx, func(ctx context.Context) error {
 		if authorize == nil || !authorize(ctx) {
@@ -86,7 +88,7 @@ func (s *Store) DeleteWorkflowDefinition(ctx context.Context, projectID, actorID
 			return err
 		}
 		var runs bool
-		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pipeline_runs r LEFT JOIN swarms s ON s.id=r.swarm_id WHERE s.project_id=? OR s.id IS NULL)`, projectID).Scan(&runs); err != nil {
+		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarms WHERE project_id=? AND graph IS NOT NULL)`, projectID).Scan(&runs); err != nil {
 			return err
 		}
 		if runs {

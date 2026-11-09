@@ -1,0 +1,23 @@
+package server
+
+import (
+	"context"
+	"database/sql"
+)
+
+// insertSwarmGraph привязывает рою снимок графа напрямую, минуя
+// производственную привязку AttachSwarmGraph с её обязательным источником:
+// HTTP-тесты провода проверяют читателей и гейт, а не fail-closed
+// источник. Снимок уходит вместе с роем (#206), ID запуска — это рой.
+func insertSwarmGraph(ctx context.Context, ts *testServer, swarmID string, graph []byte, execution string) error {
+	db, err := sql.Open("sqlite", ts.dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000`); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `UPDATE swarms SET graph=?,execution=?,definition_name='test',definition_version=1,definition_revision='rev',updated_at='now' WHERE id=?`, graph, execution, swarmID)
+	return err
+}

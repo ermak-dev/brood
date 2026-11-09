@@ -127,7 +127,7 @@ func TestWorkflowDefinitionDelete(t *testing.T) {
 	if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", "demo", func(context.Context) bool { return false }); !errors.Is(err, ErrProjectSyncDenied) {
 		t.Fatalf("revoked session: %v", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO swarms(id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('s','p','admin','s','s','now','now'); INSERT INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES ('r','s','admin',X'01','succeeded')`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO swarms(id,project_id,owner_id,name,atespace_name,created_at,updated_at,graph,definition_name,definition_version) VALUES ('s','p','admin','s','s','now','now',X'01','demo',1)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", "demo", yes); err == nil || !strings.Contains(err.Error(), "pipeline runs") {
@@ -136,7 +136,7 @@ func TestWorkflowDefinitionDelete(t *testing.T) {
 	if _, err := s.GetWorkflowDefinition(ctx, "p", "demo"); err != nil {
 		t.Fatalf("blocked deletion removed definition: %v", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM pipeline_runs WHERE id='r'`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER swarm_graph_immutable; UPDATE swarms SET graph=NULL WHERE id='s'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", "demo", yes); err != nil {

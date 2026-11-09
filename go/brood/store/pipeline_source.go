@@ -18,20 +18,20 @@ type PipelineSource struct {
 var ErrPipelineSourceUnverified = errors.New("pipeline source checkout is not independently verified")
 
 const pipelineSourceSchema = `CREATE TABLE pipeline_sources (
-    run_id TEXT NOT NULL PRIMARY KEY REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    swarm_id TEXT NOT NULL PRIMARY KEY REFERENCES swarms(id) ON DELETE CASCADE,
     origin TEXT NOT NULL,
     commit_sha TEXT NOT NULL
 )`
 
 const pipelineSourceImmutable = `CREATE TRIGGER pipeline_sources_immutable BEFORE UPDATE ON pipeline_sources BEGIN SELECT RAISE(ABORT, 'pipeline source is immutable'); END`
-const pipelineSourceNoReplace = `CREATE TRIGGER pipeline_sources_no_replace BEFORE INSERT ON pipeline_sources WHEN EXISTS (SELECT 1 FROM pipeline_sources WHERE run_id=NEW.run_id) BEGIN SELECT RAISE(ABORT, 'pipeline source is immutable'); END`
-const pipelineSourceNoDelete = `CREATE TRIGGER pipeline_sources_no_delete BEFORE DELETE ON pipeline_sources WHEN EXISTS (SELECT 1 FROM pipeline_runs WHERE id=OLD.run_id) BEGIN SELECT RAISE(ABORT, 'pipeline source is immutable'); END`
-const pipelineRunNoReplace = `CREATE TRIGGER pipeline_runs_no_replace BEFORE INSERT ON pipeline_runs WHEN EXISTS (SELECT 1 FROM pipeline_runs WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT, 'pipeline run already exists'); END`
+const pipelineSourceNoReplace = `CREATE TRIGGER pipeline_sources_no_replace BEFORE INSERT ON pipeline_sources WHEN EXISTS (SELECT 1 FROM pipeline_sources WHERE swarm_id=NEW.swarm_id) BEGIN SELECT RAISE(ABORT, 'pipeline source is immutable'); END`
+const pipelineSourceNoDelete = `CREATE TRIGGER pipeline_sources_no_delete BEFORE DELETE ON pipeline_sources WHEN EXISTS (SELECT 1 FROM swarms WHERE id=OLD.swarm_id) BEGIN SELECT RAISE(ABORT, 'pipeline source is immutable'); END`
 
-// Триггеры неизменности источника и идентичности запуска оплачены ревью
-// (#158, #160); регистрация перенесена в общий список схемы без
-// изменений семантики: pipelineSourceFullSchema и verifyPipelineSourcesSchema
-// в registry.go (#205).
+// Триггеры неизменности источника оплачены ревью (#158, #160); ключ
+// перевешан с запуска на рой без изменения смысла (#206): снимок
+// источника и резерв подготовки остаются fail-closed. Идентичность
+// запуска (бывший pipeline_runs_no_replace) защищает неизменность
+// снимка графа роя: swarmGraphNoReplace в registry.go.
 
 func canonicalPipelineSource(source *PipelineSource) (*PipelineSource, error) {
 	if source == nil {

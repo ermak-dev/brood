@@ -48,7 +48,7 @@ func TestRootSwarmWorkflowProgression(t *testing.T) {
 		t.Run(tc.answer, func(t *testing.T) {
 			ctx := context.Background()
 			s := sourceTestStore(t)
-			if err := createLegacyPipelineRun(ctx, s, PipelineRun{ID: "r", SwarmID: "s", OwnerID: "u", Graph: snapshot, Status: "running"}); err != nil {
+			if err := attachTestGraph(ctx, s, "s", string(snapshot)); err != nil {
 				t.Fatal(err)
 			}
 			sequence := int64(0)
@@ -56,40 +56,40 @@ func TestRootSwarmWorkflowProgression(t *testing.T) {
 				t.Helper()
 				sequence++
 				request := fmt.Sprintf("request-%d", sequence)
-				if _, err := s.AppendPipelineVisit(ctx, "s", "r", PipelineVisit{NodeID: node, State: "inflight", ActorUID: "actor", ActorIncarnation: 1, RequestID: request}); err != nil {
+				if _, err := s.AppendPipelineVisit(ctx, "s", "s", PipelineVisit{NodeID: node, State: "inflight", ActorUID: "actor", ActorIncarnation: 1, RequestID: request}); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.CompletePipelineActorVisit(ctx, "s", "r", sequence, request, "actor", 1, "success"); err != nil {
+				if err := s.CompletePipelineActorVisit(ctx, "s", "s", sequence, request, "actor", 1, "success"); err != nil {
 					t.Fatal(err)
 				}
 			}
 			for _, node := range before {
 				complete(node)
 			}
-			run, err := s.GetPipelineRun(ctx, "s", "r")
-			visits, visitsErr := s.ListPipelineVisits(ctx, "s", "r")
-			if err != nil || visitsErr != nil || run.Status != "waiting_human" || len(visits) != int(sequence)+1 || visits[sequence].NodeID != "decision" || visits[sequence].State != "waiting" {
-				t.Fatalf("gated run: run=%+v visits=%+v errors=%v, %v", run, visits, err, visitsErr)
+			sw, err := s.GetSwarm(ctx, "s")
+			visits, visitsErr := s.SwarmSteps(ctx, "s")
+			if err != nil || visitsErr != nil || sw.Execution != "waiting" || len(visits) != int(sequence)+1 || visits[sequence].NodeID != "decision" || visits[sequence].State != "waiting" {
+				t.Fatalf("gated run: swarm=%+v visits=%+v errors=%v, %v", sw, visits, err, visitsErr)
 			}
 			sequence++
-			if err := s.AnswerPipelineVisit(ctx, "s", "r", sequence, tc.answer); err != nil {
+			if err := s.AnswerPipelineVisit(ctx, "s", "s", sequence, tc.answer); err != nil {
 				t.Fatal(err)
 			}
 			if tc.answer == "fail" {
-				run, err := s.GetPipelineRun(ctx, "s", "r")
-				visits, visitsErr := s.ListPipelineVisits(ctx, "s", "r")
-				if err != nil || visitsErr != nil || run.Status != "failed" || len(visits) != int(sequence)+1 || visits[sequence-1].Answer == nil || *visits[sequence-1].Answer != "fail" || visits[sequence].NodeID != "done" || visits[sequence].State != "completed" {
-					t.Fatalf("rejected: run=%+v visits=%+v errors=%v, %v", run, visits, err, visitsErr)
+				sw, err := s.GetSwarm(ctx, "s")
+				visits, visitsErr := s.SwarmSteps(ctx, "s")
+				if err != nil || visitsErr != nil || sw.Execution != "failed" || len(visits) != int(sequence)+1 || visits[sequence-1].Answer == nil || *visits[sequence-1].Answer != "fail" || visits[sequence].NodeID != "done" || visits[sequence].State != "completed" {
+					t.Fatalf("rejected: swarm=%+v visits=%+v errors=%v, %v", sw, visits, err, visitsErr)
 				}
 				return
 			}
 			for _, node := range after {
 				complete(node)
 			}
-			run, err = s.GetPipelineRun(ctx, "s", "r")
-			visits, visitsErr = s.ListPipelineVisits(ctx, "s", "r")
-			if err != nil || visitsErr != nil || run.Status != "succeeded" || len(visits) != int(sequence)+1 || visits[sequence].NodeID != "done" || visits[sequence].State != "completed" {
-				t.Fatalf("approved: run=%+v visits=%+v errors=%v, %v", run, visits, err, visitsErr)
+			sw, err = s.GetSwarm(ctx, "s")
+			visits, visitsErr = s.SwarmSteps(ctx, "s")
+			if err != nil || visitsErr != nil || sw.Execution != "succeeded" || len(visits) != int(sequence)+1 || visits[sequence].NodeID != "done" || visits[sequence].State != "completed" {
+				t.Fatalf("approved: swarm=%+v visits=%+v errors=%v, %v", sw, visits, err, visitsErr)
 			}
 		})
 	}

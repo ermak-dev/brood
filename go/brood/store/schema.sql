@@ -31,7 +31,12 @@ CREATE TABLE swarms (
     state         TEXT NOT NULL DEFAULT 'provisioning',
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
-    retry         TEXT NOT NULL DEFAULT '' CHECK (retry IN ('', 'create', 'delete'))
+    retry         TEXT NOT NULL DEFAULT '' CHECK (retry IN ('', 'create', 'delete')),
+    graph         BLOB,
+    execution     TEXT NOT NULL DEFAULT 'idle' CHECK (execution IN ('idle', 'running', 'waiting', 'succeeded', 'failed', 'stopped')),
+    definition_name     TEXT,
+    definition_version  INTEGER,
+    definition_revision TEXT
 );
 
 CREATE TABLE sessions (
