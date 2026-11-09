@@ -31,6 +31,26 @@ func xOfLabel(t *testing.T, svg, label string) float64 {
 	return x
 }
 
+// nodeY достаёт y-координату текста узла с данным label.
+var textY = regexp.MustCompile(`<text x="[-0-9.]+" y="([0-9.]+)" text-anchor="middle">`)
+
+func yOfLabel(t *testing.T, svg, label string) float64 {
+	t.Helper()
+	i := strings.Index(svg, `>`+label+`</text>`)
+	if i < 0 {
+		t.Fatalf("label %s missing:\n%s", label, svg)
+	}
+	match := textY.FindStringSubmatch(svg[clampLo(i-160) : i+1])
+	if match == nil {
+		t.Fatalf("text y of %s not found:\n%s", label, svg)
+	}
+	y, err := strconv.ParseFloat(match[1], 64)
+	if err != nil {
+		t.Fatalf("parse y of %s: %v", label, err)
+	}
+	return y
+}
+
 // clampLo не даёт окну поиска уйти в отрицательные индексы.
 func clampLo(i int) int {
 	if i < 0 {
@@ -40,16 +60,16 @@ func clampLo(i int) int {
 }
 
 func TestSVGLayering(t *testing.T) {
-	// Линейная цепочка: каждый узел строго правее предыдущего.
+	// Линейная цепочка: каждый узел строго ниже предыдущего.
 	svg := SVG(RunView{Graph: chain()})
-	xa, xb := xOfLabel(t, svg, "a"), xOfLabel(t, svg, "b")
-	xc, xd := xOfLabel(t, svg, "c"), xOfLabel(t, svg, "d")
-	if !(xa < xb && xb < xc && xc < xd) {
-		t.Fatalf("nodes not layered in chain order: a=%v b=%v c=%v d=%v\n%s", xa, xb, xc, xd, svg)
+	ya, yb := yOfLabel(t, svg, "a"), yOfLabel(t, svg, "b")
+	yc, yd := yOfLabel(t, svg, "c"), yOfLabel(t, svg, "d")
+	if !(ya < yb && yb < yc && yc < yd) {
+		t.Fatalf("nodes not layered in chain order: a=%v b=%v c=%v d=%v\n%s", ya, yb, yc, yd, svg)
 	}
 	// Ветвление fan out: общие преемники дальше обоих источников.
 	svg = SVG(RunView{Graph: sampleGraph()})
-	if !(xOfLabel(t, svg, "lint") > xOfLabel(t, svg, "fan out") && xOfLabel(t, svg, "fan in") > xOfLabel(t, svg, "lint")) {
+	if !(yOfLabel(t, svg, "lint") > yOfLabel(t, svg, "fan out") && yOfLabel(t, svg, "fan in") > yOfLabel(t, svg, "lint")) {
 		t.Fatalf("fan-out layout broken:\n%s", svg)
 	}
 }
@@ -105,13 +125,13 @@ func TestSVGViewBoxSizedToContent(t *testing.T) {
 		}
 		nums[j] = n
 	}
-	// Восемь слоёв sampleGraph: ширина заметно больше высоты одного
-	// блока; самая высокая колонка из двух узлов задаёт высоту.
-	if nums[2] < 500 {
-		t.Fatalf("width suspiciously small: %v", nums[2])
-	}
-	if nums[3] < 100 {
+	// Восемь слоёв sampleGraph: высота заметно больше ширины одной
+	// строки; самая широкая строка из двух узлов задаёт ширину.
+	if nums[3] < 500 {
 		t.Fatalf("height suspiciously small: %v", nums[3])
+	}
+	if nums[2] < 100 {
+		t.Fatalf("width suspiciously small: %v", nums[2])
 	}
 	// Максимальная координата содержимого не выходит за viewBox.
 	for _, m := range regexp.MustCompile(`(x|y)="([0-9.]+)"`).FindAllStringSubmatch(svg, -1) {
@@ -168,7 +188,7 @@ func TestSVGCaptionBounds(t *testing.T) {
 		if _, err := fmt.Sscan(doc.ViewBox, &left, &top, &width, &height); err != nil {
 			t.Fatal(err)
 		}
-		half := float64(utf8.RuneCountInString(caption)) * svgGlyphWidth / 2
+		half := float64(utf8.RuneCountInString(caption)) * svgGlyphWidth * 12 / 16 / 2
 		if doc.Text.Value != caption {
 			t.Fatalf("caption lost or escaped incorrectly: %q", doc.Text.Value)
 		}
@@ -188,10 +208,10 @@ func TestSVGEmptyGraph(t *testing.T) {
 	}
 }
 
-// BUG: SVG defaults hide edges and labels, cycles collapse, and classes permit XML injection.
+// BUG: SVG defaults hid edges and labels; cycles collapsed and classes permitted XML injection.
 // HYPOTHESIS: presentation attributes and class escaping are missing; relaxation diverges on cycles.
-// SOLUTION: supply overridable presentation attributes, escape classes, and break cycles deterministically.
-// RESULT: FIXED — standalone elements have paint and cycles have separate layers.
+// SOLUTION: an embedded style drives standalone paint, classes are escaped, cycles break deterministically.
+// RESULT: FIXED — standalone elements have paint via the style block and cycles have separate layers.
 // STATUS: FIXED
 func TestSVGRegression(t *testing.T) {
 	g := Graph{Nodes: []Node{{ID: "a", Label: "a", Kind: Kind(`x" onload="evil`)}, {ID: "b", Label: "b"}}, Edges: []Edge{{From: "a", To: "b"}, {From: "b", To: "a"}}}
@@ -213,13 +233,15 @@ func TestSVGRegression(t *testing.T) {
 			}
 		}
 	}
-	if xOfLabel(t, svg, "a") == xOfLabel(t, svg, "b") {
+	if yOfLabel(t, svg, "a") == yOfLabel(t, svg, "b") {
 		t.Error("cycle nodes collapse into one layer")
 	}
-	for _, want := range []string{`fill="white"`, `stroke="black"`, `fill="black"`} {
-		if !strings.Contains(svg, want) {
-			t.Errorf("standalone presentation missing %s", want)
-		}
+	// Зашитых красок в разметке нет: стиль задаёт currentColor.
+	if strings.Contains(svg, `fill="white"`) || strings.Contains(svg, `stroke="black"`) || strings.Contains(svg, `fill="black"`) {
+		t.Error("hardcoded color attribute remains in markup")
+	}
+	if !strings.Contains(svg, "currentColor") {
+		t.Error("standalone paint must use currentColor")
 	}
 }
 

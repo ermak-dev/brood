@@ -1,5 +1,5 @@
 digraph pipeline {
-  rankdir=LR;
+  rankdir=TB;
   build [label="build", shape=box];
   check [label="ci ok?", shape=diamond];
   exit [label="exit", shape=Msquare];

@@ -38,7 +38,7 @@ func TestRenderDotGolden(t *testing.T) {
 	}
 	expected := strings.Join([]string{
 		`digraph pipeline {`,
-		`  rankdir=LR;`,
+		`  rankdir=TB;`,
 		`  build [label="build", shape=box];`,
 		`  check [label="check", shape=diamond];`,
 		`  done [label="done", shape=Msquare];`,

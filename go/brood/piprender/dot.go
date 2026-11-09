@@ -94,7 +94,7 @@ func edgeLabel(e Edge) string {
 func DOT(g Graph) string {
 	var b strings.Builder
 	b.WriteString("digraph pipeline {\n")
-	b.WriteString("  rankdir=LR;\n")
+	b.WriteString("  rankdir=TB;\n")
 	for _, n := range sortedNodes(g.Nodes) {
 		shape, ok := dotShapes[n.Kind]
 		if !ok {

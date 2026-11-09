@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
@@ -219,8 +218,6 @@ func (s *Server) pipelineGraph(w http.ResponseWriter, r *http.Request) {
 		states[n.ID] = piprender.State(n.Status)
 	}
 	svg := piprender.SVG(piprender.RunView{Graph: g, Nodes: states})
-	const styles = `<style>.state-active rect{fill:#fef3c7;stroke:#b45309}.state-done rect{fill:#dcfce7;stroke:#15803d}.state-failed rect{fill:#fee2e2;stroke:#b91c1c}.state-skipped rect{fill:#e5e7eb;stroke:#6b7280}</style>`
-	svg = strings.Replace(svg, `role="img">`, `role="img">`+styles, 1)
 	writeJSON(w, 200, struct {
 		SVG string `json:"svg"`
 	}{svg})
