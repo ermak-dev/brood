@@ -226,7 +226,10 @@ func TestWorkflowCatalog(t *testing.T) {
 	r, body, _ = ts.do(member, "GET", graph, "", nil)
 	expectStatus(t, "definition graph", r, body, http.StatusOK)
 	svg, ok := body["svg"].(string)
-	if !ok || !strings.Contains(svg, "<svg") || !strings.Contains(svg, ">ask</text>") || !strings.Contains(svg, ">done</text>") || strings.Contains(svg, "state-active") {
+	// Определение без прогона не подсвечивает узлы: у групп узлов нет
+	// активного класса (правило .state-active во встроенном стиле —
+	// не состояние узла).
+	if !ok || !strings.Contains(svg, "<svg") || !strings.Contains(svg, ">ask</text>") || !strings.Contains(svg, ">done</text>") || strings.Contains(svg, `state-active">`) {
 		t.Fatalf("definition graph: %v", body)
 	}
 	for _, p := range []string{catalog, graph} {
