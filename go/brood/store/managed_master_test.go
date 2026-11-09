@@ -1,43 +1,42 @@
 package store
 
 // FEATURE: Durable managed role and human delegation.
-// SPEC: Legacy actors become workers, delegation is immutable, and reopening keeps it.
+// SPEC: Delegation is immutable, survives reopen, and a foreign schema
+// version is refused without mutation.
 // IMPLEMENTATION: Additive schema 7 role, delegator and parent UID columns.
 // RESULT: IMPLEMENTED — legacy task evidence and durable delegation survive reopen.
 // STATUS: DONE
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestManagedMasterV6Migration(t *testing.T) {
+// TestManagedMasterForeignVersionRefused: миграций нет (#205); база
+// версии 6 не обновляется, а отвергается без изменения схемы и версии.
+func TestManagedMasterForeignVersionRefused(t *testing.T) {
 	ctx := context.Background()
-	path := lifecycleSchema3(t)
-	db, err := sql.Open("sqlite", dsn(path))
+	path := filepath.Join(t.TempDir(), "roles.sqlite3")
+	s, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`ALTER TABLE managed_actors ADD COLUMN ` + managedStageColumn + `; ` + managedConnectionsRuntimeSchema() + `; PRAGMA user_version=6`); err != nil {
+	if _, err := s.db.Exec(`PRAGMA user_version=6`); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
-	for range 2 {
-		s, err := Open(ctx, path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		a, err := s.GetManagedActor(ctx, "a")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if a.Role != "worker" || a.DelegatorID != "" || a.ParentUID != "" || a.UPID != "UPID:unknown" || a.OperationID != "old-create" {
-			t.Fatalf("migration lost identity: %+v", a)
-		}
-		s.Close()
+	before := schemaSnapshot(t, s.db)
+	s.Close()
+	if st, err := Open(ctx, path); err == nil {
+		st.Close()
+		t.Fatal("previous managed master version accepted")
+	} else if !strings.Contains(err.Error(), "incompatible database schema") {
+		t.Fatal(err)
+	}
+	if err := assertDatabaseUnchanged(t, path, 6, before); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -94,21 +93,30 @@ func TestManagedMasterPersistenceAndImmutability(t *testing.T) {
 	}
 }
 
-func TestManagedMasterLegacyDefaults(t *testing.T) {
+// TestManagedMasterReserveDefaults: новый актор без явной делегации —
+// worker без delegator и parent; значение переживает переоткрытие.
+func TestManagedMasterReserveDefaults(t *testing.T) {
 	ctx := context.Background()
-	path := lifecycleSchema3(t)
-	for range 2 {
-		s, err := Open(ctx, path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		a, err := s.GetManagedActor(ctx, "a")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if a.Role != "worker" || a.DelegatorID != "" || a.ParentUID != "" {
-			t.Fatalf("unsafe legacy delegation: %+v", a)
-		}
-		s.Close()
+	path := filepath.Join(t.TempDir(), "roles.sqlite3")
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedFixture(t, s)
+	if _, err := s.ReserveManagedActor(ctx, managedRequest("a", "one", 101)); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a, err := s.GetManagedActor(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Role != "worker" || a.DelegatorID != "" || a.ParentUID != "" {
+		t.Fatalf("unsafe delegation default: %+v", a)
 	}
 }

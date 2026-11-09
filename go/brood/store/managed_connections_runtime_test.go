@@ -11,10 +11,10 @@ import (
 )
 
 // FEATURE: Сохранение runtime и безопасное представление подключения.
-// SPEC: Миграция v5 сохраняет строки и credential, повторное открытие стабильно;
-// форматирование и JSON входной структуры не раскрывают секрет или CA.
-// IMPLEMENTATION: Additive v6 ALTER и редактированные представления структуры.
-// RESULT: IMPLEMENTED — сохранение строк и повторное открытие проверены.
+// SPEC: Подключения переживают переоткрытие базы; чужая версия схемы
+// отвергается без потери credential; форматирование и JSON входной
+// структуры не раскрывают секрет или CA.
+// Миграций больше нет (#205).
 // STATUS: DONE
 func TestManagedConnectionRedaction(t *testing.T) {
 	c := ManagedConnection{TokenSecret: "private-token-sentinel", CAPEM: "private-ca-sentinel"}
@@ -29,54 +29,40 @@ func TestManagedConnectionRedaction(t *testing.T) {
 	}
 }
 
-func TestManagedConnectionV5Migration(t *testing.T) {
+// TestManagedConnectionForeignVersionRefused: миграций нет (#205); база
+// версии 5 не обновляется, а отвергается без изменения схемы, версии
+// и данных подключений.
+func TestManagedConnectionForeignVersionRefused(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "connections.sqlite3")
 	s, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.CreateManagedConnection(ctx, ManagedConnection{Name: "pve-main", Endpoint: "https://pve.invalid:8006", TokenID: "op@pve!brood", TokenSecret: "keep-secret", CAPEM: "keep-ca", Node: "n", ResourcePool: "r", Storage: "s", Network: "v"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version=5`); err != nil {
+		t.Fatal(err)
+	}
+	before := schemaSnapshot(t, s.db)
 	s.Close()
+	if st, err := Open(ctx, path); err == nil {
+		st.Close()
+		t.Fatal("previous managed connection version accepted")
+	} else if !strings.Contains(err.Error(), "incompatible database schema") {
+		t.Fatal(err)
+	}
+	if err := assertDatabaseUnchanged(t, path, 5, before); err != nil {
+		t.Fatal(err)
+	}
 	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Готовим точную старую v5; колонка есть только после реализации v6.
-	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('managed_connections') WHERE name='runtime_config'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		if _, err := db.Exec(`ALTER TABLE managed_connections DROP COLUMN runtime_config`); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, column := range []string{"origin", "role", "delegator_id", "parent_uid"} {
-		if _, err := db.Exec(`ALTER TABLE managed_actors DROP COLUMN ` + column); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := db.Exec(`DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; DROP TABLE coordination_claims; DROP TABLE command_project_details; INSERT INTO managed_connections VALUES ('c','legacy','https://pve.invalid','a@b!c','keep-secret','keep-ca','n','r','s','v','created','updated'); PRAGMA user_version=5`); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-	for i := 0; i < 2; i++ {
-		s, err = Open(ctx, path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var version int
-		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 16 {
-			t.Fatalf("version=%d err=%v", version, err)
-		}
-		rows, err := s.ListManagedConnections(ctx)
-		if err != nil || len(rows) != 1 || rows[0].Name != "legacy" || rows[0].CAPEM != "keep-ca" || rows[0].CreatedAt != "created" {
-			t.Fatal("migration lost row")
-		}
-		secret, err := s.ManagedConnectionSecret(ctx, "legacy")
-		if err != nil || secret != "keep-secret" {
-			t.Fatal("migration lost credential")
-		}
-		s.Close()
+	defer db.Close()
+	var secret string
+	if err := db.QueryRow(`SELECT token_secret FROM managed_connections WHERE name='pve-main'`).Scan(&secret); err != nil || secret != "keep-secret" {
+		t.Fatalf("credential changed: %q %v", secret, err)
 	}
 }

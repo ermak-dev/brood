@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -208,70 +209,63 @@ func TestWorkflowDefinitionsSync(t *testing.T) {
 // RESULT: IMPLEMENTED — authorization and validation precede writes.
 // STATUS: DONE
 // FEATURE: Publication timestamps for workflow versions.
-// SPEC: Migrated rows retain their data and unknown time; unchanged sync preserves it.
-func TestWorkflowPublicationTimeMigration(t *testing.T) {
+// SPEC: Publishing sets published_at; unchanged syncs do not write it.
+// Миграций больше нет (#205): времена публикации проверяются на текущей
+// схеме, а не на переходе версий.
+func TestWorkflowPublicationTime(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	seedProject(t, s, "p", "preserved")
 	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; CREATE TABLE workflow_definitions (project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, yaml TEXT NOT NULL, version INTEGER NOT NULL CHECK (version > 0), PRIMARY KEY (project_id, name)); INSERT INTO workflow_definitions VALUES ('p','demo',?,3); PRAGMA user_version=12`, workflowYAML); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.initializeSchema(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var text string
-	var version int
-	var published sql.NullString
-	read := func() {
-		t.Helper()
-		if err := s.db.QueryRowContext(ctx, `SELECT yaml,version,published_at FROM workflow_definitions WHERE project_id='p' AND name='demo'`).Scan(&text, &version, &published); err != nil {
-			t.Fatal(err)
-		}
-	}
-	read()
-	if text != workflowYAML || version != 3 || published.Valid {
-		t.Fatalf("migrated: %q %d %+v", text, version, published)
-	}
 	yes := func(context.Context) bool { return true }
 	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML}, yes); err != nil {
 		t.Fatal(err)
 	}
+	var version int
+	var published sql.NullString
+	read := func() {
+		t.Helper()
+		if err := s.db.QueryRowContext(ctx, `SELECT version,published_at FROM workflow_definitions WHERE project_id='p' AND name='demo'`).Scan(&version, &published); err != nil {
+			t.Fatal(err)
+		}
+	}
 	read()
-	if published.Valid || version != 3 {
-		t.Fatal("unchanged legacy record was rewritten")
+	if !published.Valid || version != 1 {
+		t.Fatalf("first publication: %d %+v", version, published)
+	}
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML}, yes); err != nil {
+		t.Fatal(err)
+	}
+	before := published
+	read()
+	if published.String != before.String || version != 1 {
+		t.Fatal("unchanged record was rewritten")
 	}
 	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML + "\n"}, yes); err != nil {
 		t.Fatal(err)
 	}
 	read()
-	if !published.Valid || version != 4 {
+	if !published.Valid || published.String == before.String || version != 2 {
 		t.Fatalf("changed: %d %+v", version, published)
 	}
 }
 
-func TestWorkflowVersionMigrationAndRecreate(t *testing.T) {
+func TestWorkflowDeleteAndRecreateKeepsCounter(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	seedProjectWithMember(t, s, "p", "member")
 	if err := s.CreateUser(ctx, User{ID: "admin", Username: "admin", PasswordHash: "h", IsAdmin: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; ALTER TABLE workflow_definitions DROP COLUMN revision; INSERT INTO workflow_definitions(project_id,name,yaml,version,published_at) VALUES ('p','demo',?,7,'then'); PRAGMA user_version=13`, workflowYAML); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.initializeSchema(ctx); err != nil {
+	yes := func(context.Context) bool { return true }
+	if _, err := s.SyncWorkflowDefinitions(ctx, "p", "admin", map[string]string{"demo": workflowYAML}, yes); err != nil {
 		t.Fatal(err)
 	}
 	d, err := s.GetWorkflowDefinition(ctx, "p", "demo")
-	if err != nil || d.Version != 7 || d.YAML != workflowYAML || d.PublishedAt.String != "then" {
-		t.Fatalf("migration lost data: %+v %v", d, err)
-	}
-	yes := func(context.Context) bool { return true }
-	if changed, err := s.SyncWorkflowDefinitions(ctx, "p", "member", map[string]string{"demo": workflowYAML}, yes); err != nil || changed {
-		t.Fatalf("idempotent sync: %v %v", changed, err)
+	if err != nil || d.Version != 1 {
+		t.Fatalf("create: %+v %v", d, err)
 	}
 	if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", "demo", yes); err != nil {
 		t.Fatal(err)
@@ -283,7 +277,7 @@ func TestWorkflowVersionMigrationAndRecreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err = s.GetWorkflowDefinition(ctx, "p", "demo")
-	if err != nil || d.Version <= 7 {
+	if err != nil || d.Version <= 1 {
 		t.Fatalf("reused version: %+v %v", d, err)
 	}
 }
@@ -373,21 +367,28 @@ func TestWorkflowVersionConcurrentSyncDelete(t *testing.T) {
 	}
 }
 
-func TestWorkflowDefinitionMigration(t *testing.T) {
+// TestWorkflowSchemaForeignVersionRefused: миграций нет (#205); база
+// версии 11 не обновляется, а отвергается без изменения файла.
+func TestWorkflowSchemaForeignVersionRefused(t *testing.T) {
 	ctx := context.Background()
-	s := newTestStore(t)
+	path := filepath.Join(t.TempDir(), "workflow.db")
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	seedProject(t, s, "p", "preserved")
-	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; PRAGMA user_version=11`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `PRAGMA user_version=11`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.initializeSchema(ctx); err != nil {
+	before := schemaSnapshot(t, s.db)
+	s.Close()
+	if reopened, err := Open(ctx, path); err == nil {
+		reopened.Close()
+		t.Fatal("previous workflow schema version accepted")
+	} else if !strings.Contains(err.Error(), "incompatible database schema") {
 		t.Fatal(err)
 	}
-	if _, err := s.GetProject(ctx, "p"); err != nil {
+	if err := assertDatabaseUnchanged(t, path, 11, before); err != nil {
 		t.Fatal(err)
-	}
-	var version int
-	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 16 {
-		t.Fatalf("version %d: %v", version, err)
 	}
 }

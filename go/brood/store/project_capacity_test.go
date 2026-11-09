@@ -7,12 +7,13 @@ import (
 	"math"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
 // FEATURE: Persist shard selectors and optional limits without losing ACL data (#69).
-// SPEC: Nil differs from zero; replacement is atomic; recognized versions upgrade
-// in one transaction, unknown or damaged versioned schemas never reconstruct data.
+// SPEC: Nil differs from zero; replacement is atomic; foreign or damaged
+// schema versions never reconstruct data and never mutate the file.
 func projectLimit(value int64) *int64 { return &value }
 
 func TestProjectCapacityRoundtrip(t *testing.T) {
@@ -105,7 +106,9 @@ func TestProjectCapacityRejectsInvalidWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestProjectCapacityKnownSchemaUpgrade(t *testing.T) {
+// TestProjectCapacityLegacySchemaRefused: миграций нет (#205); базы
+// версий 0 и 1 не расширяются, а отвергаются без изменения файла.
+func TestProjectCapacityLegacySchemaRefused(t *testing.T) {
 	for _, version := range []int{0, 1} {
 		t.Run(string(rune('0'+version)), func(t *testing.T) {
 			path := legacyACLDatabase(t, false)
@@ -122,24 +125,20 @@ func TestProjectCapacityKnownSchemaUpgrade(t *testing.T) {
 				}
 				db.Close()
 			}
-			s, err := Open(context.Background(), path)
+			db, err := sql.Open("sqlite", dsn(path))
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer s.Close()
-			var current int
-			if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&current); err != nil || current != 16 {
-				t.Fatalf("version=%d, %v", current, err)
+			before := schemaSnapshot(t, db)
+			db.Close()
+			if s, err := Open(context.Background(), path); err == nil {
+				s.Close()
+				t.Fatal("legacy schema accepted")
+			} else if !strings.Contains(err.Error(), "incompatible database schema") {
+				t.Fatal(err)
 			}
-			var hash, data string
-			if err := s.db.QueryRow(`SELECT password_hash FROM users WHERE id='u1'`).Scan(&hash); err != nil || hash != "private-hash" {
-				t.Fatalf("user changed: %q, %v", hash, err)
-			}
-			if err := s.db.QueryRow(`SELECT data FROM sessions WHERE token_hash='token-hash'`).Scan(&data); err != nil || data != "session-data" {
-				t.Fatalf("session changed: %q, %v", data, err)
-			}
-			if role, err := s.GetSwarmRole(context.Background(), "sw", "u1"); err != nil || role != "owner" {
-				t.Fatalf("owner changed: %q, %v", role, err)
+			if err := assertDatabaseUnchanged(t, path, version, before); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -156,11 +155,18 @@ func TestProjectCapacityDamagedSchemaRefused(t *testing.T) {
 			if _, err := s.db.Exec(q); err != nil {
 				t.Fatal(err)
 			}
+			want := schemaVersion
+			if q == `PRAGMA user_version=99` {
+				want = 99
+			}
+			before := schemaSnapshot(t, s.db)
 			s.Close()
-			s, err = Open(context.Background(), path)
-			if err == nil {
-				s.Close()
+			if reopened, err := Open(context.Background(), path); err == nil {
+				reopened.Close()
 				t.Fatal("damaged/unknown schema accepted")
+			}
+			if err := assertDatabaseUnchanged(t, path, want, before); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -172,25 +178,13 @@ func TestProjectCapacityDamagedSchemaRefused(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE project_capacity (project_id TEXT)`); err != nil {
 		t.Fatal(err)
 	}
+	before := schemaSnapshot(t, db)
 	db.Close()
-	s, err := Open(context.Background(), path)
-	if err == nil {
+	if s, err := Open(context.Background(), path); err == nil {
 		s.Close()
 		t.Fatal("reserved legacy table accepted")
 	}
-	db, err = sql.Open("sqlite", dsn(path))
-	if err != nil {
+	if err := assertDatabaseUnchanged(t, path, 0, before); err != nil {
 		t.Fatal(err)
-	}
-	defer db.Close()
-	var version, count int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='swarm_members'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if version != 0 || count != 0 {
-		t.Fatalf("partial upgrade leaked: version=%d, ACL tables=%d", version, count)
 	}
 }

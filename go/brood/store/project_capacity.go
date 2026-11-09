@@ -131,27 +131,5 @@ func (s *Store) SetProjectCapacity(ctx context.Context, projectID string, capaci
 	})
 }
 
-func initializeProjectCapacity(ctx context.Context, tx *sql.Tx) error {
-	var version int
-	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-		return err
-	}
-	if version == 1 {
-		var reserved int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name='project_capacity'`).Scan(&reserved); err != nil {
-			return err
-		}
-		if reserved != 0 {
-			return fmt.Errorf("incompatible database schema: unversioned project capacity object")
-		}
-		if _, err := tx.ExecContext(ctx, projectCapacitySchema); err != nil {
-			return fmt.Errorf("extend project capacity schema: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=2`); err != nil {
-			return err
-		}
-	} else if version != 2 && version != 3 && version != 4 && version != 5 && version != 6 && version != 7 && version != 8 && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14 && version != 15 && version != 16 {
-		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
-	}
-	return checkSchema(ctx, tx, projectCapacitySchema)
-}
+// Регистрация лимитов в общей схеме — schemaModules ("project-capacity")
+// и verifyProjectCapacitySchema в registry.go (#205).
