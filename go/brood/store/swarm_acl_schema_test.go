@@ -5,12 +5,18 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
-// FEATURE: Add ACL to the precisely recognized current database without data loss.
-// SPEC: Owners are backfilled once, grants survive reopen, conflicting names
-// refuse the extension atomically, and a damaged ACL database is not rebuilt.
+// FEATURE: Recognize only the single current schema version.
+// SPEC: A fresh database creates the full ACL schema; a legacy unversioned
+// database is refused without changes, a damaged ACL database is not rebuilt.
+// Миграций больше нет (#205): расширение прежней базовой схемы не выполняется.
+
+// legacyACLDatabase — нерасширенная база до внедрения ACL: объекты есть,
+// user_version равен нулю. Фикстура для проверки отказа без мутации.
 func legacyACLDatabase(t *testing.T, duplicate bool) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "legacy.db")
@@ -46,65 +52,37 @@ func legacyACLDatabase(t *testing.T, duplicate bool) string {
 	return path
 }
 
-func TestACLRecognizedDatabaseExtensionPreservesRecords(t *testing.T) {
-	path := legacyACLDatabase(t, false)
-	ctx := context.Background()
-	s, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	role, err := s.GetSwarmRole(ctx, "sw", "u1")
-	if err != nil || role != "owner" {
-		t.Fatalf("backfilled role = %q, %v", role, err)
-	}
-	if err := s.SetSwarmMember(ctx, "sw", "u2", "viewer"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	role, err = s.GetSwarmRole(ctx, "sw", "u2")
-	if err != nil || role != "viewer" {
-		t.Fatalf("grant after reopen = %q, %v", role, err)
-	}
-	var hash, data string
-	if err := s.db.QueryRow(`SELECT password_hash FROM users WHERE id='u1'`).Scan(&hash); err != nil || hash != "private-hash" {
-		t.Fatalf("user changed during extension: %q, %v", hash, err)
-	}
-	if err := s.db.QueryRow(`SELECT data FROM sessions WHERE token_hash='token-hash'`).Scan(&data); err != nil || data != "session-data" {
-		t.Fatalf("session changed during extension: %q, %v", data, err)
-	}
-	if _, err := s.db.Exec(`UPDATE swarm_members SET role='administrator' WHERE swarm_id='sw' AND user_id='u2'`); err == nil {
-		t.Fatal("SQL role constraint accepted an unsupported role")
-	}
-}
-
-func TestACLConflictingLegacyNamesRefuseWithoutChanges(t *testing.T) {
-	path := legacyACLDatabase(t, true)
-	s, err := Open(context.Background(), path)
-	if err == nil {
-		s.Close()
-		t.Fatal("conflicting live names accepted during ACL extension")
-	}
-	db, err := sql.Open("sqlite", dsn(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var tables, swarms int
-	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='swarm_members'`).Scan(&tables); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(`SELECT count(*) FROM swarms`).Scan(&swarms); err != nil {
-		t.Fatal(err)
-	}
-	if tables != 0 || swarms != 2 {
-		t.Fatalf("failed extension mutated data: ACL tables=%d swarms=%d", tables, swarms)
+func TestACLLegacyDatabaseRefusedWithoutChanges(t *testing.T) {
+	for name, path := range map[string]string{
+		"clean":       legacyACLDatabase(t, false),
+		"conflicting": legacyACLDatabase(t, true),
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, err := sql.Open("sqlite", dsn(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := schemaSnapshot(t, db)
+			db.Close()
+			if s, err := Open(context.Background(), path); err == nil {
+				s.Close()
+				t.Fatal("unversioned legacy database accepted")
+			} else if !strings.Contains(err.Error(), "incompatible database schema") {
+				t.Fatal(err)
+			}
+			db, err = sql.Open("sqlite", dsn(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			var tables int
+			if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='swarm_members'`).Scan(&tables); err != nil {
+				t.Fatal(err)
+			}
+			if tables != 0 || !reflect.DeepEqual(before, schemaSnapshot(t, db)) {
+				t.Fatalf("refused open mutated legacy database: ACL tables=%d", tables)
+			}
+		})
 	}
 }
 

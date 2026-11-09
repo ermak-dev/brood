@@ -13,67 +13,15 @@ import (
 const testOrigin = "https://git.example.com/group/repo.git"
 
 // FEATURE: Durable actor origin and project repository (#146).
-// SPEC: Schema 10 adds managed_actors.origin and project_repositories without
-// resetting data; a v9 database upgrades in place, a damaged or unversioned
-// v10 schema is refused without mutation. Origins are stored canonical only.
-// IMPLEMENTATION: One additive ALTER/CREATE inside the opening transaction.
+// SPEC: The single schema version creates managed_actors.origin and
+// project_repositories in a fresh database; a damaged schema or a foreign
+// version is refused without mutation. Origins are stored canonical only.
+// IMPLEMENTATION: Module DDL and verification in the shared schema registry.
 // RESULT: IMPLEMENTED
 // STATUS: DONE
-func TestOriginSchemaUpgradeFromV9PreservesData(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "origin.sqlite3")
-	s, err := Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	managedFixture(t, s)
-	if _, err := s.ReserveManagedActor(ctx, managedRequest("legacy", "one", 101)); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutProjectSecretVars(ctx, "one", map[string]string{"APP_TOKEN": "keep-value"}); err != nil {
-		t.Fatal(err)
-	}
-	s.Close()
-	downgradeOriginSchema(t, path)
-	for range 2 {
-		s, err = Open(ctx, path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var version int
-		if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 16 {
-			t.Fatalf("version=%d err=%v", version, err)
-		}
-		a, err := s.GetManagedActor(ctx, "legacy")
-		if err != nil || a.Origin != "" || a.CTID != 101 || a.Name != "legacy" {
-			t.Fatalf("upgrade lost actor: %+v %v", a, err)
-		}
-		repository, err := s.ProjectRepository(ctx, "one")
-		if err != nil || repository != "" {
-			t.Fatalf("upgrade invented a repository: %q %v", repository, err)
-		}
-		bundle, err := s.ReadProjectSecretBundle(ctx, "one")
-		if err != nil || bundle.Vars["APP_TOKEN"] != "keep-value" {
-			t.Fatalf("upgrade lost project secret: %v", err)
-		}
-		s.Close()
-	}
-}
-
-// downgradeOriginSchema turns a current database into the exact schema 9.
-func downgradeOriginSchema(t *testing.T, path string) {
-	t.Helper()
-	db, err := sql.Open("sqlite", dsn(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; PRAGMA user_version=9`); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestOriginSchemaRefusesUnversionedObjects(t *testing.T) {
+// Миграций больше нет (#205): старые версии схемы не обновляются,
+// а отвергаются; контракт проверяет отказ и неизменность файла.
+func TestOriginSchemaRefusesPreviousVersionWithoutMutation(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "origin.sqlite3")
 	s, err := Open(ctx, path)
@@ -81,25 +29,23 @@ func TestOriginSchemaRefusesUnversionedObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	downgradeOriginSchema(t, path)
 	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE project_repositories (project_id TEXT)`); err != nil {
+	if _, err := db.Exec(`PRAGMA user_version=9`); err != nil {
 		t.Fatal(err)
 	}
 	before := schemaSnapshot(t, db)
+	db.Close()
 	if st, err := Open(ctx, path); err == nil {
 		st.Close()
-		t.Fatal("unversioned repository table accepted")
+		t.Fatal("previous schema version accepted")
 	} else if !strings.Contains(err.Error(), "incompatible database schema") {
 		t.Fatal(err)
 	}
-	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 9 || !reflect.DeepEqual(before, schemaSnapshot(t, db)) {
-		t.Fatalf("refused upgrade mutated schema: version=%d err=%v", version, err)
+	if err := assertDatabaseUnchanged(t, path, 9, before); err != nil {
+		t.Fatal(err)
 	}
 }
 

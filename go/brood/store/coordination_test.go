@@ -353,9 +353,11 @@ func TestCoordinationIndependentConnections(t *testing.T) {
 	}
 }
 
-func TestCoordinationUnversionedObjectsRollback(t *testing.T) {
+// TestCoordinationUnversionedObjectsRefused: миграций нет (#205); база
+// с coordination-объектами чужой структуры отвергается без мутации.
+func TestCoordinationUnversionedObjectsRefused(t *testing.T) {
 	ctx := context.Background()
-	path := lifecycleSchema3(t)
+	path := legacyACLDatabase(t, false)
 	db, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		t.Fatal(err)
@@ -376,40 +378,25 @@ func TestCoordinationUnversionedObjectsRollback(t *testing.T) {
 	defer db.Close()
 	var version int
 	var evidence string
-	if err = db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 3 {
+	if err = db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 0 {
 		t.Fatalf("version changed %d %v", version, err)
 	}
 	if !reflect.DeepEqual(before, schemaSnapshot(t, db)) {
-		t.Fatal("rejected migration changed schema")
+		t.Fatal("refused open changed schema")
 	}
 	if err = db.QueryRow(`SELECT evidence FROM coordination_claims`).Scan(&evidence); err != nil || evidence != "keep" {
 		t.Fatalf("evidence changed %q %v", evidence, err)
 	}
 }
 
-func TestCoordinationMigrationAndValidation(t *testing.T) {
+// TestCoordinationDamagedSchemaRefused: повреждённая таблица координации
+// ловится при открытии базы текущей версии.
+func TestCoordinationDamagedSchemaRefused(t *testing.T) {
 	ctx := context.Background()
-	path := lifecycleSchema3(t)
+	path := filepath.Join(t.TempDir(), "coordination.db")
 	s, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	s.Close()
-	db, err := sql.Open("sqlite", dsn(path))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; DROP TABLE coordination_claims; DROP TABLE command_project_details; PRAGMA user_version=7`); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-	s, err = Open(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var version int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 16 {
-		t.Fatalf("version %d: %v", version, err)
 	}
 	if _, err = s.db.Exec(`ALTER TABLE coordination_claims ADD COLUMN unexpected TEXT`); err != nil {
 		t.Fatal(err)

@@ -6,13 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"sync"
 	"testing"
 )
 
 // FEATURE: Durable managed Proxmox inventory.
-// SPEC: Transactional schema upgrades preserve native data; reservations survive
+// SPEC: A fresh database creates the full managed schema; reservations survive
 // unknown cleanup and stopped/error phases; CAS and partial uniqueness prevent reuse.
 func managedFixture(t *testing.T, s *Store) ManagedPool {
 	t.Helper()
@@ -223,96 +222,29 @@ func TestManagedConcurrentReservations(t *testing.T) {
 		t.Fatalf("accepted=%d want 2", accepted)
 	}
 }
-func TestManagedSchemaUpgrade(t *testing.T) {
-	for _, version := range []int{0, 1, 2} {
-		t.Run(fmt.Sprint(version), func(t *testing.T) {
-			ctx := context.Background()
-			path := legacyACLDatabase(t, false)
-			db, err := sql.Open("sqlite", dsn(path))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if version >= 1 {
-				if _, err = db.Exec(swarmMembersSchema + `; INSERT INTO swarm_members SELECT id,owner_id,'owner' FROM swarms; ` + liveSwarmNameIndex + `; PRAGMA user_version=1`); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if version >= 1 {
-				if _, err := db.Exec(`INSERT INTO swarm_members VALUES ('sw','u2','viewer')`); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if version >= 2 {
-				if _, err = db.Exec(projectCapacitySchema + `; INSERT INTO project_capacity(project_id,worker_selector,max_actors) VALUES ('p','{}',7); PRAGMA user_version=2`); err != nil {
-					t.Fatal(err)
-				}
-			}
-			before := schemaSnapshot(t, db)
-			db.Close()
-			st, err := Open(ctx, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var v int
-			if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil || v != 16 {
-				t.Fatalf("version=%d err=%v", v, err)
-			}
-			user, err := st.GetUser(ctx, "u1")
-			if err != nil || user.PasswordHash != "private-hash" {
-				t.Fatalf("native user=%+v err=%v", user, err)
-			}
-			var data string
-			if err := st.db.QueryRow(`SELECT data FROM sessions WHERE token_hash='token-hash'`).Scan(&data); err != nil || data != "session-data" {
-				t.Fatalf("native session=%q err=%v", data, err)
-			}
-			if role, err := st.GetSwarmRole(ctx, "sw", "u1"); err != nil || role != "owner" {
-				t.Fatalf("native owner=%q err=%v", role, err)
-			}
-			if version >= 1 {
-				if role, err := st.GetSwarmRole(ctx, "sw", "u2"); err != nil || role != "viewer" {
-					t.Fatalf("native viewer=%q err=%v", role, err)
-				}
-			}
-			if version == 2 {
-				c, err := st.GetProjectCapacity(ctx, "p")
-				if err != nil || c.MaxActors == nil || *c.MaxActors != 7 {
-					t.Fatalf("capacity=%+v err=%v", c, err)
-				}
-			}
-			after := schemaSnapshot(t, st.db)
-			if len(after) <= len(before) {
-				t.Fatal("inventory not added")
-			}
-			for _, definition := range before {
-				if !slices.Contains(after, definition) {
-					t.Fatalf("native schema changed: %s", definition)
-				}
-			}
-			st.Close()
-			st, err = Open(ctx, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer st.Close()
-			if !reflect.DeepEqual(after, schemaSnapshot(t, st.db)) {
-				t.Fatal("reopen altered schema")
-			}
-		})
-	}
-}
-func TestManagedMigrationRollback(t *testing.T) {
+
+// TestManagedSchemaContract: миграций нет (#205); база чужой версии
+// отвергается без изменения схемы и данных, частичная схема с чужими
+// managed-объектами — тоже.
+func TestManagedSchemaContract(t *testing.T) {
 	for _, version := range []int{0, 2} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			ctx := context.Background()
 			path := legacyACLDatabase(t, false)
+			if version == 2 {
+				db, err := sql.Open("sqlite", dsn(path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.Exec(swarmMembersSchema + `; INSERT INTO swarm_members SELECT id,owner_id,'owner' FROM swarms; ` + liveSwarmNameIndex + `; ` + projectCapacitySchema + `; PRAGMA user_version=2`); err != nil {
+					db.Close()
+					t.Fatal(err)
+				}
+				db.Close()
+			}
 			db, err := sql.Open("sqlite", dsn(path))
 			if err != nil {
 				t.Fatal(err)
-			}
-			if version == 2 {
-				if _, err := db.Exec(swarmMembersSchema + `; INSERT INTO swarm_members SELECT id,owner_id,'owner' FROM swarms; ` + liveSwarmNameIndex + `; ` + projectCapacitySchema + `; PRAGMA user_version=2`); err != nil {
-					t.Fatal(err)
-				}
 			}
 			if _, err := db.Exec(`CREATE TABLE managed_actors (foreign_data TEXT); INSERT INTO managed_actors VALUES ('keep')`); err != nil {
 				t.Fatal(err)
@@ -322,6 +254,8 @@ func TestManagedMigrationRollback(t *testing.T) {
 			if st, err := Open(ctx, path); err == nil {
 				st.Close()
 				t.Fatal("partial managed schema accepted")
+			} else if !errors.Is(err, errIncompatibleSchema) {
+				t.Fatal(err)
 			}
 			db, err = sql.Open("sqlite", dsn(path))
 			if err != nil {
@@ -333,7 +267,7 @@ func TestManagedMigrationRollback(t *testing.T) {
 				t.Fatal(err)
 			}
 			if v != version || !reflect.DeepEqual(before, schemaSnapshot(t, db)) {
-				t.Fatal("failed upgrade mutated database")
+				t.Fatal("refused open mutated database")
 			}
 			var data string
 			if err := db.QueryRow(`SELECT foreign_data FROM managed_actors`).Scan(&data); err != nil || data != "keep" {

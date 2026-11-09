@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 //go:embed coordination.sql
@@ -202,24 +201,5 @@ func (s *Store) giveCoordination(ctx context.Context, kind string, c Coordinatio
 	})
 }
 
-func initializeCoordination(ctx context.Context, tx *sql.Tx) error {
-	var version int
-	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-		return err
-	}
-	if version == 7 {
-		var reserved int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name GLOB 'coordination_*'`).Scan(&reserved); err != nil {
-			return err
-		}
-		if reserved != 0 {
-			return fmt.Errorf("incompatible database schema: unversioned coordination objects")
-		}
-		if _, err := tx.ExecContext(ctx, coordinationSchema+`PRAGMA user_version=8`); err != nil {
-			return fmt.Errorf("extend coordination schema: %w", err)
-		}
-	} else if version != 8 && version != 9 && version != 10 && version != 11 && version != 12 && version != 13 && version != 14 && version != 15 && version != 16 {
-		return fmt.Errorf("incompatible database schema: unsupported version %d", version)
-	}
-	return checkSchema(ctx, tx, coordinationSchema)
-}
+// Регистрация координации в общей схеме — schemaModules ("coordination")
+// и verifyCoordinationSchema в registry.go (#205).

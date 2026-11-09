@@ -18,6 +18,14 @@ import (
 // ErrNotFound возвращает вызывающему, когда записи с данным ключом нет.
 var ErrNotFound = fmt.Errorf("record not found")
 
+// errIncompatibleSchema — общая причина отказов несовместимой схемы:
+// ошибки заворачиваются в неё, вызывающие проверяют errors.Is.
+var errIncompatibleSchema = errors.New("incompatible database schema")
+
+// schemaVersion — единственная версия схемы базы. Миграций нет: база
+// создаётся заново, любая другая версия отвергается (#205).
+const schemaVersion = 16
+
 //go:embed schema.sql
 var currentSchema string
 
@@ -81,55 +89,44 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // Close закрывает соединение с базой.
 func (s *Store) Close() error { return s.db.Close() }
 
-// initializeSchema создаёт схему только в пустой базе. Проверка и создание
-// держат BEGIN IMMEDIATE: конкурентные Open не видят частичную схему.
+// initializeSchema применяет единую схему. Пустая база (версия 0 без
+// объектов) создаётся целиком и получает schemaVersion; совпадающая
+// версия проверяется; любая другая — отказ без мутации файла. Проверка
+// и создание держат BEGIN IMMEDIATE: конкурентные Open не видят частичную
+// схему. Модули схемы объявляют только свой DDL и проверку (#205).
 func (s *Store) initializeSchema(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin schema initialization: %w", err)
 	}
 	defer tx.Rollback()
+	var version int
+	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("inspect schema version: %w", err)
+	}
 	var objects int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
 		return fmt.Errorf("inspect database schema: %w", err)
 	}
-	if objects == 0 {
-		if _, err := tx.ExecContext(ctx, currentSchema); err != nil {
-			return fmt.Errorf("initialize database schema: %w", err)
+	switch {
+	case version == 0 && objects == 0:
+		for _, module := range schemaModules {
+			if _, err := tx.ExecContext(ctx, module.create()); err != nil {
+				return fmt.Errorf("initialize database schema: %w", err)
+			}
 		}
-	} else if err := checkCurrentSchema(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializeACL(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializeProjectCapacity(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializeManaged(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializeCoordination(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializeProjectSecrets(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializeOrigins(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializePipelines(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializeWorkflowDefinitions(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializePipelineSources(ctx, tx); err != nil {
-		return err
-	}
-	if err := initializePipelinePreparations(ctx, tx); err != nil {
-		return err
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version=%d`, schemaVersion)); err != nil {
+			return fmt.Errorf("initialize schema version: %w", err)
+		}
+	case version == schemaVersion:
+		for _, module := range schemaModules {
+			if err := module.verify(ctx, tx); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("%w: found %d, want %d; recreate the database", errIncompatibleSchema, version, schemaVersion)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema initialization: %w", err)
@@ -137,14 +134,8 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 	return nil
 }
 
-// checkCurrentSchema сверяет определения таблиц, включая ограничения.
-// schema.sql содержит только CREATE TABLE, без комментариев и разделителей
-// внутри литералов. Пробелы несущественны; retry, добавленный старым ALTER,
-// даёт то же определение. Посторонние служебные таблицы не меняются.
-func checkCurrentSchema(ctx context.Context, tx *sql.Tx) error {
-	return checkSchema(ctx, tx, currentSchema)
-}
-
+// checkSchema сверяет определения таблиц, включая ограничения. Пробелы
+// несущественны. Посторонние служебные таблицы не меняются.
 func checkSchema(ctx context.Context, tx *sql.Tx, expected string) error {
 	for _, statement := range strings.Split(expected, ";") {
 		fields := strings.Fields(statement)

@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"brood.dev/go/brood/pipeline"
 )
@@ -67,8 +66,15 @@ const pipelinePreparationSchema = `CREATE TABLE pipeline_preparations (
     UNIQUE (actor_uid)
 )`
 
-func initializePipelinePreparations(ctx context.Context, tx *sql.Tx) error {
-	triggers := []struct{ name, statement string }{
+// Триггеры целостности намерений оплачены ревью (#163); регистрация
+// перенесена в общий список схемы: pipelinePreparationFullSchema и
+// verifyPipelinePreparationsSchema в registry.go (#205).
+
+// pipelinePreparationTriggers — триггеры целостности намерений: актёр
+// неизменен до подтверждения, связка и посещения защищены от подмены и
+// удаления (#163). Семантика оплачена ревью (#205).
+func pipelinePreparationTriggers() []struct{ name, statement string } {
+	return []struct{ name, statement string }{
 		{"pipeline_preparations_actor_fence", pipelinePreparationActorFence},
 		{"pipeline_preparations_actor_no_replace", pipelinePreparationActorNoReplace},
 		{"pipeline_preparations_no_delete", pipelinePreparationNoDelete},
@@ -78,44 +84,6 @@ func initializePipelinePreparations(ctx context.Context, tx *sql.Tx) error {
 		{"pipeline_preparations_step_update_fence", pipelinePreparationStepUpdateFence},
 		{"pipeline_preparations_run_no_delete", pipelinePreparationRunNoDelete},
 	}
-	var version int
-	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-		return err
-	}
-	if version == 15 {
-		for _, name := range []string{"pipeline_preparations", "pipeline_preparations_actor_fence", "pipeline_preparations_actor_no_replace", "pipeline_preparations_no_delete", "pipeline_preparations_no_replace", "pipeline_preparations_update_fence", "pipeline_preparations_step_no_replace", "pipeline_preparations_step_update_fence", "pipeline_preparations_run_no_delete"} {
-			var existing int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name=?`, name).Scan(&existing); err != nil {
-				return err
-			}
-			if existing != 0 {
-				return errors.New("incompatible database schema: unversioned pipeline preparations")
-			}
-		}
-		if _, err := tx.ExecContext(ctx, pipelinePreparationSchema); err != nil {
-			return fmt.Errorf("extend pipeline preparation schema: %w", err)
-		}
-		for _, trigger := range triggers {
-			if _, err := tx.ExecContext(ctx, trigger.statement); err != nil {
-				return fmt.Errorf("extend pipeline preparation schema: %w", err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `PRAGMA user_version=16`); err != nil {
-			return fmt.Errorf("extend pipeline preparation schema: %w", err)
-		}
-	} else if version != 16 {
-		return errors.New("incompatible database schema: unsupported pipeline preparation version")
-	}
-	if err := checkSchema(ctx, tx, pipelinePreparationSchema); err != nil {
-		return err
-	}
-	for _, trigger := range triggers {
-		var actual string
-		if err := tx.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?`, trigger.name).Scan(&actual); err != nil || normalizeSchemaSQL(actual) != normalizeSchemaSQL(trigger.statement) {
-			return errors.New("incompatible database schema: pipeline preparation trigger differs")
-		}
-	}
-	return nil
 }
 
 // ReservePipelinePreparation atomically binds a new managed actor allocation to a visit.

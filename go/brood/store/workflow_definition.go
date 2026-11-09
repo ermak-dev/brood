@@ -21,22 +21,6 @@ type WorkflowDefinition struct {
 	PublishedAt sql.NullString
 }
 
-const legacyWorkflowDefinitionSchema = `CREATE TABLE workflow_definitions (
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    yaml TEXT NOT NULL,
-    version INTEGER NOT NULL CHECK (version > 0),
-    PRIMARY KEY (project_id, name)
-)`
-
-const workflowDefinitionSchemaV13 = `CREATE TABLE workflow_definitions (
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    yaml TEXT NOT NULL,
-    version INTEGER NOT NULL CHECK (version > 0),
-    published_at TEXT, PRIMARY KEY (project_id, name)
-)`
-
 const workflowDefinitionSchema = `CREATE TABLE workflow_definitions (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -50,55 +34,9 @@ const workflowRevisionSchema = `CREATE TABLE workflow_revision_counters (
     version INTEGER NOT NULL CHECK (typeof(version) = 'integer' AND version > 0)
 )`
 
-func initializeWorkflowDefinitions(ctx context.Context, tx *sql.Tx) error {
-	var version int
-	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-		return err
-	}
-	if version == 11 {
-		var n int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name='workflow_definitions'`).Scan(&n); err != nil {
-			return err
-		}
-		if n != 0 {
-			return errors.New("incompatible database schema: unversioned workflow definitions")
-		}
-		if _, err := tx.ExecContext(ctx, workflowDefinitionSchemaV13+`; PRAGMA user_version=13`); err != nil {
-			return fmt.Errorf("extend workflow schema: %w", err)
-		}
-	} else if version == 12 {
-		if err := checkSchema(ctx, tx, legacyWorkflowDefinitionSchema); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE workflow_definitions ADD COLUMN published_at TEXT; PRAGMA user_version=13`); err != nil {
-			return fmt.Errorf("extend workflow schema: %w", err)
-		}
-	} else if version != 13 && version != 14 && version != 15 && version != 16 {
-		return errors.New("incompatible database schema: unsupported workflow version")
-	}
-	if version < 14 {
-		if err := checkSchema(ctx, tx, workflowDefinitionSchemaV13); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE workflow_definitions ADD COLUMN revision TEXT; UPDATE workflow_definitions SET revision=lower(hex(randomblob(16)));`+workflowRevisionSchema+`; INSERT INTO workflow_revision_counters(project_id,version) SELECT project_id,MAX(version) FROM workflow_definitions GROUP BY project_id; PRAGMA user_version=14`); err != nil {
-			return fmt.Errorf("extend workflow revision schema: %w", err)
-		}
-	}
-	if err := checkSchema(ctx, tx, workflowDefinitionSchema); err != nil {
-		return err
-	}
-	if err := checkSchema(ctx, tx, workflowRevisionSchema); err != nil {
-		return err
-	}
-	var invalid bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM workflow_revision_counters WHERE typeof(version) != 'integer' OR version <= 0) OR EXISTS(SELECT 1 FROM workflow_definitions d LEFT JOIN workflow_revision_counters c ON c.project_id=d.project_id WHERE typeof(d.version) != 'integer' OR d.version <= 0 OR c.version IS NULL OR c.version < d.version OR d.revision IS NULL OR length(d.revision) != 32 OR d.revision GLOB '*[^0-9a-f]*')`).Scan(&invalid); err != nil {
-		return err
-	}
-	if invalid {
-		return errors.New("incompatible database schema: workflow revision counters differ from definitions")
-	}
-	return nil
-}
+// Регистрация определений workflow в общей схеме — schemaModules
+// ("workflow") и verifyWorkflowSchema в registry.go (#205): таблицы
+// и согласованность счётчиков ревизий проверяются при открытии.
 
 // GetWorkflowDefinition returns a named definition in a project.
 func (s *Store) GetWorkflowDefinition(ctx context.Context, projectID, name string) (WorkflowDefinition, error) {

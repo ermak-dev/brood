@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -15,9 +14,9 @@ import (
 	"brood.dev/go/brood/projectsecret"
 )
 
-// FEATURE: Private project secret storage and validated schema 9 (#134).
+// FEATURE: Private project secret storage and validated schema (#134).
 // SPEC: Atomic bounded batches, monotonic revisions, metadata-only listing, project FK and durable reopen.
-// IMPLEMENTATION: Validated additive schema 9, immediate transactions and per-batch savepoints.
+// IMPLEMENTATION: Immediate transactions and per-batch savepoints.
 // RESULT: IMPLEMENTED — roundtrip, concurrent writers, bounded rollback and migration checks pass.
 // STATUS: DONE
 func TestProjectSecretRoundtrip(t *testing.T) {
@@ -221,9 +220,12 @@ func TestProjectSecretNestedBatchFailure(t *testing.T) {
 	}
 }
 
-func TestProjectSecretSchemaMigration(t *testing.T) {
+// TestProjectSecretSchemaContract: миграций нет (#205); база чужой версии
+// отвергается без изменения схемы и версии, а повреждённая таблица секрeтов
+// ловится при открытии текущей версии.
+func TestProjectSecretSchemaContract(t *testing.T) {
 	ctx := context.Background()
-	for _, damage := range []string{"", "reserved", "old-schema", "versioned"} {
+	for _, damage := range []string{"foreign-version", "old-version", "damaged-table"} {
 		t.Run(damage, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "migration.db")
 			s, e := Open(ctx, path)
@@ -231,64 +233,31 @@ func TestProjectSecretSchemaMigration(t *testing.T) {
 				t.Fatal(e)
 			}
 			seedProject(t, s, "p", "p")
-			if damage != "versioned" {
-				_, e = s.db.Exec(`ALTER TABLE managed_actors DROP COLUMN origin; DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; DROP TABLE workflow_revision_counters; DROP TABLE workflow_definitions; DROP TABLE pipeline_steps; DROP TABLE pipeline_runs; DROP TABLE project_repositories; DROP TABLE project_secret_files; DROP TABLE project_secret_vars; DROP TABLE project_secret_revisions; PRAGMA user_version=8`)
-				if e != nil {
-					t.Fatal(e)
-				}
-			}
 			switch damage {
-			case "reserved":
-				_, e = s.db.Exec(`CREATE TABLE project_secret_files (bad TEXT)`)
-			case "old-schema":
-				_, e = s.db.Exec(`DROP TABLE coordination_claims; PRAGMA user_version=7; CREATE TABLE project_secret_files (bad TEXT)`)
-			case "versioned":
+			case "foreign-version":
+				_, e = s.db.Exec(`PRAGMA user_version=99`)
+			case "old-version":
+				_, e = s.db.Exec(`PRAGMA user_version=8`)
+			case "damaged-table":
 				_, e = s.db.Exec(`DROP TABLE project_secret_vars; CREATE TABLE project_secret_vars (bad TEXT)`)
 			}
 			if e != nil {
 				t.Fatal(e)
 			}
+			want := schemaVersion
+			if damage != "damaged-table" {
+				want = map[string]int{"foreign-version": 99, "old-version": 8}[damage]
+			}
 			before := schemaSnapshot(t, s.db)
 			s.Close()
-			reopened, e := Open(ctx, path)
-			if damage == "" {
-				if e != nil {
-					t.Fatal(e)
-				}
-				defer reopened.Close()
-				var v int
-				reopened.db.QueryRow(`PRAGMA user_version`).Scan(&v)
-				if v != 16 {
-					t.Fatal("schema version", v)
-				}
-				if _, e = reopened.GetProject(ctx, "p"); e != nil {
-					t.Fatal(e)
-				}
-				return
-			}
-			if e == nil {
+			if reopened, e := Open(ctx, path); e == nil {
 				reopened.Close()
 				t.Fatal("damaged schema accepted")
-			}
-			raw, e := sql.Open("sqlite", dsn(path))
-			if e != nil {
+			} else if !strings.Contains(e.Error(), "incompatible database schema") {
 				t.Fatal(e)
 			}
-			defer raw.Close()
-			if !reflect.DeepEqual(before, schemaSnapshot(t, raw)) {
-				t.Fatal("failed migration changed schema")
-			}
-			var v int
-			raw.QueryRow(`PRAGMA user_version`).Scan(&v)
-			want := 8
-			if damage == "old-schema" {
-				want = 7
-			}
-			if damage == "versioned" {
-				want = 16
-			}
-			if v != want {
-				t.Fatal("failed migration changed version")
+			if e := assertDatabaseUnchanged(t, path, want, before); e != nil {
+				t.Fatal(e)
 			}
 		})
 	}

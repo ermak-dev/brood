@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -157,27 +158,31 @@ func TestBoundPipelineRefusesActorEffects(t *testing.T) {
 	}
 }
 
-func TestPipelineSourceLegacyMigration(t *testing.T) {
+// TestPipelineSourceForeignVersionRefused: миграций нет (#205); база
+// версии 14 отвергается без изменения схемы и версии, триггеры
+// неизменности при этом не пересоздаются.
+func TestPipelineSourceForeignVersionRefused(t *testing.T) {
 	ctx := context.Background()
-	s := sourceTestStore(t)
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES ('legacy','s','u',?,'running')`, []byte(actorStartGraph)); err != nil {
+	path := filepath.Join(t.TempDir(), "source.db")
+	s, err := Open(ctx, path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`DROP TRIGGER pipeline_preparations_actor_fence; DROP TRIGGER pipeline_preparations_actor_no_replace; DROP TRIGGER pipeline_preparations_step_no_replace; DROP TRIGGER pipeline_preparations_step_update_fence; DROP TRIGGER pipeline_preparations_run_no_delete; DROP TABLE pipeline_preparations; DROP TRIGGER pipeline_runs_no_replace; DROP TABLE pipeline_sources; PRAGMA user_version=14`); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO users VALUES ('u','user',NULL,'hash',0,0,'now','now'); INSERT INTO projects VALUES ('p','project','now'); INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,created_at,updated_at) VALUES ('s','p','u','swarm','space','now','now'); INSERT INTO swarm_members VALUES ('s','u','owner'); INSERT INTO pipeline_runs(id,swarm_id,owner_id,graph,status) VALUES ('legacy','s','u',?,'running')`, []byte(actorStartGraph)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.initializeSchema(ctx); err != nil {
+	if _, err := s.db.Exec(`PRAGMA user_version=14`); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.GetPipelineRun(ctx, "s", "legacy")
-	if err != nil || got.Source != nil {
-		t.Fatalf("legacy snapshot: %+v %v", got.Source, err)
-	}
-	if err := s.initializeSchema(ctx); err != nil {
+	before := schemaSnapshot(t, s.db)
+	s.Close()
+	if reopened, err := Open(ctx, path); err == nil {
+		reopened.Close()
+		t.Fatal("previous pipeline source version accepted")
+	} else if !strings.Contains(err.Error(), "incompatible database schema") {
 		t.Fatal(err)
 	}
-	visit := PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "uid", ActorIncarnation: 1, RequestID: "legacy-request"}
-	if _, err := s.AppendPipelineVisit(ctx, "s", "legacy", visit); err != nil {
-		t.Fatalf("migrated legacy run no longer accepts its actor visit: %v", err)
+	if err := assertDatabaseUnchanged(t, path, 14, before); err != nil {
+		t.Fatal(err)
 	}
 }
