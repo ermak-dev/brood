@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 
 	"brood.dev/go/brood/pipeline"
 )
@@ -383,77 +382,14 @@ func (s *Store) RecoverPipelineActions(ctx context.Context) error {
 }
 
 // supportedPipeline rejects execution semantics this runner cannot honor.
-func supportedPipeline(d *pipeline.Document) error {
-	if d.Retry != nil && d.Retry.MaxRetries != 0 {
-		return errors.New("pipeline retries are unsupported")
-	}
-	for _, gate := range d.GoalGates {
-		if gate != d.Exit {
-			return errors.New("pipeline goal gates are unsupported")
-		}
-	}
-	for id, n := range d.Nodes {
-		if n.Type == "actor" && n.ManagedPool != "" {
-			return errors.New("managed pool pipeline execution is unsupported")
-		}
-		if n.Type != "actor" && n.Type != "human" && n.Type != "exit" {
-			return errors.New("pipeline node type is unsupported")
-		}
-		if n.Type == "exit" && id != d.Exit {
-			return errors.New("pipeline has a non-designated exit")
-		}
-		if n.Type == "human" {
-			seen := map[string]bool{}
-			for _, option := range n.Options {
-				if seen[option.Outcome] {
-					return errors.New("ambiguous pipeline human outcome")
-				}
-				seen[option.Outcome] = true
-				if _, ok := selectPipelineEdge(d, id, "answered", option.Outcome); !ok {
-					return errors.New("pipeline human option has no matching edge")
-				}
-			}
-		}
-	}
-	for _, e := range d.Edges {
-		if e.Condition != "" {
-			for _, clause := range strings.Split(e.Condition, "&&") {
-				if !strings.HasPrefix(strings.TrimSpace(clause), "outcome=") && !strings.HasPrefix(strings.TrimSpace(clause), "outcome!=") {
-					return errors.New("pipeline condition is unsupported")
-				}
-			}
-		}
-	}
-	return nil
-}
+func supportedPipeline(d *pipeline.Document) error { return pipeline.Supported(d) }
 
-func selectPipelineEdge(d *pipeline.Document, node, state, value string) (pipeline.Edge, bool) {
-	preferred := ""
-	if state == "answered" {
-		for _, option := range d.Nodes[node].Options {
-			if option.Outcome == value {
-				preferred = option.Label
-				break
-			}
-		}
-	}
-	var edges []pipeline.Edge
-	for _, edge := range d.Edges {
-		if edge.From != node || (state == "completed" && value == "fail" && edge.Condition == "") {
-			continue
-		}
-		if state == "answered" && edge.Label != "" && edge.Label != preferred {
-			continue
-		}
-		edges = append(edges, edge)
-	}
-	return pipeline.SelectNext(edges, value, nil, preferred, nil)
-}
-
+// progressPipeline applies one transition computed by the pure engine.
+// The store owns only the sequence currency check and the write: the visit
+// is finalized (answer or outcome recorded by its own column), the successor
+// visit and the run status follow the transition. Everything runs in the
+// caller's transaction, so a failed write rolls back without a partial step.
 func (s *Store) progressPipeline(ctx context.Context, r PipelineRun, d *pipeline.Document, sequence int64, node, state, value string) error {
-	if err := supportedPipeline(d); err != nil {
-		return err
-	}
 	var latest int64
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT MAX(sequence) FROM pipeline_steps WHERE run_id=?`, r.ID).Scan(&latest); err != nil {
 		return err
@@ -461,48 +397,26 @@ func (s *Store) progressPipeline(ctx context.Context, r PipelineRun, d *pipeline
 	if latest != sequence {
 		return ErrPipelineVisitConflict
 	}
-	edge, ok := selectPipelineEdge(d, node, state, value)
-	if !ok {
-		column := "outcome"
-		if state == "answered" {
-			column = "answer"
-		}
-		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state=?, `+column+`=? WHERE run_id=? AND sequence=?`, state, value, r.ID, sequence); err != nil {
+	transition, err := pipeline.Advance(d, pipeline.Event{Node: node, State: state, Outcome: value})
+	if err != nil {
+		return err
+	}
+	// Исход актёра и ответ оператора — разные поля: без подстановки имени
+	// колонки строкой каждая ветка пишет своё поле явно.
+	if state == "answered" {
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state=?,answer=? WHERE run_id=? AND sequence=?`, state, value, r.ID, sequence); err != nil {
 			return err
 		}
-		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_runs SET status='failed' WHERE id=?`, r.ID)
+	} else if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state=?,outcome=? WHERE run_id=? AND sequence=?`, state, value, r.ID, sequence); err != nil {
 		return err
 	}
-	if d.Nodes[edge.To].Type == "exit" && edge.To != d.Exit {
-		return errors.New("pipeline has a non-designated exit")
-	}
-	next := d.Nodes[edge.To]
-	nextState := "pending"
-	status := "running"
-	switch next.Type {
-	case "human":
-		nextState = "waiting"
-		status = "waiting_human"
-	case "exit":
-		nextState = "completed"
-		status = "succeeded"
-		if value == "fail" {
-			status = "failed"
-		}
-	case "actor":
-	default:
-		return errors.New("pipeline node type is unsupported")
-	}
-	column := "outcome"
-	if state == "answered" {
-		column = "answer"
-	}
-	if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_steps SET state=?, `+column+`=? WHERE run_id=? AND sequence=?`, state, value, r.ID, sequence); err != nil {
+	if transition.Terminal {
+		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_runs SET status=? WHERE id=?`, transition.Execution, r.ID)
 		return err
 	}
-	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_steps(run_id,sequence,node_id,state) VALUES (?,?,?,?)`, r.ID, sequence+1, edge.To, nextState); err != nil {
+	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_steps(run_id,sequence,node_id,state) VALUES (?,?,?,?)`, r.ID, sequence+1, transition.Next, transition.NextState); err != nil {
 		return err
 	}
-	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_runs SET status=? WHERE id=?`, status, r.ID)
+	_, err = s.conn(ctx).ExecContext(ctx, `UPDATE pipeline_runs SET status=? WHERE id=?`, transition.Execution, r.ID)
 	return err
 }
