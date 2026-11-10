@@ -1,8 +1,10 @@
 package build
 
 // FEATURE: Named declarative workflows in Broodfile.
-// SPEC: Validate pipeline graph structure and template references while preserving build plans.
-// IMPLEMENTATION: Reuse pipeline validation and resolve templates in the Broodfile.
+// SPEC: Validate pipeline graph structure and role labels; workflow nodes
+// name roles instead of creation sources, and build plans stay unchanged.
+// IMPLEMENTATION: Reuse pipeline validation; the Broodfile schema carries
+// the role field and the compiler checks it is a DNS label.
 // RESULT: IMPLEMENTED — workflows are declarative and do not change build plans.
 // STATUS: DONE
 
@@ -24,7 +26,7 @@ func TestWorkflowExpandedYAML(t *testing.T) {
 	doc["workflows"] = map[string]any{"check": map[string]any{
 		"start": "work", "exit": "done",
 		"nodes": map[string]any{
-			"work": map[string]any{"type": "actor", "template": "python", "prompt": strings.Repeat("x\n", 110000)},
+			"work": map[string]any{"type": "actor", "role": "build", "prompt": strings.Repeat("x\n", 110000)},
 			"done": map[string]any{"type": "exit"},
 		},
 		"edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"},
@@ -94,7 +96,7 @@ func TestProjectAndWorkflow(t *testing.T) {
 	doc["project"] = map[string]any{"repository": "git@git.example.com:team/repo.git", "description": "Example"}
 	doc["workflows"] = map[string]any{"check": map[string]any{
 		"start": "work", "exit": "done",
-		"nodes": map[string]any{"work": map[string]any{"type": "actor", "template": "python"}, "done": map[string]any{"type": "exit"}},
+		"nodes": map[string]any{"work": map[string]any{"type": "actor", "role": "build"}, "done": map[string]any{"type": "exit"}},
 		"edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"},
 	}}
 	parsed, err := ParseDocument(marshal(t, doc), "Broodfile")
@@ -110,7 +112,7 @@ func TestProjectAndWorkflow(t *testing.T) {
 		t.Fatalf("project config: %v", config)
 	}
 	graph, err := Workflow(parsed, "check", "Broodfile")
-	if err != nil || graph.Nodes["work"].Template != "python" {
+	if err != nil || graph.Nodes["work"].Role != "build" {
 		t.Fatalf("workflow: %v, %v", graph, err)
 	}
 	parsed["workflows"].(map[string]any)["check"].(map[string]any)["exit"] = "missing"
@@ -122,7 +124,7 @@ func TestProjectAndWorkflow(t *testing.T) {
 func TestWorkflows(t *testing.T) {
 	graph := map[string]any{
 		"start": "work", "exit": "done",
-		"nodes": map[string]any{"work": map[string]any{"type": "actor", "template": "python"}, "done": map[string]any{"type": "exit"}},
+		"nodes": map[string]any{"work": map[string]any{"type": "actor", "role": "build"}, "done": map[string]any{"type": "exit"}},
 		"edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"},
 	}
 	t.Run("valid and build unchanged", func(t *testing.T) {
@@ -151,7 +153,12 @@ func TestWorkflows(t *testing.T) {
 		want   string
 	}{
 		{"unknown field", func(g map[string]any) { g["surprise"] = true }, "additionalProperties"},
-		{"missing template", func(g map[string]any) { g["nodes"].(map[string]any)["work"].(map[string]any)["template"] = "missing" }, "missing"},
+		{"missing role", func(g map[string]any) { delete(g["nodes"].(map[string]any)["work"].(map[string]any), "role") }, "role"},
+		{"bad role", func(g map[string]any) { g["nodes"].(map[string]any)["work"].(map[string]any)["role"] = "Bad Role" }, "pattern"},
+		{"role on exit", func(g map[string]any) { g["nodes"].(map[string]any)["done"].(map[string]any)["role"] = "build" }, "const"},
+		{"legacy template", func(g map[string]any) { g["nodes"].(map[string]any)["work"].(map[string]any)["template"] = "python" }, "additionalProperties"},
+		{"legacy managedPool", func(g map[string]any) { g["nodes"].(map[string]any)["work"].(map[string]any)["managedPool"] = "pool" }, "additionalProperties"},
+		{"legacy styles", func(g map[string]any) { g["styles"] = []any{map[string]any{"selectors": []any{"work"}}} }, "additionalProperties"},
 		{"missing endpoint", func(g map[string]any) { g["exit"] = "missing" }, "missing"},
 		{"empty nodes", func(g map[string]any) { g["nodes"] = map[string]any{} }, "nodes"},
 	} {
@@ -168,68 +175,22 @@ func TestWorkflows(t *testing.T) {
 	}
 }
 
-// FEATURE: Embedded workflow actors may name external managed pools.
-// SPEC: Pool names are not Broodfile template references; malformed sources are rejected.
-// IMPLEMENTATION: Validate actor sources without resolving external pools.
-// RESULT: IMPLEMENTED — legacy templates and managed pools are supported.
+// FEATURE: Workflow actor nodes name roles; provisioning stays out of the graph.
+// SPEC: A role must be a DNS label on actor nodes and absent elsewhere.
+// IMPLEMENTATION: Validate roles with the shared graph validator.
+// RESULT: IMPLEMENTED — roles replace templates, managed pools and styles.
 // STATUS: DONE
-// BUG: Embedded workflows reject actors using matching style templates.
-// HYPOTHESIS: The Broodfile schema requires a source before styles can be checked.
-// SOLUTION: Defer source selection to shared graph validation.
-// RESULT: FIXED — embedded workflows use the same effective source rules.
-// STATUS: FIXED
-func TestStyledWorkflowSources(t *testing.T) {
-	for _, tc := range []struct {
-		name, selector string
-		node           map[string]any
-		valid          bool
-	}{
-		{"name", "work", map[string]any{"type": "actor"}, true},
-		{"type", "type:actor", map[string]any{"type": "actor"}, true},
-		{"wildcard", "*", map[string]any{"type": "actor"}, true},
-		{"mismatch legacy", "other", map[string]any{"type": "actor"}, true},
-		{"pool overrides style", "work", map[string]any{"type": "actor", "managedPool": "pool"}, true},
-		{"both", "work", map[string]any{"type": "actor", "template": "python", "managedPool": "pool"}, false},
-		{"null template", "work", map[string]any{"type": "actor", "template": nil, "managedPool": "pool"}, false},
-		{"null pool", "work", map[string]any{"type": "actor", "template": "python", "managedPool": nil}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			doc := minimal(t)
-			doc["workflows"] = map[string]any{"check": map[string]any{"start": "work", "exit": "done", "nodes": map[string]any{"work": tc.node, "done": map[string]any{"type": "exit"}}, "edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"}, "styles": []any{map[string]any{"selectors": []any{tc.selector}, "template": "python"}}}}
-			_, err := ParseDocument(marshal(t, doc), "Broodfile")
-			if (err == nil) != tc.valid {
-				t.Fatalf("valid=%v, error=%v", tc.valid, err)
-			}
-		})
-	}
-}
-
-// BUG: The published schema accepts an actor with conflicting explicit sources.
-// HYPOTHESIS: Its managedPool condition does not constrain template.
-// SOLUTION: Restrict explicit template to empty when managedPool is present.
-// RESULT: FIXED — schema and compiler reject conflicting sources.
-// STATUS: FIXED
-func TestManagedPoolSchemaRejectsConflictingSources(t *testing.T) {
-	doc := minimal(t)
-	doc["workflows"] = map[string]any{"check": map[string]any{"start": "work", "exit": "done", "nodes": map[string]any{"work": map[string]any{"type": "actor", "template": "python", "managedPool": "pool"}, "done": map[string]any{"type": "exit"}}, "edges": []any{map[string]any{"from": "work", "to": "done"}}, "goalGates": []any{"done"}}}
-	if err := evalSchema(schemaRoot, doc, nil); err == nil {
-		t.Fatal("schema accepted conflicting explicit actor sources")
-	}
-}
-
-func TestManagedPoolWorkflow(t *testing.T) {
+func TestWorkflowRoleValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		node  map[string]any
 		valid bool
 	}{
-		{"external pool", map[string]any{"type": "actor", "managedPool": "external-pool"}, true},
-		{"template", map[string]any{"type": "actor", "template": "python"}, true},
-		{"missing template", map[string]any{"type": "actor", "template": "absent"}, false},
-		{"both", map[string]any{"type": "actor", "template": "python", "managedPool": "pool"}, false},
-		{"neither legacy", map[string]any{"type": "actor"}, true},
-		{"bad pool", map[string]any{"type": "actor", "managedPool": "Bad_Pool"}, false},
-		{"nonactor", map[string]any{"type": "condition", "managedPool": "pool"}, false},
+		{"role", map[string]any{"type": "actor", "role": "build"}, true},
+		{"missing role", map[string]any{"type": "actor"}, false},
+		{"bad role", map[string]any{"type": "actor", "role": "Bad Role"}, false},
+		{"role on human", map[string]any{"type": "human", "role": "build", "question": "q?", "options": []any{map[string]any{"label": "y", "outcome": "success"}}}, false},
+		{"role on exit", map[string]any{"type": "exit", "role": "build"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := minimal(t)

@@ -43,7 +43,7 @@ func TestWorkflowLimitResponse(t *testing.T) {
 // HYPOTHESIS: They are sent and committed in separate requests.
 func TestProjectSyncWorkflowAtomicity(t *testing.T) {
 	ts, admin, _, _, _ := gitRepositorySetup(t)
-	workflow := "apiVersion: brood.dev/v1alpha1\nname: demo\nstart: s\nexit: e\nnodes:\n  s: {type: actor, prompt: go}\n  l: {type: land, target: main}\n  e: {type: exit}\nedges:\n  - {from: s, to: l}\n  - {from: l, to: e}\ngoalGates: [l]\n"
+	workflow := "apiVersion: brood.dev/v1alpha1\nname: demo\nstart: s\nexit: e\nnodes:\n  s: {type: actor, role: worker, prompt: go}\n  l: {type: land, target: main}\n  e: {type: exit}\nedges:\n  - {from: s, to: l}\n  - {from: l, to: e}\ngoalGates: [l]\n"
 	declaration := map[string]any{"name": "atomic", "repository": "", "description": "before", "workflows": map[string]string{"demo": workflow}}
 	r, b, _ := ts.do(admin, "PUT", "/api/projects/sync", ts.csrf(admin), declaration)
 	expectStatus(t, "initial sync", r, b, 201)
@@ -69,7 +69,7 @@ func TestProjectSyncWorkflowAtomicity(t *testing.T) {
 func TestProjectSyncWorkflowConcurrent(t *testing.T) {
 	ts, admin, _, _, _ := gitRepositorySetup(t)
 	csrf := ts.csrf(admin)
-	workflow := "apiVersion: brood.dev/v1alpha1\nname: demo\nstart: s\nexit: e\nnodes:\n  s: {type: actor, prompt: VALUE}\n  l: {type: land, target: main}\n  e: {type: exit}\nedges:\n  - {from: s, to: l}\n  - {from: l, to: e}\ngoalGates: [l]\n"
+	workflow := "apiVersion: brood.dev/v1alpha1\nname: demo\nstart: s\nexit: e\nnodes:\n  s: {type: actor, role: worker, prompt: VALUE}\n  l: {type: land, target: main}\n  e: {type: exit}\nedges:\n  - {from: s, to: l}\n  - {from: l, to: e}\ngoalGates: [l]\n"
 	request := func(value string) map[string]any {
 		return map[string]any{"name": "concurrent-workflow", "repository": "", "description": value, "workflows": map[string]string{"demo": strings.ReplaceAll(workflow, "VALUE", value)}}
 	}

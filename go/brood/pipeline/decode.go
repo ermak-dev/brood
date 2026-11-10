@@ -53,7 +53,7 @@ func decodeDocument(text, filename string, limitSize bool) (*Document, error) {
 	if err := checkYAMLNodes(&root, 0); err != nil {
 		return nil, fail(err.Error(), rootLine(&root))
 	}
-	if err := checkManagedPoolFields(&root); err != nil {
+	if err := checkRoleFields(&root); err != nil {
 		return nil, fail(err.Error(), rootLine(&root))
 	}
 	document := &Document{}
@@ -66,8 +66,9 @@ func decodeDocument(text, filename string, limitSize bool) (*Document, error) {
 	return document, nil
 }
 
-// checkManagedPoolFields сохраняет различие между отсутствующим и пустым полем.
-func checkManagedPoolFields(root *yaml.Node) error {
+// checkRoleFields называет заменившее поле для удалённых способов провижининга
+// и сохраняет различие между отсутствующей и пустой ролью.
+func checkRoleFields(root *yaml.Node) error {
 	if len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
 		return nil
 	}
@@ -82,23 +83,24 @@ func checkManagedPoolFields(root *yaml.Node) error {
 			if node.Kind != yaml.MappingNode {
 				continue
 			}
-			var pool, template *yaml.Node
+			var role *yaml.Node
 			kind := ""
 			for k := 0; k+1 < len(node.Content); k += 2 {
 				switch node.Content[k].Value {
+				case "template", "managedPool":
+					return fmt.Errorf("nodes.%s.%s: removed; name the actor's role with \"role\", provisioning stays in templates and pools",
+						nodes.Content[j].Value, node.Content[k].Value)
 				case "type":
 					kind = node.Content[k+1].Value
-				case "managedPool":
-					pool = node.Content[k+1]
-				case "template":
-					template = node.Content[k+1]
+				case "role":
+					role = node.Content[k+1]
 				}
 			}
-			if pool != nil && template != nil && (template.Kind != yaml.ScalarNode || template.Tag != "!!str") {
-				return fmt.Errorf("nodes.%s.template: must be a string with managedPool", nodes.Content[j].Value)
+			if role != nil && (kind != "actor" || role.Kind != yaml.ScalarNode || role.Tag != "!!str" || !patternDNSName.MatchString(role.Value)) {
+				return fmt.Errorf("nodes.%s.role: must be a lowercase DNS label on an actor node", nodes.Content[j].Value)
 			}
-			if pool != nil && (kind != "actor" || pool.Kind != yaml.ScalarNode || pool.Tag != "!!str" || !patternDNSName.MatchString(pool.Value)) {
-				return fmt.Errorf("nodes.%s.managedPool: must be a lowercase DNS label on an actor node", nodes.Content[j].Value)
+			if kind == "actor" && (role == nil || role.Kind != yaml.ScalarNode || role.Tag != "!!str" || role.Value == "") {
+				return fmt.Errorf("nodes.%s.role: actor node requires a role; role replaced template, managedPool and styles", nodes.Content[j].Value)
 			}
 		}
 	}

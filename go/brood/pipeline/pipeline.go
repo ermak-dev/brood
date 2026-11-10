@@ -3,9 +3,11 @@
 // edge selection, walk simulation and DOT rendering.
 //
 // Схема brood.dev/v1alpha1: узлы (actor, human, condition, land, exit,
-// parallel, fan_in), рёбра с condition/weight/label, goalGates, retry
-// и стили с селекторами. Разбор строгий: неизвестные поля, якоря и
-// повторяющиеся ключи отвергаются, отказ — строка с причиной.
+// parallel, fan_in), рёбра с condition/weight/label, goalGates и retry.
+// Actor-узлы называют роль, а не способ создания актора (#208): связывает
+// роль с актором рой, провижининг остаётся в шаблонах и пулах. Разбор
+// строгий: неизвестные поля, якоря и повторяющиеся ключи отвергаются,
+// отказ — строка с причиной.
 package pipeline
 
 import (
@@ -13,7 +15,6 @@ import (
 	"os"
 	"regexp"
 	"sort"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -32,16 +33,16 @@ type Option struct {
 	Outcome string `yaml:"outcome"`
 }
 
-// Node — узел конвейера с типом и полями своего типа.
+// Node — узел конвейера с типом и полями своего типа. Role обязательна
+// у actor-узлов: имя, по которому рой связывает узел с существующим актором.
 type Node struct {
-	Type        string   `yaml:"type"`
-	Template    string   `yaml:"template,omitempty"`
-	ManagedPool string   `yaml:"managedPool,omitempty"`
-	Prompt      string   `yaml:"prompt,omitempty"`
-	Question    string   `yaml:"question,omitempty"`
-	Options     []Option `yaml:"options,omitempty"`
-	Target      string   `yaml:"target,omitempty"`
-	Branches    []string `yaml:"branches,omitempty"`
+	Type     string   `yaml:"type"`
+	Role     string   `yaml:"role,omitempty"`
+	Prompt   string   `yaml:"prompt,omitempty"`
+	Question string   `yaml:"question,omitempty"`
+	Options  []Option `yaml:"options,omitempty"`
+	Target   string   `yaml:"target,omitempty"`
+	Branches []string `yaml:"branches,omitempty"`
 }
 
 // Edge — ребро графа; пустое условие всегда истинно.
@@ -51,12 +52,6 @@ type Edge struct {
 	Condition string `yaml:"condition,omitempty"`
 	Label     string `yaml:"label,omitempty"`
 	Weight    int    `yaml:"weight,omitempty"`
-}
-
-// Style — правило оформления: селекторы узлов и template по умолчанию.
-type Style struct {
-	Selectors []string `yaml:"selectors"`
-	Template  string   `yaml:"template,omitempty"`
 }
 
 // Retry — политика повторов неудачных узлов.
@@ -74,7 +69,6 @@ type Document struct {
 	Edges      []Edge          `yaml:"edges"`
 	GoalGates  []string        `yaml:"goalGates"`
 	Retry      *Retry          `yaml:"retry"`
-	Styles     []Style         `yaml:"styles,omitempty"`
 }
 
 // Severity — уровень диагностики; ERROR блокирует прогон.
@@ -141,14 +135,11 @@ func (d *Document) checkSchema(filename string) error {
 			return fail("nodes."+name+".type",
 				fmt.Sprintf("unknown node type %q; expected one of actor, human, condition, land, exit, parallel, fan_in", node.Type))
 		}
-		if node.Type == "actor" && node.Template != "" && node.ManagedPool != "" {
-			return fail("nodes."+name, "actor cannot specify both template and managedPool")
+		if node.Role != "" && (node.Type != "actor" || !patternDNSName.MatchString(node.Role)) {
+			return fail("nodes."+name+".role", "must be a lowercase DNS label on an actor node")
 		}
-		if node.ManagedPool != "" && node.Type != "actor" {
-			return fail("nodes."+name+".managedPool", "only actor nodes may specify managedPool")
-		}
-		if node.ManagedPool != "" && !patternDNSName.MatchString(node.ManagedPool) {
-			return fail("nodes."+name+".managedPool", "must be a lowercase DNS label")
+		if node.Type == "actor" && node.Role == "" {
+			return fail("nodes."+name+".role", "actor node requires a role; role replaced template, managedPool and styles")
 		}
 		if node.Type == "human" {
 			if len(node.Options) == 0 {
@@ -180,23 +171,13 @@ func (d *Document) checkSchema(filename string) error {
 	return nil
 }
 
-// EffectiveTemplate gives explicit sources precedence over style defaults.
-// The last matching nonempty style template wins when no source is explicit.
-func (d *Document) EffectiveTemplate(name string) string {
-	node := d.Nodes[name]
-	if node.Template != "" || node.ManagedPool != "" {
-		return node.Template
-	}
-	result := ""
-	for _, style := range d.Styles {
-		if style.Template == "" {
-			continue
-		}
-		for _, selector := range style.Selectors {
-			if len(styleTargets(selector, []string{name}, d.Nodes)) != 0 {
-				result = style.Template
-				break
-			}
+// Roles returns the set of distinct role names used by actor nodes.
+// The set is a derived value: roles exist only as node fields.
+func (d *Document) Roles() map[string]bool {
+	result := map[string]bool{}
+	for _, node := range d.Nodes {
+		if node.Type == "actor" {
+			result[node.Role] = true
 		}
 	}
 	return result
@@ -272,15 +253,17 @@ func (d *Document) Validate() error {
 }
 
 // nodeGraphErrors проверяет ограничения узлов, общие для обеих форм валидации.
+// Форму роли проверяет и checkSchema при разборе; здесь она повторена для
+// документа, собранного без разбора.
 func (d *Document) nodeGraphErrors() []string {
 	var errors []string
 	for _, name := range d.sortedNodeNames() {
 		node := d.Nodes[name]
-		if node.Type == "actor" && node.Template != "" && node.ManagedPool != "" {
-			errors = append(errors, fmt.Sprintf("actor node %q cannot specify both template and managedPool", name))
+		if node.Role != "" && (node.Type != "actor" || !patternDNSName.MatchString(node.Role)) {
+			errors = append(errors, fmt.Sprintf("node %q role must be a lowercase DNS label on an actor", name))
 		}
-		if node.ManagedPool != "" && (node.Type != "actor" || !patternDNSName.MatchString(node.ManagedPool)) {
-			errors = append(errors, fmt.Sprintf("node %q managedPool must be a lowercase DNS label on an actor", name))
+		if node.Type == "actor" && node.Role == "" {
+			errors = append(errors, fmt.Sprintf("actor node %q requires a role", name))
 		}
 		if node.Type == "exit" && name != d.Exit {
 			errors = append(errors, fmt.Sprintf("exit node %q is not the designated exit %q", name, d.Exit))
@@ -417,55 +400,5 @@ func (d *Document) Diagnostics() ([]Diagnostic, error) {
 				edge.From, edge.To)
 		}
 	}
-	if len(d.Styles) > 0 {
-		all := d.sortedNodeNames()
-		matched := map[string]bool{}
-		for _, style := range d.Styles {
-			for _, selector := range style.Selectors {
-				for _, name := range styleTargets(selector, all, d.Nodes) {
-					matched[name] = true
-				}
-			}
-		}
-		for _, style := range d.Styles {
-			for _, selector := range style.Selectors {
-				if len(styleTargets(selector, all, d.Nodes)) > 0 {
-					continue
-				}
-				appendf(WARNING, "style selector %q matches no nodes", selector)
-			}
-		}
-		if len(matched) == 0 {
-			appendf(INFO, "no style selector matches any node")
-		}
-	} else {
-		appendf(INFO, "document has no styles")
-	}
 	return result, nil
-}
-
-// styleTargets разворачивает селектор стиля в имена узлов: "*" — все
-// узлы, "type:<kind>" — узлы типа, иначе точное имя узла.
-func styleTargets(selector string, names []string, nodes map[string]Node) []string {
-	if selector == "*" {
-		return names
-	}
-	if kind, ok := strings.CutPrefix(selector, "type:"); ok {
-		if !nodeTypes[kind] {
-			return nil
-		}
-		result := []string{}
-		for _, name := range names {
-			if nodes[name].Type == kind {
-				result = append(result, name)
-			}
-		}
-		return result
-	}
-	for _, name := range names {
-		if name == selector {
-			return []string{name}
-		}
-	}
-	return nil
 }

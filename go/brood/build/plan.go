@@ -490,18 +490,20 @@ func init() {
 	}
 	text := &schemaNode{typ: "string"}
 	option := &schemaNode{typ: "object", addlFalse: true, required: []string{"label", "outcome"}, props: schemaProperties("label", text, "outcome", text)}
+	// Роль узла workflow: DNS label, обязательна у actor-узлов (#208).
+	// Схема проверяет форму и привязку к типу узла; обязательность для
+	// actor-узлов проверяет общий валидатор конвейера ниже по потоку.
 	node := &schemaNode{typ: "object", addlFalse: true, required: []string{"type"}, props: schemaProperties(
-		"type", &schemaNode{typ: "string", enum: []any{"actor", "human", "condition", "land", "exit", "parallel", "fan_in"}}, "template", text, "managedPool", name, "prompt", text, "question", text,
+		"type", &schemaNode{typ: "string", enum: []any{"actor", "human", "condition", "land", "exit", "parallel", "fan_in"}}, "role", name, "prompt", text, "question", text,
 		"options", &schemaNode{typ: "array", items: option}, "target", text, "branches", &schemaNode{typ: "array", items: text}),
 		allOf: []*schemaNode{
-			{ifS: &schemaNode{required: []string{"managedPool"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true}, "template", &schemaNode{constV: "", constSet: true})}},
+			{ifS: &schemaNode{required: []string{"role"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true})}},
 		}}
 	edge := &schemaNode{typ: "object", addlFalse: true, required: []string{"from", "to"}, props: schemaProperties("from", text, "to", text, "condition", text, "label", text, "weight", &schemaNode{typ: "integer"})}
-	style := &schemaNode{typ: "object", addlFalse: true, required: []string{"selectors"}, props: schemaProperties("selectors", &schemaNode{typ: "array", items: text}, "template", text)}
 	workflow := &schemaNode{typ: "object", addlFalse: true, required: []string{"start", "exit", "nodes", "edges", "goalGates"}, props: schemaProperties(
 		"start", text, "exit", text, "nodes", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: node},
 		"edges", &schemaNode{typ: "array", items: edge}, "goalGates", &schemaNode{typ: "array", items: text},
-		"styles", &schemaNode{typ: "array", items: style}, "retry", &schemaNode{typ: "object", addlFalse: true, required: []string{"maxRetries"}, props: schemaProperties("maxRetries", &schemaNode{typ: "integer", minP: numberPtr(0)})})}
+		"retry", &schemaNode{typ: "object", addlFalse: true, required: []string{"maxRetries"}, props: schemaProperties("maxRetries", &schemaNode{typ: "integer", minP: numberPtr(0)})})}
 	capacityLimit := &schemaNode{anyOf: []*schemaNode{
 		{typ: "null"},
 		{typ: "string", maxLen: 19, pattern: regexp.MustCompile(`^(0|[1-9][0-9]*)$`)},
@@ -1388,12 +1390,11 @@ func WorkflowSnapshots(document map[string]any, filename string) (map[string]str
 	return result, nil
 }
 
-// validateWorkflows использует общий validator конвейеров и проверяет ссылки на шаблоны.
+// validateWorkflows использует общий validator конвейеров: узлы workflow
+// называют роли, а не шаблоны, сверка со списком templates не нужна (#208).
 func validateWorkflows(document map[string]any, filename string) error {
 	workflows, _ := asMap(document["workflows"])
-	templates, _ := asMap(document["templates"])
 	for _, name := range sortedKeys(workflows) {
-		graph, _ := asMap(workflows[name])
 		parsed, err := Workflow(document, name, filename)
 		if err != nil {
 			return err
@@ -1401,26 +1402,9 @@ func validateWorkflows(document map[string]any, filename string) error {
 		if err := parsed.Validate(); err != nil {
 			return fmt.Errorf("%s: workflows.%s: %w", filename, name, err)
 		}
-		for _, nodeName := range sortedKeys(graphNodes(graph)) {
-			node := parsed.Nodes[nodeName]
-			if node.Template != "" {
-				if _, ok := templates[node.Template]; !ok {
-					return fmt.Errorf("%s: workflows.%s.nodes.%s.template: unknown template %q", filename, name, nodeName, node.Template)
-				}
-			}
-		}
-		for i, style := range parsed.Styles {
-			if style.Template != "" {
-				if _, ok := templates[style.Template]; !ok {
-					return fmt.Errorf("%s: workflows.%s.styles.%d.template: unknown template %q", filename, name, i, style.Template)
-				}
-			}
-		}
 	}
 	return nil
 }
-
-func graphNodes(graph map[string]any) map[string]any { nodes, _ := asMap(graph["nodes"]); return nodes }
 
 // planProjectConfig сохраняет присутствие необязательных полей серверного проекта.
 func planProjectConfig(document map[string]any, filename string) (map[string]any, error) {

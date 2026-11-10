@@ -51,15 +51,22 @@ func TestRootSwarmWorkflowProgression(t *testing.T) {
 			if err := attachTestGraph(ctx, s, "s", string(snapshot)); err != nil {
 				t.Fatal(err)
 			}
+			// Две роли графа — два актора роя; каждый шаг адресует актора
+			// роли своего узла (#208).
+			actors := map[string]string{"review": "reviewer", "build": "builder"}
+			for role, uid := range actors {
+				roleActor(t, s, "s", uid, role)
+			}
 			sequence := int64(0)
 			complete := func(node string) {
 				t.Helper()
 				sequence++
 				request := fmt.Sprintf("request-%d", sequence)
-				if _, err := s.AppendPipelineVisit(ctx, "s", "s", PipelineVisit{NodeID: node, State: "inflight", ActorUID: "actor", ActorIncarnation: 1, RequestID: request}); err != nil {
+				actor := actors[graph.Nodes[node].Role]
+				if _, err := s.AppendPipelineVisit(ctx, "s", "s", PipelineVisit{NodeID: node, State: "inflight", ActorUID: actor, ActorIncarnation: 1, RequestID: request}); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.CompletePipelineActorVisit(ctx, "s", "s", sequence, request, "actor", 1, "success"); err != nil {
+				if err := s.CompletePipelineActorVisit(ctx, "s", "s", sequence, request, actor, 1, "success"); err != nil {
 					t.Fatal(err)
 				}
 			}

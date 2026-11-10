@@ -30,7 +30,7 @@ nodes:
     type: human
     options:
       - {label: yes, outcome: success}
-  actor: {type: actor, template: development, prompt: work}
+  actor: {type: actor, role: build, prompt: work}
   done: {type: exit}
 edges:
   - {from: ask, to: actor}
@@ -114,14 +114,15 @@ func TestExampleWorkflowRoutes(t *testing.T) {
 			if err := attachTestGraph(ctx, s, outcome, string(exampleGraph(t))); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.AppendPipelineVisit(ctx, outcome, outcome, PipelineVisit{NodeID: "inspect", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "req"}); err != nil {
+			actor := roleActor(t, s, outcome, "a-"+outcome, "inspect")
+			if _, err := s.AppendPipelineVisit(ctx, outcome, outcome, PipelineVisit{NodeID: "inspect", State: "inflight", ActorUID: actor.UID, ActorIncarnation: 1, RequestID: "req"}); err != nil {
 				t.Fatal(err)
 			}
 			actorOutcome := "success"
 			if outcome == "actor-fail" {
 				actorOutcome = "fail"
 			}
-			if err := s.CompletePipelineActorVisit(ctx, outcome, outcome, 1, "req", "a", 1, actorOutcome); err != nil {
+			if err := s.CompletePipelineActorVisit(ctx, outcome, outcome, 1, "req", actor.UID, 1, actorOutcome); err != nil {
 				t.Fatal(err)
 			}
 			if outcome == "actor-fail" {
@@ -165,7 +166,7 @@ nodes:
     type: human
     options:
       - {label: Reject, outcome: fail}
-  repair: {type: actor, template: development, prompt: repair}
+  repair: {type: actor, role: build, prompt: repair}
   done: {type: exit}
 edges:
   - {from: ask, to: repair, label: Reject}
@@ -180,6 +181,7 @@ goalGates: [done]
 			if err := attachTestGraph(ctx, s, "r", graph); err != nil {
 				t.Fatal(err)
 			}
+			roleActor(t, s, "r", "a", "build")
 			if _, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
 				t.Fatal(err)
 			}
@@ -214,32 +216,34 @@ name: actor-start
 start: actor
 exit: done
 nodes:
-  actor: {type: actor, template: development, prompt: work}
+  actor: {type: actor, role: build, prompt: work}
   done: {type: exit}
 edges:
   - {from: actor, to: done}
 goalGates: [done]
 `
 
-// BUG: Swarms accept actor sources that the runner cannot safely dispatch.
-// HYPOTHESIS: Execution validation accepts managed pools without a dispatcher.
-// SOLUTION: Reject managed pools until dispatch can verify pool identities.
-// RESULT: FIXED — unsupported graphs are rejected without persistence.
+// BUG: Swarms accept graphs that describe actor provisioning instead of roles.
+// HYPOTHESIS: Legacy template and managedPool fields fall out of validation.
+// SOLUTION: Strict parsing rejects replaced fields with the role named (#208).
+// RESULT: FIXED — legacy provisioning fields are rejected without persistence.
 // STATUS: FIXED
-func TestPipelineUnsupportedActorSources(t *testing.T) {
+func TestPipelineRejectsLegacyActorSources(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct{ name, graph string }{
-		{"managed pool", strings.Replace(actorStartGraph, "template: development", "managedPool: pool", 1)},
+		{"managed pool", strings.Replace(actorStartGraph, "role: build", "managedPool: pool", 1)},
+		{"template", strings.Replace(actorStartGraph, "role: build", "template: development", 1)},
+		{"missing role", strings.Replace(actorStartGraph, "role: build, ", "", 1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := swarmTestStore(t, "s")
 			err := s.AttachSwarmGraph(ctx, "s", []byte(tc.graph), "test", 1, "rev", &PipelineSource{Origin: "https://example.com/group/repo.git", Commit: strings.Repeat("a", 40)})
-			if err == nil {
-				t.Error("unsupported actor source accepted for execution")
+			if err == nil || !strings.Contains(err.Error(), "role") {
+				t.Errorf("legacy actor source accepted or refused without naming the role: %v", err)
 			}
 			sw, err := s.GetSwarm(ctx, "s")
 			if err != nil || sw.Graph != nil || sw.Execution != "idle" {
-				t.Errorf("unsupported graph was persisted: %+v %v", sw, err)
+				t.Errorf("legacy graph was persisted: %+v %v", sw, err)
 			}
 		})
 	}
@@ -261,11 +265,12 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 			if err := attachTestGraph(ctx, s, tc.name, tc.graph); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.AppendPipelineVisit(ctx, tc.name, tc.name, PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "req"}); err != nil {
+			actor := roleActor(t, s, tc.name, "a-"+tc.name, "build")
+			if _, err := s.AppendPipelineVisit(ctx, tc.name, tc.name, PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: actor.UID, ActorIncarnation: 1, RequestID: "req"}); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if err := s.CompletePipelineActorVisit(ctx, tc.name, tc.name, 1, "req", "a", 1, "fail"); err != nil {
+				if err := s.CompletePipelineActorVisit(ctx, tc.name, tc.name, 1, "req", actor.UID, 1, "fail"); err != nil {
 					t.Fatalf("completion/replay: %v", err)
 				}
 			}
@@ -323,6 +328,7 @@ func TestPipelineDistinctActorReservations(t *testing.T) {
 	if err := attachTestGraph(ctx, s, "r", actorStartGraph); err != nil {
 		t.Fatal(err)
 	}
+	roleActor(t, s, "r", "a", "build")
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for _, request := range []string{"one", "two"} {
@@ -360,6 +366,8 @@ func TestPipelineVisitValidation(t *testing.T) {
 	if err := attachTestGraph(ctx, s, "r", actorStartGraph); err != nil {
 		t.Fatal(err)
 	}
+	// Роль привязана к «a»: отказ даёт проверка полей, а не привязка.
+	roleActor(t, s, "r", "a", "build")
 	for _, v := range []PipelineVisit{{NodeID: "missing", State: "waiting"}, {NodeID: "actor", State: "inflight"}, {NodeID: "actor", State: "inflight", ActorUID: "a", RequestID: "x"}, {NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: -1, RequestID: "x"}, {NodeID: "ask", State: "waiting", ActorUID: "actor"}, {NodeID: "ask", State: "invented"}} {
 		if _, err := s.AppendPipelineVisit(ctx, "r", "r", v); err == nil {
 			t.Errorf("accepted invalid visit: %+v", v)
@@ -378,6 +386,7 @@ func TestPipelineReservationAndRecovery(t *testing.T) {
 	if err := attachTestGraph(ctx, s, "r", actorStartGraph); err != nil {
 		t.Fatal(err)
 	}
+	roleActor(t, s, "r", "a", "build")
 	v := PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "key"}
 	const n = 10
 	var wg sync.WaitGroup
@@ -444,12 +453,16 @@ func TestPipelineReservationAndRecovery(t *testing.T) {
 func TestCompletePipelineActorVisit(t *testing.T) {
 	s := swarmTestStore(t, "r", "uncertain", "terminal", "concurrent")
 	ctx := context.Background()
+	// newSwarm — рой с актором «a-<рой>» на инкарнации 2, привязанным к роли
+	// узла, и его шагом inflight.
 	newSwarm := func(id string) {
 		t.Helper()
 		if err := attachTestGraph(ctx, s, id, actorStartGraph); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.AppendPipelineVisit(ctx, id, id, PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 2, RequestID: "req"}); err != nil {
+		roleActor(t, s, id, "a-"+id, "")
+		rebindAt(t, s, id, "a-"+id, "build", 2)
+		if _, err := s.AppendPipelineVisit(ctx, id, id, PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a-" + id, ActorIncarnation: 2, RequestID: "req"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -464,32 +477,32 @@ func TestCompletePipelineActorVisit(t *testing.T) {
 		incarnation    int64
 		outcome        string
 	}{
-		{"missing", "r", 1, "req", "a", 2, "success"}, {"r", "r", 2, "req", "a", 2, "success"},
-		{"r", "r", 1, "fake", "a", 2, "success"},
-		{"r", "r", 1, "req", "fake", 2, "success"}, {"r", "r", 1, "req", "a", 3, "success"},
-		{"r", "r", 1, "req", "a", 2, "invalid"}, {"r", "r", 0, "req", "a", 2, "success"},
+		{"missing", "r", 1, "req", "a-r", 2, "success"}, {"r", "r", 2, "req", "a-r", 2, "success"},
+		{"r", "r", 1, "fake", "a-r", 2, "success"},
+		{"r", "r", 1, "req", "fake", 2, "success"}, {"r", "r", 1, "req", "a-r", 3, "success"},
+		{"r", "r", 1, "req", "a-r", 2, "invalid"}, {"r", "r", 0, "req", "a-r", 2, "success"},
 	} {
 		if err := complete(tc.swarm, tc.run, tc.seq, tc.request, tc.actor, tc.incarnation, tc.outcome); err == nil {
 			t.Errorf("accepted forged callback: %+v", tc)
 		}
 	}
-	if err := complete("r", "r", 1, "req", "a", 2, "success"); err != nil {
+	if err := complete("r", "r", 1, "req", "a-r", 2, "success"); err != nil {
 		t.Fatal(err)
 	}
-	if err := complete("r", "r", 1, "req", "a", 2, "success"); err != nil {
+	if err := complete("r", "r", 1, "req", "a-r", 2, "success"); err != nil {
 		t.Fatalf("duplicate: %v", err)
 	}
-	if err := complete("r", "r", 1, "req", "a", 2, "fail"); err == nil {
+	if err := complete("r", "r", 1, "req", "a-r", 2, "fail"); err == nil {
 		t.Fatal("accepted mismatched outcome")
 	}
 	visits, err := s.SwarmSteps(ctx, "r")
 	if err != nil || len(visits) != 2 || visits[0].State != "completed" || visits[0].Outcome == nil || *visits[0].Outcome != "success" || visits[1].NodeID != "done" || visits[1].State != "completed" {
 		t.Fatalf("visit: %+v %v", visits, err)
 	}
-	if err := complete("r", "r", 1, "req", "a", 2, "success"); err != nil {
+	if err := complete("r", "r", 1, "req", "a-r", 2, "success"); err != nil {
 		t.Fatalf("retry after progression: %v", err)
 	}
-	replay, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 2, RequestID: "req"})
+	replay, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a-r", ActorIncarnation: 2, RequestID: "req"})
 	if err != nil || !replay.Replay || replay.Sequence != 1 || replay.State != "completed" {
 		t.Fatalf("reservation replay after completion: %+v %v", replay, err)
 	}
@@ -497,14 +510,14 @@ func TestCompletePipelineActorVisit(t *testing.T) {
 	if err := s.RecoverPipelineActions(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := complete("uncertain", "uncertain", 1, "req", "a", 2, "success"); err == nil {
+	if err := complete("uncertain", "uncertain", 1, "req", "a-uncertain", 2, "success"); err == nil {
 		t.Fatal("accepted unconfirmed work")
 	}
 	newSwarm("terminal")
 	if _, err := s.db.Exec(`UPDATE swarms SET execution='succeeded' WHERE id='terminal'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := complete("terminal", "terminal", 1, "req", "a", 2, "success"); err == nil {
+	if err := complete("terminal", "terminal", 1, "req", "a-terminal", 2, "success"); err == nil {
 		t.Fatal("accepted terminal graph")
 	}
 	newSwarm("concurrent")
@@ -513,7 +526,10 @@ func TestCompletePipelineActorVisit(t *testing.T) {
 	results := make(chan error, m)
 	for i := 0; i < m; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); results <- complete("concurrent", "concurrent", 1, "req", "a", 2, "fail") }()
+		go func() {
+			defer wg.Done()
+			results <- complete("concurrent", "concurrent", 1, "req", "a-concurrent", 2, "fail")
+		}()
 	}
 	wg.Wait()
 	close(results)
@@ -536,6 +552,8 @@ func TestPipelineAtomicProgression(t *testing.T) {
 	if err := attachTestGraph(ctx, s, "r", runGraph); err != nil {
 		t.Fatal(err)
 	}
+	// Роль привязана к «a»: отказ первому шагу даёт нестартовый узел.
+	roleActor(t, s, "r", "a", "build")
 	if _, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "x"}); err == nil {
 		t.Fatal("accepted non-start node")
 	}
@@ -564,6 +582,7 @@ func TestPipelineProgressionRollbackAndLoop(t *testing.T) {
 	if err := attachTestGraph(ctx, s, "r", graph); err != nil {
 		t.Fatal(err)
 	}
+	roleActor(t, s, "r", "a", "build")
 	if _, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
 		t.Fatal(err)
 	}
@@ -685,6 +704,8 @@ func TestSwarmStepsOperations(t *testing.T) {
 	if _, err := s.AppendPipelineVisit(ctx, "other", "other", PipelineVisit{NodeID: "ask", State: "waiting"}); err == nil {
 		t.Fatal("graphless swarm accepted a visit")
 	}
+	roleActor(t, s, "s", "actor", "")
+	rebindAt(t, s, "s", "actor", "build", 2)
 	if _, err = s.AppendPipelineVisit(ctx, "s", "s", PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: "actor", ActorIncarnation: 2, RequestID: "req"}); err != nil {
 		t.Fatal(err)
 	}

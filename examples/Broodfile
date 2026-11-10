@@ -37,7 +37,7 @@ workflows:
     nodes:
       inspect:
         type: actor
-        template: python
+        role: inspect
         prompt: Summarize the current checkout without modifying files.
       review:
         type: human

@@ -20,7 +20,7 @@ name: demo
 start: s
 exit: e
 nodes:
-  s: {type: actor, prompt: go}
+  s: {type: actor, role: build, prompt: go}
   l: {type: land, target: main}
   e: {type: exit}
 edges:
