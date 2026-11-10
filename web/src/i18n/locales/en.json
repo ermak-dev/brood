@@ -130,7 +130,8 @@
       "active": "Active",
       "deleting": "Deleting",
       "error": "Error",
-      "deleted": "Deleted"
+      "deleted": "Deleted",
+      "stopped": "Stopped"
     },
     "repository": {
       "title": "Repository",
@@ -161,7 +162,20 @@
       "reset_password_hint": "Sets a new password and ends all of the user's sessions.",
       "delete_user_hint": "Deletes the account and revokes its sessions and memberships.",
       "remove_member_hint": "Takes away access to the project and to the member's swarms in it."
-    }
+    },
+    "execution": "Execution",
+    "execution_states": {
+      "idle": "Not started",
+      "running": "Running",
+      "waiting": "Waiting for answer",
+      "succeeded": "Succeeded",
+      "failed": "Stuck",
+      "stopped": "Stopped"
+    },
+    "open_requests": "Open questions",
+    "swarm_count": "Swarms",
+    "activity_limited": "Execution is read for the first {{count}} active swarms; the rest show a dash until the server summary arrives.",
+    "failed_swarms": "Swarms: {{names}}"
   },
   "common": {
     "login": "Login",
@@ -292,7 +306,8 @@
     "policy": "Access Policy",
     "worker_pools": "Worker pools",
     "project": "Project",
-    "overview": "Overview"
+    "overview": "Overview",
+    "waiting_swarms": "Waiting for an answer: {{count}}"
   },
   "nav_groups": {
     "project": "Project",
@@ -1612,7 +1627,6 @@
           "title": "Network Configuration",
           "description": "Proxy, retry, and routing settings",
           "proxy_url": "Proxy URL",
-          "proxy_url_sponsor_hint": "No suitable proxy?",
           "request_retry": "Request Retry Count",
           "max_retry_credentials": "Max Retry Credentials",
           "max_retry_credentials_hint": "Leave empty to keep it unset. Set to 0 or a negative integer to try all available credentials.",

@@ -130,7 +130,8 @@
       "active": "運作中",
       "deleting": "正在刪除",
       "error": "錯誤",
-      "deleted": "已刪除"
+      "deleted": "已刪除",
+      "stopped": "已停止"
     },
     "repository": {
       "title": "儲存庫",
@@ -161,7 +162,20 @@
       "reset_password_hint": "設定新密碼並結束該使用者的所有工作階段。",
       "delete_user_hint": "刪除該帳戶並撤銷其工作階段和成員關係。",
       "remove_member_hint": "撤銷該成員對專案及其中自己群組的存取權限。"
-    }
+    },
+    "execution": "執行",
+    "execution_states": {
+      "idle": "未啟動",
+      "running": "執行中",
+      "waiting": "等待回答",
+      "succeeded": "已完成",
+      "failed": "已卡住",
+      "stopped": "已停止"
+    },
+    "open_requests": "待答問題",
+    "swarm_count": "蜂群數",
+    "activity_limited": "僅讀取前 {{count}} 個活躍蜂群的執行狀態；其餘顯示破折號，直到伺服器提供彙總。",
+    "failed_swarms": "蜂群：{{names}}"
   },
   "common": {
     "login": "登入",
@@ -292,7 +306,8 @@
     "policy": "存取政策",
     "worker_pools": "工作節點池",
     "project": "專案",
-    "overview": "總覽"
+    "overview": "總覽",
+    "waiting_swarms": "等待回答：{{count}}"
   },
   "nav_groups": {
     "project": "專案",
@@ -1638,7 +1653,6 @@
           "title": "網路設定",
           "description": "代理、重試和路由設定",
           "proxy_url": "代理 URL",
-          "proxy_url_sponsor_hint": "沒有合適的代理？",
           "request_retry": "請求重試次數",
           "max_retry_credentials": "最大重試憑證數",
           "max_retry_credentials_hint": "留空表示不設定；設為 0 或負整數表示嘗試所有可用憑證。",

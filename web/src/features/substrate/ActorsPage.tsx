@@ -12,9 +12,8 @@ import { ActorActionFailure } from './components/ActorActionFailure';
 import { ActorOutcomeNotices } from './components/ActorOutcomeNotices';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { EntityTable, type Column } from './components/EntityTable';
-import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
-import { SwarmSections } from './components/SwarmSections';
+import { GroupBar, SwarmSections, useSwarmSectionFailure } from './components/SwarmSections';
 import { StateBadge } from './components/StateBadge';
 import { DASH, formatDate } from './format';
 import {
@@ -122,6 +121,8 @@ function Actors({
   const { t } = useTranslation();
   const load = useCallback(() => loadActors(project), [project]);
   const { data: loaded, error, loading, refresh } = useResource(load);
+  // Отказ загрузки уходит в общую плашку над группами (#255).
+  useSwarmSectionFailure(project, name, error);
   const data = loaded?.actors ?? null;
   const goldenOf = (actor: Actor) => loaded?.golden.get(actor.metadata.name);
   const { run, confirm } = useActions(refresh);
@@ -205,9 +206,7 @@ function Actors({
 
   return (
     <div className={styles.page}>
-      <PageHeader
-        title={name}
-        headingLevel={2}
+      <GroupBar
         meta={[
           data && t('actors.meta_count', { count: data.length }),
           data && count('running') > 0 && t('actors.meta_running', { count: count('running') }),
@@ -232,11 +231,7 @@ function Actors({
 
       {loading ? (
         <LoadingSpinner />
-      ) : error ? (
-        <div className={styles.empty}>
-          <EmptyState title={t('substrate.load_failed')} description={error} />
-        </div>
-      ) : data && data.length > 0 ? (
+      ) : error ? null : data && data.length > 0 ? (
         <ActorTable
           rows={data}
           swarm={project}

@@ -25,8 +25,11 @@ import {
   useConfigStore,
   useLanguageStore,
   useNotificationStore,
+  useProjectStore,
+  useSwarmActivityStore,
   useThemeStore,
 } from '@/stores';
+import { waitingCount } from '@/features/access/swarmActivity';
 import { AUTH_FILES_CHANGED_EVENT } from '@/features/authFiles/authFilesEvents';
 import {
   collectPluginResourceEntries,
@@ -72,6 +75,8 @@ const NAV_TOOLTIP_VIEWPORT_MARGIN = 8;
 interface SidebarNavGroup {
   id: string;
   labelKey: string;
+  /** Готовая подпись (имя проекта) вместо перевода ключа. */
+  label?: string;
   items: SidebarNavItem[];
 }
 
@@ -296,6 +301,17 @@ export function MainLayout() {
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
   const clearCache = useConfigStore((state) => state.clearCache);
 
+  // brood: сводка роёв выбранного проекта -- имя группы меню и число ждущих
+  // ответа у «Swarms» (#255); страница роёв делит с ней один опрос.
+  const project = useProjectStore((state) => state.project);
+  const loadActivity = useSwarmActivityStore((state) => state.load);
+  const activityProject = useSwarmActivityStore((state) => state.project);
+  const projectName = useSwarmActivityStore((state) => state.name);
+  const activitySwarms = useSwarmActivityStore((state) => state.swarms);
+  const activities = useSwarmActivityStore((state) => state.activities);
+  const waitingSwarms =
+    activityProject === project ? waitingCount(activitySwarms, activities) : 0;
+
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
   const language = useLanguageStore((state) => state.language);
@@ -461,6 +477,10 @@ export function MainLayout() {
     });
   }, [fetchConfig, isSuperuser]);
 
+  useEffect(() => {
+    void loadActivity(project);
+  }, [loadActivity, project, apiBase]);
+
   const loadPluginResources = useCallback(async () => {
     if (!isSuperuser || connectionStatus !== 'connected' || !supportsPlugin) {
       setPluginResources([]);
@@ -561,12 +581,24 @@ export function MainLayout() {
     : [];
 
   const navGroups: SidebarNavGroup[] = [
-    ...navSections({ administrator: isSuperuser, plugins: supportsPlugin }).map((section) => ({
+    ...navSections({
+      administrator: isSuperuser,
+      plugins: supportsPlugin,
+      projectName: activityProject === project ? projectName : undefined,
+      waitingSwarms,
+    }).map((section) => ({
       id: section.id,
       labelKey: section.labelKey,
-      items: section.entries.map(({ icon: Icon, ...entry }) => ({
+      label: section.label,
+      items: section.entries.map(({ icon: Icon, badge, badgeLabelKey, ...entry }) => ({
         ...entry,
         icon: <Icon size={18} />,
+        ...(badge !== undefined
+          ? {
+              badge,
+              badgeLabel: badgeLabelKey ? t(badgeLabelKey, { count: badge }) : undefined,
+            }
+          : {}),
         ...(entry.path === '/auth-files'
           ? {
               badge: authFilesCount ?? undefined,
@@ -642,6 +674,7 @@ export function MainLayout() {
       ...(isSuperuser ? [fetchConfig(true)] : []),
       loadPluginResources(),
       loadAuthFilesCount(),
+      loadActivity(project),
       triggerHeaderRefresh(),
     ]);
     const rejected = results.find((result) => result.status === 'rejected');
@@ -1072,7 +1105,7 @@ export function MainLayout() {
             {visibleNavGroups.map((group, idx) => (
               <div className="nav-group" key={group.id}>
                 {showSidebarLabels ? (
-                  <div className="nav-group-label">{t(group.labelKey)}</div>
+                  <div className="nav-group-label">{group.label ?? t(group.labelKey)}</div>
                 ) : (
                   idx > 0 && <div className="nav-group-divider" aria-hidden="true" />
                 )}

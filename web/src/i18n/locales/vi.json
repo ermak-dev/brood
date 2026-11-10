@@ -130,7 +130,8 @@
       "active": "Đang hoạt động",
       "deleting": "Đang xóa",
       "error": "Lỗi",
-      "deleted": "Đã xóa"
+      "deleted": "Đã xóa",
+      "stopped": "Đã dừng"
     },
     "repository": {
       "title": "Kho mã",
@@ -161,7 +162,20 @@
       "reset_password_hint": "Đặt mật khẩu mới và kết thúc mọi phiên của người dùng.",
       "delete_user_hint": "Xóa tài khoản và thu hồi phiên đăng nhập cùng tư cách thành viên.",
       "remove_member_hint": "Thu hồi quyền truy cập dự án và các bầy của thành viên trong đó."
-    }
+    },
+    "execution": "Thực thi",
+    "execution_states": {
+      "idle": "Chưa khởi động",
+      "running": "Đang chạy",
+      "waiting": "Đang chờ trả lời",
+      "succeeded": "Hoàn thành",
+      "failed": "Bị kẹt",
+      "stopped": "Đã dừng"
+    },
+    "open_requests": "Câu hỏi đang mở",
+    "swarm_count": "Số bầy",
+    "activity_limited": "Chỉ đọc trạng thái thực thi của {{count}} bầy đang hoạt động đầu tiên; các bầy còn lại hiển thị gạch ngang cho đến khi máy chủ gửi bản tóm tắt.",
+    "failed_swarms": "Bầy: {{names}}"
   },
   "common": {
     "login": "Đăng nhập",
@@ -292,7 +306,8 @@
     "policy": "Chính sách truy cập",
     "worker_pools": "Nhóm worker",
     "project": "Dự án",
-    "overview": "Tổng quan"
+    "overview": "Tổng quan",
+    "waiting_swarms": "Đang chờ trả lời: {{count}}"
   },
   "nav_groups": {
     "project": "Dự án",
@@ -1433,7 +1448,6 @@
           "session_affinity": "Định tuyến Session Affinity",
           "ws_auth": "Xác thực WebSocket",
           "ws_auth_desc": "Bật xác thực WebSocket (/v1/ws)",
-          "proxy_url_sponsor_hint": "Chưa có proxy phù hợp?",
           "max_retry_interval_hint": "Đặt thành 0 hoặc số nguyên âm để bỏ qua thời gian chờ cooldown giữa các lượt thử lại."
         },
         "streaming": {

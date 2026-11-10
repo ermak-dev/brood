@@ -130,7 +130,8 @@
       "active": "运行中",
       "deleting": "正在删除",
       "error": "错误",
-      "deleted": "已删除"
+      "deleted": "已删除",
+      "stopped": "已停止"
     },
     "repository": {
       "title": "仓库",
@@ -161,7 +162,20 @@
       "reset_password_hint": "设置新密码并结束该用户的所有会话。",
       "delete_user_hint": "删除该账户并撤销其会话和成员关系。",
       "remove_member_hint": "撤销该成员对项目及其中自己群组的访问权限。"
-    }
+    },
+    "execution": "执行",
+    "execution_states": {
+      "idle": "未启动",
+      "running": "运行中",
+      "waiting": "等待回答",
+      "succeeded": "已完成",
+      "failed": "已卡住",
+      "stopped": "已停止"
+    },
+    "open_requests": "待答问题",
+    "swarm_count": "蜂群数",
+    "activity_limited": "仅读取前 {{count}} 个活跃蜂群的执行状态；其余显示破折号，直到服务器提供汇总。",
+    "failed_swarms": "蜂群：{{names}}"
   },
   "common": {
     "login": "登录",
@@ -292,7 +306,8 @@
     "policy": "访问策略",
     "worker_pools": "工作节点池",
     "project": "项目",
-    "overview": "概览"
+    "overview": "概览",
+    "waiting_swarms": "等待回答：{{count}}"
   },
   "nav_groups": {
     "project": "项目",
@@ -1610,7 +1625,6 @@
           "title": "网络配置",
           "description": "代理、重试和路由设置",
           "proxy_url": "代理 URL",
-          "proxy_url_sponsor_hint": "没有合适的代理？",
           "request_retry": "请求重试次数",
           "max_retry_credentials": "最大重试凭据数",
           "max_retry_credentials_hint": "留空表示不设置；设为 0 或负整数表示尝试所有可用凭据。",

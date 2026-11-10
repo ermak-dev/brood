@@ -86,6 +86,34 @@ describe('navigation groups', () => {
     }
   });
 
+  // #255: группа ресурсов проекта названа именем проекта, у «Swarms» --
+  // число роёв, ждущих ответа оператора; без имени и без ждущих -- как было.
+  test('the project group carries the project name and a waiting counter', () => {
+    const named = navSections({
+      administrator: false,
+      plugins: false,
+      projectName: 'Alpha',
+      waitingSwarms: 2,
+    });
+    expect(named[0].id).toBe('project');
+    expect(named[0].label).toBe('Alpha');
+    expect(named[0].labelKey).toBe('nav_groups.project');
+    const swarms = named[0].entries.find((entry) => entry.path === '/swarms');
+    expect(swarms?.badge).toBe(2);
+    expect(swarms?.badgeLabelKey).toBe('nav.waiting_swarms');
+    const plain = navSections({ administrator: false, plugins: false, waitingSwarms: 0 });
+    expect(plain[0].label).toBeUndefined();
+    const quiet = plain[0].entries.find((entry) => entry.path === '/swarms');
+    expect(quiet?.badge).toBeUndefined();
+    expect(quiet?.badgeLabelKey).toBeUndefined();
+    for (const name of locales) {
+      const text = lookup(locale(name), 'nav.waiting_swarms');
+      expect([name, typeof text === 'string' && text.includes('{{count}}')]).toEqual([name, true]);
+    }
+    expect(source('components/layout/MainLayout.tsx')).toContain('badgeLabelKey');
+    expect(source('components/layout/MainLayout.tsx')).toContain('group.label ??');
+  });
+
   test('every entry opens a route and the layout renders these groups', () => {
     const routes = source('router/MainRoutes.tsx');
     for (const section of navSections({ administrator: true, plugins: true })) {

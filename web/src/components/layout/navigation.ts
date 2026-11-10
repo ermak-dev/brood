@@ -36,11 +36,17 @@ export interface NavEntry {
   labelKey: string;
   metaKey?: string;
   icon: ComponentType<IconProps>;
+  /** Счётчик у пункта (#255: рои, ждущие ответа) и ключ его подписи для
+   * читалки с {{count}}; без счётчика пункт как прежде. */
+  badge?: number;
+  badgeLabelKey?: string;
 }
 
 export interface NavSection {
   id: 'project' | 'infrastructure' | 'administration' | 'gateway' | 'system';
   labelKey: string;
+  /** Готовая подпись вместо ключа: группа проекта названа его именем. */
+  label?: string;
   entries: NavEntry[];
 }
 
@@ -175,18 +181,31 @@ const sections = (plugins: boolean): NavSection[] => [
 ];
 
 /** Группы меню для роли: пункты, закрытые роли, и опустевшие группы
- * не показываются. Страницы плагинов добавляет MainLayout отдельно. */
+ * не показываются. Страницы плагинов добавляет MainLayout отдельно.
+ * Группа проекта несёт имя выбранного проекта, а «Swarms» -- число роёв,
+ * ждущих ответа оператора (#255); ноль счётчика не рисует. */
 export function navSections({
   administrator,
   plugins,
+  projectName,
+  waitingSwarms = 0,
 }: {
   administrator: boolean;
   plugins: boolean;
+  projectName?: string;
+  waitingSwarms?: number;
 }): NavSection[] {
   return sections(plugins)
     .map((section) => ({
       ...section,
-      entries: section.entries.filter((entry) => visibleAccessPath(entry.path, administrator)),
+      ...(section.id === 'project' && projectName ? { label: projectName } : {}),
+      entries: section.entries
+        .filter((entry) => visibleAccessPath(entry.path, administrator))
+        .map((entry) =>
+          entry.path === '/swarms' && waitingSwarms > 0
+            ? { ...entry, badge: waitingSwarms, badgeLabelKey: 'nav.waiting_swarms' }
+            : entry
+        ),
     }))
     .filter((section) => section.entries.length > 0);
 }
