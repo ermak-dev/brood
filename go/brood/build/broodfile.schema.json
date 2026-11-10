@@ -237,6 +237,11 @@
           "maxLength": 4096,
           "type": "string"
         },
+        "git_credential": {
+          "maxLength": 63,
+          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$",
+          "type": "string"
+        },
         "repository": {
           "maxLength": 1024,
           "type": "string"

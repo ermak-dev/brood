@@ -62,3 +62,51 @@ func TestProjectDeclarationOfflineWithoutGit(t *testing.T) {
 		t.Fatalf("offline project = %v", config)
 	}
 }
+
+// FEATURE: Broodfile reference to a server-only Git credential (#173).
+// SPEC: project.git_credential names a project Git credential, never a value:
+// a lowercase DNS label, or "" to clear the reference explicitly; absent keeps
+// the server's reference. A reference with an explicitly empty repository is
+// a contradiction. Refusals do not echo the field.
+func TestProjectDeclarationGitCredential(t *testing.T) {
+	plan := func(project map[string]any) (map[string]any, error) {
+		doc := minimal(t)
+		doc["project"] = project
+		resolved, err := MakePlan(doc, nil, "", "localhost:5000/team", "development", "Broodfile")
+		if err != nil {
+			return nil, err
+		}
+		return resolved["projectConfig"].(map[string]any), nil
+	}
+	for _, reference := range []string{"gitlab", ""} {
+		config, err := plan(map[string]any{"repository": "https://git.example.com/team/repo.git", "git_credential": reference})
+		wantNoError(t, err)
+		if value, present := config["git_credential"]; !present || value != reference {
+			t.Fatalf("reference %q = %v", reference, config)
+		}
+	}
+	config, err := plan(map[string]any{"git_credential": "gitlab"})
+	wantNoError(t, err)
+	if config["git_credential"] != "gitlab" {
+		t.Fatalf("reference with resolved repository = %v", config)
+	}
+	config, err = plan(map[string]any{"repository": "https://git.example.com/team/repo.git"})
+	wantNoError(t, err)
+	if _, present := config["git_credential"]; present {
+		t.Fatalf("absent reference became explicit: %v", config)
+	}
+	for _, project := range []map[string]any{
+		{"git_credential": "DO_NOT_ECHO"},
+		{"git_credential": "do_not_echo"},
+		{"git_credential": "do-not-echo:token"},
+		{"git_credential": strings.Repeat("a", 64)},
+		{"git_credential": true},
+		{"git_credential": nil},
+		{"git_credential": map[string]any{"token": "DO_NOT_ECHO"}},
+		{"repository": "", "git_credential": "gitlab"},
+	} {
+		if _, err := plan(project); err == nil || strings.Contains(err.Error(), "DO_NOT_ECHO") || strings.Contains(err.Error(), "do_not_echo") {
+			t.Fatalf("invalid reference %v accepted or exposed: %v", project, err)
+		}
+	}
+}

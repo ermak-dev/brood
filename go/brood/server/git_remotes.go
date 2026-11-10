@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -26,6 +28,16 @@ func (gitCredential) String() string               { return "server.gitCredentia
 func (c gitCredential) GoString() string           { return c.String() }
 func (gitCredential) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
 
+// Format закрывает любой verb: String и GoString fmt зовёт только для %v,
+// %s, %q, %x, %X и %#v, остальные печатали поля (%d давал
+// {%!d(string=token)}). Тот же Format у каждого держателя Git credential.
+// Остаётся %p не-указателя: его fmt печатает рефлексией мимо методов, такой
+// вызов отвергает go vet.
+func (c gitCredential) Format(f fmt.State, _ rune) { redactFormat(f, c) }
+
+// redactFormat печатает скрытое представление держателя credential.
+func redactFormat(f fmt.State, s fmt.Stringer) { _, _ = io.WriteString(f, s.String()) }
+
 // configured сообщает, есть ли у remote учётные данные (Basic auth).
 func (c gitCredential) configured() bool { return c.username != "" && c.token != "" }
 
@@ -35,12 +47,7 @@ type gitRemotes map[string]gitCredential
 func (gitRemotes) String() string               { return "server.gitRemotes{redacted}" }
 func (r gitRemotes) GoString() string           { return r.String() }
 func (gitRemotes) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
-
-// has сообщает, настроен ли remote с точно этим каноническим origin.
-func (r gitRemotes) has(origin string) bool {
-	_, ok := r[origin]
-	return ok
-}
+func (r gitRemotes) Format(f fmt.State, _ rune) { redactFormat(f, r) }
 
 // origins — настроенные remotes в стабильном порядке.
 func (r gitRemotes) origins() []string {

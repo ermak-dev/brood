@@ -417,7 +417,7 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательные microvm и подготовленный lxc |
 | `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only management key |
 | `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |
-| `BROOD_GIT_REMOTES` | необязательные remotes репозиториев проектов и их токены для Git gateway; только Secret сервера, см. «Git remotes» |
+| `BROOD_GIT_REMOTES` | необязательные remotes репозиториев проектов для Git gateway: egress сервера и legacy-токены; только Secret сервера, см. «Git remotes» |
 
 Для отдельного backend managed-акторов задаются `BROOD_ACTOR_LLM_URL`
 (строгий HTTPS origin) и `BROOD_ACTOR_LLM_API_KEY`. Необязательная
@@ -484,6 +484,14 @@ token. Ротация токена меняет checksum `Secret.data` и пер
 режим `existing` переносит ключ тем же rollout после snapshot. Смена адресов
 host требует повторной выкладки. Токен не попадает в argv, вывод, edge,
 акторов и воркеров.
+
+Токен в `BROOD_GIT_REMOTES` больше не обязателен: проектный Git credential
+(`bro secret git`, [SECRETS.md](SECRETS.md)) хранится в приватной БД сервера,
+ротируется без выкладки и имеет приоритет над токеном remote того же
+repository. Выкладка не читает БД и не знает его host, поэтому egress сервера
+к нему по-прежнему открывает только ключ `BROOD_GIT_REMOTES`: для repository
+с проектным credential достаточно значения `{}`. Без egress шлюз отвечает
+502, хотя режим origin — `gateway`.
 
 ## Proxmox runtime
 

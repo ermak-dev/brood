@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/gitcredential"
 	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/pipeline"
 	"brood.dev/go/brood/store"
@@ -26,6 +27,10 @@ type projectSyncJSON struct {
 	Created    bool   `json:"created"`
 	Changed    bool   `json:"changed"`
 	OriginMode string `json:"origin_mode"`
+	// GitCredential — действующая ссылка декларации; Bound — она указывает на
+	// проектный credential, привязанный ровно к repository. Значений нет.
+	GitCredential      string `json:"git_credential"`
+	GitCredentialBound bool   `json:"git_credential_bound"`
 }
 
 func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
@@ -51,13 +56,18 @@ func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusServiceUnavailable, "project sync failed")
 		return
 	}
-	mode := gitorigin.Mode(result.Repository, result.Repository, s.git.remotes.has, managedPublicHost)
+	// Ошибка чтения после фиксации не превращает запись в отказ: режим пуст,
+	// следующее чтение пересчитает его.
+	mode, bound := "", false
+	if access, err := s.projectGitAccess(r.Context(), result.ID); err == nil {
+		mode, bound = access.mode(result.Repository), access.bound
+	}
 	status := http.StatusOK
 	if result.Created {
 		status = http.StatusCreated
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, projectSyncJSON{ID: result.ID, Name: result.Name, Repository: result.Repository, Created: result.Created, Changed: result.Changed, OriginMode: mode})
+	writeJSON(w, status, projectSyncJSON{ID: result.ID, Name: result.Name, Repository: result.Repository, Created: result.Created, Changed: result.Changed, OriginMode: mode, GitCredential: result.GitCredential, GitCredentialBound: bound})
 }
 
 func (s *Server) syncProject(ctx context.Context, userID string, declaration store.ProjectDeclaration, authorize func(context.Context) bool) (store.ProjectSyncResult, error) {
@@ -116,7 +126,7 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 	if _, err := decoder.Token(); err != io.EOF {
 		return declaration, invalid
 	}
-	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true, "workflows": true})
+	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true, "git_credential": true, "workflows": true})
 	if err != nil {
 		return declaration, invalid
 	}
@@ -152,6 +162,14 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 			return declaration, invalid
 		}
 		declaration.Description = &description
+	}
+	if raw, ok := body["git_credential"]; ok {
+		// Имя серверного Git credential, не значение; ссылке нужен repository.
+		var reference string
+		if !syncString(raw, &reference) || reference != "" && (gitcredential.ValidateName(reference) != nil || declaration.Repository == "") {
+			return declaration, invalid
+		}
+		declaration.GitCredential = &reference
 	}
 	if raw, ok := body["capacity"]; ok {
 		fields, err := syncObject(raw, map[string]bool{"worker_selector": true, "max_swarms": true, "max_actors": true, "max_cpu_millicores": true, "max_memory_bytes": true})

@@ -60,6 +60,45 @@ func TestGitRemotesSetting(t *testing.T) {
 	}
 }
 
+// gitFormatVerbs covers every verb family with flags and width: String and
+// GoString serve only %v, %s, %q, %x, %X and %#v, other verbs printed fields.
+// %p is left out: fmt renders a non-pointer %p by reflection past every
+// method, and go vet rejects that call.
+var gitFormatVerbs = []string{"%v", "%+v", "%#v", "%s", "%10s", "%-40v", "%q", "%#q", "%x", "%X", "% x", "%d", "%+d", "%5d", "%t", "%c", "%b", "%o", "%O", "%e", "%E", "%f", "%.3g", "%U", "%#U", "%z"}
+
+// SPEC: Every holder of a Git credential (installation remotes, the config
+// that loads them, the gateway, a project access snapshot and a request
+// target) hides the username and token for every fmt verb (#173).
+func TestGitCredentialHoldersRedactEveryVerb(t *testing.T) {
+	origin := "https://git.example.com/group/repo.git"
+	cfg, err := LoadConfig(func(key string) string {
+		if key == gitRemotesSetting {
+			return `{"` + origin + `":{"username":"brood-bot","token":"` + gitTokenSentinel + `"}}`
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := cfg.gitRemotes[origin]
+	if credential.token != gitTokenSentinel {
+		t.Fatal("remote not loaded")
+	}
+	access := gitAccess{repository: origin, credential: credential, gateway: true, bound: true}
+	gateway := newGitGateway(cfg.gitRemotes)
+	for name, value := range map[string]any{
+		"credential": credential, "remotes": cfg.gitRemotes, "config": cfg, "config pointer": &cfg,
+		"gateway": gateway, "access": access, "target": gitTarget{credential: credential},
+	} {
+		for _, verb := range gitFormatVerbs {
+			if text := fmt.Sprintf(verb, value); strings.Contains(text, gitTokenSentinel) || strings.Contains(text, "brood-bot") {
+				t.Errorf("%s with %s rendered: %s", name, verb, text)
+				break
+			}
+		}
+	}
+}
+
 func TestGitRemotesSettingRefusals(t *testing.T) {
 	origin := "https://git.example.com/group/repo.git"
 	entry := func(value string) string { return `{"` + origin + `":` + value + `}` }

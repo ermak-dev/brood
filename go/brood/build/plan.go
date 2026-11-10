@@ -43,6 +43,9 @@ var (
 	patternDrive    = regexp.MustCompile(`^[A-Za-z]:`)
 )
 
+// patternOptionalName — имя или пустая строка, явно снимающая ссылку.
+var patternOptionalName = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$`)
+
 // failure строит отказ «файл: поле (строка): причина» без трассировки.
 func failure(filename, field string, line int, reason string) error {
 	location := filename + ": " + field
@@ -520,6 +523,8 @@ func init() {
 		"repository", &schemaNode{typ: "string", maxLen: gitorigin.MaxLength},
 		"description", &schemaNode{typ: "string", maxLen: 4096},
 		"capacity", projectCapacity,
+		// Ссылка на серверный Git credential проекта (#173): имя, не значение.
+		"git_credential", &schemaNode{typ: "string", maxLen: 63, pattern: patternOptionalName},
 	)}
 	apiVersion := &schemaNode{typ: "string", constV: "brood.dev/v1alpha1", constSet: true}
 	schemaRoot = &schemaNode{
@@ -1433,6 +1438,13 @@ func planProjectConfig(document map[string]any, filename string) (map[string]any
 			}
 		}
 		config["capacity"] = deepCopyValue(capacity)
+	}
+	if reference, present := declaration["git_credential"]; present {
+		name, _ := reference.(string)
+		if repository, explicit := declaration["repository"].(string); explicit && repository == "" && name != "" {
+			return nil, failure(filename, "project.git_credential", -1, "a Git credential reference requires a project repository")
+		}
+		config["git_credential"] = name
 	}
 	return config, nil
 }
