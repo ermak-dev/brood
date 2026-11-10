@@ -28,6 +28,7 @@ var schemaModules = []schemaModule{
 	{id: "coordination", create: func() string { return coordinationSchema }, verify: verifyCoordinationSchema},
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
+	{id: "git-credential", create: func() string { return projectGitCredentialSchema }, verify: verifyProjectGitCredentialSchema},
 	{id: "pipelines", create: func() string { return swarmStepsSchema }, verify: verifySwarmStepsSchema},
 	{id: "swarm-roles", create: func() string { return swarmRoleBindingSchema }, verify: verifySwarmRoleSchema},
 	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},

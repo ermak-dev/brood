@@ -30,19 +30,19 @@ type originRefusal struct{ detail string }
 
 func (e *originRefusal) Error() string { return "actor origin refused: " + e.detail }
 
-const originModeRefusal = "origin must be the project repository configured in BROOD_GIT_REMOTES or a repository on an allowed public Git host"
+const originModeRefusal = "origin must be the project repository with server Git access (a project Git credential or BROOD_GIT_REMOTES) or a repository on an allowed public Git host"
 
-// originMode пересчитывает режим доступа origin по текущим repository проекта
-// и remotes установки. Пустой origin режима не имеет.
+// originMode пересчитывает режим доступа origin по текущему Git-доступу
+// проекта. Пустой origin режима не имеет.
 func (s *Server) originMode(ctx context.Context, projectID, origin string) (string, error) {
 	if origin == "" {
 		return "", nil
 	}
-	repository, err := s.store.ProjectRepository(ctx, projectID)
+	access, err := s.projectGitAccess(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
-	return gitorigin.Mode(origin, repository, s.git.remotes.has, managedPublicHost), nil
+	return access.mode(origin), nil
 }
 
 // settledOriginMode is originMode for a response after a committed mutation:
@@ -60,11 +60,11 @@ func (s *Server) settledOriginMode(ctx context.Context, projectID, origin string
 // иначе origin создающего master, иначе repository проекта, иначе пусто.
 // Непустой origin без режима — отказ, а не тихий пустой workspace.
 func (s *Server) resolveActorOrigin(ctx context.Context, projectID, requested string, parent *store.ManagedActor) (string, error) {
-	repository, err := s.store.ProjectRepository(ctx, projectID)
+	access, err := s.projectGitAccess(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
-	origin := repository
+	origin := access.repository
 	switch {
 	case requested != "":
 		if origin, err = gitorigin.Canonical(requested); err != nil {
@@ -76,7 +76,7 @@ func (s *Server) resolveActorOrigin(ctx context.Context, projectID, requested st
 	if origin == "" {
 		return "", nil
 	}
-	if gitorigin.Mode(origin, repository, s.git.remotes.has, managedPublicHost) == "" {
+	if access.mode(origin) == "" {
 		return "", &originRefusal{detail: originModeRefusal}
 	}
 	return origin, nil

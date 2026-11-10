@@ -260,13 +260,15 @@ UpdateActor с исходными UID/version, затем ResumeActor. Это д
 серверного проекта, не путь. `--ref`, `--registry`, `--atespace` удалены.
 Справка опций — `bro build --help`, не корневая справка.
 
-`PUT /api/projects/sync` принимает `{name, repository, description?, capacity?}`.
+`PUT /api/projects/sync` принимает `{name, repository, description?, capacity?, git_credential?}`.
 Repository — канонический HTTPS URL либо явная пустая строка. На клиенте
 отсутствующее поле Broodfile разрешается из Git origin; обычные SSH/SCP origins
 нормализуются в HTTPS. Capacity имеет тот же wire shape, что API ёмкости.
 Пропущенные description/capacity сохраняются, явная capacity заменяется
-полностью. Создание — 201, обновление/no-op — 200, тело
-`{id,name,repository,created,changed,origin_mode}`. Создание и изменения требуют
+полностью. `git_credential` — имя серверного Git credential проекта или `""`
+(снять ссылку); отсутствующее поле сохраняет ссылку, непустой ссылке нужен
+непустой repository. Создание — 201, обновление/no-op — 200, тело
+`{id,name,repository,created,changed,origin_mode,git_credential,git_credential_bound}`. Создание и изменения требуют
 администратора, no-op допускает участника проекта; сессия/права перепроверяются
 в транзакции. Идентичный повтор не записывает строки БД и не создаёт дубликаты.
 Членство, секреты, рои и существующие checkout акторов не меняются.

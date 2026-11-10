@@ -108,6 +108,7 @@ type gitGatewayFixture struct {
 	ts       *substrateServer
 	alice    *http.Client
 	swarm    string
+	project  string
 	actor    store.ManagedActor
 	token    string
 	upstream *gitUpstream
@@ -118,8 +119,22 @@ type gitGatewayFixture struct {
 // durable start intent. The fake PVE models one CT, so only "clone" runs there.
 func gitGatewaySetup(t *testing.T) gitGatewayFixture {
 	t.Helper()
+	return gitGatewaySetupWith(t, nil)
+}
+
+// gitGatewaySetupWith runs configure after the project repository is selected
+// and before any actor is created.
+func gitGatewaySetupWith(t *testing.T, configure func(ts *substrateServer, project string)) gitGatewayFixture {
+	t.Helper()
 	ts, alice, swarm, _, hub := managedOriginSetup(t, gitTestOrigin)
 	ctx := context.Background()
+	sw, err := ts.srv.store.GetSwarm(ctx, swarm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configure != nil {
+		configure(ts, sw.ProjectID)
+	}
 	path := "/api/swarms/" + swarm + "/actors"
 	r, b, _ := ts.do(alice, "POST", path, ts.csrf(alice), managedOriginBody("clone", gitTestOrigin))
 	expectStatus(t, "create clone", r, b, http.StatusCreated)
@@ -145,7 +160,7 @@ func gitGatewaySetup(t *testing.T) gitGatewayFixture {
 	if err != nil {
 		t.Fatalf("direct actor start intent: %v", err)
 	}
-	f := gitGatewayFixture{ts: ts, alice: alice, swarm: swarm, actor: a, token: guestToken(ts.srv.managed.registry.relaySecret, a.UID, a.Incarnation)}
+	f := gitGatewayFixture{ts: ts, alice: alice, swarm: swarm, project: sw.ProjectID, actor: a, token: guestToken(ts.srv.managed.registry.relaySecret, a.UID, a.Incarnation)}
 	f.upstream = newGitUpstream(t, ts, gitAdvertisement())
 	return f
 }

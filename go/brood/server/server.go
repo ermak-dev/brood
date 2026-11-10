@@ -166,6 +166,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProxmoxPools(cfg.proxmox)
 	srv.mountProxmoxConnections()
 	srv.mountProjectSecrets()
+	srv.mountGitCredentials()
 	srv.mountGitRepositories()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)

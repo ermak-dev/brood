@@ -165,3 +165,48 @@ func TestBuildSyncFailureStopsBeforeDocker(t *testing.T) {
 		t.Fatal("project sync refusal published build artifacts")
 	}
 }
+
+// FEATURE: bro build sends the Git credential reference and reports its state (#173).
+// SPEC: project.git_credential travels in the sync declaration as a name;
+// an unbound reference is reported by name with the command that fixes it,
+// never with any value. A bound reference with gateway mode prints nothing.
+func TestBuildSyncsGitCredentialReference(t *testing.T) {
+	isolateState(t)
+	root := gitProject(t)
+	addBuildOrigin(t, root)
+	file := filepath.Join(root, "Broodfile")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, append(data, []byte("project:\n  git_credential: gitlab\n")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	response := `{"id":"project-id","name":"example","repository":"https://git.example.com/team/current.git","created":false,"changed":false,"origin_mode":"","git_credential":"gitlab","git_credential_bound":false}`
+	var declarations []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var declaration map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&declaration); err != nil {
+			t.Error(err)
+		}
+		declarations = append(declarations, declaration)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(response))
+	}))
+	defer server.Close()
+	saveBuildSession(t, server.URL)
+	fakeDocker(t, "exit 42\n")
+	_, _, diagnostic := invoke(t, "", "build")
+	if len(declarations) != 1 || declarations[0]["git_credential"] != "gitlab" || declarations[0]["repository"] != "https://git.example.com/team/current.git" {
+		t.Fatalf("declaration = %v", declarations)
+	}
+	if !strings.Contains(diagnostic, "Git credential gitlab") || !strings.Contains(diagnostic, "bro secret --project example git add gitlab") {
+		t.Fatalf("unbound reference not reported: %q", diagnostic)
+	}
+	response = `{"id":"project-id","name":"example","repository":"https://git.example.com/team/current.git","created":false,"changed":false,"origin_mode":"gateway","git_credential":"gitlab","git_credential_bound":true}`
+	_, _, diagnostic = invoke(t, "", "build")
+	if strings.Contains(diagnostic, "Git credential") || strings.Contains(diagnostic, "no Git access mode") {
+		t.Fatalf("bound reference reported: %q", diagnostic)
+	}
+}

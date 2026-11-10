@@ -4,15 +4,18 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"brood.dev/go/brood/gitorigin"
@@ -46,8 +49,9 @@ type gitGateway struct {
 	active       map[string]int
 }
 
-func (*gitGateway) String() string     { return "server.gitGateway{redacted}" }
-func (g *gitGateway) GoString() string { return g.String() }
+func (*gitGateway) String() string               { return "server.gitGateway{redacted}" }
+func (g *gitGateway) GoString() string           { return g.String() }
+func (g *gitGateway) Format(f fmt.State, _ rune) { redactFormat(f, g) }
 
 // gitTarget — проверенный upstream одного запроса; передаётся в Rewrite через
 // контекст, чтобы URL и credential выбирал только сервер.
@@ -57,12 +61,61 @@ type gitTarget struct {
 }
 
 // fmt печатает неэкспортируемые поля без их String: скрываем всю структуру.
-func (gitTarget) String() string     { return "server.gitTarget{redacted}" }
-func (t gitTarget) GoString() string { return t.String() }
+func (gitTarget) String() string               { return "server.gitTarget{redacted}" }
+func (t gitTarget) GoString() string           { return t.String() }
+func (t gitTarget) Format(f fmt.State, _ rune) { redactFormat(f, t) }
 
 type gitTargetKey struct{}
 
 var errGitRedirect = errors.New("git upstream redirect denied")
+
+// errGitAddressDenied — адрес upstream вне допустимых для шлюза.
+var errGitAddressDenied = errors.New("git upstream address denied")
+
+// gitTranslatedPrefixes — IPv6 с вложенным IPv4 для шлюза трансляции или
+// туннеля: NAT64 (64:ff9b::/96, local-use 64:ff9b:1::/48), 6to4 (2002::/16),
+// Teredo (2001::/32), IPv4-compatible (::/96) и IPv4-translated
+// (::ffff:0:0:0/96). Шлюз доставит такой адрес на вложенный IPv4, в том числе
+// loopback и metadata, мимо проверок IPv4. Отказ — для всего префикса, без
+// разбора вложенного адреса: local-use NAT64 кладёт IPv4 в позицию, зависящую
+// от длины префикса сети, которую сервер не знает. В сети только с IPv6 и
+// DNS64 upstream нужен собственный IPv6-адрес: синтезированный NAT64 отвергается.
+var gitTranslatedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("::/96"),
+	netip.MustParsePrefix("::ffff:0:0:0/96"),
+}
+
+// gitDialControl — граница SSRF после разрешения имени: upstream, заданный
+// через API (#173), не попадает на loopback, link-local (включая metadata
+// 169.254.169.254), unspecified, multicast, broadcast, reserved адреса и IPv6
+// с вложенным IPv4 (gitTranslatedPrefixes). Частные адреса LAN допустимы: Git
+// установки обычно там; те же правила deploy применяет к remotes установки при
+// выкладке.
+func gitDialControl(_, address string, _ syscall.RawConn) error {
+	addrPort, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return errGitAddressDenied
+	}
+	ip := addrPort.Addr().Unmap()
+	if !ip.IsGlobalUnicast() {
+		return errGitAddressDenied
+	}
+	if ip.Is4() {
+		if first := ip.As4()[0]; first == 0 || first >= 240 {
+			return errGitAddressDenied
+		}
+	}
+	for _, prefix := range gitTranslatedPrefixes {
+		if prefix.Contains(ip) {
+			return errGitAddressDenied
+		}
+	}
+	return nil
+}
 
 func newGitGateway(remotes gitRemotes) *gitGateway {
 	if remotes == nil {
@@ -72,7 +125,7 @@ func newGitGateway(remotes gitRemotes) *gitGateway {
 	// Без прокси окружения: единственные адресаты — настроенные remotes.
 	g.transport = &http.Transport{
 		Proxy:                  nil,
-		DialContext:            (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:            (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: gitDialControl}).DialContext,
 		TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:    30 * time.Second,
 		ResponseHeaderTimeout:  10 * time.Minute,
@@ -248,8 +301,9 @@ func (s *Server) serveManagedGit(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
-	// Остановка, reset, смена repository проекта или remote отзывают и уже
-	// открытый поток: проверка раз в секунду отменяет upstream.
+	// Остановка, reset, смена repository проекта, remote или ссылки декларации,
+	// ротация и удаление Git credential отзывают и уже открытый поток:
+	// проверка раз в секунду отменяет upstream.
 	watcher := make(chan struct{})
 	go func() {
 		defer close(watcher)
@@ -264,7 +318,7 @@ func (s *Server) serveManagedGit(w http.ResponseWriter, r *http.Request) {
 					cancel()
 					return
 				}
-				if current, status, _ := s.gitGatewayTarget(ctx, route, token, false); status != 0 || current.upstream.String() != target.upstream.String() {
+				if current, status, _ := s.gitGatewayTarget(ctx, route, token, false); status != 0 || current.upstream.String() != target.upstream.String() || current.credential != target.credential {
 					cancel()
 					return
 				}
@@ -285,7 +339,8 @@ func (s *Server) serveManagedGit(w http.ResponseWriter, r *http.Request) {
 
 // gitGatewayTarget повторяет проверку привязки secrets runtime: актор, рой,
 // atespace и (при namespace) native namespace, затем требует, чтобы origin
-// актора сейчас был в режиме gateway. Credential берётся только из remotes.
+// актора сейчас был в режиме gateway. Credential берётся только из текущего
+// Git-доступа проекта: привязанного проектного credential или remote установки.
 func (s *Server) gitGatewayTarget(ctx context.Context, route gitRoute, token string, namespace bool) (gitTarget, int, string) {
 	denied := func() (gitTarget, int, string) {
 		return gitTarget{}, http.StatusUnauthorized, "guest authorization denied"
@@ -306,12 +361,11 @@ func (s *Server) gitGatewayTarget(ctx context.Context, route gitRoute, token str
 			return denied()
 		}
 	}
-	mode, err := s.originMode(ctx, swarm.ProjectID, actor.Origin)
+	access, err := s.projectGitAccess(ctx, swarm.ProjectID)
 	if err != nil {
 		return gitTarget{}, http.StatusServiceUnavailable, "Git gateway unavailable"
 	}
-	credential, configured := s.git.remotes[actor.Origin]
-	if mode != gitorigin.ModeGateway || !configured {
+	if access.mode(actor.Origin) != gitorigin.ModeGateway {
 		return gitTarget{}, http.StatusForbidden, "Git gateway is not enabled for this actor's origin"
 	}
 	upstream, err := url.Parse(actor.Origin + "/" + route.operation)
@@ -319,5 +373,5 @@ func (s *Server) gitGatewayTarget(ctx context.Context, route gitRoute, token str
 		return gitTarget{}, http.StatusServiceUnavailable, "Git gateway unavailable"
 	}
 	upstream.RawQuery = route.query
-	return gitTarget{upstream: *upstream, credential: credential}, 0, ""
+	return gitTarget{upstream: *upstream, credential: access.credential}, 0, ""
 }

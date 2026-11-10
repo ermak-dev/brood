@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"io"
 	"net/http"
@@ -81,6 +82,29 @@ func mustGit(t *testing.T, home, dir string, args ...string) string {
 	return out
 }
 
+// seededGitBackend creates group/repo.git with one seeded commit under a new
+// root and serves it with git http-backend, pushes enabled.
+func seededGitBackend(t *testing.T, gitPath, home string) (root, bare string, backend *cgi.Handler) {
+	t.Helper()
+	root = t.TempDir()
+	bare = filepath.Join(root, "group", "repo.git")
+	if err := os.MkdirAll(filepath.Dir(bare), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, home, root, "init", "-q", "--bare", "--initial-branch=main", bare)
+	mustGit(t, home, bare, "config", "http.receivepack", "true")
+	seed := t.TempDir()
+	mustGit(t, home, seed, "init", "-q", "--initial-branch=main")
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("seeded through the gateway\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, home, seed, "add", "README.md")
+	mustGit(t, home, seed, "commit", "-q", "-m", "seed")
+	mustGit(t, home, seed, "push", "-q", bare, "main")
+	backend = &cgi.Handler{Path: gitPath, Args: []string{"http-backend"}, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1"}}
+	return root, bare, backend
+}
+
 // FEATURE: Real smart-HTTP clone and push through the Git gateway (#146).
 // SPEC: An unmodified git client with only the guest bearer token clones and
 // pushes (including chunked uploads) to the installation remote served by git
@@ -95,24 +119,9 @@ func TestGitGatewayCloneAndPushEndToEnd(t *testing.T) {
 		t.Skip("git is not installed")
 	}
 	home := t.TempDir()
-	root := t.TempDir()
-	bare := filepath.Join(root, "group", "repo.git")
-	if err := os.MkdirAll(filepath.Dir(bare), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, home, root, "init", "-q", "--bare", "--initial-branch=main", bare)
-	mustGit(t, home, bare, "config", "http.receivepack", "true")
-	seed := t.TempDir()
-	mustGit(t, home, seed, "init", "-q", "--initial-branch=main")
-	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("seeded through the gateway\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	mustGit(t, home, seed, "add", "README.md")
-	mustGit(t, home, seed, "commit", "-q", "-m", "seed")
-	mustGit(t, home, seed, "push", "-q", bare, "main")
+	root, bare, backend := seededGitBackend(t, gitPath, home)
 
 	f := gitGatewaySetup(t)
-	backend := &cgi.Handler{Path: gitPath, Args: []string{"http-backend"}, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1"}}
 	var chunked atomic.Int32
 	f.upstream.setInner(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// net/http/cgi refuses chunked bodies; real Git servers accept them.
@@ -227,6 +236,94 @@ func TestGitGatewayCloneAndPushEndToEnd(t *testing.T) {
 			for _, secret := range []string{gitTokenSentinel, "brood-bot", f.token, "cookie-sentinel"} {
 				if strings.Contains(strings.Join(values, " "), secret) {
 					t.Fatalf("response header %s disclosed a secret", key)
+				}
+			}
+		}
+	}
+}
+
+// FEATURE: Synthetic acceptance of a project Git credential (#173).
+// SPEC: Without any installation remote, an unmodified git client holding
+// only the guest bearer token clones and pushes through the gateway to a
+// local TLS git http-backend that requires the project credential. Rotation
+// takes effect on the next request without restart; removal refuses the
+// next clone. No response or client error discloses the credential.
+// IMPLEMENTATION: Router + reverse proxy to net/http/cgi git http-backend.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestGitGatewayProjectCredentialCloneEndToEnd(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	home := t.TempDir()
+	root, bare, backend := seededGitBackend(t, gitPath, home)
+	f := projectCredentialGateway(t)
+	if len(f.ts.srv.git.remotes) != 0 {
+		t.Fatal("installation remotes configured")
+	}
+	f.upstream.setInner(backend)
+	capture := &gitCapture{}
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.ts.srv.Handler().ServeHTTP(&gitCaptureWriter{ResponseWriter: w, capture: capture}, r)
+	}))
+	defer front.Close()
+	remote := front.URL + f.base()
+	header := "http.extraHeader=Authorization: Bearer " + f.token
+	work := filepath.Join(t.TempDir(), "project")
+	mustGit(t, home, root, "-c", header, "clone", "-q", remote, work)
+	if content, err := os.ReadFile(filepath.Join(work, "README.md")); err != nil || string(content) != "seeded through the gateway\n" {
+		t.Fatalf("clone content: %q %v", content, err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "change.txt"), []byte("pushed with a project credential\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, home, work, "add", "change.txt")
+	mustGit(t, home, work, "commit", "-q", "-m", "push")
+	mustGit(t, home, work, "-c", header, "push", "-q", "origin", "HEAD:main")
+	if got := mustGit(t, home, bare, "show", "main:change.txt"); got != "pushed with a project credential\n" {
+		t.Fatalf("pushed content: %q", got)
+	}
+
+	putProjectGitCredential(t, f.ts, f.project, "gitlab", gitTestOrigin, gitRotatedToken)
+	f.upstream.rotate(gitRotatedToken)
+	mustGit(t, home, root, "-c", header, "clone", "-q", remote, filepath.Join(t.TempDir(), "rotated"))
+
+	if err := f.ts.srv.store.RemoveProjectGitCredentials(context.Background(), f.project, []string{"gitlab"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := gitCommand(t, home, root, "-c", header, "clone", "-q", remote, filepath.Join(t.TempDir(), "removed"))
+	if err == nil {
+		t.Fatal("clone succeeded after the credential was removed")
+	}
+	seen := f.upstream.seen()
+	operations := map[string]bool{}
+	for _, request := range seen {
+		user, password, ok := (&http.Request{Header: request.header}).BasicAuth()
+		if !ok || user != "brood-bot" || (password != gitTokenSentinel && password != gitRotatedToken) {
+			t.Fatalf("upstream request without the project credential: %s %s", request.method, request.path)
+		}
+		operations[request.method+" "+request.path+" "+password] = true
+	}
+	for _, want := range []string{
+		"POST /group/repo.git/git-upload-pack " + gitTokenSentinel,
+		"POST /group/repo.git/git-receive-pack " + gitTokenSentinel,
+		"POST /group/repo.git/git-upload-pack " + gitRotatedToken,
+	} {
+		if !operations[want] {
+			t.Fatalf("operation %q missing", want)
+		}
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	for _, secret := range []string{gitTokenSentinel, gitRotatedToken, "brood-bot"} {
+		if strings.Contains(out, secret) || bytes.Contains(capture.body.Bytes(), []byte(secret)) {
+			t.Fatalf("credential %q disclosed to the guest", secret)
+		}
+		for _, h := range capture.headers {
+			for _, values := range h {
+				if strings.Contains(strings.Join(values, " "), secret) {
+					t.Fatalf("credential %q disclosed in a response header", secret)
 				}
 			}
 		}

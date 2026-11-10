@@ -98,9 +98,11 @@ type Config struct {
 	artifactsDir string
 }
 
-// String and GoString keep server credentials out of diagnostic formatting.
-func (Config) String() string     { return "server.Config{redacted}" }
-func (c Config) GoString() string { return c.String() }
+// String, GoString and Format keep server credentials, including the
+// installation Git remotes, out of diagnostic formatting with any verb.
+func (Config) String() string               { return "server.Config{redacted}" }
+func (c Config) GoString() string           { return c.String() }
+func (c Config) Format(f fmt.State, _ rune) { redactFormat(f, c) }
 
 // getenv — источник окружения: интерфейс для тестов.
 type getenv func(string) string

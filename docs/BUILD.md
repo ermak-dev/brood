@@ -17,6 +17,8 @@ project:
   description: Coding workspace
   # Если repository не задан, используется Git origin текущего checkout.
   repository: https://git.example.com/team/my-project.git
+  # Имя серверного Git credential проекта (bro secret git), не значение.
+  git_credential: my-project-git
   capacity:
     worker_selector: {brood.dev/purpose: development}
     max_swarms: '4'
@@ -76,6 +78,22 @@ capacity полностью заменяет selector и пределы: про�
 превращается в право сервера обращаться к нему. Панель показывает repository
 для чтения и указывает Broodfile как источник настройки. Разрешённая
 конфигурация проекта сохраняется в `build.json` как `projectConfig`.
+
+`git_credential` — ссылка на серверный Git credential проекта
+([SECRETS.md](SECRETS.md), «Серверные Git credentials»): только имя,
+lowercase DNS label до 63 байт; значение credential в Broodfile, план,
+`build.json` и образ не попадает. Отсутствующее поле сохраняет ссылку
+сервера, `git_credential: ""` явно её снимает, смена — только администратор.
+Ссылка при явном `repository: ""` — отказ до сервера. Сервер принимает ссылку
+и на ещё не созданный credential: это позволяет сначала синхронизировать
+новый проект, затем добавить credential. Ответ синхронизации содержит
+`git_credential` и `git_credential_bound`. Если ссылка не указывает на
+credential, привязанный ровно к repository проекта, `bro build` печатает
+предупреждение с командой `bro secret ... git add`; режим gateway от такой
+ссылки не появляется. Credential привязан к URL: смена repository в Broodfile
+не отправляет прежний token новому серверу, пока credential не привязан
+заново. Сервер без поддержки поля отвечает 400 `invalid or oversized project
+declaration`: сначала обновите сервер.
 
 ## Использование
 

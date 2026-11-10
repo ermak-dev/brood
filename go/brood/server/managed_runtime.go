@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"brood.dev/go/brood/app"
-	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/proxmox"
 	"brood.dev/go/brood/proxmox/relay"
 	"brood.dev/go/brood/store"
@@ -619,7 +618,7 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNa
 	if err != nil {
 		return nil, err
 	}
-	repository, err := m.server.store.ProjectRepository(ctx, sw.ProjectID)
+	access, err := m.server.projectGitAccess(ctx, sw.ProjectID)
 	if err != nil {
 		return nil, err
 	}
@@ -638,11 +637,7 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNa
 		if err != nil {
 			return nil, err
 		}
-		mode := ""
-		if a.Origin != "" {
-			mode = gitorigin.Mode(a.Origin, repository, m.server.git.remotes.has, managedPublicHost)
-		}
-		out = append(out, managedActorJSON(a, p, sw.AtespaceName, mode))
+		out = append(out, managedActorJSON(a, p, sw.AtespaceName, access.mode(a.Origin)))
 	}
 	return out, nil
 }

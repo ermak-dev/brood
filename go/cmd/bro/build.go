@@ -14,6 +14,7 @@ import (
 
 	"brood.dev/go/brood/build"
 	"brood.dev/go/brood/clientapi"
+	"brood.dev/go/brood/gitcredential"
 )
 
 func buildUsage(w io.Writer) {
@@ -135,7 +136,12 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 	if err != nil {
 		return fmt.Errorf("project synchronization: %w", sessionError(err))
 	}
-	if synchronized.Repository != "" && synchronized.OriginMode == "" {
+	reference := synchronized.GitCredential
+	switch {
+	case reference != "" && !synchronized.GitCredentialBound && gitcredential.ValidateName(reference) == nil:
+		name, _ := declaration["name"].(string)
+		fmt.Fprintf(c.diagnostic, "project synchronized; Git credential %s is not bound to its repository; run: bro secret --project %s git add %s --repository URL --username USER --stdin\n", reference, name, reference)
+	case synchronized.Repository != "" && synchronized.OriginMode == "":
 		fmt.Fprintln(c.diagnostic, "project synchronized; no Git access mode is configured for its repository")
 	}
 	if err := sessions.Save(client.Origin(), client.Stored()); err != nil {

@@ -12,6 +12,12 @@ import (
 
 // secretStorageError prevents database diagnostics from reflecting secret inputs.
 func secretStorageError(err error) error {
+	return opaqueStorageError(err, "project secret storage operation failed")
+}
+
+// opaqueStorageError keeps not-found and context outcomes and replaces every
+// other database diagnostic with a fixed detail: it may quote secret inputs.
+func opaqueStorageError(err error, detail string) error {
 	if err == nil {
 		return nil
 	}
@@ -24,7 +30,7 @@ func secretStorageError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return context.DeadlineExceeded
 	}
-	return errors.New("project secret storage operation failed")
+	return errors.New(detail)
 }
 
 func (s *Store) projectSecretRevision(ctx context.Context, projectID string) (int64, error) {
