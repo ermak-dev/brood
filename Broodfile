@@ -2,6 +2,7 @@ apiVersion: brood.dev/v1alpha1
 name: brood
 project:
   description: Agent pool on Agent Substrate
+  git_credential: brood-gitlab
 defaultTarget: development
 pinsFile: brood/dev/pins.json
 sources:
