@@ -23,6 +23,8 @@ def main(argv):
     print(f"Go server deployed: {result['image']}")
     print(f"Public endpoint: https://{result['host']}")
     if "acceptance" in result:
+        if result.get("recovered"):
+            print("Recovered an interrupted rollout: crash-looping pod replaced after verified snapshot")
         print(f"Rollout passed; {result['acceptance']}")
         print(f"Private database snapshot retained on owned PVC: {result['snapshot']}")
     else:

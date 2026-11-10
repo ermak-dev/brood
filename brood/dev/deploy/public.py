@@ -98,7 +98,9 @@ class Deployment:
         except ValueError:
             raise RuntimeError(f"cannot inspect {kind}/{name}: invalid JSON") from None
 
-    def check(self):
+    def check(self, existing=None):
+        """Preflight. existing - ExistingInstall полного запуска: только он (не --check)
+        вправе перед проверкой установки разобрать оборванный scale-to-zero."""
         values = settings(self.get)
         self.cluster.check()
         infrastructure = Infrastructure(self.cluster, project=str(self.project))
@@ -107,7 +109,12 @@ class Deployment:
         GoDeploy(self.cluster, get=self.get, project=self.project)._worker_images()
         infrastructure._api_egress()
         if values["BROOD_DEPLOY_MODE"] == "existing":
-            ExistingInstall(self).check()
+            if existing:
+                existing.recover()
+            if existing:
+                existing.check()
+            else:
+                ExistingInstall(self).check(recoverable=True)
             for kind, name in (("deployment", "edge"), ("service", "edge")):
                 ExistingInstall(self).owned(kind, name)
         old = {}
@@ -223,19 +230,35 @@ class Deployment:
             if code:
                 raise RuntimeError(f"cannot remove obsolete {kind}/{name}")
 
-    def run(self):
-        values, before = self.check()
-        image = self.build_edge()
-        if values.get("BROOD_DEPLOY_MODE") == "existing":
-            existing = ExistingInstall(self)
+    def run_existing(self, existing):
+        """Единый вход записи: flock и Lease берутся до первого действия, в том числе сборки."""
+        try:
+            existing.claim()
+            values, before = self.check(existing)
+            image = self.build_edge()
             existing.state = existing.check()
             server = GoDeploy(self.cluster, get=self.get, project=self.project).run(before_apply=existing.snapshot)
             existing.inspect(server)
             self.apply_edge(image, before)
             self.probe(values, login=False)
-            return {"image": server, "edge": image, "host": values["BROOD_PUBLIC_HOST"],
-                    "admin_created": False, "snapshot": existing.snapshot_path,
-                    "acceptance": "operator-authenticated acceptance pending"}
+        except BaseException:
+            # Отказ до before_apply откатывает scale; после - Lease остаётся (неоднозначный исход).
+            existing.release()
+            raise
+        existing.finish()
+        result = {"image": server, "edge": image, "host": values["BROOD_PUBLIC_HOST"],
+                  "admin_created": False, "snapshot": existing.snapshot_path,
+                  "acceptance": "operator-authenticated acceptance pending"}
+        if existing.recovered:
+            result["recovered"] = "crashloop"
+        return result
+
+    def run(self):
+        existing = ExistingInstall(self) if (self.get("BROOD_DEPLOY_MODE") or "initial") == "existing" else None
+        if existing:
+            return self.run_existing(existing)
+        values, before = self.check()
+        image = self.build_edge()
         server = GoDeploy(self.cluster, get=self.get, project=self.project).run()
         created = self.bootstrap(values)
         self.apply_edge(image, before)

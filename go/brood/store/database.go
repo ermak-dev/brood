@@ -6,10 +6,13 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 )
 
 // DatabaseMetadata contains only deployment-safe aggregate information.
@@ -169,4 +172,119 @@ func validateDatabaseSnapshot(ctx context.Context, path string) (DatabaseMetadat
 		return DatabaseMetadata{}, errors.New("snapshot integrity validation failed")
 	}
 	return inspectDatabaseMetadata(ctx, db)
+}
+
+// DatabaseVerification is the deployment-safe result of a schema check.
+type DatabaseVerification struct {
+	SchemaVersion int64 `json:"schema_version"`
+	Verified      bool  `json:"verified"`
+}
+
+// maxVerifyBytes bounds the in-memory copy. The helper pod limit is 256Mi and
+// peak use is about twice the file (read buffer plus the SQLite deserialized
+// copy), so 32 MiB leaves room for the runtime.
+var maxVerifyBytes int64 = 32 << 20
+
+// VerifyDatabaseSchema proves that the snapshot at path has SHA-256 wantSHA256
+// and that this binary's Open would accept exactly those bytes: same version and
+// module checks as initializeSchema. The file is opened once without following
+// symlinks, read into memory and hashed; SQLite then opens that same buffer as an
+// in-memory database. The path is never given to SQLite, so a file replaced
+// after the read, or unexpected -wal/-journal/-shm sidecars, cannot change the
+// verdict and nothing on disk is created or written. The error names the failing
+// table, never row data.
+func VerifyDatabaseSchema(ctx context.Context, path, wantSHA256 string) (DatabaseVerification, error) {
+	return verifyDatabaseSchema(ctx, path, wantSHA256, nil)
+}
+
+func verifyDatabaseSchema(ctx context.Context, path, wantSHA256 string, afterRead func()) (DatabaseVerification, error) {
+	var result DatabaseVerification
+	if len(wantSHA256) != 64 {
+		return result, errors.New("expected snapshot sha256 must be 64 hex characters")
+	}
+	if _, err := hex.DecodeString(wantSHA256); err != nil || wantSHA256 != strings.ToLower(wantSHA256) {
+		return result, errors.New("expected snapshot sha256 must be lowercase hex")
+	}
+	data, err := readSnapshot(ctx, path)
+	if err != nil {
+		return result, err
+	}
+	if afterRead != nil {
+		afterRead()
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != wantSHA256 {
+		return result, errors.New("snapshot sha256 does not match the verified snapshot")
+	}
+	db, err := sql.Open("sqlite", "file::memory:?_pragma=trusted_schema(OFF)")
+	if err != nil {
+		return result, errors.New("cannot open in-memory verification database")
+	}
+	defer db.Close()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return result, errors.New("cannot open in-memory verification database")
+	}
+	defer conn.Close()
+	err = conn.Raw(func(driverConn any) error {
+		d, ok := driverConn.(interface{ Deserialize([]byte) error })
+		if !ok {
+			return errors.New("driver cannot open a snapshot from memory")
+		}
+		return d.Deserialize(data)
+	})
+	if err != nil {
+		return result, errors.New("snapshot bytes are not a loadable SQLite database")
+	}
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return result, errors.New("cannot start read-only schema verification")
+	}
+	defer tx.Rollback()
+	var version int64
+	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return result, errors.New("cannot read snapshot schema version")
+	}
+	if version != schemaVersion {
+		return result, fmt.Errorf("%w: found %d, want %d", errIncompatibleSchema, version, schemaVersion)
+	}
+	for _, module := range schemaModules {
+		if err := module.verify(ctx, tx); err != nil {
+			return result, err
+		}
+	}
+	return DatabaseVerification{SchemaVersion: version, Verified: true}, nil
+}
+
+// readSnapshot reads a regular, non-symlink file through one descriptor (opened
+// non-blocking, so a FIFO is refused instead of hanging), so the
+// size check and the bytes come from the same inode.
+func readSnapshot(ctx context.Context, path string) ([]byte, error) {
+	if ctx.Err() != nil {
+		return nil, errors.New("database operation cancelled or timed out")
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, errors.New("snapshot must exist, be readable and not be a symlink")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, errors.New("snapshot must be a regular file")
+	}
+	if info.Size() > maxVerifyBytes {
+		return nil, errors.New("snapshot is too large to verify in memory")
+	}
+	// Буфер ровно по размеру инода: без удвоения ReadAll. Лишний байт - файл вырос.
+	data := make([]byte, info.Size())
+	if _, err := io.ReadFull(file, data); err != nil {
+		return nil, errors.New("snapshot cannot be read completely within the size limit")
+	}
+	var extra [1]byte
+	if n, _ := file.Read(extra[:]); n != 0 {
+		return nil, errors.New("snapshot cannot be read completely within the size limit")
+	}
+	if ctx.Err() != nil {
+		return nil, errors.New("database operation cancelled or timed out")
+	}
+	return data, nil
 }
