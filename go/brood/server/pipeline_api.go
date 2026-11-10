@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
@@ -14,13 +15,29 @@ import (
 	"brood.dev/go/brood/store"
 )
 
+// pipelineNodeJSON — шаг роя: посещение узла. Sequence, StartedAt и
+// FinishedAt — номер шага и его записанные моменты (#206), без них
+// страница роя не может показать, когда шаг шёл (#215).
 type pipelineNodeJSON struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Status    string `json:"status"`
-	Label     string `json:"label"`
-	Outcome   string `json:"outcome,omitempty"`
-	ActorName string `json:"actorName,omitempty"`
+	ID         string  `json:"id"`
+	Sequence   int64   `json:"sequence"`
+	Kind       string  `json:"kind"`
+	Status     string  `json:"status"`
+	Label      string  `json:"label"`
+	Outcome    string  `json:"outcome,omitempty"`
+	ActorName  string  `json:"actorName,omitempty"`
+	StartedAt  *string `json:"startedAt,omitempty"`
+	FinishedAt *string `json:"finishedAt,omitempty"`
+}
+
+// pipelineGraphNodeJSON — узел графа роя с тем, что граф ему поручает:
+// prompt актору или вопрос оператору. Страница роя показывает это у
+// выбранного узла (#215), в том числе у ещё не посещённого.
+type pipelineGraphNodeJSON struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	Prompt   string `json:"prompt,omitempty"`
+	Question string `json:"question,omitempty"`
 }
 type pipelineOptionJSON struct {
 	ID    string `json:"id"`
@@ -197,7 +214,7 @@ func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store
 	result := pipelineRunJSON{ID: sw.ID, Name: d.Name, Status: legacyRunStatus(sw.Execution), SwarmID: sw.ID, SwarmName: sw.Name, ProjectID: project.ID, ProjectName: project.Name, Owner: owner.Username, Nodes: []pipelineNodeJSON{}}
 	for _, v := range steps {
 		n := d.Nodes[v.NodeID]
-		row := pipelineNodeJSON{ID: v.NodeID, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName}
+		row := pipelineNodeJSON{ID: v.NodeID, Sequence: v.Sequence, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName, StartedAt: v.StartedAt, FinishedAt: v.FinishedAt}
 		switch v.State {
 		case "waiting", "inflight":
 			row.Status = "active"
@@ -301,8 +318,25 @@ func (s *Server) pipelineGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	svg := piprender.SVG(piprender.RunView{Graph: g, Nodes: states})
 	writeJSON(w, 200, struct {
-		SVG string `json:"svg"`
-	}{svg})
+		SVG   string                  `json:"svg"`
+		Nodes []pipelineGraphNodeJSON `json:"nodes"`
+	}{svg, graphNodes(d)})
+}
+
+// graphNodes перечисляет узлы снимка графа в порядке ID: порядок ответа
+// не зависит от обхода map.
+func graphNodes(d *pipeline.Document) []pipelineGraphNodeJSON {
+	ids := make([]string, 0, len(d.Nodes))
+	for id := range d.Nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]pipelineGraphNodeJSON, 0, len(ids))
+	for _, id := range ids {
+		n := d.Nodes[id]
+		out = append(out, pipelineGraphNodeJSON{ID: id, Kind: n.Type, Prompt: n.Prompt, Question: n.Question})
+	}
+	return out
 }
 
 func (s *Server) pipelineDetail(w http.ResponseWriter, r *http.Request) {

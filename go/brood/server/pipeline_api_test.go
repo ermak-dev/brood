@@ -398,3 +398,79 @@ func TestPipelineCancelledGateIsNotOffered(t *testing.T) {
 		t.Fatalf("cancelled gate offered after refused resume: %v", b)
 	}
 }
+
+// FEATURE: The swarm page shows when each step ran and what the graph asks
+// of the selected node (#215).
+// SPEC: Every step carries its sequence and its recorded start and finish;
+// the graph lists each node with its kind and the instruction the graph
+// gives it: the actor prompt or the human question.
+// IMPLEMENTATION: Copy the stored step moments and the parsed node fields
+// into the existing read views.
+// RESULT: IMPLEMENTED — the timing and the instruction are on the wire.
+// STATUS: DONE
+func TestPipelineStepTimesAndNodeInstructions(t *testing.T) {
+	ts := newSubstrateServer(t, newFakeAteapi())
+	_, alice, _, swarm := actorsSetup(t, ts.testServer)
+	ctx := context.Background()
+	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
+	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, role: development, prompt: Write the plan}\n", 1)
+	graph = strings.Replace(graph, "  - {from: ask, to: done}", "  - {from: entry, to: ask}\n  - {from: ask, to: done}", 1)
+	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(graph), "running"); err != nil {
+		t.Fatal(err)
+	}
+	// Шаг актора кладётся напрямую, как в TestPipelineWireContract: привязку
+	// роли к актору проверяет хранилище (#208), здесь читается провод.
+	entry := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
+	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", "worker", 1, "success"); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := ts.srv.store.SwarmSteps(ctx, swarm)
+	if err != nil || len(steps) != 2 || steps[0].StartedAt == nil || steps[0].FinishedAt == nil || steps[1].FinishedAt != nil {
+		t.Fatalf("stored steps: %+v %v", steps, err)
+	}
+	r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+swarm, "", nil)
+	expectStatus(t, "detail", r, b, 200)
+	nodes, ok := b["nodes"].([]any)
+	if !ok || len(nodes) != 2 {
+		t.Fatalf("steps: %v", b["nodes"])
+	}
+	first, second := nodes[0].(map[string]any), nodes[1].(map[string]any)
+	if first["sequence"] != float64(steps[0].Sequence) || first["startedAt"] != *steps[0].StartedAt || first["finishedAt"] != *steps[0].FinishedAt {
+		t.Fatalf("finished step must carry its sequence and moments: %v", first)
+	}
+	if _, finished := second["finishedAt"]; finished || second["sequence"] != float64(steps[1].Sequence) {
+		t.Fatalf("waiting step has no finish: %v", second)
+	}
+	if steps[1].StartedAt == nil {
+		if _, started := second["startedAt"]; started {
+			t.Fatalf("unrecorded start must stay absent: %v", second)
+		}
+	} else if second["startedAt"] != *steps[1].StartedAt {
+		t.Fatalf("waiting step start: %v", second)
+	}
+	r, b, _ = ts.do(alice, "GET", "/api/pipeline-runs/"+swarm+"/graph", "", nil)
+	expectStatus(t, "graph", r, b, 200)
+	listed, ok := b["nodes"].([]any)
+	if !ok || len(listed) != 3 {
+		t.Fatalf("graph nodes: %v", b["nodes"])
+	}
+	want := []map[string]any{
+		{"id": "ask", "kind": "human", "question": "Continue?"},
+		{"id": "done", "kind": "exit"},
+		{"id": "entry", "kind": "actor", "prompt": "Write the plan"},
+	}
+	for i, node := range listed {
+		got := node.(map[string]any)
+		if len(got) != len(want[i]) {
+			t.Fatalf("graph node %d: got %v, want %v", i, got, want[i])
+		}
+		for key, value := range want[i] {
+			if got[key] != value {
+				t.Fatalf("graph node %d: got %v, want %v", i, got, want[i])
+			}
+		}
+	}
+}
