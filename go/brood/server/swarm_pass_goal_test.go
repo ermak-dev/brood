@@ -216,16 +216,18 @@ func TestSwarmPassGoalReachesEveryStep(t *testing.T) {
 	if len(messages) != 3 {
 		t.Fatalf("%d instructions, want 3", len(messages))
 	}
+	// Между задачей и текстом узла — только итог предыдущего шага прохода
+	// (#248): у первого шага прохода его нет.
 	for i, want := range []struct {
-		goal, other, node string
-		pass              int
+		goal, other, previous, node string
+		pass                        int
 	}{
-		{first, second, "Build the feature and run the tests.", 1},
-		{first, second, "Review the change.", 1},
-		{second, first, "Build the feature and run the tests.", 4},
+		{first, second, "", "Build the feature and run the tests.", 1},
+		{first, second, "Previous step 1 (node build, outcome success):\nThe actor left no report.\n\n", "Review the change.", 1},
+		{second, first, "", "Build the feature and run the tests.", 4},
 	} {
 		body := messages[i].Request.Body
-		block := fmt.Sprintf("Goal of this pass (started at step %d; earlier passes may have had other goals):\n%s\n\nNode instruction:\n%s\n", want.pass, want.goal, want.node)
+		block := fmt.Sprintf("Goal of this pass (started at step %d; earlier passes may have had other goals):\n%s\n\n%sNode instruction:\n%s\n", want.pass, want.goal, want.previous, want.node)
 		if !strings.Contains(body, block) || strings.Contains(body, want.other) {
 			t.Fatalf("instruction %d does not carry its pass goal %q before the node text:\n%s", i+1, want.goal, body)
 		}

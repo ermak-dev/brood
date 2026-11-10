@@ -69,9 +69,30 @@ type ActorStepAttempt struct {
 	// прочитанные той же транзакцией резерва.
 	Pass int64
 	Goal string
+	// Previous — итог предыдущего шага того же прохода (#248), прочитанный
+	// той же транзакцией резерва; nil у первого шага прохода.
+	Previous *PreviousStep
 	// Lease — workspace-lease подтверждения; его исход пишет сервер
 	// (FinishActorOperation) после ответа гостя.
 	Lease ActorOperation
+}
+
+// PreviousStep — шаг прохода, непосредственно предшествующий шагу актора
+// (#248): исход и отчёт actor-шага или отвеченный узловой запрос human-шага.
+// Это текст для актора, а не полномочие: ни отчёт, ни ответ оператора прав
+// не выдают.
+type PreviousStep struct {
+	Sequence int64
+	NodeID   string
+	// Outcome — исход шага; у human-шага — исход варианта, выбранного
+	// оператором.
+	Outcome string
+	// Report — отчёт actor-шага (#233); пуст у human-шага и у шага без
+	// отчёта.
+	Report string
+	// Request — отвеченный узловой запрос human-шага: вопрос, материал,
+	// варианты и ответ оператора; nil у actor-шага.
+	Request *SwarmRequest
 }
 
 // ReserveActorStep reserves the delivery attempt of the swarm's latest step
@@ -83,7 +104,9 @@ type ActorStepAttempt struct {
 // is ErrNoActorStep without a write. A role that does not resolve to a live
 // bound actor or a busy workspace closes the step as refused with the reason
 // in the same transaction and answers ErrActorStepRefused. The attempt
-// carries the goal of the step's pass and the sequence of its first step.
+// carries the goal of the step's pass, the sequence of its first step and,
+// read in the same transaction, the step right before it in that pass
+// (Previous, #248): nil for the first step of a pass.
 func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller string) (ActorStepAttempt, error) {
 	if !validPipelineField(swarmID) || !validPipelineField(requestID) || caller == "" {
 		return ActorStepAttempt{}, errors.New("invalid actor step reservation")
@@ -120,7 +143,11 @@ func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller
 		if err != nil {
 			return err
 		}
-		attempt = ActorStepAttempt{SwarmID: w.ID, SwarmName: w.Name, Sequence: sequence, NodeID: node, RequestID: requestID, Actor: actor, Source: *w.Source, Graph: d, Pass: pass, Goal: goal, Lease: lease}
+		previous, err := s.previousStep(ctx, d, swarmID, pass, sequence)
+		if err != nil {
+			return err
+		}
+		attempt = ActorStepAttempt{SwarmID: w.ID, SwarmName: w.Name, Sequence: sequence, NodeID: node, RequestID: requestID, Actor: actor, Source: *w.Source, Graph: d, Pass: pass, Goal: goal, Previous: previous, Lease: lease}
 		return nil
 	})
 	if err != nil {
@@ -130,6 +157,40 @@ func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller
 		return ActorStepAttempt{}, fmt.Errorf("%w: %s", ErrActorStepRefused, refusal)
 	}
 	return attempt, nil
+}
+
+// previousStep читает шаг, предшествующий sequence в проходе pass (#248). У
+// первого шага прохода (и у шага вне прохода) его нет: шаги прошлых
+// проходов не читаются. Следующий шаг граф открывает только после
+// завершённого actor-шага или отвеченного human-шага (progressPipeline),
+// поэтому иное состояние — ошибка, и резерв откатывается.
+func (s *Store) previousStep(ctx context.Context, d *pipeline.Document, swarmID string, pass, sequence int64) (*PreviousStep, error) {
+	if pass < 1 || sequence <= pass {
+		return nil, nil
+	}
+	p := PreviousStep{Sequence: sequence - 1}
+	var state string
+	var outcome sql.NullString
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,outcome,COALESCE(report,'') FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, p.Sequence).Scan(&p.NodeID, &state, &outcome, &p.Report)
+	if err != nil {
+		return nil, fmt.Errorf("previous step %d: %w", p.Sequence, err)
+	}
+	switch kind := d.Nodes[p.NodeID].Type; {
+	case kind == "actor" && state == "completed" && outcome.Valid:
+		p.Outcome = outcome.String
+		return &p, nil
+	case kind == "human" && state == "answered":
+		req, err := scanSwarmRequest(s.conn(ctx).QueryRowContext(ctx, `SELECT `+swarmRequestCols+` FROM swarm_requests WHERE swarm_id=? AND sequence=? AND origin='node' AND state='answered'`, swarmID, p.Sequence))
+		if err != nil {
+			return nil, fmt.Errorf("node request of previous step %d: %w", p.Sequence, err)
+		}
+		if req.Outcome == nil {
+			return nil, fmt.Errorf("node request of previous step %d has no outcome", p.Sequence)
+		}
+		p.Outcome, p.Request = *req.Outcome, &req
+		return &p, nil
+	}
+	return nil, fmt.Errorf("previous step %d is %s at %s node %s", p.Sequence, state, d.Nodes[p.NodeID].Type, p.NodeID)
 }
 
 // awaitingActorStep находит последний шаг роя, ждущий доставки: идущий
