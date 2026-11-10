@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"brood.dev/go/brood/clientapi"
 )
 
 const swarmCLIRoles = `{"swarmId":"s3","execution":"idle","graph":{"pinned":false,"name":"release","version":3,"revision":"rev"},"roles":[{"role":"build","inGraph":true,"state":"ready","actorUid":"u1","actorName":"master","actorIncarnation":2},{"role":"extra","inGraph":false,"state":"missing","actorUid":"gone","actorIncarnation":1},{"role":"review","inGraph":true,"state":"unbound"}]}`
@@ -95,6 +99,101 @@ func TestSwarmRolesCLI(t *testing.T) {
 	}
 }
 
+// FEATURE: bro swarm start and stop (#242).
+// SPEC: start sends the definition, the pass goal from --goal or from
+// --goal-file (a file or - for stdin, one trailing newline dropped) and an
+// optional commit; stop sends nothing. Both print the execution, its graph,
+// source and last step. Invalid arguments and unreadable or oversized goal
+// files never make a request.
+// IMPLEMENTATION: parseSwarm, readGoalFile, clientapi StartSwarm/StopSwarm.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestSwarmStartStopCLI(t *testing.T) {
+	var starts []map[string]any
+	stops := 0
+	secretServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/projects":
+			fmt.Fprint(w, `[{"id":"p1","name":"demo"}]`)
+		case r.URL.Path == "/api/projects/p1/swarms":
+			fmt.Fprint(w, `[{"id":"s3","name":"solo","state":"active"}]`)
+		case r.URL.Path == "/api/swarms/s3/start" && r.Method == "POST":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			starts = append(starts, body)
+			fmt.Fprint(w, `{"swarmId":"s3","execution":"running","definition":{"name":"release","version":3,"revision":"rev"},"source":{"origin":"https://git.example.org/team/repo.git","commit":"0123456789abcdef0123456789abcdef01234567"},"goal":"Fix #42.","step":{"sequence":4,"nodeId":"build","state":"pending"}}`)
+		case r.URL.Path == "/api/swarms/s3/stop" && r.Method == "POST":
+			stops++
+			fmt.Fprint(w, `{"swarmId":"s3","execution":"stopped","definition":{"name":"release","version":3,"revision":"rev"},"source":{"origin":"https://git.example.org/team/repo.git","commit":"0123456789abcdef0123456789abcdef01234567"},"goal":"Fix #42.","step":{"sequence":4,"nodeId":"build","state":"unconfirmed","detail":"the swarm stopped during instruction delivery; the delivery outcome is unknown"}}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+	started := "started swarm s3 (solo): execution running\n" +
+		"graph: release version 3 revision rev\n" +
+		"source: https://git.example.org/team/repo.git commit 0123456789abcdef0123456789abcdef01234567\n" +
+		"step 4 build: pending\n"
+	goalFile := filepath.Join(t.TempDir(), "goal.md")
+	if err := os.WriteFile(goalFile, []byte("Fix #42.\n\t- keep the API\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		input string
+		args  []string
+		body  map[string]any
+	}{
+		{"", []string{"swarm", "start", "solo", "--definition", "release", "--goal", "Fix #42."}, map[string]any{"definition": "release", "goal": "Fix #42."}},
+		{"", []string{"swarm", "start", "--definition=release", "--goal=-Fix #42.", "s3", "--commit", "abc"}, map[string]any{"definition": "release", "goal": "-Fix #42.", "commit": "abc"}},
+		{"", []string{"swarm", "start", "s3", "--goal-file", goalFile, "--definition", "release"}, map[string]any{"definition": "release", "goal": "Fix #42.\n\t- keep the API"}},
+		{"From stdin.\r\n", []string{"swarm", "start", "s3", "--definition", "release", "--goal-file", "-"}, map[string]any{"definition": "release", "goal": "From stdin."}},
+	} {
+		starts = nil
+		code, out, diag := invoke(t, tc.input, tc.args...)
+		if code != 0 || out != started || diag != "" {
+			t.Fatalf("%v: %d %q %q", tc.args, code, out, diag)
+		}
+		if len(starts) != 1 || !reflect.DeepEqual(starts[0], tc.body) {
+			t.Fatalf("%v: start bodies %v, want %v", tc.args, starts, tc.body)
+		}
+	}
+	code, out, diag := invoke(t, "", "swarm", "stop", "solo")
+	want := "stopped swarm s3 (solo): execution stopped\n" +
+		"graph: release version 3 revision rev\n" +
+		"source: https://git.example.org/team/repo.git commit 0123456789abcdef0123456789abcdef01234567\n" +
+		"step 4 build: unconfirmed (the swarm stopped during instruction delivery; the delivery outcome is unknown)\n"
+	if code != 0 || out != want || diag != "" || stops != 1 {
+		t.Fatalf("stop: %d %q %q, %d stops", code, out, diag, stops)
+	}
+}
+
+// TestSwarmStartGoalFileRefusals — задача из файла, который не читается или
+// длиннее предела сервера, отказывается до запроса.
+func TestSwarmStartGoalFileRefusals(t *testing.T) {
+	secretServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unreadable goal made a request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	dir := t.TempDir()
+	large := filepath.Join(dir, "large")
+	if err := os.WriteFile(large, []byte(strings.Repeat("x", clientapi.MaxSwarmGoalBytes+1)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		input, file, reason string
+	}{
+		{"", filepath.Join(dir, "absent"), "could not open the goal file"},
+		{"", dir, "could not read the goal file"},
+		{"", large, "the goal file exceeds 4096 bytes"},
+		{strings.Repeat("y", clientapi.MaxSwarmGoalBytes+1), "-", "the goal file exceeds 4096 bytes"},
+	} {
+		code, out, diag := invoke(t, tc.input, "swarm", "start", "s3", "--definition", "release", "--goal-file", tc.file)
+		if code != 1 || out != "" || !strings.Contains(diag, tc.reason) {
+			t.Fatalf("%s: %d %q %q", tc.file, code, out, diag)
+		}
+	}
+}
+
 func TestSwarmCLIRejectsArguments(t *testing.T) {
 	secretServer(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("invalid arguments made a request: %s %s", r.Method, r.URL.Path)
@@ -113,6 +212,22 @@ func TestSwarmCLIRejectsArguments(t *testing.T) {
 		{"swarm", "unbind", "s1"},
 		{"swarm", "unbind", "s1", "build", "master"},
 		{"swarm", "start", "s1"},
+		{"swarm", "start", "s1", "--definition", "release"},
+		{"swarm", "start", "s1", "--goal", "Fix #42."},
+		{"swarm", "start", "s1", "--definition", "release", "--goal", "a", "--goal-file", "goal.md"},
+		{"swarm", "start", "s1", "--definition", "release", "--goal"},
+		{"swarm", "start", "s1", "--definition", "release", "--goal="},
+		{"swarm", "start", "s1", "--definition", "release", "--goal", "a", "--goal", "b"},
+		{"swarm", "start", "s1", "--definition", "release", "--goal-file"},
+		{"swarm", "start", "s1", "--definition", "release", "--goal", "a", "--commit"},
+		{"swarm", "start", "s1", "extra", "--definition", "release", "--goal", "a"},
+		{"swarm", "start", "--definition", "release", "--goal", "a"},
+		{"swarm", "stop"},
+		{"swarm", "stop", "s1", "extra"},
+		{"swarm", "stop", "s1", "--commit", "abc"},
+		{"swarm", "stop", "s1", "--definition", "release"},
+		{"swarm", "roles", "s1", "--goal", "a"},
+		{"swarm", "bind", "s1", "build", "master", "--commit", "abc"},
 		{"swarm", "roles", "s1", "--force"},
 		{"swarm", "roles", ""},
 	} {
@@ -126,7 +241,7 @@ func TestSwarmCLIRejectsArguments(t *testing.T) {
 		t.Fatalf("guest swarm: %d %q %q", code, out, diag)
 	}
 	code, out, diag = invoke(t, "", "swarm", "--help")
-	if code != 0 || !strings.Contains(out, "bro swarm bind SWARM ROLE ACTOR") || diag != "" {
+	if code != 0 || !strings.Contains(out, "bro swarm bind SWARM ROLE ACTOR") || !strings.Contains(out, "bro swarm start SWARM --definition NAME (--goal TEXT | --goal-file FILE) [--commit SHA]") || !strings.Contains(out, "bro swarm stop SWARM") || diag != "" {
 		t.Fatalf("help: %d %q %q", code, out, diag)
 	}
 }

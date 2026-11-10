@@ -20,7 +20,7 @@ import (
 func TestPipelineRunSnapshotIdentityWire(t *testing.T) {
 	f := startAPISetup(t)
 	ctx := context.Background()
-	r, b := f.start(f.alice, map[string]any{"definition": "release", "commit": startAPICommit})
+	r, b := f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit})
 	expectStatus(t, "start", r, b, http.StatusOK)
 	pinned, err := f.ts.srv.store.GetWorkflowDefinition(ctx, f.project, "release")
 	if err != nil {

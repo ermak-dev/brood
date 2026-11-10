@@ -119,7 +119,7 @@ func TestSwarmRolesWire(t *testing.T) {
 	if graph["pinned"] != false || graph["name"] != "review" || roleItem(t, b, "review")["state"] != "unbound" || roleItem(t, b, "review")["inGraph"] != true {
 		t.Fatalf("catalog roles: %v", b)
 	}
-	start := map[string]any{"definition": "review", "commit": startAPICommit}
+	start := map[string]any{"goal": startAPIGoal, "definition": "review", "commit": startAPICommit}
 	r, b = f.start(f.alice, start)
 	expectStatus(t, "start with unbound review", r, b, http.StatusConflict)
 	if !strings.Contains(b["detail"].(string), `role "review"`) {
@@ -223,7 +223,7 @@ func TestSwarmRoleBindRefusalsWire(t *testing.T) {
 			return master(f)
 		}, status: http.StatusConflict, detail: "swarm is not active"},
 		{name: "execution waiting", setup: func(t *testing.T, f startAPIFixture) map[string]any {
-			r, b := f.start(f.alice, map[string]any{"definition": "release", "commit": startAPICommit})
+			r, b := f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit})
 			expectStatus(t, "start", r, b, http.StatusOK)
 			return master(f)
 		}, status: http.StatusConflict, detail: "swarm execution is running or waiting; stop the swarm before changing role bindings"},
@@ -335,7 +335,7 @@ func TestSwarmRolesViewWire(t *testing.T) {
 	if got := roleItem(t, b, "build"); got["state"] != "stale" || got["actorIncarnation"] != float64(f.master.Incarnation) {
 		t.Fatalf("stale binding: %v", got)
 	}
-	release := map[string]any{"definition": "release", "commit": startAPICommit}
+	release := map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit}
 	r, b = f.start(f.alice, release)
 	expectStatus(t, "start with a stale binding", r, b, http.StatusConflict)
 	r, b = f.bind(f.alice, "build", map[string]any{"actorUid": f.master.UID, "actorIncarnation": f.master.Incarnation})

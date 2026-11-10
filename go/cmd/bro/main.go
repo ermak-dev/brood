@@ -98,6 +98,7 @@ commands:
   push [target] [options]        upload built images and template to the current server
   secret [options]                manage project secrets on the current server
   swarm roles|bind|unbind SWARM   list and change swarm role bindings to actors
+  swarm start|stop SWARM          start a swarm pass with its goal, stop it
   pipeline <sub> FILE             validate, plan or render a pipeline document
   mcp                           serve catalog tools over stdio
   <catalog command>             execute a scoped orchestration command

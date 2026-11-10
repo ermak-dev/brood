@@ -133,7 +133,7 @@ func TestSwarmStartResolvesProjectBranch(t *testing.T) {
 
 			f, upstream := resolveStartSetup(t, tc.access(t), backend)
 			life := f.lifeState(t)
-			r, b, raw := f.startRaw(t, map[string]any{"definition": "release"})
+			r, b, raw := f.startRaw(t, map[string]any{"goal": startAPIGoal, "definition": "release"})
 			expectStatus(t, "start without commit", r, b, http.StatusOK)
 			source, _ := b["source"].(map[string]any)
 			if source["origin"] != gitTestOrigin || source["commit"] != trunk || b["execution"] != "waiting" {
@@ -162,7 +162,7 @@ func TestSwarmStartResolvesProjectBranch(t *testing.T) {
 			mustGit(t, home, bare, "update-ref", "refs/heads/trunk", moved)
 			r, b = f.stop(f.alice)
 			expectStatus(t, "stop", r, b, http.StatusOK)
-			r, b, raw = f.startRaw(t, map[string]any{"definition": "release"})
+			r, b, raw = f.startRaw(t, map[string]any{"goal": startAPIGoal, "definition": "release"})
 			expectStatus(t, "restart", r, b, http.StatusOK)
 			if b["source"].(map[string]any)["commit"] != trunk || b["step"].(map[string]any)["sequence"] != float64(2) {
 				t.Fatalf("restart response: %s", raw)
@@ -183,7 +183,7 @@ func TestSwarmStartResolvesProjectBranch(t *testing.T) {
 // repository.
 func TestSwarmStartNamedCommitSkipsResolution(t *testing.T) {
 	f, upstream := resolveStartSetup(t, nil, gitAdvertisement())
-	r, b, raw := f.startRaw(t, map[string]any{"definition": "release", "commit": startAPICommit})
+	r, b, raw := f.startRaw(t, map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit})
 	expectStatus(t, "start with commit", r, b, http.StatusOK)
 	if got := f.pinnedSource(t); got != gitTestOrigin+" "+startAPICommit {
 		t.Fatalf("source snapshot %q: %s", got, raw)
@@ -295,7 +295,7 @@ func TestSwarmStartResolutionRefusals(t *testing.T) {
 				tc.prepare(t, f, upstream)
 			}
 			before, life := f.executionState(t), f.lifeState(t)
-			r, b, raw := f.startRaw(t, map[string]any{"definition": "release"})
+			r, b, raw := f.startRaw(t, map[string]any{"goal": startAPIGoal, "definition": "release"})
 			expectStatus(t, tc.name, r, b, tc.status)
 			if detail, _ := b["detail"].(string); !strings.HasPrefix(detail, "cannot resolve the project branch: ") || !strings.Contains(detail, tc.reason) {
 				t.Fatalf("reason %q does not name %q", detail, tc.reason)
@@ -328,7 +328,7 @@ func TestSwarmStartViewerResolvesNothing(t *testing.T) {
 	r, b, _ := f.ts.do(f.alice, "POST", "/api/swarms/"+f.swarm+"/members", f.ts.csrf(f.alice), map[string]string{"username": "bob", "role": "viewer"})
 	expectStatus(t, "add viewer", r, b, http.StatusNoContent)
 	before := f.executionState(t)
-	r, b = f.start(f.bob, map[string]any{"definition": "release"})
+	r, b = f.start(f.bob, map[string]any{"goal": startAPIGoal, "definition": "release"})
 	expectStatus(t, "viewer start", r, b, http.StatusForbidden)
 	if got := f.executionState(t); got != before || len(upstream.seen()) != 0 {
 		t.Fatalf("viewer start: %d upstream requests, state\n%s\nwant\n%s", len(upstream.seen()), got, before)
@@ -349,7 +349,7 @@ func TestSwarmStartRepositoryChangedDuringResolution(t *testing.T) {
 		advertise(headAdvertisement(headTestCommit+" HEAD", headTestCaps)).ServeHTTP(w, r)
 	}))
 	before := f.executionState(t)
-	r, b, _ := f.startRaw(t, map[string]any{"definition": "release"})
+	r, b, _ := f.startRaw(t, map[string]any{"goal": startAPIGoal, "definition": "release"})
 	expectStatus(t, "start", r, b, http.StatusConflict)
 	if detail, _ := b["detail"].(string); !strings.Contains(detail, "repository changed") {
 		t.Fatalf("reason %q", detail)

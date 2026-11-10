@@ -170,21 +170,33 @@ SA и уже встреченных principals, не превращение ло
 ## Запуск и остановка роя
 
 Устройство и инварианты — [MODEL.md](../docs/MODEL.md), «Запуск и остановка
-роя» (#211, #228).
+роя» (#211, #228, #242).
 
-- `POST /api/swarms/{id}/start` — ровно `{definition, commit?}`, строки,
-  owner/editor/administrator, Origin/CSRF; 200 — `swarmId`, `execution`,
-  `definition` (`name`, `version`, `revision`), `source` (`origin`,
-  `commit`) и последний шаг `step` (`sequence`, `nodeId`, `state`,
-  `detail` у шага актора, «Шаги актора»).
+- `POST /api/swarms/{id}/start` — ровно `{definition, goal, commit?}`,
+  строки, owner/editor/administrator, Origin/CSRF; 200 — `swarmId`,
+  `execution`, `definition` (`name`, `version`, `revision`), `source`
+  (`origin`, `commit`), `goal` — задача текущего прохода, и последний шаг
+  `step` (`sequence`, `nodeId`, `state`, `detail` у шага актора, «Шаги
+  актора»). `goal` обязателен на каждом запуске: непустая строка до 4096
+  байт UTF-8 без управляющих символов, кроме `\n` и `\t`; она хранится у
+  первого шага прохода и больше не меняется. Тело — до 64 КиБ, чтобы задача
+  в пределе проходила и при экранировании каждого символа.
   Полный commit в теле пиннится без сетевого запроса. Без `commit` первый
   запуск пиннит commit, на который сейчас указывает HEAD repository проекта:
   сервер разрешает его до транзакции записи Git-доступом шлюза. Повторный
   запуск идёт на закреплённом источнике; непустой `commit` обязан с ним
   совпасть.
-- `POST /api/swarms/{id}/stop` — без тела, те же права; 200 — то же тело.
+- `POST /api/swarms/{id}/stop` — без тела, те же права; 200 — то же тело,
+  `goal` — задача остановленного прохода.
 
-Отказы запуска ничего не пишут. 404 — рой скрыт или определения нет в
+Отказы запуска ничего не пишут. 400 `invalid swarm start: expected
+{definition, goal, commit?} with a definition name and a goal` — тело не
+объект, неизвестное или повторное поле, не строка, нет `definition` или
+`goal`. 422 `invalid swarm goal: ` с одной фиксированной причиной: `the goal
+is empty` (пусто или одни пробелы), `the goal exceeds 4096 bytes`, `the goal
+has control characters other than newline and tab`, `the goal contains the
+message envelope closing tag`. Обе проверки — до разрешения ветки проекта:
+запроса к upstream нет. 404 — рой скрыт или определения нет в
 каталоге проекта, 403 — права или сессия, 409 — состояние роя или
 исполнения, другой снимок, непривязанная роль или repository проекта
 сменился, пока сервер разрешал ветку, 422 — неисполнимый граф или источник
@@ -200,6 +212,20 @@ SA и уже встреченных principals, не превращение ло
 - 504 `Git upstream request timed out`;
 - 422 `the repository has no default branch`, `the repository HEAD is not a branch`,
   `the repository HEAD is not a SHA-1 commit`.
+
+`bro swarm start SWARM --definition NAME (--goal TEXT | --goal-file FILE)
+[--commit SHA]` и `bro swarm stop SWARM` (#242) ходят в эти маршруты по bro
+login сессии; рой — по ID или имени, как у `bro swarm roles`. `--goal-file`
+читает файл или stdin (`-`), снимает один завершающий перевод строки и
+отказывает до запроса, если задача длиннее 4096 байт; остальные правила
+задачи проверяет сервер. Из тела отказа `clientapi` берёт причину, только
+если это одна строка без управляющих символов до 1024 байт, равная `invalid
+swarm start: ...`, `swarm management denied` или `swarm not found`, либо
+начинающаяся с фиксированной части причины с подробностью: `invalid swarm
+goal: `, `workflow definition is not in the project catalog: `, `swarm state
+conflict: `, `swarm graph is pinned: `, `workflow graph is not executable: `,
+`swarm source is invalid: `, `swarm source changed during start: `, `cannot
+resolve the project branch: `, `role "`.
 
 ## Привязка ролей роя к акторам
 
@@ -246,6 +272,10 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
 коммита запуска, узлового ответа и исхода прошлого шага, а также при старте
 сервера.
 
+- Задача прохода в чтении исполнения (`GET /api/pipeline-runs/{run}`,
+  `GET /api/swarms/{id}/pipeline-runs`): `goal` прогона — задача текущего
+  прохода; у узла прогона `pass` — `sequence` первого шага его прохода и
+  `goal` — только у этого первого шага. До первого запуска полей нет.
 - Состояния шага (`state` в `step` ответа `POST /api/swarms/{id}/start` и
   `/stop`, `status` узла в `GET /api/pipeline-runs/{run}`): `pending`,
   `attesting`, `delivering`, `inflight`, `unconfirmed`, `refused`, `waiting`,
@@ -267,13 +297,18 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   возвращает шаг в `pending`, следующий старт доставляет его заново.
 - Инструкция — одно сообщение канала роя: `from` — `swarm:<id роя>`, `to` —
   имя привязанного актора, `waitSec` 0. Тело: `[brood swarm <имя>] Step <n>,
-  node <узел>.`, текст узла, строка с `run_id`, `sequence` и `request_id` для
-  `pipeline_visit_complete`, по строке на исход `success` и `fail` с тем,
-  куда он ведёт граф, просьба приложить `report` (что сделано и где
-  результат: ветка, MR, документ) и подсказка про `ask_operator`. Не больше
-  64 КиБ; тело с закрывающим тегом конверта сообщения или такое, чей NDJSON у
-  гостя (auth-кадр, конверт, экранированное тело) превысит 128 КиБ, не
-  отправляется (`refused`).
+  node <узел>.`, блок `Goal of this pass (started at step <первый шаг
+  прохода>; earlier passes may have had other goals):` с задачей прохода
+  (#242), блок `Node instruction:` с текстом узла, строка с `run_id`,
+  `sequence` и `request_id` для `pipeline_visit_complete`, по строке на исход
+  `success` и `fail` с тем, куда он ведёт граф, просьба приложить `report`
+  (что сделано и где результат: ветка, MR, документ) и подсказка про
+  `ask_operator`. Задача и текст узла обрезаны по краям от пробелов. Не
+  больше 64 КиБ + 4096 байт задачи; тело с закрывающим тегом конверта
+  сообщения, шаг без задачи прохода или такое тело, чей NDJSON у гостя
+  (auth-кадр, конверт, экранированное тело) превысит 128 КиБ, не
+  отправляется (`refused`). Ни задача, ни текст узла не граница
+  безопасности.
 - `pipeline_visit_complete` принимается от актора шага той же инкарнации с
   тем же `request_id`, пока он привязан к роли узла и рой идёт; шаг роя с
   источником — только с записанным подтверждением. Иначе гость получает

@@ -23,13 +23,24 @@ package store
 // транзакции записи держала бы блокировку SQLite на время upstream. Поэтому
 // транзакция сверяет repository, из которого commit разрешён (SwarmStart.Origin),
 // с текущим repository проекта.
-// RESULT: IMPLEMENTED — схема не меняется, версия схемы прежняя.
+// Задача прохода (#242) — текст оператора, с которым идёт проход: она
+// пишется в колонку goal первого шага прохода тем же INSERT, что открывает
+// проход, и ограждена от правок схемой (swarm_steps_goal_fence). Отдельная
+// таблица проходов дала бы второй ключ, внешний ключ к шагу и ещё одну запись
+// в транзакции запуска ради одного поля: проход и так — его первый шаг и
+// следующие до следующего запуска, номер первого шага его и называет. Колонка
+// на каждом шаге копировала бы до 4 КиБ на шаг и потребовала бы переносить её
+// в progressPipeline. Шаг находит задачу своего прохода по последнему шагу с
+// задачей не дальше себя; шаги идут подряд, потому что новый проход
+// начинается только после остановки или завершения прошлого.
+// RESULT: IMPLEMENTED — схема 24: swarm_steps.goal и swarm_steps_goal_fence.
 // STATUS: DONE
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"brood.dev/go/brood/pipeline"
 )
@@ -73,6 +84,31 @@ type SwarmStart struct {
 	// before the transaction (#228). The first start refuses with
 	// ErrSwarmSourceChanged if the project repository is another by then.
 	Origin string
+	// Goal is the operator's task for the new pass (#242), required on every
+	// start: ValidSwarmGoal. It is kept with the first step of the pass and
+	// every step instruction of the pass carries it.
+	Goal string
+}
+
+// ErrSwarmGoalInvalid: the pass goal is empty or not bounded plain text; the
+// message names the reason from a fixed set.
+var ErrSwarmGoalInvalid = errors.New("invalid swarm goal")
+
+// MaxSwarmGoalBytes bounds the pass goal; the schema holds the same limit.
+const MaxSwarmGoalBytes = 4096
+
+// ValidSwarmGoal reports why goal cannot be the goal of a pass: it is empty
+// or only whitespace, exceeds MaxSwarmGoalBytes, is not valid UTF-8 or has
+// control characters other than newline and tab. The goal is not trimmed or
+// otherwise changed; the error is ErrSwarmGoalInvalid with a fixed reason.
+func ValidSwarmGoal(goal string) error {
+	if strings.TrimSpace(goal) == "" {
+		return fmt.Errorf("%w: the goal is empty", ErrSwarmGoalInvalid)
+	}
+	if problem := plainTextProblem(goal, MaxSwarmGoalBytes); problem != "" {
+		return fmt.Errorf("%w: the goal %s", ErrSwarmGoalInvalid, problem)
+	}
+	return nil
 }
 
 // passPlan — проверенный запуск до первой записи.
@@ -88,15 +124,20 @@ type passPlan struct {
 // StartSwarm starts a new pass of the swarm graph and returns the swarm.
 // authorize checks the caller's session with the transaction context; the
 // user must still manage the active swarm. The swarm must not be running or
-// waiting. The first start takes the definition from the catalog of the
-// swarm's project, validates it as the runner would and pins it with its
-// identity and source; a restart reuses the pinned snapshot. Every role of
-// the graph must be bound to a running actor (CheckSwarmRolesFit). All
-// checks precede the first write and run in the transaction that writes, so
-// of concurrent starts exactly one succeeds. No actor is created or touched.
+// waiting. Every start names the goal of its pass (ValidSwarmGoal); the
+// first step of the pass keeps it. The first start takes the definition from
+// the catalog of the swarm's project, validates it as the runner would and
+// pins it with its identity and source; a restart reuses the pinned
+// snapshot. Every role of the graph must be bound to a running actor
+// (CheckSwarmRolesFit). All checks precede the first write and run in the
+// transaction that writes, so of concurrent starts exactly one succeeds. No
+// actor is created or touched.
 func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(context.Context) bool) (Swarm, error) {
 	var started Swarm
 	err := s.WithTx(ctx, func(ctx context.Context) error {
+		if err := ValidSwarmGoal(in.Goal); err != nil {
+			return err
+		}
 		w, err := s.manageableSwarm(ctx, in.SwarmID, in.UserID, "start", authorize)
 		if err != nil {
 			return err
@@ -116,7 +157,7 @@ func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(co
 				return err
 			}
 		}
-		if err := s.beginPass(ctx, w.ID, plan); err != nil {
+		if err := s.beginPass(ctx, w.ID, in.Goal, plan); err != nil {
 			return err
 		}
 		started, err = s.GetSwarm(ctx, w.ID)
@@ -280,17 +321,18 @@ func (s *Store) startSource(ctx context.Context, projectID string, in SwarmStart
 }
 
 // beginPass открывает проход: первый шаг стартового узла получает
-// следующий номер роя, шаги прошлых проходов не трогаются. Шаг узла-человека
+// следующий номер роя и задачу прохода, шаги прошлых проходов не трогаются.
+// Шаг узла-человека
 // открывает свой запрос в той же транзакции, как у преемника в
 // progressPipeline, но без материала: предыдущий шаг роя принадлежит
 // прошлому проходу, и его отчёт не то, что одобряют сейчас (#233). Условие
 // на исполнение повторяет проверку запуска в самой записи.
-func (s *Store) beginPass(ctx context.Context, swarmID string, plan passPlan) error {
+func (s *Store) beginPass(ctx context.Context, swarmID, goal string, plan passPlan) error {
 	var sequence int64
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0)+1 FROM swarm_steps WHERE swarm_id=?`, swarmID).Scan(&sequence); err != nil {
 		return err
 	}
-	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES (?,?,?,?)`, swarmID, sequence, plan.entry.Next, plan.entry.NextState); err != nil {
+	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal) VALUES (?,?,?,?,?)`, swarmID, sequence, plan.entry.Next, plan.entry.NextState, goal); err != nil {
 		return err
 	}
 	if plan.entry.NextState == "waiting" {

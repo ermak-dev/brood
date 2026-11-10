@@ -1,7 +1,7 @@
 package server
 
 // FEATURE: HTTP запуска и остановки роя (#211).
-// SPEC: POST /api/swarms/{id}/start {definition, commit} и
+// SPEC: POST /api/swarms/{id}/start {definition, goal, commit?} и
 // POST /api/swarms/{id}/stop. Видящему рой без права управлять — 403,
 // постороннему рой скрыт — 404. Отказы называют причину и ничего не пишут;
 // запуск и остановка не создают, не останавливают и не удаляют акторов.
@@ -23,6 +23,8 @@ import (
 const (
 	startAPIOrigin = "https://git.example.org/team/repo.git"
 	startAPICommit = "89abcdef0123456789abcdef0123456789abcdef"
+	// startAPIGoal — задача прохода, с которой фикстуры запускают рой (#242).
+	startAPIGoal = "Release issue #9: publish the parser."
 )
 
 const startAPIRelease = `apiVersion: brood.dev/v1alpha1
@@ -194,7 +196,7 @@ func TestSwarmStartStopWire(t *testing.T) {
 	f := startAPISetup(t)
 	ctx := context.Background()
 	life := f.lifeState(t)
-	start := map[string]any{"definition": "release", "commit": startAPICommit}
+	start := map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit}
 
 	r, b := f.start(f.bob, start)
 	expectStatus(t, "outsider start", r, b, http.StatusNotFound)
@@ -256,12 +258,12 @@ func TestSwarmStartStopWire(t *testing.T) {
 		t.Fatalf("answer after stop advanced the graph:\n%s\nwant\n%s", got, frozen)
 	}
 
-	r, b = f.start(f.alice, map[string]any{"definition": "release"})
+	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "release"})
 	expectStatus(t, "restart", r, b, http.StatusOK)
 	if b["step"].(map[string]any)["sequence"] != float64(2) || b["source"].(map[string]any)["commit"] != startAPICommit {
 		t.Fatalf("restart response: %v", b)
 	}
-	r, b = f.start(f.alice, map[string]any{"definition": "approve"})
+	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "approve"})
 	expectStatus(t, "restart with another definition", r, b, http.StatusConflict)
 	if got := f.lifeState(t); got != life {
 		t.Fatalf("restart touched actors:\n%s\nwant\n%s", got, life)
@@ -278,11 +280,11 @@ func TestSwarmStartRefusalsWire(t *testing.T) {
 		status int
 		reason string
 	}{
-		{name: "definition missing", body: map[string]any{"definition": "absent", "commit": startAPICommit}, status: http.StatusNotFound, reason: `"absent"`},
-		{name: "definition of another project", body: map[string]any{"definition": "foreign", "commit": startAPICommit}, status: http.StatusNotFound, reason: `"foreign"`},
-		{name: "graph the runner refuses", body: map[string]any{"definition": "retrying", "commit": startAPICommit}, status: http.StatusUnprocessableEntity, reason: "retries"},
-		{name: "unbound role", body: map[string]any{"definition": "review", "commit": startAPICommit}, status: http.StatusConflict, reason: `role "review"`},
-		{name: "actor not running", body: map[string]any{"definition": "release", "commit": startAPICommit}, setup: func(t *testing.T, f startAPIFixture) {
+		{name: "definition missing", body: map[string]any{"goal": startAPIGoal, "definition": "absent", "commit": startAPICommit}, status: http.StatusNotFound, reason: `"absent"`},
+		{name: "definition of another project", body: map[string]any{"goal": startAPIGoal, "definition": "foreign", "commit": startAPICommit}, status: http.StatusNotFound, reason: `"foreign"`},
+		{name: "graph the runner refuses", body: map[string]any{"goal": startAPIGoal, "definition": "retrying", "commit": startAPICommit}, status: http.StatusUnprocessableEntity, reason: "retries"},
+		{name: "unbound role", body: map[string]any{"goal": startAPIGoal, "definition": "review", "commit": startAPICommit}, status: http.StatusConflict, reason: `role "review"`},
+		{name: "actor not running", body: map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit}, setup: func(t *testing.T, f startAPIFixture) {
 			a, err := f.ts.srv.store.GetManagedActor(context.Background(), f.master.UID)
 			if err != nil {
 				t.Fatal(err)
@@ -292,25 +294,25 @@ func TestSwarmStartRefusalsWire(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, status: http.StatusConflict, reason: "provisioning"},
-		{name: "swarm not active", body: map[string]any{"definition": "release", "commit": startAPICommit}, setup: func(t *testing.T, f startAPIFixture) {
+		{name: "swarm not active", body: map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit}, setup: func(t *testing.T, f startAPIFixture) {
 			if err := f.ts.srv.store.SetSwarmState(context.Background(), f.swarm, "error"); err != nil {
 				t.Fatal(err)
 			}
 		}, status: http.StatusConflict, reason: "swarm is error"},
-		{name: "commit missing without server Git access", body: map[string]any{"definition": "release"}, status: http.StatusUnprocessableEntity, reason: "has no server Git access; bind a project Git credential or name the commit"},
-		{name: "project without repository", body: map[string]any{"definition": "release", "commit": startAPICommit}, setup: func(t *testing.T, f startAPIFixture) {
+		{name: "commit missing without server Git access", body: map[string]any{"goal": startAPIGoal, "definition": "release"}, status: http.StatusUnprocessableEntity, reason: "has no server Git access; bind a project Git credential or name the commit"},
+		{name: "project without repository", body: map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit}, setup: func(t *testing.T, f startAPIFixture) {
 			if err := f.ts.srv.store.SetProjectRepository(context.Background(), f.project, ""); err != nil {
 				t.Fatal(err)
 			}
 		}, status: http.StatusUnprocessableEntity, reason: "repository"},
-		{name: "project without repository nor commit", body: map[string]any{"definition": "release"}, setup: func(t *testing.T, f startAPIFixture) {
+		{name: "project without repository nor commit", body: map[string]any{"goal": startAPIGoal, "definition": "release"}, setup: func(t *testing.T, f startAPIFixture) {
 			if err := f.ts.srv.store.SetProjectRepository(context.Background(), f.project, ""); err != nil {
 				t.Fatal(err)
 			}
 		}, status: http.StatusUnprocessableEntity, reason: "the project has no repository"},
 		{name: "definition absent from body", body: map[string]any{"commit": startAPICommit}, status: http.StatusBadRequest, reason: "definition"},
-		{name: "unknown field", body: map[string]any{"definition": "release", "commit": startAPICommit, "graph": "x"}, status: http.StatusBadRequest, reason: "definition"},
-		{name: "definition not a string", body: map[string]any{"definition": 7, "commit": startAPICommit}, status: http.StatusBadRequest, reason: "definition"},
+		{name: "unknown field", body: map[string]any{"goal": startAPIGoal, "definition": "release", "commit": startAPICommit, "graph": "x"}, status: http.StatusBadRequest, reason: "definition"},
+		{name: "definition not a string", body: map[string]any{"goal": startAPIGoal, "definition": 7, "commit": startAPICommit}, status: http.StatusBadRequest, reason: "definition"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := startAPISetup(t)
@@ -338,7 +340,7 @@ func TestSwarmStartRefusalsWire(t *testing.T) {
 // решается последним ключом.
 func TestSwarmStartDuplicateField(t *testing.T) {
 	f := startAPISetup(t)
-	req, err := http.NewRequest("POST", f.ts.http.URL+"/api/swarms/"+f.swarm+"/start", strings.NewReader(`{"definition":"approve","definition":"release","commit":"`+startAPICommit+`"}`))
+	req, err := http.NewRequest("POST", f.ts.http.URL+"/api/swarms/"+f.swarm+"/start", strings.NewReader(`{"goal":"`+startAPIGoal+`","definition":"approve","definition":"release","commit":"`+startAPICommit+`"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +366,7 @@ func TestSwarmStopRefusesFinished(t *testing.T) {
 	if !strings.Contains(b["detail"].(string), "execution is idle") {
 		t.Fatalf("stop idle reason: %v", b)
 	}
-	r, b = f.start(f.alice, map[string]any{"definition": "approve", "commit": startAPICommit})
+	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "approve", "commit": startAPICommit})
 	expectStatus(t, "start", r, b, http.StatusOK)
 	r, b, _ = f.ts.do(f.alice, "POST", nodeAnswerPath(t, f.ts.srv, f.swarm, 1), f.ts.csrf(f.alice), map[string]any{"outcome": "success"})
 	expectStatus(t, "approve", r, b, http.StatusOK)
@@ -393,7 +395,7 @@ func TestSwarmStartConcurrentWire(t *testing.T) {
 	for i := range starters {
 		go func() {
 			defer done.Done()
-			req, err := http.NewRequest("POST", f.ts.http.URL+"/api/swarms/"+f.swarm+"/start", strings.NewReader(`{"definition":"release","commit":"`+startAPICommit+`"}`))
+			req, err := http.NewRequest("POST", f.ts.http.URL+"/api/swarms/"+f.swarm+"/start", strings.NewReader(`{"goal":"`+startAPIGoal+`","definition":"release","commit":"`+startAPICommit+`"}`))
 			if err != nil {
 				t.Error(err)
 				ready.Done()

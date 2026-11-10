@@ -43,6 +43,12 @@ type PipelineVisit struct {
 	Detail string
 	// Report is the actor's account of a completed step (#233).
 	Report string
+	// Goal is the goal of the pass this step opened (#242): only the first
+	// step of a pass has one.
+	Goal string
+	// Pass is the sequence of the first step of the step's pass; 0 for a
+	// step outside a pass opened by StartSwarm.
+	Pass int64
 	// ActorName is filled by reads when the stage actor is known: the managed
 	// actor with ActorUID in the step's own swarm.
 	ActorName string
@@ -58,7 +64,8 @@ func activeExecution(execution string) bool {
 }
 
 // SwarmSteps returns the visits of the swarm graph in sequence order.
-// Only the swarm's own steps are visible; an empty swarm has no steps.
+// Only the swarm's own steps are visible; an empty swarm has no steps. Each
+// visit names the first step of its pass (Pass), which carries the pass goal.
 func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit, error) {
 	if !validPipelineField(swarmID) {
 		return nil, errors.New("invalid swarm ID")
@@ -69,24 +76,43 @@ func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit
 	}
 	defer rows.Close()
 	result := []PipelineVisit{}
+	// Шаги идут по номеру: проход шага — последний открытый до него проход.
+	var pass int64
 	for rows.Next() {
 		v, err := scanSwarmStep(rows)
 		if err != nil {
 			return nil, err
 		}
+		if v.Goal != "" {
+			pass = v.Sequence
+		}
+		v.Pass = pass
 		result = append(result, v)
 	}
 	return result, rows.Err()
 }
 
+// passGoal — первый шаг и задача прохода, которому принадлежит шаг
+// sequence: последний шаг роя с задачей не дальше него, как в SwarmSteps.
+// Шаг вне прохода, открытого запуском, — 0 и пустая задача.
+func (s *Store) passGoal(ctx context.Context, swarmID string, sequence int64) (int64, string, error) {
+	var pass int64
+	var goal string
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT sequence,goal FROM swarm_steps WHERE swarm_id=? AND sequence<=? AND goal IS NOT NULL ORDER BY sequence DESC LIMIT 1`, swarmID, sequence).Scan(&pass, &goal)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", nil
+	}
+	return pass, goal, err
+}
+
 // swarmStepSelect resolves managed names by UID within the step's own swarm,
 // including deleted actors whose names may since have been reused (#206:
 // join к запуску исчез — шаг принадлежит рою напрямую).
-const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.attested_commit,''),COALESCE(s.detail,''),COALESCE(s.report,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
+const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.attested_commit,''),COALESCE(s.detail,''),COALESCE(s.report,''),COALESCE(s.goal,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
 
 func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 	var v PipelineVisit
-	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.AttestedCommit, &v.Detail, &v.Report, &v.ActorName)
+	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.AttestedCommit, &v.Detail, &v.Report, &v.Goal, &v.ActorName)
 	return v, err
 }
 
@@ -369,16 +395,26 @@ func stepReportContext(sequence int64, node, outcome, report string) string {
 // управляющих символов, кроме перевода строки и табуляции. Пустой отчёт —
 // его отсутствие.
 func validStepReport(report string) error {
-	if len(report) > MaxStepReportBytes {
-		return fmt.Errorf("%w: the report exceeds %d bytes", ErrStepReportInvalid, MaxStepReportBytes)
-	}
-	if !utf8.ValidString(report) {
-		return fmt.Errorf("%w: the report is not valid UTF-8", ErrStepReportInvalid)
-	}
-	if strings.IndexFunc(report, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) >= 0 {
-		return fmt.Errorf("%w: the report has control characters other than newline and tab", ErrStepReportInvalid)
+	if problem := plainTextProblem(report, MaxStepReportBytes); problem != "" {
+		return fmt.Errorf("%w: the report %s", ErrStepReportInvalid, problem)
 	}
 	return nil
+}
+
+// plainTextProblem называет, чем текст от актора или оператора (отчёт шага,
+// задача прохода) не годится: длиннее limit байт, не UTF-8 или с
+// управляющими символами, кроме перевода строки и табуляции. Годный текст —
+// пустая строка в ответе; пустой текст годен, решает вызывающий.
+func plainTextProblem(text string, limit int) string {
+	switch {
+	case len(text) > limit:
+		return fmt.Sprintf("exceeds %d bytes", limit)
+	case !utf8.ValidString(text):
+		return "is not valid UTF-8"
+	case strings.IndexFunc(text, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) >= 0:
+		return "has control characters other than newline and tab"
+	}
+	return ""
 }
 
 // executionOfTransition переводит статус прогона чистого движка (#207)
