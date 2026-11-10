@@ -65,6 +65,10 @@ type ActorStepAttempt struct {
 	Actor  ManagedActor
 	Source PipelineSource
 	Graph  *pipeline.Document
+	// Pass and Goal — первый шаг прохода этого шага и задача прохода (#242),
+	// прочитанные той же транзакцией резерва.
+	Pass int64
+	Goal string
 	// Lease — workspace-lease подтверждения; его исход пишет сервер
 	// (FinishActorOperation) после ответа гостя.
 	Lease ActorOperation
@@ -78,7 +82,8 @@ type ActorStepAttempt struct {
 // step becomes attesting with that actor and request ID. Nothing to reserve
 // is ErrNoActorStep without a write. A role that does not resolve to a live
 // bound actor or a busy workspace closes the step as refused with the reason
-// in the same transaction and answers ErrActorStepRefused.
+// in the same transaction and answers ErrActorStepRefused. The attempt
+// carries the goal of the step's pass and the sequence of its first step.
 func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller string) (ActorStepAttempt, error) {
 	if !validPipelineField(swarmID) || !validPipelineField(requestID) || caller == "" {
 		return ActorStepAttempt{}, errors.New("invalid actor step reservation")
@@ -111,7 +116,11 @@ func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller
 		if err := s.markStepAttesting(ctx, swarmID, sequence, actor, requestID); err != nil {
 			return err
 		}
-		attempt = ActorStepAttempt{SwarmID: w.ID, SwarmName: w.Name, Sequence: sequence, NodeID: node, RequestID: requestID, Actor: actor, Source: *w.Source, Graph: d, Lease: lease}
+		pass, goal, err := s.passGoal(ctx, swarmID, sequence)
+		if err != nil {
+			return err
+		}
+		attempt = ActorStepAttempt{SwarmID: w.ID, SwarmName: w.Name, Sequence: sequence, NodeID: node, RequestID: requestID, Actor: actor, Source: *w.Source, Graph: d, Pass: pass, Goal: goal, Lease: lease}
 		return nil
 	})
 	if err != nil {

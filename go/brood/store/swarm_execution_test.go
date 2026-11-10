@@ -28,6 +28,8 @@ import (
 const (
 	startOrigin = "https://git.example.org/team/repo.git"
 	startCommit = "0123456789abcdef0123456789abcdef01234567"
+	// startGoal — задача прохода, с которой стартуют проходы фикстур (#242).
+	startGoal = "Ship issue #7: the parser drops trailing comments."
 )
 
 // startRelease — человек решает, затем актор роли build.
@@ -116,7 +118,7 @@ func publish(t *testing.T, s *Store, project string, definitions map[string]stri
 }
 
 func startOne(s *Store, definition string) (Swarm, error) {
-	return s.StartSwarm(context.Background(), SwarmStart{SwarmID: "one", UserID: "u", Definition: definition, Commit: startCommit}, allow)
+	return s.StartSwarm(context.Background(), SwarmStart{SwarmID: "one", UserID: "u", Definition: definition, Commit: startCommit, Goal: startGoal}, allow)
 }
 
 // dumpTables печатает строки таблиц целиком в стабильном порядке: сравнение
@@ -214,7 +216,7 @@ func TestStartSwarmFirstPass(t *testing.T) {
 // проекта до транзакции (#228), пиннится, пока repository прежний.
 func TestStartSwarmResolvedOrigin(t *testing.T) {
 	s := startStore(t)
-	w, err := s.StartSwarm(context.Background(), SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Commit: startCommit, Origin: startOrigin}, allow)
+	w, err := s.StartSwarm(context.Background(), SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Commit: startCommit, Origin: startOrigin, Goal: startGoal}, allow)
 	mustNil(t, err)
 	if w.Source == nil || *w.Source != (PipelineSource{Origin: startOrigin, Commit: startCommit}) {
 		t.Fatalf("source snapshot: %+v", w.Source)
@@ -285,7 +287,7 @@ func TestStartSwarmRefusesBeforeWrite(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(t, s)
 			}
-			in := SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Commit: startCommit}
+			in := SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Commit: startCommit, Goal: startGoal}
 			if tc.in.SwarmID != "" {
 				in.SwarmID = tc.in.SwarmID
 			}
@@ -537,7 +539,7 @@ func TestRestartIsNewPass(t *testing.T) {
 	} {
 		before := dumpTables(t, s, executionTables...)
 		in := tc.in
-		in.SwarmID, in.UserID = "one", "u"
+		in.SwarmID, in.UserID, in.Goal = "one", "u", startGoal
 		if _, err := s.StartSwarm(ctx, in, allow); !errors.Is(err, ErrSwarmGraphPinned) || !strings.Contains(err.Error(), tc.text) {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
@@ -548,7 +550,7 @@ func TestRestartIsNewPass(t *testing.T) {
 
 	// Повторный запуск без commit идёт на записанном источнике; с тем же
 	// commit — тоже.
-	again, err := s.StartSwarm(ctx, SwarmStart{SwarmID: "one", UserID: "u", Definition: "release"}, allow)
+	again, err := s.StartSwarm(ctx, SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Goal: startGoal}, allow)
 	mustNil(t, err)
 	if string(again.Graph) != string(first.Graph) || again.DefinitionVersion != first.DefinitionVersion || again.DefinitionRevision != first.DefinitionRevision || *again.Source != *first.Source {
 		t.Fatalf("restart replaced the snapshot: %+v, was %+v", again, first)

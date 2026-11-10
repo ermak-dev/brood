@@ -90,7 +90,7 @@ func TestSwarmRolesThroughClient(t *testing.T) {
 	if err != nil || len(view.Roles) != 2 || view.Roles[1].Role != "review" || view.Roles[1].State != "ready" || view.Roles[1].ActorName != "master" {
 		t.Fatalf("bind review: %+v %v", view, err)
 	}
-	r, b = f.start(f.alice, map[string]any{"definition": "review", "commit": startAPICommit})
+	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "review", "commit": startAPICommit})
 	expectStatus(t, "start after bind", r, b, http.StatusOK)
 	_, err = alice.UnbindSwarmRole(ctx, f.swarm, "review")
 	expectReason(t, "unbind while running", err, "swarm execution is running or waiting; stop the swarm before changing role bindings")

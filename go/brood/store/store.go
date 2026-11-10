@@ -37,7 +37,9 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // swarm_steps_attested.
 // 23: отчёт актора о шаге swarm_steps.report и его ограждение
 // swarm_steps_report_fence (#233).
-const schemaVersion = 23
+// 24: задача прохода swarm_steps.goal на первом шаге прохода и её
+// ограждение swarm_steps_goal_fence (#242).
+const schemaVersion = 24
 
 //go:embed schema.sql
 var currentSchema string

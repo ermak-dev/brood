@@ -41,6 +41,8 @@ import (
 const (
 	dispatchOrigin = "https://git.example.org/team/repo.git"
 	dispatchCommit = "fedcba9876543210fedcba9876543210fedcba98"
+	// dispatchGoal — задача прохода фикстур доставки (#242).
+	dispatchGoal = "Deliver issue #12: the parser keeps trailing comments."
 )
 
 // dispatchGraph — build роли build, затем review роли review; отказ build
@@ -218,7 +220,7 @@ func (d *dispatchServer) committed() committedStep {
 
 func (d *dispatchServer) start(definition string) {
 	d.t.Helper()
-	r, b, _ := d.do(d.alice, "POST", "/api/swarms/"+d.swarm+"/start", d.csrf(d.alice), map[string]any{"definition": definition, "commit": dispatchCommit})
+	r, b, _ := d.do(d.alice, "POST", "/api/swarms/"+d.swarm+"/start", d.csrf(d.alice), map[string]any{"definition": definition, "commit": dispatchCommit, "goal": dispatchGoal})
 	expectStatus(d.t, "start", r, b, http.StatusOK)
 	d.srv.steps.wait()
 }
@@ -302,7 +304,7 @@ func (d *dispatchServer) startPending(definition string) {
 	if err != nil {
 		d.t.Fatal(err)
 	}
-	if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: definition, Commit: dispatchCommit}, func(context.Context) bool { return true }); err != nil {
+	if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: definition, Commit: dispatchCommit, Goal: dispatchGoal}, func(context.Context) bool { return true }); err != nil {
 		d.t.Fatal(err)
 	}
 }
@@ -451,7 +453,7 @@ func TestStepDeliveryIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Запуск хранилищем: шаг ждёт доставки, диспетчер ещё не звали.
-	if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: "deliver", Commit: dispatchCommit}, func(context.Context) bool { return true }); err != nil {
+	if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: "deliver", Commit: dispatchCommit, Goal: dispatchGoal}, func(context.Context) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -968,7 +970,7 @@ func TestStepResumeAtServerStart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: "deliver", Commit: dispatchCommit}, func(context.Context) bool { return true }); err != nil {
+		if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: "deliver", Commit: dispatchCommit, Goal: dispatchGoal}, func(context.Context) bool { return true }); err != nil {
 			t.Fatal(err)
 		}
 		d.restart()
@@ -983,7 +985,7 @@ func TestStepResumeAtServerStart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: "deliver", Commit: dispatchCommit}, func(context.Context) bool { return true }); err != nil {
+			if _, err := d.srv.store.StartSwarm(ctx, store.SwarmStart{SwarmID: d.swarm, UserID: u.ID, Definition: "deliver", Commit: dispatchCommit, Goal: dispatchGoal}, func(context.Context) bool { return true }); err != nil {
 				t.Fatal(err)
 			}
 			a, err := d.srv.store.ReserveActorStep(ctx, d.swarm, store.NewID(), "swarm:"+d.swarm)
@@ -1079,13 +1081,14 @@ func TestStepInstruction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := store.ActorStepAttempt{SwarmID: "01SWARM", SwarmName: "alpha", Sequence: 7, NodeID: "build", RequestID: "01REQUEST", Graph: d, Actor: store.ManagedActor{Name: "worker", UID: "actor-uid"}}
+	a := store.ActorStepAttempt{SwarmID: "01SWARM", SwarmName: "alpha", Sequence: 7, NodeID: "build", RequestID: "01REQUEST", Graph: d, Actor: store.ManagedActor{Name: "worker", UID: "actor-uid"}, Pass: 7, Goal: dispatchGoal}
 	text, err := stepInstruction(a)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, part := range []string{
 		"[brood swarm alpha] Step 7, node build.",
+		dispatchGoal,
 		"Build the feature and run the tests.",
 		"pipeline_visit_complete",
 		"run_id 01SWARM", "sequence 7", "request_id 01REQUEST",
@@ -1142,7 +1145,9 @@ func TestStepInstructionFitsTheGuestFrame(t *testing.T) {
 		node.Prompt = strings.Repeat("<", n)
 		doc := *d
 		doc.Nodes = map[string]pipeline.Node{"build": node, "review": d.Nodes["review"], "done": d.Nodes["done"]}
-		return store.ActorStepAttempt{SwarmID: "01KAAAAAAAAAAAAAAAAAAAAAAA", SwarmName: "alpha", Sequence: 7, NodeID: "build", RequestID: "01KBBBBBBBBBBBBBBBBBBBBBBB", Graph: &doc, Actor: store.ManagedActor{Name: "worker", UID: "actor-uid"}}
+		// Задача прохода в пределе и из символов, которые JSON раздувает
+		// вшестеро (#242): запас кадра считается вместе с ней.
+		return store.ActorStepAttempt{SwarmID: "01KAAAAAAAAAAAAAAAAAAAAAAA", SwarmName: "alpha", Sequence: 7, NodeID: "build", RequestID: "01KBBBBBBBBBBBBBBBBBBBBBBB", Graph: &doc, Actor: store.ManagedActor{Name: "worker", UID: "actor-uid"}, Pass: 1, Goal: strings.Repeat(">", store.MaxSwarmGoalBytes)}
 	}
 	body := func(a store.ActorStepAttempt) string {
 		// Тело так, как его собирает stepInstruction, без проверок размера.

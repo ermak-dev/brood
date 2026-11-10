@@ -146,12 +146,16 @@ func verifyOriginSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkSchema(ctx, tx, managedOriginSchema())
 }
 
-// verifySwarmStepsSchema сверяет шаги роя и ограждение их отчёта.
+// verifySwarmStepsSchema сверяет шаги роя и ограждения их отчёта и задачи
+// прохода.
 func verifySwarmStepsSchema(ctx context.Context, tx *sql.Tx) error {
 	if err := checkSchema(ctx, tx, swarmStepsSchema); err != nil {
 		return err
 	}
-	return checkObject(ctx, tx, "trigger", "swarm_steps_report_fence", swarmStepReportFence)
+	if err := checkObject(ctx, tx, "trigger", "swarm_steps_report_fence", swarmStepReportFence); err != nil {
+		return err
+	}
+	return checkObject(ctx, tx, "trigger", "swarm_steps_goal_fence", swarmStepGoalFence)
 }
 
 // verifySwarmRoleSchema сверяет привязки ролей роёв.
