@@ -19,6 +19,9 @@
  * Operator questions are answered through the swarm request API (#216,
  * requests.ts), not through the run. The server must authorize every
  * operation against the run's swarm and return a reason on refusal.
+ * The graph is a pure drawing of the run: for the same snapshot revision,
+ * current node and status the server renders the same SVG, so the page polls
+ * the run and reads the graph again only when one of those changed (#257).
  */
 
 import { BroodApiError, request } from './http';

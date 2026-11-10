@@ -1,7 +1,6 @@
 import { Fragment, useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useInterval } from '@/hooks/useInterval';
 import { useProjectStore } from '@/stores';
 import { accessApi, type AccessSwarm } from '@/services/brood/access';
 import {
@@ -25,6 +24,7 @@ import { SWARMS_PATH } from './routes';
 import { nodeRequest } from './requestState';
 import { RequestCard, RequestInbox } from './SwarmRequests';
 import { useSwarmRequests } from './useSwarmRequests';
+import { useGraphRefetch, useSwarmPolling } from './useSwarmPolling';
 import { SnapshotFacts, SwarmExecutionControl } from './SwarmControls';
 import { SwarmRoles } from './SwarmRoles';
 import { executionAction, snapshotIdentity } from './swarmControl';
@@ -81,13 +81,15 @@ function SwarmScreen({ id }: { id: string }) {
     void graph.refresh();
   });
   const administrator = useAdministrator();
-  useInterval(
-    () => {
-      void execution.refresh();
-      void graph.refresh();
-    },
-    run && runIsLive(run) ? 5000 : null
-  );
+  // Один тик на страницу (#257): исполнение перечитывается, пока идёт или
+  // ждёт; инбокс и роли подписаны на тот же тик; граф следует за исполнением.
+  const live = runIsLive(run);
+  const refreshExecution = execution.refresh;
+  const tick = useCallback(() => {
+    if (live) void refreshExecution();
+  }, [live, refreshExecution]);
+  useSwarmPolling(tick, swarm.data?.state === 'active');
+  useGraphRefetch(execution.data ? run : undefined, graph.refresh);
   // Адрес роя выбирает его проект глобальным контекстом, как старые ссылки
   // с проектом: список роёв и разделы проекта открываются на нём.
   const setProject = useProjectStore((state) => state.setProject);
