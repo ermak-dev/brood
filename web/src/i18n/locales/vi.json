@@ -67,6 +67,7 @@
     "administration": "Quản trị hệ thống",
     "choose_project": "Chọn",
     "select_project": "Chọn dự án",
+    "current_project": "Dự án: {{name}}",
     "select_project_hint": "Chọn dự án từ menu trên cùng hoặc danh sách Dự án.",
     "no_active_swarms": "Dự án không có bầy đang hoạt động nào có thể truy cập.",
     "swarm": "Bầy",
@@ -242,10 +243,6 @@
   "title": {
     "login": "Trung tâm Quản lý Brood",
     "abbr": "Brood"
-  },
-  "splash": {
-    "title": "Brood",
-    "subtitle": "Trung tâm Quản lý"
   },
   "login": {
     "username_label": "Tên đăng nhập:",
@@ -3120,6 +3117,7 @@
       "fan_in": "hợp nhánh"
     },
     "graph_label": "Đồ thị lần chạy",
+    "graph_description": "Mỗi nút là một nút bấm được đặt tên theo bước, loại và trạng thái; nút mà lần chạy đang đứng được đánh dấu là hiện tại. Chọn một nút sẽ hiển thị chi tiết bên dưới đồ thị.",
     "graph_empty": "Không có đồ thị"
   },
   "swarm_page": {

@@ -78,7 +78,7 @@ export function RequestInbox({
         )}
         {history.length > 0 && (
           <>
-            <h4 className={local.historyTitle}>{t('swarm_requests.history')}</h4>
+            <h3 className={local.historyTitle}>{t('swarm_requests.history')}</h3>
             <ol className={local.list}>{history.map(card)}</ol>
           </>
         )}
@@ -228,6 +228,7 @@ function AnswerForm({
   const [draft, setDraft] = useState(emptyDraft);
   const [sending, setSending] = useState(false);
   const group = useId();
+  const hintId = useId();
   const form = requestForm(request);
   if (!form) return <p className={page.hint}>{t('swarm_requests.unknown_kind')}</p>;
   const body = answerBody(request, draft);
@@ -277,7 +278,7 @@ function AnswerForm({
           })}
         </div>
       )}
-      <p className={page.hint}>
+      <p id={hintId} className={page.hint}>
         {t(form.route ? 'swarm_requests.route_hint' : 'swarm_requests.actor_hint')}
       </p>
       {form.text !== 'none' && (
@@ -289,6 +290,7 @@ function AnswerForm({
             className={local.textarea}
             value={draft.text}
             required={form.text === 'required'}
+            aria-describedby={hintId}
             disabled={sending}
             onChange={(event) => {
               const text = event.target.value;

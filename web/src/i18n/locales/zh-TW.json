@@ -67,6 +67,7 @@
     "administration": "系統管理",
     "choose_project": "選擇",
     "select_project": "選擇專案",
+    "current_project": "專案：{{name}}",
     "select_project_hint": "請在頂部選單或專案清單中選擇專案。",
     "no_active_swarms": "此專案沒有可存取的有效群組。",
     "swarm": "群組",
@@ -242,10 +243,6 @@
   "title": {
     "login": "Brood 管理中心",
     "abbr": "Brood"
-  },
-  "splash": {
-    "title": "Brood",
-    "subtitle": "管理中心"
   },
   "login": {
     "username_label": "使用者名稱：",
@@ -3139,6 +3136,7 @@
       "fan_in": "匯合"
     },
     "graph_label": "執行圖",
+    "graph_description": "每個節點都是按鈕，名稱由步驟、類型和狀態組成；執行所在的節點標記為目前。選擇節點後，其詳情顯示在圖下方。",
     "graph_empty": "暫無圖表"
   },
   "swarm_page": {

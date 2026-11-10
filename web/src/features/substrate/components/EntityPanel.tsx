@@ -109,6 +109,10 @@ function PanelGroup({ group }: { group: PanelActionGroup }) {
 
 function PanelButton({ action }: { action: PanelAction }) {
   const { t } = useTranslation();
+  // Имя кнопки — её заголовок, описание — отдельно (#256): без этого
+  // скринридер читал карточку целиком как имя, а потом ещё раз как описание.
+  const labelId = useId();
+  const newTabId = useId();
   const descriptionId = useId();
   const unavailable = Boolean(action.blocked) || Boolean(action.pending);
   const className = [
@@ -121,7 +125,7 @@ function PanelButton({ action }: { action: PanelAction }) {
     .join(' ');
   const body = (
     <>
-      <span className={styles.panelActionLabel}>
+      <span id={labelId} className={styles.panelActionLabel}>
         {action.pending && <span className="loading-spinner" aria-hidden="true" />}
         {action.label}
       </span>
@@ -141,10 +145,13 @@ function PanelButton({ action }: { action: PanelAction }) {
         href={action.href}
         target="_blank"
         rel="noopener noreferrer"
+        aria-labelledby={`${labelId} ${newTabId}`}
         aria-describedby={described}
       >
         {body}
-        <span className={styles.srOnly}>{t('substrate.opens_new_tab')}</span>
+        <span id={newTabId} className={styles.srOnly}>
+          {t('substrate.opens_new_tab')}
+        </span>
       </a>
     );
   }
@@ -154,6 +161,7 @@ function PanelButton({ action }: { action: PanelAction }) {
       className={className}
       aria-disabled={unavailable ? true : undefined}
       aria-busy={action.pending ? true : undefined}
+      aria-labelledby={labelId}
       aria-describedby={described}
       onClick={unavailable ? undefined : action.onSelect}
     >

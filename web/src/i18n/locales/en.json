@@ -67,6 +67,7 @@
     "administration": "System administration",
     "choose_project": "Select",
     "select_project": "Select a project",
+    "current_project": "Project: {{name}}",
     "select_project_hint": "Choose a project in the header or from the Projects list.",
     "no_active_swarms": "This project has no accessible active swarms.",
     "swarm": "Swarm",
@@ -242,10 +243,6 @@
   "title": {
     "login": "Brood Management Center",
     "abbr": "Brood"
-  },
-  "splash": {
-    "title": "Brood",
-    "subtitle": "Management Center"
   },
   "login": {
     "username_label": "Username:",
@@ -3114,6 +3111,7 @@
       "fan_in": "fan-in"
     },
     "graph_label": "Run graph",
+    "graph_description": "Each node is a button named by its step, kind and state; the node where the run stands is marked current. Selecting a node shows its details below the graph.",
     "graph_empty": "No graph available"
   },
   "swarm_page": {

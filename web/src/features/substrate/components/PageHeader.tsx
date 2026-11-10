@@ -19,7 +19,7 @@ export function PageHeader({ title, meta = [], actions, headingLevel = 1 }: Page
     <header className={styles.header}>
       <div className={styles.copy}>
         <Heading className={styles.title}>{title}</Heading>
-        {items.length > 0 && (
+        {items.length > 0 ? (
           <p className={styles.meta}>
             {items.map((item, index) => (
               <Fragment key={index}>
@@ -32,6 +32,11 @@ export function PageHeader({ title, meta = [], actions, headingLevel = 1 }: Page
               </Fragment>
             ))}
           </p>
+        ) : (
+          /* Без meta колонка заголовка ниже кнопок действий, и те, прижатые
+           * к её низу, вылезали вверх под плавающую шапку (fixed, 80px при
+           * отступе контента 70px). Пустая строка meta держит высоту (#256). */
+          <p className={styles.meta} aria-hidden="true" style={{ visibility: 'hidden' }} />
         )}
       </div>
       {actions && <div className={styles.actions}>{actions}</div>}

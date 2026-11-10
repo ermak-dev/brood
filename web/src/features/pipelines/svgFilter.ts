@@ -159,6 +159,12 @@ export function svgNodeKind(node: ReactNode): string {
   return match ? match[1] : '';
 }
 
+/** Состояние узла из класса state-<state>; пустая строка, если нет. */
+export function svgNodeState(node: ReactNode): string {
+  const match = nodeClasses(node).match(/(?:^|\s)state-([-\w]+)(?:\s|$)/);
+  return match ? match[1] : '';
+}
+
 const firstText = (node: ReactNode): string => {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);

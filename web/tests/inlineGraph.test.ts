@@ -199,9 +199,10 @@ describe('inline graph component', () => {
     const svg = container.querySelector('svg');
     expect(svg?.getAttribute('role')).not.toBe('img');
     expect(svg?.getAttribute('aria-label')).toBe('Run graph');
+    // #256: состояние — часть имени, не только цвет.
     expect(buttons(container).map((b) => b.getAttribute('aria-label'))).toEqual([
-      'start, start',
-      'ask, human',
+      'start, start, Done',
+      'ask, human, Active',
     ]);
     expect(buttons(container).every((b) => b.getAttribute('tabindex') === '0')).toBe(true);
     await unmount();
@@ -270,7 +271,7 @@ describe('inline graph component', () => {
       createElement(RunGraph, { svg, onSelect: () => {} })
     );
     const label = buttons(container)[0].getAttribute('aria-label');
-    expect(label).toBe('q, quantum');
+    expect(label).toBe('q, quantum, Pending');
     expect(label).not.toContain('pipelines.kind');
     await unmount();
   });
