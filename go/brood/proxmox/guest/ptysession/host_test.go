@@ -40,7 +40,7 @@ func TestPTYFixture(t *testing.T) {
 		var trigger [1]byte
 		_, _ = os.Stdin.Read(trigger[:])
 		if string(initial) == "fixture:flood" {
-			_, _ = os.Stdout.Write([]byte(strings.Repeat("x", 4*1024*1024) + "\r\nfinished"))
+			floodUntilInput()
 		} else {
 			columns, rows, _ := term.GetSize(0)
 			_, _ = fmt.Fprintf(os.Stdout, "size=%dx%d", columns, rows)
@@ -50,6 +50,32 @@ func TestPTYFixture(t *testing.T) {
 	}
 	_, _ = io.Copy(os.Stdout, os.Stdin)
 	os.Exit(0)
+}
+
+// floodUntilInput пишет вывод, пока не придёт следующий байт ввода, и
+// сообщает записанный объём. Длину потока задаёт тест, а не константа:
+// буферы host и сокета (SO_SNDBUF задаёт машина) переполняются при
+// любом размере, а под race VT observer не разбирает лишние мегабайты.
+func floodUntilInput() {
+	stop := make(chan struct{})
+	go func() {
+		var b [1]byte
+		_, _ = os.Stdin.Read(b[:])
+		close(stop)
+	}()
+	chunk := []byte(strings.Repeat("x", 4096))
+	flooded := 0
+	for {
+		select {
+		case <-stop:
+			// Число стоит перед маркером: экран с "finished" содержит его целиком.
+			_, _ = fmt.Fprintf(os.Stdout, "\r\nflooded=%d finished", flooded)
+			return
+		default:
+			n, _ := os.Stdout.Write(chunk)
+			flooded += n
+		}
+	}
 }
 
 func fixture(t *testing.T, initial string) (*Host, string) {
@@ -100,7 +126,8 @@ func mustOK(t *testing.T, r Reply) Reply {
 }
 func awaitScreen(t *testing.T, path, proof, want string) Reply {
 	t.Helper()
-	// Race-инструментация проверяет каждый байт многомегабайтного потока.
+	// Под race VT observer разбирает поток примерно в 10 раз медленнее,
+	// а flood-тест гонит через него сотни KiB.
 	deadline := time.NewTimer(15 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(5 * time.Millisecond)
