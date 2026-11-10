@@ -51,20 +51,27 @@ type pipelineGateJSON struct {
 	Kind     string               `json:"kind"`
 	Options  []pipelineOptionJSON `json:"options"`
 }
+
+// pipelineRunJSON — исполнение роя на старом проводе прогона. Definition —
+// личность снимка, записанная первым запуском (#211), а не текущее
+// определение каталога: новая публикация её не меняет, поэтому страница роя
+// показывает расхождение снимка с каталогом (#218). У снимка без записанной
+// личности поля нет.
 type pipelineRunJSON struct {
-	ID          string             `json:"id"`
-	Name        string             `json:"name"`
-	Status      string             `json:"status"`
-	SwarmID     string             `json:"swarmId"`
-	SwarmName   string             `json:"swarmName"`
-	ProjectID   string             `json:"projectId"`
-	ProjectName string             `json:"projectName"`
-	Owner       string             `json:"owner"`
-	StartedAt   *string            `json:"startedAt"`
-	FinishedAt  *string            `json:"finishedAt,omitempty"`
-	CurrentNode string             `json:"currentNode,omitempty"`
-	Nodes       []pipelineNodeJSON `json:"nodes"`
-	Gate        *pipelineGateJSON  `json:"gate,omitempty"`
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Definition  *swarmDefinitionJSON `json:"definition,omitempty"`
+	Status      string               `json:"status"`
+	SwarmID     string               `json:"swarmId"`
+	SwarmName   string               `json:"swarmName"`
+	ProjectID   string               `json:"projectId"`
+	ProjectName string               `json:"projectName"`
+	Owner       string               `json:"owner"`
+	StartedAt   *string              `json:"startedAt"`
+	FinishedAt  *string              `json:"finishedAt,omitempty"`
+	CurrentNode string               `json:"currentNode,omitempty"`
+	Nodes       []pipelineNodeJSON   `json:"nodes"`
+	Gate        *pipelineGateJSON    `json:"gate,omitempty"`
 }
 
 // legacyRunStatus переводит состояние исполнения роя (#206) в статус
@@ -212,6 +219,9 @@ func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store
 		return pipelineRunJSON{}, err
 	}
 	result := pipelineRunJSON{ID: sw.ID, Name: d.Name, Status: legacyRunStatus(sw.Execution), SwarmID: sw.ID, SwarmName: sw.Name, ProjectID: project.ID, ProjectName: project.Name, Owner: owner.Username, Nodes: []pipelineNodeJSON{}}
+	if sw.DefinitionName != "" {
+		result.Definition = &swarmDefinitionJSON{Name: sw.DefinitionName, Version: sw.DefinitionVersion, Revision: sw.DefinitionRevision}
+	}
 	for _, v := range steps {
 		n := d.Nodes[v.NodeID]
 		row := pipelineNodeJSON{ID: v.NodeID, Sequence: v.Sequence, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName, StartedAt: v.StartedAt, FinishedAt: v.FinishedAt}
