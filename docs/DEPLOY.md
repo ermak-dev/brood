@@ -419,6 +419,7 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only management key |
 | `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |
 | `BROOD_GIT_REMOTES` | необязательные remotes репозиториев проектов для Git gateway: egress сервера и legacy-токены; только Secret сервера, см. «Git remotes» |
+| `BROOD_ACTOR_GIT_DOMAIN` | необязательный домен Git-идентичности акторов (#249): коммиты актора подписаны `brood <актор> <актор@домен>`; DNS-имя в нижнем регистре, без дефолта; без него актор идентичности не получает. Смена домена требует reset акторов, см. «Подтверждение workspace» в `docs/PROXMOX.md` |
 
 Для отдельного backend managed-акторов задаются `BROOD_ACTOR_LLM_URL`
 (строгий HTTPS origin) и `BROOD_ACTOR_LLM_API_KEY`. Необязательная

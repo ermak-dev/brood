@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"brood.dev/go/brood/gitidentity"
 )
 
 // workspaceOriginFile lives next to the secret projection in /run/brood but is
@@ -22,9 +24,12 @@ const originLimit = 1024
 
 // WorkspaceOrigin is the clone source of an actor: both fields empty, or a
 // canonical HTTPS origin with mode gateway (Brood Git gateway) or direct.
+// GitIdentity (#249) is the installation-assigned commit identity, present
+// only with an origin; zero when the installation has none.
 type WorkspaceOrigin struct {
-	Origin string `json:"origin"`
-	Mode   string `json:"mode"`
+	Origin      string               `json:"origin"`
+	Mode        string               `json:"mode"`
+	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
 }
 
 // ValidateWorkspaceOrigin checks the bootstrap pair. It mirrors the server's
@@ -42,8 +47,11 @@ func ValidateWorkspaceOrigin(origin, mode string, hosts []string) error {
 	return errors.New("direct workspace origin host is not an approved guest host")
 }
 
+// checkWorkspaceOrigin treats the identity like the mode: it never stands alone.
 func checkWorkspaceOrigin(o WorkspaceOrigin) error {
 	switch {
+	case o.Origin == "" && !o.GitIdentity.IsZero():
+		return errors.New("workspace Git identity requires an origin")
 	case o.Origin == "" && o.Mode == "":
 		return nil
 	case o.Origin == "" || o.Mode == "":
@@ -52,6 +60,8 @@ func checkWorkspaceOrigin(o WorkspaceOrigin) error {
 		return errors.New("workspace origin mode must be gateway or direct")
 	case !canonicalOrigin(o.Origin):
 		return errors.New("workspace origin must be a canonical HTTPS repository URL")
+	case !o.GitIdentity.IsZero():
+		return o.GitIdentity.Validate()
 	}
 	return nil
 }
@@ -99,20 +109,19 @@ func dnsHostname(host string) bool {
 
 // PublishWorkspaceOrigin stages the bootstrap origin for the app wrapper as
 // root:1000 0440. Only guest root may call it, before the actor starts.
-func PublishWorkspaceOrigin(origin, mode string) error {
+func PublishWorkspaceOrigin(o WorkspaceOrigin) error {
 	if os.Geteuid() != 0 {
 		return errors.New("workspace origin requires guest root")
 	}
 	if err := prepareRunDirectory(); err != nil {
 		return err
 	}
-	return publishWorkspaceOrigin(projectSecretDirectory, origin, mode, 0, 1000)
+	return publishWorkspaceOrigin(projectSecretDirectory, o, 0, 1000)
 }
 
 func originFailure() error { return errors.New("workspace origin projection unavailable or unsafe") }
 
-func publishWorkspaceOrigin(path, origin, mode string, uid, gid int) error {
-	o := WorkspaceOrigin{Origin: origin, Mode: mode}
+func publishWorkspaceOrigin(path string, o WorkspaceOrigin, uid, gid int) error {
 	if err := checkWorkspaceOrigin(o); err != nil {
 		return err
 	}

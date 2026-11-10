@@ -248,7 +248,7 @@ func prepareProjectApp(l appLayout, warn io.Writer) ([]string, error) {
 	origin, err := readWorkspaceOrigin(l.Run, l.RunUID, l.RunGID)
 	if err != nil {
 		fmt.Fprintln(warn, "brood: workspace origin is unavailable; the first-start clone is skipped")
-	} else if err = cloneWorkspace(context.Background(), cloneSpec{Project: l.Project, Home: l.Home, Origin: origin.Origin, Mode: origin.Mode, Gateway: l.Gateway, Timeout: l.CloneTimeout}); err != nil {
+	} else if err = cloneWorkspace(context.Background(), cloneSpec{Project: l.Project, Home: l.Home, Origin: origin.Origin, Mode: origin.Mode, Identity: origin.GitIdentity, Gateway: l.Gateway, Timeout: l.CloneTimeout}); err != nil {
 		fmt.Fprintf(warn, "brood: %s; Claude starts now and the clone is retried on the next start while the workspace is empty\n", err)
 	}
 	bundle, err := readProjectSecrets(l.Run, l.RunUID, l.RunGID)

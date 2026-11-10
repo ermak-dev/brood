@@ -376,3 +376,36 @@ func TestGuestWorkspaceOriginEmpty(t *testing.T) {
 	expectWorkspace(t, "empty after repository", f.serve("GET", workspacePath(plain), nil, bearer(f.token(plain))), "", "")
 	expectWorkspaceDenied(t, "empty actor cookie", f.serve("GET", workspacePath(plain), nil, nil), http.StatusUnauthorized, f)
 }
+
+// FEATURE: Actor Git identity delivered with the workspace origin (#249).
+// SPEC: With BROOD_ACTOR_GIT_DOMAIN set, the workspace response of an actor
+// with an origin carries gitIdentity {name: "brood <actor>", email:
+// "<actor>@<domain>"}; without the setting, or for an actor without origin,
+// the body is exactly {origin, mode} as before. Denied responses stay as they
+// were and never carry the identity.
+func TestGuestWorkspaceGitIdentity(t *testing.T) {
+	f := workspaceSetup(t)
+	clone := workspacePath(f.clone)
+	expectWorkspace(t, "unset domain", f.serve("GET", clone, nil, bearer(f.token(f.clone))), gitTestOrigin, "gateway")
+
+	f.ts.srv.actorGitDomain = "brood.corp.example"
+	w := f.serve("GET", clone, nil, bearer(f.token(f.clone)))
+	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("identity: status=%d header=%v body=%s", w.Code, w.Header(), w.Body.String())
+	}
+	var got map[string]any
+	want := map[string]any{"origin": gitTestOrigin, "mode": "gateway", "gitIdentity": map[string]any{"name": "brood clone", "email": "clone@brood.corp.example"}}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("identity body %s; want %v", w.Body.String(), want)
+	}
+	direct := f.serve("GET", workspacePath(f.direct), nil, bearer(f.token(f.direct)))
+	if err := json.Unmarshal(direct.Body.Bytes(), &got); err != nil || got["gitIdentity"] == nil || got["mode"] != "direct" {
+		t.Fatalf("direct identity body %s", direct.Body.String())
+	}
+
+	// Без origin нет клона, куда писать идентичность: тело прежнее.
+	setProjectRepository(t, f.ts, f.swarm, "")
+	expectWorkspace(t, "no origin with domain", f.serve("GET", clone, nil, bearer(f.token(f.clone))), "", "")
+	setProjectRepository(t, f.ts, f.swarm, gitTestOrigin)
+	expectWorkspaceDenied(t, "wrong token with domain", f.serve("GET", clone, nil, bearer(strings.Repeat("A", 43))), http.StatusUnauthorized, f)
+}

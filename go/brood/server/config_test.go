@@ -3,6 +3,7 @@
 package server
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -139,5 +140,37 @@ func TestConfigAteapi(t *testing.T) {
 		cfg.AteapiCA != values["ATEAPI_CA_FILE"] ||
 		cfg.AteapiEndpoint != values["ATEAPI_ENDPOINT"] {
 		t.Fatalf("ateapi config: %+v", cfg)
+	}
+}
+
+// FEATURE: Installation domain of the actor Git identity (#249).
+// SPEC: BROOD_ACTOR_GIT_DOMAIN is optional and has no default; a value must
+// be a lowercase DNS name, otherwise the server refuses to start naming the
+// setting. Quotes are stripped like every .env value.
+func TestConfigActorGitDomain(t *testing.T) {
+	cfg, err := LoadConfig(func(string) string { return "" })
+	if err != nil || cfg.ActorGitDomain != "" {
+		t.Fatalf("unset domain: %q %v", cfg.ActorGitDomain, err)
+	}
+	cfg, err = LoadConfig(func(k string) string {
+		if k == "BROOD_ACTOR_GIT_DOMAIN" {
+			return "'brood.corp.example'"
+		}
+		return ""
+	})
+	if err != nil || cfg.ActorGitDomain != "brood.corp.example" {
+		t.Fatalf("domain: %q %v", cfg.ActorGitDomain, err)
+	}
+	for _, bad := range []string{"Brood.corp.example", "192.0.2.1", "brood.corp.example.", "brood corp", "https://brood.corp.example", "actor@brood.corp.example"} {
+		_, err := LoadConfig(func(k string) string {
+			if k == "BROOD_ACTOR_GIT_DOMAIN" {
+				return bad
+			}
+			return ""
+		})
+		var ce *ConfigError
+		if !errors.As(err, &ce) || ce.Setting != "BROOD_ACTOR_GIT_DOMAIN" {
+			t.Fatalf("%q accepted or misreported: %v", bad, err)
+		}
 	}
 }

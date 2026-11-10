@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/proxmox/attest"
 	"brood.dev/go/brood/proxmox/guest/sessionctl"
 	"brood.dev/go/brood/proxmox/relay"
@@ -28,6 +29,7 @@ var (
 	attestCommit    = strings.Repeat("ab", 20)
 	attestChallenge = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 	attestOrigin    = "https://git.example.com/group/project"
+	attestIdentity  = gitidentity.Identity{Name: "brood worker2", Email: "worker2@brood.corp.example"}
 )
 
 type attestRecorder struct {
@@ -90,6 +92,12 @@ func TestWorkspaceAttestSignsAfterQuietCheckoutAndSession(t *testing.T) {
 	}
 	if rec.checkout != (sessionctl.CheckoutRequest{Commit: attestCommit, Origin: attestOrigin, Mode: "gateway"}) {
 		t.Fatalf("checkout request %+v", rec.checkout)
+	}
+	// Идентичность bootstrap (#249) едет в helper с тем же запросом.
+	identified := rec.attestor()
+	identified.Origin.GitIdentity = attestIdentity
+	if r := attestCall(identified, attestArgs(nil)); !r.OK || rec.checkout.GitIdentity != attestIdentity {
+		t.Fatalf("identity not passed to checkout: %+v %+v", r, rec.checkout)
 	}
 	if strings.Contains(r.Text, attestToken) {
 		t.Fatal("relay token in the response")
@@ -192,8 +200,12 @@ func TestCheckoutHelperRequest(t *testing.T) {
 		t.Fatal(req, err)
 	}
 	var back sessionctl.CheckoutRequest
-	if json.Unmarshal(req.Arguments, &back) != nil || back.Mode != "direct" || back.Commit != attestCommit {
+	if json.Unmarshal(req.Arguments, &back) != nil || back.Mode != "direct" || back.Commit != attestCommit || strings.Contains(string(req.Arguments), "gitIdentity") {
 		t.Fatalf("%s", req.Arguments)
+	}
+	req, err = checkoutHelperRequest(sessionctl.CheckoutRequest{Commit: attestCommit, Origin: attestOrigin, Mode: "direct", GitIdentity: attestIdentity})
+	if err != nil || json.Unmarshal(req.Arguments, &back) != nil || back.GitIdentity != attestIdentity {
+		t.Fatalf("identity lost: %s %v", req.Arguments, err)
 	}
 	facts, err := checkoutFacts(relay.SessionResponse{OK: true, Outcome: "complete", Text: `{"commit":"` + attestCommit + `","fetched":true}`})
 	if err != nil || facts != (sessionctl.CheckoutFacts{Commit: attestCommit, Fetched: true}) {

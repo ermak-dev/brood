@@ -21,6 +21,7 @@ import (
 	"sync"
 	"testing"
 
+	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -89,38 +90,54 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 			t.Fatalf("fetch %+v: %+v %v", want, got, err)
 		}
 	}
+	// Идентичность (#249): необязательный объект ровно {name, email} при origin.
+	withIdentity := `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example"}}`
+	server.serve(withIdentity, http.StatusOK)
+	wantIdentity := WorkspaceOrigin{Origin: cloneTestOrigin, Mode: "gateway", GitIdentity: gitidentity.Identity{Name: "brood worker2", Email: "worker2@brood.corp.example"}}
+	if got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts); err != nil || got != wantIdentity {
+		t.Fatalf("fetch with identity: %+v %v", got, err)
+	}
 	bad := map[string]string{
-		"origin without mode": workspaceOriginJSON(cloneTestOrigin, ""),
-		"mode without origin": workspaceOriginJSON("", "gateway"),
-		"unknown mode":        workspaceOriginJSON(cloneTestOrigin, "ssh"),
-		"plain HTTP":          workspaceOriginJSON("http://git.example.org/repo.git", "gateway"),
-		"userinfo":            workspaceOriginJSON("https://private-token@git.example.org/repo.git", "gateway"),
-		"query":               workspaceOriginJSON("https://git.example.org/repo.git?private-token", "gateway"),
-		"fragment":            workspaceOriginJSON("https://git.example.org/repo.git#private-token", "gateway"),
-		"empty fragment":      workspaceOriginJSON("https://git.example.org/repo.git#", "gateway"),
-		"port":                workspaceOriginJSON("https://git.example.org:8443/repo.git", "gateway"),
-		"IP literal":          workspaceOriginJSON("https://192.0.2.1/repo.git", "gateway"),
-		"IPv6 literal":        workspaceOriginJSON("https://[2001:db8::1]/repo.git", "gateway"),
-		"numeric host":        workspaceOriginJSON("https://1.2.3/repo.git", "gateway"),
-		"uppercase host":      workspaceOriginJSON("https://Git.example.org/repo.git", "gateway"),
-		"trailing dot":        workspaceOriginJSON("https://git.example.org./repo.git", "gateway"),
-		"trailing slash":      workspaceOriginJSON("https://git.example.org/repo.git/", "gateway"),
-		"empty path":          workspaceOriginJSON("https://git.example.org", "gateway"),
-		"root path":           workspaceOriginJSON("https://git.example.org/", "gateway"),
-		"control character":   workspaceOriginJSON("https://git.example.org/re\tpo.git", "gateway"),
-		"too long":            workspaceOriginJSON("https://git.example.org/"+strings.Repeat("a", 1024), "gateway"),
-		"unapproved direct":   workspaceOriginJSON("https://git.example.org/repo.git", "direct"),
-		"unknown field":       `{"origin":"","mode":"","token":"private-token"}`,
-		"missing mode":        `{"origin":""}`,
-		"missing origin":      `{"mode":""}`,
-		"empty object":        `{}`,
-		"null field":          `{"origin":null,"mode":""}`,
-		"wrong type":          `{"origin":1,"mode":""}`,
-		"trailing document":   workspaceOriginJSON("", "") + `{"private-token":1}`,
-		"array":               `["private-token"]`,
-		"not JSON":            `private-token`,
-		"empty body":          ``,
-		"oversized":           `{"origin":"","mode":""}` + strings.Repeat(" ", 4<<10),
+		"identity without origin": `{"origin":"","mode":"","gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example"}}`,
+		"identity angle":          `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":"brood <worker2>","email":"worker2@brood.corp.example"}}`,
+		"identity bad email":      `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":"brood worker2","email":"private-token"}}`,
+		"identity extra field":    `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example","token":"private-token"}}`,
+		"identity missing email":  `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":"brood worker2"}}`,
+		"identity null":           `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":null}`,
+		"identity null field":     `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":null,"email":"worker2@brood.corp.example"}}`,
+		"identity string":         `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":"brood worker2 <worker2@brood.corp.example>"}`,
+		"identity twice":          `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example"},"gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example"}}`,
+		"origin without mode":     workspaceOriginJSON(cloneTestOrigin, ""),
+		"mode without origin":     workspaceOriginJSON("", "gateway"),
+		"unknown mode":            workspaceOriginJSON(cloneTestOrigin, "ssh"),
+		"plain HTTP":              workspaceOriginJSON("http://git.example.org/repo.git", "gateway"),
+		"userinfo":                workspaceOriginJSON("https://private-token@git.example.org/repo.git", "gateway"),
+		"query":                   workspaceOriginJSON("https://git.example.org/repo.git?private-token", "gateway"),
+		"fragment":                workspaceOriginJSON("https://git.example.org/repo.git#private-token", "gateway"),
+		"empty fragment":          workspaceOriginJSON("https://git.example.org/repo.git#", "gateway"),
+		"port":                    workspaceOriginJSON("https://git.example.org:8443/repo.git", "gateway"),
+		"IP literal":              workspaceOriginJSON("https://192.0.2.1/repo.git", "gateway"),
+		"IPv6 literal":            workspaceOriginJSON("https://[2001:db8::1]/repo.git", "gateway"),
+		"numeric host":            workspaceOriginJSON("https://1.2.3/repo.git", "gateway"),
+		"uppercase host":          workspaceOriginJSON("https://Git.example.org/repo.git", "gateway"),
+		"trailing dot":            workspaceOriginJSON("https://git.example.org./repo.git", "gateway"),
+		"trailing slash":          workspaceOriginJSON("https://git.example.org/repo.git/", "gateway"),
+		"empty path":              workspaceOriginJSON("https://git.example.org", "gateway"),
+		"root path":               workspaceOriginJSON("https://git.example.org/", "gateway"),
+		"control character":       workspaceOriginJSON("https://git.example.org/re\tpo.git", "gateway"),
+		"too long":                workspaceOriginJSON("https://git.example.org/"+strings.Repeat("a", 1024), "gateway"),
+		"unapproved direct":       workspaceOriginJSON("https://git.example.org/repo.git", "direct"),
+		"unknown field":           `{"origin":"","mode":"","token":"private-token"}`,
+		"missing mode":            `{"origin":""}`,
+		"missing origin":          `{"mode":""}`,
+		"empty object":            `{}`,
+		"null field":              `{"origin":null,"mode":""}`,
+		"wrong type":              `{"origin":1,"mode":""}`,
+		"trailing document":       workspaceOriginJSON("", "") + `{"private-token":1}`,
+		"array":                   `["private-token"]`,
+		"not JSON":                `private-token`,
+		"empty body":              ``,
+		"oversized":               `{"origin":"","mode":""}` + strings.Repeat(" ", 4<<10),
 	}
 	for name, body := range bad {
 		t.Run(name, func(t *testing.T) {

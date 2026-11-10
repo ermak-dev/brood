@@ -956,6 +956,32 @@ class GoDeploymentTests(unittest.TestCase):
             env = {e["name"] for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
             self.assertEqual(set(settings) & env, set(expected))
 
+    # FEATURE: BROOD_ACTOR_GIT_DOMAIN доходит до сервера (#249).
+    # SPEC: домен — настройка установки без дефолта; выкладка проверяет форму
+    # (DNS-имя в нижнем регистре) до сборки, передаёт его через Secret и
+    # secretKeyRef, как остальные настройки; снятие убирает ключ и env.
+    def test_actor_git_domain_reaches_server_env_and_is_validated(self):
+        settings = {"BROOD_ACTOR_GIT_DOMAIN": "brood.corp.example"}
+        configured = self.capture_release(settings)
+        secret = next(o for o in configured if o["metadata"]["name"] == "brood-go-env")
+        self.assertEqual(base64.b64decode(secret["data"]["BROOD_ACTOR_GIT_DOMAIN"]).decode(), "brood.corp.example")
+        deployment = next(o for o in configured if o["kind"] == "Deployment")
+        env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["BROOD_ACTOR_GIT_DOMAIN"], {"name": "BROOD_ACTOR_GIT_DOMAIN", "valueFrom": {
+            "secretKeyRef": {"name": "brood-go-env", "key": "BROOD_ACTOR_GIT_DOMAIN"}}})
+        removed = self.capture_release({})
+        self.assertNotIn("BROOD_ACTOR_GIT_DOMAIN", next(o for o in removed if o["metadata"]["name"] == "brood-go-env")["data"])
+        self.assertNotIn("BROOD_ACTOR_GIT_DOMAIN", {e["name"] for e in next(
+            o for o in removed if o["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"][0]["env"]})
+        for bad in ("Brood.corp.example", "192.0.2.1", "brood.corp.example.", "actor@brood.corp.example",
+                    "https://brood.corp.example", "brood corp", "a" * 64 + ".example"):
+            with self.subTest(domain=bad):
+                deploy = self.deploy({"BROOD_ACTOR_GIT_DOMAIN": bad})
+                with self.assertRaisesRegex(RuntimeError, "BROOD_ACTOR_GIT_DOMAIN") as raised:
+                    deploy.run()
+                self.assertNotIn(bad, str(raised.exception))
+                deploy.cluster.shell.output.assert_not_called()
+
     def test_config_only_does_not_resolve_or_open_api_egress(self):
         with patch.object(go_server.socket, "getaddrinfo", side_effect=AssertionError("unexpected DNS")):
             objects = self.capture_release({"BROOD_PROXMOX_POOLS": '{"lab":{"endpoint":"https://pve.invalid:8006"}}',

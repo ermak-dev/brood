@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"brood.dev/go/brood/gitidentity"
 )
 
 const workspaceRuntimePrefix = "/api/proxmox/workspace/"
@@ -13,10 +15,12 @@ const workspaceRuntimePrefix = "/api/proxmox/workspace/"
 func publicWorkspacePath(path string) bool { return strings.HasPrefix(path, workspaceRuntimePrefix) }
 
 // workspaceOrigin — ответ /api/proxmox/workspace: origin актора и его режим на
-// этот запрос, либо оба пустые.
+// этот запрос, либо оба пустые. GitIdentity (#249) идёт только с origin и
+// только при настроенном BROOD_ACTOR_GIT_DOMAIN: без клона ей некуда писаться.
 type workspaceOrigin struct {
-	Origin string `json:"origin"`
-	Mode   string `json:"mode"`
+	Origin      string               `json:"origin"`
+	Mode        string               `json:"mode"`
+	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
 }
 
 // serveGuestWorkspace отдаёт root supervisor гостя источник клона workspace
@@ -40,6 +44,14 @@ func (s *Server) serveGuestWorkspace(w http.ResponseWriter, r *http.Request) {
 	body := workspaceOrigin{}
 	if mode != "" {
 		body = workspaceOrigin{Origin: g.actor.Origin, Mode: mode}
+		if s.actorGitDomain != "" {
+			// Имя актора проверено при создании; отказ здесь — нарушенный
+			// инвариант, и он виден, а не молча оставляет актора без идентичности.
+			if body.GitIdentity, err = gitidentity.Actor(g.actor.Name, s.actorGitDomain); err != nil {
+				writeDetail(w, 503, "workspace origin delivery unavailable")
+				return
+			}
+		}
 	}
 	data, err := json.Marshal(body)
 	if err != nil {

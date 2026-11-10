@@ -217,7 +217,7 @@ func TestProjectAppPreparesUnattendedClaude(t *testing.T) {
 	if err := publishProjectSecrets(run, projectsecret.Bundle{}, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
-	if err := publishWorkspaceOrigin(run, "", "", os.Geteuid(), os.Getegid()); err != nil {
+	if err := publishWorkspaceOrigin(run, WorkspaceOrigin{}, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
 	var warnings bytes.Buffer

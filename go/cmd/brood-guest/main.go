@@ -31,8 +31,9 @@ import (
 type config struct {
 	hosts []string
 	relay relay.ClientConfig
-	// origin и originMode не секретны: клон workspace (#147).
-	origin, originMode string
+	// workspace не секретен: origin и режим клона (#147) и Git-идентичность
+	// актора (#249), как их отдал сервер.
+	workspace guest.WorkspaceOrigin
 	// stage — стадия supervisor (#155): bootstrap качает артефакты и
 	// exec-ается в runtime; runtime сразу ведёт сервисы.
 	stage string
@@ -246,7 +247,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 			boundedClose(network)
 			return errors.New("guest workspace origin initialization failed")
 		}
-		c.origin, c.originMode = origin.Origin, origin.Mode
+		c.workspace = origin
 	}
 	if d.broker != nil {
 		broker, err := d.broker(ctx)
@@ -270,7 +271,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		go func() { model.Wait(); cancel() }()
 	}
 	// Только gateway-режим открывает 8318: direct-клон идёт через egress proxy.
-	if d.git != nil && c.originMode == "gateway" {
+	if d.git != nil && c.workspace.Mode == "gateway" {
 		git, err := d.git(ctx, c.relay)
 		if err != nil {
 			cancel()
@@ -287,7 +288,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		return errors.New("guest policy or actor initialization failed")
 	}
 	// Подпись — от bootstrap-идентичности root, остановка — через сам runtime.
-	attestor := guest.NewWorkspaceAttestor(cfg, guest.WorkspaceOrigin{Origin: c.origin, Mode: c.originMode}, runtime.Quiesce)
+	attestor := guest.NewWorkspaceAttestor(cfg, c.workspace, runtime.Quiesce)
 	c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
 		return guest.NewSupervisorSessionHandler(connection, refresh, attestor)
 	}

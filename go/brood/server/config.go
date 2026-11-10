@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"brood.dev/go/brood/gitidentity"
 )
 
 // Значения по умолчанию: адрес слушателя и путь базы рядом с сервером.
@@ -93,6 +95,10 @@ type Config struct {
 	ActorLLMURL    string
 	ActorLLMAPIKey string `json:"-"`
 	ActorLLMCAPEM  []byte `json:"-"`
+	// ActorGitDomain — домен адреса Git-идентичности акторов
+	// (BROOD_ACTOR_GIT_DOMAIN, #249): свойство установки, без дефолта.
+	// Пусто — гость идентичность не получает и не пишет.
+	ActorGitDomain string
 	// artifactsDir — каталог артефактов бутстрапа гостя (BROOD_ARTIFACTS_DIR):
 	// свойство машины, без дефолта. Пусто — доставка артефактов не настроена.
 	artifactsDir string
@@ -149,6 +155,7 @@ func LoadConfig(get getenv) (Config, error) {
 		CLIProxyAPIKey:        envGet(get, "CLIPROXY_API_KEY"),
 		ActorLLMURL:           envGet(get, "BROOD_ACTOR_LLM_URL"),
 		ActorLLMAPIKey:        envGet(get, "BROOD_ACTOR_LLM_API_KEY"),
+		ActorGitDomain:        envGet(get, "BROOD_ACTOR_GIT_DOMAIN"),
 		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 	}
@@ -212,6 +219,9 @@ func (cfg Config) validateAdapters() error {
 	}
 	if len(cfg.CLIProxyCAPEM) > 0 && !x509.NewCertPool().AppendCertsFromPEM(cfg.CLIProxyCAPEM) {
 		return &ConfigError{Setting: "CLIPROXY_CA_PEM_B64", Detail: "must encode valid PEM trust certificates"}
+	}
+	if cfg.ActorGitDomain != "" && !gitidentity.ValidDomain(cfg.ActorGitDomain) {
+		return &ConfigError{Setting: "BROOD_ACTOR_GIT_DOMAIN", Detail: "must be a lowercase DNS name"}
 	}
 	if err := cfg.validateRegistry(); err != nil {
 		return err

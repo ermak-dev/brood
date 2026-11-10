@@ -53,6 +53,9 @@ type Server struct {
 
 	// artifactsDir — каталог доставки артефактов бутстрапа гостя.
 	artifactsDir string
+	// actorGitDomain — домен Git-идентичности акторов (#249); пусто —
+	// идентичность гостю не отдаётся.
+	actorGitDomain string
 
 	managedLLM  http.Handler
 	adminModels *adminModelClient
@@ -107,7 +110,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("actor step recovery failed")
 	}
-	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir}
+	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain}
 	srv.steps = newStepDispatcher(srv)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {

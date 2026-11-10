@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/projectsecret"
 )
 
@@ -331,9 +332,67 @@ func TestCloneRoutesGatewayLocallyAndDirectThroughEgressProxy(t *testing.T) {
 	}
 }
 
+var cloneTestIdentity = gitidentity.Identity{Name: "brood worker2", Email: "worker2@brood.corp.example"}
+
+// SPEC (#249): the clone records the server-assigned identity in the staged
+// clone's own .git/config, after brood.origin and before publication; without
+// an identity nothing else is written. HOME is never configured.
+func TestCloneRecordsActorGitIdentity(t *testing.T) {
+	for _, identity := range []gitidentity.Identity{cloneTestIdentity, {}} {
+		project, home := privateTemp(t), privateTemp(t)
+		var calls [][]string
+		git := func(_ context.Context, env []string, args ...string) error {
+			calls = append(calls, args)
+			if slices.Contains(args, "clone") {
+				return os.MkdirAll(filepath.Join(cloneTestDestination(t, args, project, home), ".git"), 0700)
+			}
+			return nil
+		}
+		spec := cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Mode: "gateway", Gateway: "http://127.0.0.1:8318/origin.git", Timeout: time.Second, Git: git, Identity: identity}
+		if err := cloneWorkspace(context.Background(), spec); err != nil {
+			t.Fatal(err)
+		}
+		if identity.IsZero() {
+			if len(calls) != 2 {
+				t.Fatalf("without identity: %q", calls)
+			}
+			continue
+		}
+		if len(calls) != 4 {
+			t.Fatalf("with identity: %q", calls)
+		}
+		destination := calls[0][len(calls[0])-1]
+		for i, want := range [][]string{{"-C", destination, "config", "user.name", identity.Name}, {"-C", destination, "config", "user.email", identity.Email}} {
+			got := calls[2+i]
+			if !slices.Equal(got[len(got)-5:], want) || slices.Contains(got, project) || slices.Contains(got, "--global") {
+				t.Fatalf("identity config %d: %q", i, got)
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(home, ".gitconfig")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("identity written to home")
+		}
+	}
+	// Реальный Git: ключи оказываются в .git/config опубликованного клона.
+	fixture := newGitRemoteFixture(t)
+	project, home := privateTemp(t), privateTemp(t)
+	spec := cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Mode: "gateway", Gateway: fixture.gateway, Timeout: 30 * time.Second, Identity: cloneTestIdentity}
+	if err := cloneWorkspace(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if got := cloneTestGit(t, project, "config", "--file", filepath.Join(project, ".git/config"), "--get", "user.name"); got != cloneTestIdentity.Name {
+		t.Fatalf("user.name %q", got)
+	}
+	if got := cloneTestGit(t, project, "config", "--file", filepath.Join(project, ".git/config"), "--get", "user.email"); got != cloneTestIdentity.Email {
+		t.Fatalf("user.email %q", got)
+	}
+}
+
 func TestWorkspaceOriginProjection(t *testing.T) {
 	dir := privateTemp(t)
-	if err := publishWorkspaceOrigin(dir, cloneTestOrigin, "gateway", os.Geteuid(), os.Getegid()); err != nil {
+	publish := func(origin, mode string) error {
+		return publishWorkspaceOrigin(dir, WorkspaceOrigin{Origin: origin, Mode: mode}, os.Geteuid(), os.Getegid())
+	}
+	if err := publish(cloneTestOrigin, "gateway"); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Lstat(filepath.Join(dir, workspaceOriginFile))
@@ -341,17 +400,34 @@ func TestWorkspaceOriginProjection(t *testing.T) {
 		t.Fatalf("projection mode: %v %v", info, err)
 	}
 	got, err := readWorkspaceOrigin(dir, os.Geteuid(), os.Getegid())
-	if err != nil || got.Origin != cloneTestOrigin || got.Mode != "gateway" {
+	if err != nil || got != (WorkspaceOrigin{Origin: cloneTestOrigin, Mode: "gateway"}) {
 		t.Fatalf("read back: %+v %v", got, err)
 	}
-	if err := publishWorkspaceOrigin(dir, "", "", os.Geteuid(), os.Getegid()); err != nil {
+	// Идентичность (#249) едет в той же проекции и читается обратно целиком.
+	identified := WorkspaceOrigin{Origin: cloneTestOrigin, Mode: "gateway", GitIdentity: cloneTestIdentity}
+	if err := publishWorkspaceOrigin(dir, identified, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
-	if got, err = readWorkspaceOrigin(dir, os.Geteuid(), os.Getegid()); err != nil || got.Origin != "" || got.Mode != "" {
+	if got, err = readWorkspaceOrigin(dir, os.Geteuid(), os.Getegid()); err != nil || got != identified {
+		t.Fatalf("identity read back: %+v %v", got, err)
+	}
+	for _, invalid := range []WorkspaceOrigin{
+		{GitIdentity: cloneTestIdentity},
+		{Origin: cloneTestOrigin, Mode: "gateway", GitIdentity: gitidentity.Identity{Name: "brood <x>", Email: cloneTestIdentity.Email}},
+		{Origin: cloneTestOrigin, Mode: "gateway", GitIdentity: gitidentity.Identity{Name: cloneTestIdentity.Name}},
+	} {
+		if err := publishWorkspaceOrigin(dir, invalid, os.Geteuid(), os.Getegid()); err == nil {
+			t.Errorf("invalid identity published: %+v", invalid)
+		}
+	}
+	if err := publish("", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = readWorkspaceOrigin(dir, os.Geteuid(), os.Getegid()); err != nil || got != (WorkspaceOrigin{}) {
 		t.Fatalf("cleared origin: %+v %v", got, err)
 	}
 	for _, pair := range [][2]string{{cloneTestOrigin, ""}, {"", "direct"}, {"http://git.example.org/repo.git", "gateway"}, {cloneTestOrigin, "ssh"}} {
-		if err := publishWorkspaceOrigin(dir, pair[0], pair[1], os.Geteuid(), os.Getegid()); err == nil {
+		if err := publish(pair[0], pair[1]); err == nil {
 			t.Errorf("invalid pair published: %q", pair)
 		}
 	}
@@ -363,7 +439,7 @@ func TestWorkspaceOriginProjection(t *testing.T) {
 	}
 	os.Remove(path)
 	os.Symlink(filepath.Join(t.TempDir(), "target"), path)
-	if err := publishWorkspaceOrigin(dir, cloneTestOrigin, "gateway", os.Geteuid(), os.Getegid()); err == nil {
+	if err := publishWorkspaceOrigin(dir, WorkspaceOrigin{Origin: cloneTestOrigin, Mode: "gateway"}, os.Geteuid(), os.Getegid()); err == nil {
 		t.Fatal("projection symlink replaced")
 	}
 	if _, err := readWorkspaceOrigin(dir, os.Geteuid(), os.Getegid()); err == nil {
@@ -378,7 +454,7 @@ func TestProjectAppClonesBeforeApplyingFileSecrets(t *testing.T) {
 	if err := publishProjectSecrets(run, bundle, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
-	if err := publishWorkspaceOrigin(run, cloneTestOrigin, "gateway", os.Geteuid(), os.Getegid()); err != nil {
+	if err := publishWorkspaceOrigin(run, WorkspaceOrigin{Origin: cloneTestOrigin, Mode: "gateway"}, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
 	layout := appLayout{Project: project, Home: home, Run: run, RunUID: os.Geteuid(), RunGID: os.Getegid(), Gateway: f.gateway, CloneTimeout: 30 * time.Second}
@@ -404,7 +480,7 @@ func TestProjectAppStartsWithEmptyWorkspaceAfterCloneFailure(t *testing.T) {
 	if err := publishProjectSecrets(run, bundle, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
-	if err := publishWorkspaceOrigin(run, cloneTestOrigin, "gateway", os.Geteuid(), os.Getegid()); err != nil {
+	if err := publishWorkspaceOrigin(run, WorkspaceOrigin{Origin: cloneTestOrigin, Mode: "gateway"}, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
 	layout := appLayout{Project: project, Home: home, Run: run, RunUID: os.Geteuid(), RunGID: os.Getegid(), Gateway: deadGateway(t), CloneTimeout: 30 * time.Second}

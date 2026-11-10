@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -254,7 +255,7 @@ func (e *workspaceEngine) clean(ctx context.Context) error {
 // repository rejects indirection and executable Git configuration before status
 // or checkout. No origin, credential helper, network, or bootstrap is invoked.
 func (e *workspaceEngine) repository(ctx context.Context) error {
-	if err := repositoryLayout(ctx, e.root, e.git, true, nil); err != nil {
+	if err := repositoryLayout(ctx, e.root, e.git, true, nil, gitidentity.Identity{}); err != nil {
 		return err
 	}
 	return e.stream(ctx, indexArgs, refuseGitlinks)
@@ -305,8 +306,10 @@ func scanIndex(r *bufio.Reader, limit int) error {
 // repositoryLayout holds the checks shared by workspace operations and the
 // pinned checkout. wholeTree walks the clone for the file budget; otherwise
 // only .git is walked, which is what metadata safety needs. indirect extends
-// the refused metadata names.
-func repositoryLayout(ctx context.Context, workspace string, git func(context.Context, ...string) (string, error), wholeTree bool, indirect []string) error {
+// the refused metadata names. A nonzero identity is the installation's (#249):
+// recorded user keys must then repeat it; workspace operations pass zero and
+// keep the key allowlist of #125, which treats the user keys as data.
+func repositoryLayout(ctx context.Context, workspace string, git func(context.Context, ...string) (string, error), wholeTree bool, indirect []string, identity gitidentity.Identity) error {
 	root, err := openSafe(workspace, true)
 	if err != nil {
 		return errors.New("fixed workspace is unavailable or unsafe")
@@ -342,9 +345,12 @@ func repositoryLayout(ctx context.Context, workspace string, git func(context.Co
 		if entry == "" {
 			continue
 		}
-		key, _, ok := strings.Cut(entry, "\n")
+		key, value, ok := strings.Cut(entry, "\n")
 		if !ok || !workspaceConfigKey(key) {
 			return errors.New("unsafe or unsupported repository Git configuration")
+		}
+		if expected, named := identityValue(identity, key); named && value != expected {
+			return errors.New("repository Git identity differs from the installation identity of the actor; remove user.name and user.email from .git/config or reset the workspace")
 		}
 	}
 	top, err := git(ctx, "rev-parse", "--show-toplevel")
@@ -401,8 +407,23 @@ func workspaceWalk(ctx context.Context, path string, metadata bool, depth int, f
 	}
 }
 
+// identityValue names the expected value of a user key when an identity is
+// known; the second result is false for other keys or without identity.
+func identityValue(identity gitidentity.Identity, key string) (string, bool) {
+	switch {
+	case identity.IsZero():
+		return "", false
+	case key == "user.name":
+		return identity.Name, true
+	case key == "user.email":
+		return identity.Email, true
+	}
+	return "", false
+}
+
 // brood.origin — канонический origin, записанный первым клоном (#147); это
-// данные, а не исполняемая настройка Git.
+// данные, а не исполняемая настройка Git. user.name и user.email — тоже
+// данные: значение проверяет только checkout, знающий идентичность (#249).
 func workspaceConfigKey(key string) bool {
 	switch key {
 	case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode", "remote.origin.url", "remote.origin.fetch", "user.name", "user.email", "brood.origin":
