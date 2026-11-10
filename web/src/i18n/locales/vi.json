@@ -3249,5 +3249,64 @@
     "read_only": "Chỉ chủ sở hữu và người chỉnh sửa của bầy đang hoạt động mới có thể trả lời.",
     "cancelled_hint": "Đã đóng mà không có câu trả lời.",
     "unknown_kind": "Phiên bản bảng điều khiển này không thể trả lời loại yêu cầu này."
+  },
+  "swarm_roles": {
+    "title": "Vai trò",
+    "hint": "Mỗi nút tác nhân của đồ thị đặt tên một vai trò. Để khởi chạy, mọi vai trò của đồ thị phải được gắn với một tác nhân managed đang chạy của bầy này.",
+    "graph_pinned": "Vai trò của bản chụp {{name}}, phiên bản {{version}}.",
+    "graph_definition": "Vai trò của {{name}}, phiên bản {{version}}, được chọn trong hộp thoại khởi chạy. Lần khởi chạy đầu tiên sẽ ghim định nghĩa này.",
+    "graph_none": "Chưa có đồ thị. Vai trò của một định nghĩa sẽ hiện ở đây khi nó được chọn trong hộp thoại khởi chạy.",
+    "empty": "Đồ thị không có vai trò nào và chưa có vai trò nào được gắn.",
+    "empty_no_graph": "Chưa có vai trò nào được gắn.",
+    "busy": "Khi bầy đang chạy hoặc chờ câu trả lời, các liên kết không thay đổi. Hãy dừng bầy để thay đổi chúng.",
+    "read_only": "Chỉ chủ sở hữu và người chỉnh sửa của bầy đang hoạt động mới có thể gắn vai trò.",
+    "not_in_graph": "không có trong đồ thị",
+    "actor": "Tác nhân",
+    "actor_none": "chưa gắn",
+    "actor_hidden": "một tác nhân ngoài bầy này",
+    "actor_gone": "tác nhân không còn tồn tại",
+    "states": {
+      "ready": "Sẵn sàng",
+      "unbound": "Chưa gắn",
+      "stale": "Đã cũ",
+      "inactive": "Tác nhân không chạy",
+      "foreign": "Tác nhân ngoài bầy",
+      "missing": "Thiếu tác nhân"
+    },
+    "state_hints": {
+      "ready": "Các bước của vai trò này được giao cho tác nhân của nó.",
+      "unbound": "Chưa có tác nhân nào giữ vai trò này; khởi chạy sẽ bị từ chối cho đến khi có.",
+      "stale": "Tác nhân đã được tạo lại sau khi gắn. Hãy gắn lại vai trò để nhận phiên bản mới của nó.",
+      "inactive": "Tác nhân không chạy hoặc không được định chạy. Hãy khởi động nó hoặc gắn tác nhân khác.",
+      "foreign": "Tác nhân đã rời bầy này hoặc atespace của nó. Hãy gắn một tác nhân của bầy này.",
+      "missing": "Tác nhân được gắn không còn tồn tại. Hãy gắn tác nhân khác."
+    },
+    "phases": {
+      "provisioning": "đang khởi động",
+      "running": "đang chạy"
+    },
+    "choose": "Tác nhân cho vai trò {{role}}",
+    "choose_placeholder": "Chọn tác nhân",
+    "actor_option": "{{name}} ({{phase}})",
+    "actors_hint": "Chỉ tác nhân managed của bầy này đang chạy hoặc đang khởi động mới nhận được vai trò.",
+    "actors_none": "Không có tác nhân managed nào của bầy này đang chạy hoặc đang khởi động.",
+    "actors_link": "Tạo hoặc khởi động một tác nhân trên trang Tác nhân",
+    "actors_error": "Không đọc được các tác nhân của bầy này: {{reason}}",
+    "bind": "Gắn",
+    "rebind": "Gắn lại",
+    "unbind": "Gỡ",
+    "bind_role": "Gắn vai trò {{role}}",
+    "rebind_role": "Gắn lại vai trò {{role}}",
+    "unbind_role": "Gỡ liên kết vai trò {{role}}",
+    "bound": "Vai trò {{role}} đã được gắn với {{actor}}.",
+    "unbound_done": "Đã gỡ liên kết vai trò {{role}}.",
+    "refused": "Bị từ chối: {{reason}}",
+    "start": {
+      "checking": "Đang kiểm tra các vai trò của đồ thị.",
+      "ready": "Mọi vai trò của đồ thị đều đã được gắn với một tác nhân đang chạy của bầy này.",
+      "unready": "Khởi chạy sẽ bị từ chối cho đến khi mọi vai trò của đồ thị được gắn với một tác nhân đang chạy của bầy này. Chưa sẵn sàng:",
+      "where": "Gắn vai trò trong phần Vai trò của trang bầy; phần đó hiển thị vai trò của định nghĩa được chọn ở đây.",
+      "failed": "Không kiểm tra được các vai trò: {{reason}}"
+    }
   }
 }

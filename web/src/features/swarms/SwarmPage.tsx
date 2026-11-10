@@ -26,6 +26,7 @@ import { nodeRequest } from './requestState';
 import { RequestCard, RequestInbox } from './SwarmRequests';
 import { useSwarmRequests } from './useSwarmRequests';
 import { SnapshotFacts, SwarmExecutionControl } from './SwarmControls';
+import { SwarmRoles } from './SwarmRoles';
 import { executionAction, snapshotIdentity } from './swarmControl';
 import {
   executionTone,
@@ -67,6 +68,8 @@ function SwarmScreen({ id }: { id: string }) {
   const loadGraph = useCallback(() => pipelinesApi.getRunGraph(id), [id]);
   const graph = useResource(run ? loadGraph : null);
   const [chosen, setChosen] = useState<string>();
+  // Определение, выбранное в диалоге первого запуска: его роли — в блоке ролей.
+  const [startDefinition, setStartDefinition] = useState('');
   // Запросы оператору (#216). Ответ узловому запросу продвигает граф;
   // ответ, данный у узла, оставляет выбор на нём, рядом с подтверждением.
   const inbox = useSwarmRequests(id, swarm.data, (answered, place) => {
@@ -122,6 +125,7 @@ function SwarmScreen({ id }: { id: string }) {
             changed={async () => {
               await Promise.all([execution.refresh(), graph.refresh(), inbox.refresh()]);
             }}
+            chose={setStartDefinition}
           />
         )
       }
@@ -139,6 +143,13 @@ function SwarmScreen({ id }: { id: string }) {
       gateNode={asked?.nodeId}
       gate={asked && <RequestCard key={asked.id} model={inbox} request={asked} variant="node" />}
       requests={<RequestInbox model={inbox} onSelectNode={setChosen} />}
+      roles={
+        <SwarmRoles
+          swarm={data}
+          run={execution.data ? run : undefined}
+          definition={startDefinition}
+        />
+      }
       management={
         <SwarmManagement
           swarm={data}
@@ -178,6 +189,8 @@ export interface SwarmViewProps {
   gate?: ReactNode;
   /** Инбокс запросов оператору: под состояниями, выше графа. */
   requests?: ReactNode;
+  /** Роли графа и их акторы (#241): под инбоксом, выше графа. */
+  roles?: ReactNode;
   /** Доступ и жизненный цикл: в конце страницы, после работы роя. */
   management?: ReactNode;
 }
@@ -204,6 +217,7 @@ export function SwarmView({
   gateNode,
   gate,
   requests,
+  roles,
   management,
 }: SwarmViewProps) {
   const { t } = useTranslation();
@@ -233,6 +247,7 @@ export function SwarmView({
         </StateCard>
       </div>
       {requests}
+      {roles}
       {run && (
         <>
           <Section

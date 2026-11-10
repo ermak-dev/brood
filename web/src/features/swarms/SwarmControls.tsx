@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -30,6 +31,7 @@ import {
   snapshotIdentity,
   type ExecutionAction,
 } from './swarmControl';
+import { StartRolesNote } from './SwarmRoles';
 import styles from '@/features/substrate/substrate.module.scss';
 import local from './SwarmControls.module.scss';
 
@@ -72,19 +74,23 @@ type Dialog = { action: ExecutionAction; run: PipelineRun | null; session: numbe
  * диалог возвращает ей, не теряется. Открытый диалог помнит действие, с
  * которым его открыли: перечитанное состояние не подменяет его посреди
  * подтверждения, а устаревшее действие сервер отвергнет с причиной. Каждое
- * открытие — новый диалог (session): выбор и отказ прошлого не переживают. */
+ * открытие — новый диалог (session): выбор и отказ прошлого не переживают.
+ * Выбранное определение первого запуска диалог сообщает странице (chose):
+ * блок ролей показывает роли именно его (#241). */
 export function SwarmExecutionControl({
   swarm,
   projectName,
   run,
   action,
   changed,
+  chose,
 }: {
   swarm: AccessSwarm;
   projectName: string;
   run: PipelineRun | null;
   action: ExecutionAction | null;
   changed: () => Promise<void>;
+  chose?: (definition: string) => void;
 }) {
   const { t } = useTranslation();
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -122,6 +128,7 @@ export function SwarmExecutionControl({
           run={dialog.action === 'restart' ? dialog.run : null}
           close={close}
           changed={changed}
+          chose={chose}
         />
       )}
     </>
@@ -192,7 +199,8 @@ function DialogActions({
 /** Запуск роя. Первый запуск выбирает определение из каталога проекта роя,
  * показывает его граф до запуска и передаёт commit, если он введён. Повторный
  * идёт на закреплённом снимке: выбора нет, каталог не читается, commit — тот,
- * что закрепил первый запуск. */
+ * что закрепил первый запуск. Роли графа, которые запуск отвергнет, видны
+ * до нажатия и описывают кнопку запуска (#241). */
 function StartDialog({
   open,
   swarm,
@@ -200,6 +208,7 @@ function StartDialog({
   run,
   close,
   changed,
+  chose,
 }: {
   open: boolean;
   swarm: AccessSwarm;
@@ -207,8 +216,10 @@ function StartDialog({
   run: PipelineRun | null;
   close: () => void;
   changed: () => Promise<void>;
+  chose?: (definition: string) => void;
 }) {
   const { t } = useTranslation();
+  const rolesNote = useId();
   const [chosen, setChosen] = useState('');
   // Commit читается при отправке: панель его не судит, сервер назовёт причину.
   const commit = useRef<HTMLInputElement>(null);
@@ -217,6 +228,10 @@ function StartDialog({
   const catalog = useResource(run ? null : loadCatalog, { headerRefresh: false });
   const definition = run ? undefined : definitionChoice(catalog.data, chosen);
   const name = run ? restartDefinition(run) : definition?.name;
+  const first = run ? '' : (definition?.name ?? '');
+  useEffect(() => {
+    if (first) chose?.(first);
+  }, [first, chose]);
   const { pending, error, submit } = useExecutionSubmit(close, changed);
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -261,12 +276,20 @@ function StartDialog({
             <CommitField input={commit} />
           </>
         )}
+        {name && (
+          <StartRolesNote key={first} id={rolesNote} swarmId={swarm.id} definition={first} />
+        )}
         <Refusal error={error} />
         <DialogActions
           pending={pending}
           close={close}
           submit={
-            <Button type="submit" loading={pending} disabled={!name}>
+            <Button
+              type="submit"
+              loading={pending}
+              disabled={!name}
+              aria-describedby={name ? rolesNote : undefined}
+            >
               {t('swarm_page.control.submit_start')}
             </Button>
           }
