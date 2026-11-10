@@ -88,6 +88,24 @@
   overflow-wrap: anywhere;
 }
 
+/* Задача текущего прохода (#242): карточка на всю ширину сетки состояний,
+ * чтобы длинный текст не растягивал карточку инфраструктуры. */
+.passGoal {
+  grid-column: 1 / -1;
+}
+
+/* Текст задачи как набран: переводы строк и табуляция сохраняются. */
+.goalText {
+  align-self: stretch;
+  margin: 0;
+  white-space: pre-wrap;
+  tab-size: 4;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
 /* Текстовая кнопка: узел по имени, выбирает его на графе. */
 .nodeButton {
   @include button-reset;
@@ -146,6 +164,46 @@
 .hint {
   margin: 0;
   font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* История шагов по проходам: заголовок прохода и его задача над шагами. */
+.passes {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pass {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+
+  & + & {
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+  }
+}
+
+.passHead {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+
+  /* Задача — цитатой с линией слева: фон --bg-secondary в светлой теме
+   * совпадает с фоном страницы. */
+  .goalText {
+    padding: 2px 0 2px 12px;
+    border-left: 3px solid var(--border-color);
+  }
+}
+
+.passTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
   color: var(--text-secondary);
 }
 

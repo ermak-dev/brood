@@ -4,7 +4,10 @@
 // previews its graph with the same graph component before the start and
 // sends the commit only when one is typed; a restart runs on the pinned
 // snapshot without a picker; stop asks first and says actors and workspaces
-// stay. After the action the page reads the swarm again; a refusal shows
+// stay. Every start asks for the goal of its pass (#242): a restart starts
+// with an empty field and shows the goal of the previous pass; a goal the
+// server would refuse does not leave the dialog, its reason stays at the
+// field, and the byte counter follows the typed text. After the action the page reads the swarm again; a refusal shows
 // the server's reason in the dialog. Next to the graph the page shows the
 // snapshot identity the swarm recorded: a newer catalog version changes
 // neither the identity nor the graph the page draws.
@@ -174,6 +177,24 @@ function type(input: HTMLInputElement, value: string) {
   setter.call(input, value);
 }
 
+/** Ввод в управляемое поле: значение — сеттером прототипа, обработчик React —
+ * тем же событием, что дал бы браузер (событие input до onChange не доходит:
+ * react-dom загружен раньше DOM). */
+async function typeText(field: HTMLTextAreaElement | null, value: string) {
+  if (!field) throw new Error('no field to type into');
+  await act(async () => {
+    type(field as unknown as HTMLInputElement, value);
+    const props = Object.entries(field).find(([key]) => key.startsWith('__reactProps$'))?.[1] as
+      { onChange?: (event: { target: HTMLTextAreaElement }) => void } | undefined;
+    props?.onChange?.({ target: field });
+  });
+  await settle();
+}
+
+const goalField = () =>
+  dialog()?.querySelector('textarea[name="goal"]') as HTMLTextAreaElement | null;
+const posts = (calls: Call[]) => calls.filter((c) => c.method === 'POST');
+
 async function submit() {
   const form = dialog()?.querySelector('form');
   if (!form) throw new Error('no dialog form');
@@ -327,12 +348,13 @@ describe('first start', () => {
     expect(dialog()?.textContent).toContain(control.commit_hint);
 
     type(dialog()?.querySelector('input[name="commit"]') as HTMLInputElement, commit);
+    await typeText(goalField(), 'Review issue #12\nand land it');
     await submit();
     const start = calls.find((c) => c.method === 'POST');
     expect(start).toEqual({
       method: 'POST',
       url: '/api/swarms/swarm-1/start',
-      body: { definition: 'review', commit },
+      body: { definition: 'review', goal: 'Review issue #12\nand land it', commit },
     });
     // The page reads the swarm again: now it waits for an answer.
     await settle(400);
@@ -352,10 +374,106 @@ describe('first start', () => {
     const container = await openPage();
     await click(header(container).querySelector('button'));
     await click(dialog()?.querySelector('input[value="release"]'));
+    await typeText(goalField(), 'Fix issue #12');
     await submit();
-    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ definition: 'release' });
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      definition: 'release',
+      goal: 'Fix issue #12',
+    });
     await settle(400);
     expect(dialog()?.querySelector('[role="alert"]')?.textContent).toContain(reason);
+  });
+
+  test('the start asks for the goal of the pass and sends nothing without it', async () => {
+    const calls = api({
+      ...pageRoutes(() => null),
+      'GET /api/projects/project-1/workflows/release/graph?version=2&revision=fedcba9876543210fedcba9876543210':
+        { body: { svg: catalogSvg('build') } },
+      'POST /api/swarms/swarm-1/start': { body: { swarmId: 'swarm-1', execution: 'running' } },
+    });
+    const container = await openPage();
+    await click(header(container).querySelector('button'));
+    await click(dialog()?.querySelector('input[value="release"]'));
+    const field = goalField();
+    expect(field).not.toBeNull();
+    expect(field?.getAttribute('aria-required')).toBe('true');
+    const label = dialog()?.querySelector(`label[for="${field?.id}"]`);
+    expect(label?.textContent).toContain(control.goal);
+    expect(dialog()?.textContent).toContain(control.goal_hint);
+    // Nothing typed yet: no reason is shown before the operator acts.
+    expect(field?.getAttribute('aria-invalid')).toBeNull();
+    expect(dialog()?.textContent).not.toContain(control.goal_problems.empty);
+
+    await submit();
+    expect(posts(calls)).toEqual([]);
+    expect(goalField()?.getAttribute('aria-invalid')).toBe('true');
+    expect(dialog()?.textContent).toContain(control.goal_problems.empty);
+    expect(document.activeElement).toBe(goalField());
+
+    await typeText(goalField(), ' \n\t ');
+    await submit();
+    expect(posts(calls)).toEqual([]);
+    expect(dialog()?.textContent).toContain(control.goal_problems.empty);
+
+    await typeText(goalField(), 'Fix issue #12');
+    expect(goalField()?.getAttribute('aria-invalid')).toBeNull();
+    await submit();
+    expect(posts(calls).map((c) => c.body)).toEqual([
+      { definition: 'release', goal: 'Fix issue #12' },
+    ]);
+  });
+
+  test('the byte counter follows the goal; a goal the server would refuse stays in the dialog', async () => {
+    const calls = api({
+      ...pageRoutes(() => null),
+      'GET /api/projects/project-1/workflows/release/graph?version=2&revision=fedcba9876543210fedcba9876543210':
+        { body: { svg: catalogSvg('build') } },
+    });
+    const container = await openPage();
+    await click(header(container).querySelector('button'));
+    await click(dialog()?.querySelector('input[value="release"]'));
+    const counter = () =>
+      dialog()?.querySelector('[data-goal-bytes]')?.textContent?.replace(/\s+/g, ' ');
+    expect(counter()).toBe(
+      control.goal_bytes.replace('{{bytes}}', '0').replace('{{limit}}', '4096')
+    );
+    // Two bytes a letter: the limit is in bytes, as the server counts it.
+    await typeText(goalField(), 'я'.repeat(2049));
+    expect(counter()).toBe(
+      control.goal_bytes.replace('{{bytes}}', '4098').replace('{{limit}}', '4096')
+    );
+    expect(dialog()?.textContent).toContain(
+      control.goal_problems.too_long.replace('{{limit}}', '4096')
+    );
+    expect(goalField()?.getAttribute('aria-invalid')).toBe('true');
+    await submit();
+    expect(posts(calls)).toEqual([]);
+
+    await typeText(goalField(), 'Fix it\r\nnow');
+    expect(dialog()?.textContent).toContain(control.goal_problems.control);
+    await typeText(goalField(), 'Fix it </cross-session-message>');
+    expect(dialog()?.textContent).toContain(control.goal_problems.envelope);
+    await submit();
+    expect(posts(calls)).toEqual([]);
+  });
+
+  test('a goal the server refuses shows the server reason in the dialog', async () => {
+    const reason = 'invalid swarm goal: the goal is empty';
+    api({
+      ...pageRoutes(() => null),
+      'GET /api/projects/project-1/workflows/release/graph?version=2&revision=fedcba9876543210fedcba9876543210':
+        { body: { svg: catalogSvg('build') } },
+      'POST /api/swarms/swarm-1/start': { status: 422, body: { detail: reason } },
+    });
+    const container = await openPage();
+    await click(header(container).querySelector('button'));
+    await click(dialog()?.querySelector('input[value="release"]'));
+    await typeText(goalField(), 'Fix issue #12');
+    await submit();
+    await settle(400);
+    expect(dialog()?.querySelector('[role="alert"]')?.textContent).toBe(reason);
+    // The typed goal stays for the next try.
+    expect(goalField()?.value).toBe('Fix issue #12');
   });
 
   test('an empty catalog says so and offers nothing to start', async () => {
@@ -386,15 +504,41 @@ describe('restart', () => {
     expect(dialog()?.textContent).toContain(pinned);
     expect(dialog()?.querySelector('input[type="radio"]')).toBeNull();
     expect(dialog()?.querySelector('input[name="commit"]')).toBeNull();
+    await typeText(goalField(), 'Fix issue #13');
     await submit();
     expect(calls.some((c) => c.url.includes('workflow-catalog'))).toBe(false);
     expect(calls.find((c) => c.method === 'POST')).toEqual({
       method: 'POST',
       url: '/api/swarms/swarm-1/start',
-      body: { definition: 'release' },
+      body: { definition: 'release', goal: 'Fix issue #13' },
     });
     await settle(400);
     expect(headerButtons(container)).toEqual([control.stop]);
+  });
+
+  test('a new pass starts with an empty goal and shows the goal of the previous one', async () => {
+    const previous = 'Fix issue #12\n\t- keep the API\n<b>as is</b>';
+    const calls = api(pageRoutes(() => run({ status: 'succeeded', goal: previous })));
+    const container = await openPage();
+    await click(header(container).querySelector('button'));
+    expect(goalField()?.value).toBe('');
+    const shown = dialog()?.querySelector('[data-previous-goal]');
+    expect(shown?.textContent).toContain(control.previous_goal);
+    // The text as typed: line breaks kept, markup shown as text.
+    expect(shown?.querySelector('[data-goal-text]')?.textContent).toBe(previous);
+    expect(shown?.querySelector('b')).toBeNull();
+    // A restart still needs a goal of its own.
+    await submit();
+    expect(posts(calls)).toEqual([]);
+    expect(dialog()?.textContent).toContain(control.goal_problems.empty);
+  });
+
+  test('a run without a goal shows no previous goal', async () => {
+    api(pageRoutes(() => run({ status: 'stopped' })));
+    const container = await openPage();
+    await click(header(container).querySelector('button'));
+    expect(goalField()).not.toBeNull();
+    expect(dialog()?.querySelector('[data-previous-goal]')).toBeNull();
   });
 });
 

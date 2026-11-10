@@ -49,6 +49,66 @@ export function snapshotIdentity(run: PipelineRun | null): SnapshotIdentity | nu
   return { name: identity.name, version: identity.version, revision: identity.revision };
 }
 
+/** Предел задачи прохода в байтах UTF-8 — тот же, что у сервера (#242). */
+export const MAX_GOAL_BYTES = 4096;
+
+/** Почему сервер отвергнет задачу прохода: ключ причины в локалях. */
+export type GoalProblem = 'empty' | 'too_long' | 'invalid_utf8' | 'control' | 'envelope';
+
+const encoder = new TextEncoder();
+
+/** Размер задачи так, как его считает сервер: байты UTF-8, не символы. */
+export function goalBytes(goal: string): number {
+  return encoder.encode(goal).length;
+}
+
+// Пробелы, которые снимает strings.TrimSpace сервера (unicode.IsSpace):
+// trim() JavaScript снимает U+FEFF и оставляет U+0085, и пустота разошлась бы.
+const onlySpaces = /^[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/;
+// Закрывающий тег конверта сообщения гостя: с ним гость не примет ни одной
+// инструкции прохода, сервер отвергает такую задачу до записи.
+const envelopeClosingTag = '</cross-session-message>';
+
+/** Управляющий символ unicode.IsControl (C0, DEL, C1), кроме перевода
+ * строки и табуляции. Все они в BMP, поэтому хватает единиц UTF-16. */
+function hasControl(text: string): boolean {
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if ((unit < 0x20 && unit !== 0x0a && unit !== 0x09) || (unit >= 0x7f && unit <= 0x9f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Одиночная суррогатная половина: такой строки нет в UTF-8, и при отправке
+ * она молча стала бы U+FFFD, то есть не той задачей, что набрана. */
+function hasLoneSurrogate(text: string): boolean {
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    if (unit >= 0xdc00 && unit <= 0xdfff) return true;
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(i + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      i += 1;
+    }
+  }
+  return false;
+}
+
+/** Причина, по которой сервер отвергнет задачу прохода, в его порядке
+ * проверок; null — задача годится. Панель проверяет заранее, чтобы отказ
+ * был виден у поля без запроса; решает всё равно сервер. Задача не
+ * обрезается и не меняется. */
+export function goalProblem(goal: string): GoalProblem | null {
+  if (onlySpaces.test(goal)) return 'empty';
+  if (goalBytes(goal) > MAX_GOAL_BYTES) return 'too_long';
+  if (hasLoneSurrogate(goal)) return 'invalid_utf8';
+  if (hasControl(goal)) return 'control';
+  if (goal.includes(envelopeClosingTag)) return 'envelope';
+  return null;
+}
+
 /** Определение повторного запуска — то, что закрепил снимок. Без записанной
  * личности — имя графа: каталог требует его совпадения с именем определения. */
 export function restartDefinition(run: PipelineRun): string {

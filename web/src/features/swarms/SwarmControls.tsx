@@ -27,12 +27,18 @@ import { useResource } from '@/features/substrate/hooks';
 import { formatDateTimeValue } from '@/utils/format';
 import {
   definitionChoice,
+  goalBytes,
+  goalProblem,
+  MAX_GOAL_BYTES,
   restartDefinition,
   snapshotIdentity,
   type ExecutionAction,
+  type GoalProblem,
 } from './swarmControl';
+import { passGoal } from './swarmState';
 import { StartRolesNote } from './SwarmRoles';
 import styles from '@/features/substrate/substrate.module.scss';
+import page from './SwarmPage.module.scss';
 import local from './SwarmControls.module.scss';
 
 /** Личность снимка роя (#218): определение, версия и ревизия, которые
@@ -200,7 +206,10 @@ function DialogActions({
  * показывает его граф до запуска и передаёт commit, если он введён. Повторный
  * идёт на закреплённом снимке: выбора нет, каталог не читается, commit — тот,
  * что закрепил первый запуск. Роли графа, которые запуск отвергнет, видны
- * до нажатия и описывают кнопку запуска (#241). */
+ * до нажатия и описывают кнопку запуска (#241). Каждый запуск несёт задачу
+ * прохода (#242): у повторного поле пустое, рядом — задача прошлого прохода.
+ * Задачу, которую сервер заведомо отвергнет, диалог не отправляет: причина
+ * остаётся у поля, фокус переходит к нему. */
 function StartDialog({
   open,
   swarm,
@@ -223,6 +232,12 @@ function StartDialog({
   const [chosen, setChosen] = useState('');
   // Commit читается при отправке: панель его не судит, сервер назовёт причину.
   const commit = useRef<HTMLInputElement>(null);
+  const [goal, setGoal] = useState('');
+  // Пустая задача — отказ только после попытки запуска: до неё поле не ругает.
+  const [attempted, setAttempted] = useState(false);
+  const goalInput = useRef<HTMLTextAreaElement>(null);
+  const problem = goalProblem(goal);
+  const shownProblem = problem === 'empty' && !attempted ? null : problem;
   const projectId = swarm.project_id;
   const loadCatalog = useCallback(() => pipelinesApi.listDefinitions(projectId), [projectId]);
   const catalog = useResource(run ? null : loadCatalog, { headerRefresh: false });
@@ -236,11 +251,27 @@ function StartDialog({
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     if (!name || pending) return;
+    if (problem) {
+      setAttempted(true);
+      goalInput.current?.focus();
+      return;
+    }
+    const typed = run ? '' : (commit.current?.value ?? '');
     void submit(
-      () => executionApi.start(swarm.id, name, run ? '' : (commit.current?.value ?? '')),
+      () => executionApi.start(swarm.id, { definition: name, goal, commit: typed }),
       t('swarm_page.control.started', { name: swarm.name })
     );
   };
+  const goalField = (
+    <GoalField
+      input={goalInput}
+      value={goal}
+      change={setGoal}
+      problem={shownProblem}
+      disabled={pending}
+    />
+  );
+  const previous = run ? passGoal(run)?.goal : undefined;
   return (
     <Modal
       open={open}
@@ -253,7 +284,11 @@ function StartDialog({
     >
       <form className={styles.confirmBody} onSubmit={onSubmit}>
         {run ? (
-          <RestartSummary run={run} />
+          <>
+            <RestartSummary run={run} />
+            {previous && <PreviousGoal goal={previous} />}
+            {goalField}
+          </>
         ) : (
           <>
             <DefinitionPicker
@@ -273,6 +308,7 @@ function StartDialog({
                 refreshCatalog={catalog.refresh}
               />
             )}
+            {goalField}
             <CommitField input={commit} />
           </>
         )}
@@ -414,6 +450,84 @@ function DefinitionPreview({
         )}
       </LoadState>
     </div>
+  );
+}
+
+/** Задача прохода (#242): многострочный текст для акторов, обязательный на
+ * каждом запуске. Счётчик — в байтах UTF-8, как предел сервера; причина
+ * отказа — у поля и в его описании. */
+function GoalField({
+  input,
+  value,
+  change,
+  problem,
+  disabled,
+}: {
+  input: RefObject<HTMLTextAreaElement | null>;
+  value: string;
+  change: (goal: string) => void;
+  problem: GoalProblem | null;
+  disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const id = useId();
+  const hint = useId();
+  const counter = useId();
+  const error = useId();
+  const bytes = goalBytes(value);
+  return (
+    <div className={styles.field}>
+      <label className={styles.fieldLabel} htmlFor={id}>
+        {t('swarm_page.control.goal')}
+      </label>
+      <p id={hint} className={styles.fieldHint}>
+        {t('swarm_page.control.goal_hint')}
+      </p>
+      <textarea
+        ref={input}
+        id={id}
+        name="goal"
+        className={local.goal}
+        value={value}
+        rows={4}
+        disabled={disabled}
+        autoComplete="off"
+        aria-required="true"
+        aria-invalid={problem ? true : undefined}
+        aria-describedby={`${hint} ${error} ${counter}`}
+        onChange={(event) => change(event.target.value)}
+      />
+      <div className={local.goalMeta}>
+        <p id={error} className={styles.fieldError} aria-live="polite">
+          {problem && t(`swarm_page.control.goal_problems.${problem}`, { limit: MAX_GOAL_BYTES })}
+        </p>
+        <p
+          id={counter}
+          className={local.goalBytes}
+          data-over={bytes > MAX_GOAL_BYTES || undefined}
+          data-goal-bytes=""
+        >
+          {t('swarm_page.control.goal_bytes', { bytes, limit: MAX_GOAL_BYTES })}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Задача прошлого прохода — подсказкой у пустого поля нового: текст как
+ * набран, переводы строк сохранены, разметка показана текстом. */
+function PreviousGoal({ goal }: { goal: string }) {
+  const { t } = useTranslation();
+  const labelId = useId();
+  return (
+    <section className={local.previousGoal} aria-labelledby={labelId} data-previous-goal="">
+      <p id={labelId} className={local.snapshotLabel}>
+        {t('swarm_page.control.previous_goal')}
+      </p>
+      <p className={page.goalText} data-goal-text="">
+        {goal}
+      </p>
+    </section>
   );
 }
 

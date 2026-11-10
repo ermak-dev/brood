@@ -3118,9 +3118,20 @@
       "published": "发布于 {{time}}",
       "choose": "选择一个定义，在启动前查看其图。",
       "preview": "{{name}} 的图，版本 {{version}}",
+      "goal": "本轮任务",
+      "goal_hint": "每次启动都必须填写：本轮要做什么，例如要处理的 issue。本轮每个步骤的指令都会把它作为文本交给参与者；它不授予任何权限。",
+      "goal_bytes": "{{bytes}} / {{limit}} 字节",
+      "goal_problems": {
+        "empty": "请输入本轮任务。",
+        "too_long": "任务超过 {{limit}} 字节（UTF-8）。",
+        "invalid_utf8": "任务包含无效的 UTF-8 字符。",
+        "control": "任务包含换行和制表符以外的控制字符。",
+        "envelope": "任务包含消息信封的结束标签 </cross-session-message>。"
+      },
       "commit": "Commit",
       "commit_hint": "项目仓库的完整提交 SHA；首次启动会将其固定为来源。留空则从默认分支的当前提交开始。",
       "restart_text": "新一轮将在此群组首次启动时固定的快照上开始，使用相同的提交。之前的步骤保留在历史中；不会读取目录。",
+      "previous_goal": "上一轮任务",
       "stop_text": "图将停止推进，向操作员提出的未决问题会被取消。Actor、其容器和 workspace 保持不变；删除 Actor 是单独的操作。",
       "submit_start": "启动",
       "submit_stop": "停止",
@@ -3148,6 +3159,10 @@
       "stopped": "图已停止，不会推进。"
     },
     "current_node": "当前节点",
+    "pass_goal": {
+      "label": "本轮任务",
+      "pass": "第 {{number}} 轮，从步骤 #{{step}} 开始"
+    },
     "graph": "图",
     "graph_hint": "定义 {{name}} 的快照。选择节点以查看其指令、结果和 Actor。",
     "graph_label": "群组 {{name}} 的图",
