@@ -24,7 +24,27 @@ import { BroodApiError, request } from './http';
  * `waiting_human` and passes `idle` and `stopped` through (#206). */
 export type RunStatus = 'idle' | 'running' | 'waiting_human' | 'succeeded' | 'failed' | 'stopped';
 
-export type NodeStatus = 'pending' | 'active' | 'done' | 'failed' | 'skipped' | 'unconfirmed';
+/** State of a step (#212, docs/MODEL.md "Шаг актора"). The server records
+ * `pending`, `attesting`, `delivering`, `inflight`, `waiting`, `answered`,
+ * `completed`, `refused`, `unconfirmed` and `stopped`; the run view names a
+ * working step (`attesting`, `delivering`, `inflight`, `waiting`) `active`, an
+ * answered or successful one `done` and a failed outcome `failed`, and passes
+ * the others through. `skipped` names a node the graph can no longer reach. */
+export type NodeStatus =
+  | 'pending'
+  | 'attesting'
+  | 'delivering'
+  | 'inflight'
+  | 'waiting'
+  | 'active'
+  | 'answered'
+  | 'completed'
+  | 'done'
+  | 'failed'
+  | 'skipped'
+  | 'refused'
+  | 'unconfirmed'
+  | 'stopped';
 
 export type NodeKind = 'actor' | 'human' | 'condition' | 'land' | 'exit' | 'start';
 
@@ -42,6 +62,12 @@ export interface RunNode {
   sequence?: number;
   startedAt?: string;
   finishedAt?: string;
+  /** Operator-facing reason of a `refused` or `unconfirmed` step (#212). */
+  detail?: string;
+  /** Source commit the actor workspace confirmed for the step (#183, #212). */
+  commit?: string;
+  /** Actor report of the finished step, plain text (#233); older servers omit it. */
+  report?: string;
 }
 
 /** Identity of a definition: in the catalog, or as a swarm pinned it. */

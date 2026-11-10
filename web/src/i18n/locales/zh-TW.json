@@ -3195,6 +3195,10 @@
     "started": "開始",
     "finished": "結束",
     "visits": "造訪次數",
+    "reason": "原因",
+    "commit": "已確認的提交",
+    "copy_commit": "複製提交",
+    "report": "報告",
     "node_states": {
       "unvisited": "未造訪",
       "pending": "排隊中",
@@ -3202,7 +3206,20 @@
       "done": "已完成",
       "failed": "已失敗",
       "skipped": "已略過",
-      "unconfirmed": "結果未知"
+      "unconfirmed": "結果未知",
+      "attesting": "正在核驗工作區",
+      "delivering": "正在投遞指令",
+      "inflight": "執行中",
+      "waiting": "等待答覆",
+      "answered": "已答覆",
+      "completed": "已結束",
+      "refused": "已拒絕",
+      "stopped": "已停止"
+    },
+    "step_guidance": {
+      "refused": "此步驟已關閉且未產生效果，圖不會自行推進。請排除原因（綁定角色、提交或還原 actor 工作區中的變更、連接 actor），若群組仍在執行則先停止，然後在同一快照上開始新一輪。",
+      "unconfirmed": "伺服器不知道此步驟如何結束，因此既不重試也不推進圖。由你決定：先查明 actor 端發生了什麼，若群組仍在執行則停止它，然後開始新一輪。",
+      "release": "如果原因中提到被保留的工作區操作，請由管理員檢查工作區並依該操作 ID 釋放它，否則新一輪會因工作區被占用而遭拒："
     },
     "steps": "步驟歷程",
     "steps_hint": "圖節點的每次造訪，依時間由早到晚排列。點選節點名稱可在圖上顯示該節點。",

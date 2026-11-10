@@ -3167,6 +3167,10 @@
     "started": "开始",
     "finished": "结束",
     "visits": "访问次数",
+    "reason": "原因",
+    "commit": "已确认的提交",
+    "copy_commit": "复制提交",
+    "report": "报告",
     "node_states": {
       "unvisited": "未访问",
       "pending": "排队中",
@@ -3174,7 +3178,20 @@
       "done": "已完成",
       "failed": "已失败",
       "skipped": "已跳过",
-      "unconfirmed": "结果未知"
+      "unconfirmed": "结果未知",
+      "attesting": "正在核验工作区",
+      "delivering": "正在投递指令",
+      "inflight": "执行中",
+      "waiting": "等待答复",
+      "answered": "已答复",
+      "completed": "已结束",
+      "refused": "已拒绝",
+      "stopped": "已停止"
+    },
+    "step_guidance": {
+      "refused": "该步骤已关闭且未产生效果，图不会自行推进。请消除原因（绑定角色、提交或撤销 actor 工作区中的更改、连接 actor），如群组仍在运行则先停止，然后在同一快照上开始新一轮。",
+      "unconfirmed": "服务器不知道该步骤如何结束，因此既不重试也不推进图。由你决定：先查明 actor 那边发生了什么，如群组仍在运行则停止它，然后开始新一轮。",
+      "release": "如果原因中提到被保留的工作区操作，请由管理员检查工作区并按该操作 ID 释放它，否则新一轮会因工作区被占用而被拒绝："
     },
     "steps": "步骤历史",
     "steps_hint": "图节点的每次访问，按从早到晚排列。点击节点名称可在图上显示该节点。",

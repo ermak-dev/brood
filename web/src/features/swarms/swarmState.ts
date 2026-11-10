@@ -61,6 +61,57 @@ export function selectedNodeId(
   return current !== undefined && known.has(current) ? current : undefined;
 }
 
+/** Метка шага на таймлайне и у состояния узла: точка красится токенами
+ * графа. Слово состояния рядом всегда, цвет его только дублирует. */
+export type StepMark = 'pending' | 'active' | 'done' | 'failed' | 'skipped' | 'unconfirmed';
+
+/** Метка состояния шага (#212): работающий шаг — active, завершённый —
+ * done, отказ — failed (шаг закрыт без эффекта, нужен оператор),
+ * остановленный — приглушённый skipped. Неизвестный исход — своя метка:
+ * он не провал и не работа. Незнакомое состояние (сервер новее панели) не
+ * выдаётся ни за работу, ни за провал. */
+export function stepMark(status: string): StepMark {
+  switch (status) {
+    case 'attesting':
+    case 'delivering':
+    case 'inflight':
+    case 'waiting':
+    case 'active':
+      return 'active';
+    case 'answered':
+    case 'completed':
+    case 'done':
+      return 'done';
+    case 'refused':
+    case 'failed':
+      return 'failed';
+    case 'stopped':
+    case 'skipped':
+      return 'skipped';
+    case 'unconfirmed':
+      return 'unconfirmed';
+    default:
+      return 'pending';
+  }
+}
+
+/** Что делать оператору: refused и unconfirmed закрывают шаг, но не проход,
+ * и диспетчер к нему сам не вернётся (docs/MODEL.md, «Шаг актора»). */
+export type StepGuidance = 'refused' | 'unconfirmed';
+
+/** Команда, которой администратор отпускает неподтверждённую lease
+ * workspace (docs/MCP.md, `dispatch --action release`): ID операции — в
+ * причине шага, панель его не разбирает из текста сервера. */
+export function releaseCommand(swarmId: string, actorName: string | undefined): string {
+  return `bro dispatch ${actorName || '<actor>'} --request-id <operation> --action release --swarm ${swarmId}`;
+}
+
+/** Короткий commit на экране; полный — в подсказке и копировании. Восемь
+ * знаков — как короткий ID коммита в GitLab, где его будут искать. */
+export function shortCommit(commit: string): string {
+  return commit.slice(0, 8);
+}
+
 export interface NodeView {
   id: string;
   label: string;
@@ -75,14 +126,26 @@ export interface NodeView {
   /** Что граф поручает узлу: prompt актору, вопрос оператору. */
   prompt?: string;
   question?: string;
+  /** Причина refused или unconfirmed последнего посещения (#212). */
+  detail?: string;
+  /** Commit, который подтвердил workspace актора последнего посещения. */
+  commit?: string;
+  /** Отчёт актора о последнем посещении (#233), простой текст. */
+  report?: string;
+  /** Что делать оператору: только у шага, на котором стоит исполнение. */
+  guidance?: StepGuidance;
 }
 
-/** Сводка выбранного узла: исход, актор и моменты — по последнему
- * посещению, инструкция — из графа роя. */
+/** Сводка выбранного узла: исход, актор, причина, commit, отчёт и моменты —
+ * по последнему посещению, инструкция — из графа роя. Совет оператору —
+ * только когда это посещение последний шаг исполнения: отказ прошлого
+ * прохода уже разрешён новым проходом. */
 export function nodeView(run: PipelineRun | null, graph: RunGraph | null, id: string): NodeView {
-  const visits = (run?.nodes ?? []).filter((step) => step.id === id);
+  const steps = run?.nodes ?? [];
+  const visits = steps.filter((step) => step.id === id);
   const last = visits[visits.length - 1];
   const definition = graph?.nodes?.find((node) => node.id === id);
+  const status = last === steps[steps.length - 1] ? last?.status : undefined;
   return {
     id,
     label: last?.label ?? id,
@@ -95,6 +158,10 @@ export function nodeView(run: PipelineRun | null, graph: RunGraph | null, id: st
     visits: visits.length,
     prompt: definition?.prompt || undefined,
     question: definition?.question || undefined,
+    detail: last?.detail || undefined,
+    commit: last?.commit || undefined,
+    report: last?.report || undefined,
+    guidance: status === 'refused' || status === 'unconfirmed' ? status : undefined,
   };
 }
 

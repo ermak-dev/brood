@@ -3170,6 +3170,10 @@
     "started": "Started",
     "finished": "Finished",
     "visits": "Visits",
+    "reason": "Reason",
+    "commit": "Confirmed commit",
+    "copy_commit": "Copy commit",
+    "report": "Report",
     "node_states": {
       "unvisited": "Not visited",
       "pending": "Pending",
@@ -3177,7 +3181,20 @@
       "done": "Done",
       "failed": "Failed",
       "skipped": "Skipped",
-      "unconfirmed": "Outcome unknown"
+      "unconfirmed": "Outcome unknown",
+      "attesting": "Checking workspace",
+      "delivering": "Delivering instruction",
+      "inflight": "In progress",
+      "waiting": "Waiting for answer",
+      "answered": "Answered",
+      "completed": "Completed",
+      "refused": "Refused",
+      "stopped": "Stopped"
+    },
+    "step_guidance": {
+      "refused": "The step closed without effect, and the graph does not advance on its own. Fix the reason (bind the role, commit or revert changes in the actor's workspace, connect the actor), stop the swarm if it is still running, then start a new pass on the same snapshot.",
+      "unconfirmed": "The server does not know how the step ended, so it neither retries it nor advances the graph. The decision is yours: find out what happened at the actor, stop the swarm if it is still running, then start a new pass.",
+      "release": "If the reason names a reserved workspace operation, an administrator checks the workspace and releases it by that operation ID; otherwise the new pass is refused because the workspace is busy:"
     },
     "steps": "Step history",
     "steps_hint": "Every visit of a graph node, oldest first. A node name shows that node on the graph.",

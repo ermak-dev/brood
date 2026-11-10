@@ -8,13 +8,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import type { AccessProject, AccessSwarm } from '@/services/brood/access';
-import type { PipelineRun, RunGraph } from '@/services/brood/pipelines';
+import type { NodeStatus, PipelineRun, RunGraph } from '@/services/brood/pipelines';
 import {
   executionTone,
   hasStepTimes,
   nodeView,
+  releaseCommand,
   runIsLive,
   selectedNodeId,
+  shortCommit,
+  stepMark,
   swarmExecution,
   swarmProjectName,
 } from '@/features/swarms/swarmState';
@@ -167,12 +170,135 @@ describe('selected node', () => {
     });
   });
 
+  test('the latest visit gives the reason, the confirmed commit and the report', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const reported = run({
+      currentNode: 'decision',
+      nodes: [
+        {
+          id: 'architecture',
+          kind: 'actor',
+          label: 'architecture',
+          status: 'refused',
+          detail: 'actor architect is not connected to the relay; no instruction was sent',
+          sequence: 1,
+        },
+        {
+          id: 'architecture',
+          kind: 'actor',
+          label: 'architecture',
+          status: 'done',
+          outcome: 'success',
+          commit: sha,
+          report: 'Branch feat/x\nMR !12',
+          sequence: 2,
+        },
+        { id: 'decision', kind: 'human', label: 'decision', status: 'active', sequence: 3 },
+      ],
+    });
+    // The reason of an earlier visit does not stick to the later one.
+    expect(nodeView(reported, graph, 'architecture')).toMatchObject({
+      status: 'done',
+      detail: undefined,
+      commit: sha,
+      report: 'Branch feat/x\nMR !12',
+    });
+    expect(nodeView(reported, graph, 'decision')).toMatchObject({
+      detail: undefined,
+      commit: undefined,
+      report: undefined,
+    });
+  });
+
   test('step time columns exist only when the server records moments', () => {
     expect(hasStepTimes(steps)).toBe(true);
     expect(
       hasStepTimes(run({ nodes: [{ id: 'a', kind: 'actor', label: 'a', status: 'done' }] }))
     ).toBe(false);
     expect(hasStepTimes(null)).toBe(false);
+  });
+});
+
+// The step states the server records (#212, docs/MODEL.md «Шаг актора»)
+// and the names the run view gives a working or finished step.
+const STEP_STATES = [
+  'pending',
+  'attesting',
+  'delivering',
+  'inflight',
+  'waiting',
+  'answered',
+  'completed',
+  'refused',
+  'unconfirmed',
+  'stopped',
+] as const;
+const VIEW_STATES = ['active', 'done', 'failed', 'skipped'] as const;
+
+describe('actor step states (#212, #238)', () => {
+  const actorStep = (status: string, sequence: number, id = 'architecture') => ({
+    id,
+    kind: 'actor' as const,
+    label: id,
+    status: status as NodeStatus,
+    sequence,
+  });
+
+  test('every step state has its own mark; refused reads as a failure, unconfirmed never', () => {
+    for (const state of ['attesting', 'delivering', 'inflight', 'waiting', 'active']) {
+      expect({ state, mark: stepMark(state) }).toEqual({ state, mark: 'active' });
+    }
+    for (const state of ['answered', 'completed', 'done']) {
+      expect({ state, mark: stepMark(state) }).toEqual({ state, mark: 'done' });
+    }
+    expect(stepMark('refused')).toBe('failed');
+    expect(stepMark('failed')).toBe('failed');
+    expect(stepMark('unconfirmed')).toBe('unconfirmed');
+    expect(stepMark('stopped')).toBe('skipped');
+    expect(stepMark('skipped')).toBe('skipped');
+    expect(stepMark('pending')).toBe('pending');
+    expect(stepMark('unvisited')).toBe('pending');
+    // A state of a newer server is not dressed up as progress or failure.
+    expect(stepMark('paused')).toBe('pending');
+  });
+
+  test('guidance belongs to the refused or unconfirmed step the execution stands on', () => {
+    for (const state of ['refused', 'unconfirmed'] as const) {
+      const stuck = run({ currentNode: 'architecture', nodes: [actorStep(state, 1)] });
+      expect(nodeView(stuck, graph, 'architecture').guidance).toBe(state);
+    }
+    for (const state of STEP_STATES.filter((s) => s !== 'refused' && s !== 'unconfirmed')) {
+      const step = run({ currentNode: 'architecture', nodes: [actorStep(state, 1)] });
+      expect({ state, guidance: nodeView(step, graph, 'architecture').guidance }).toEqual({
+        state,
+        guidance: undefined,
+      });
+    }
+    // A new pass already answered the refusal of an earlier one.
+    const later = run({
+      currentNode: 'decision',
+      nodes: [actorStep('refused', 1), actorStep('pending', 2, 'decision')],
+    });
+    expect(nodeView(later, graph, 'architecture')).toMatchObject({
+      status: 'refused',
+      guidance: undefined,
+    });
+    expect(nodeView(null, graph, 'architecture').guidance).toBeUndefined();
+  });
+
+  test('the lease release names the step actor and the swarm; the operation stays a slot', () => {
+    expect(releaseCommand('swarm-1', 'architect')).toBe(
+      'bro dispatch architect --request-id <operation> --action release --swarm swarm-1'
+    );
+    // The actor of a step the server could not name is a slot too, not "undefined".
+    expect(releaseCommand('swarm-1', undefined)).toBe(
+      'bro dispatch <actor> --request-id <operation> --action release --swarm swarm-1'
+    );
+  });
+
+  test('a commit is shown by its short form; a short value stays whole', () => {
+    expect(shortCommit('0123456789abcdef0123456789abcdef01234567')).toBe('01234567');
+    expect(shortCommit('abc')).toBe('abc');
   });
 });
 
@@ -292,16 +418,23 @@ describe('locales', () => {
       expect(english[`swarm_page.execution_states.${state}`]).toBeTruthy();
       expect(english[`swarm_page.execution_hints.${state}`]).toBeTruthy();
     }
-    for (const state of [
-      'unvisited',
-      'pending',
-      'active',
-      'done',
-      'failed',
-      'skipped',
-      'unconfirmed',
-    ]) {
-      expect(english[`swarm_page.node_states.${state}`]).toBeTruthy();
+    // Every state a step can be in reads in words, stopped included (#238).
+    for (const state of ['unvisited', ...STEP_STATES, ...VIEW_STATES]) {
+      expect({ state, word: Boolean(english[`swarm_page.node_states.${state}`]) }).toEqual({
+        state,
+        word: true,
+      });
+    }
+    for (const state of ['refused', 'unconfirmed', 'release']) {
+      expect(english[`swarm_page.step_guidance.${state}`]).toBeTruthy();
+    }
+    // Two states never share a word: the word carries the state, not the color.
+    for (const locale of locales) {
+      const translated = flatten(read(locale));
+      const words = ['unvisited', ...STEP_STATES, ...VIEW_STATES].map(
+        (state) => translated[`swarm_page.node_states.${state}`]
+      );
+      expect({ locale, distinct: new Set(words).size }).toEqual({ locale, distinct: words.length });
     }
   });
 });

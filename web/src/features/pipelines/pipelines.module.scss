@@ -79,19 +79,33 @@
   stroke: var(--pip-active-stroke);
 }
 
-.svg :global(.state-done) rect {
+/* Состояния шага #212, которые вид прогона передаёт как есть, красятся по
+   той же метке, что и таймлайн (stepMark, features/swarms/swarmState.ts):
+   completed — как done, refused — как failed, stopped — как skipped,
+   unconfirmed — пунктиром: исход неизвестен, это не провал и не работа. */
+.svg :global(.state-done) rect,
+.svg :global(.state-completed) rect {
   fill: var(--pip-done-fill);
   stroke: var(--pip-done-stroke);
 }
 
-.svg :global(.state-failed) rect {
+.svg :global(.state-failed) rect,
+.svg :global(.state-refused) rect {
   fill: var(--pip-failed-fill);
   stroke: var(--pip-failed-stroke);
 }
 
-.svg :global(.state-skipped) rect {
+.svg :global(.state-skipped) rect,
+.svg :global(.state-stopped) rect {
   fill: var(--pip-skipped-fill);
   stroke: var(--pip-skipped-stroke);
+}
+
+.svg :global(.state-unconfirmed) rect {
+  fill: var(--pip-node-fill);
+  stroke: var(--pip-active-stroke);
+  stroke-dasharray: 4 3;
+  stroke-width: 2;
 }
 
 /* Узел-кнопка (есть onSelect): курсор и видимый фокус. */
@@ -179,4 +193,14 @@
   @extend %timelineDot;
   background: var(--pip-skipped-fill);
   border-color: var(--pip-skipped-stroke);
+}
+
+/* Неизвестный исход — ромб, а не круг: отличается формой, не только
+   оттенком от идущего шага. */
+.timeline-unconfirmed {
+  @extend %timelineDot;
+  border-radius: 1px;
+  background: var(--pip-node-fill);
+  border: 2px solid var(--pip-active-stroke);
+  transform: translateY(-1px) rotate(45deg);
 }
