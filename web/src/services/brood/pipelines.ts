@@ -9,6 +9,8 @@
  * POST /api/pipeline-runs/{run}/nodes/{node}/answer accepts {answer, visitSequence}.
  * Since #206 the graph and its execution belong to the swarm: {run} is the
  * swarm ID, and a visible swarm without a graph answers 404 (getSwarmRun).
+ * The run carries `definition`, the identity of the snapshot its first start
+ * pinned (#218), not the current catalog definition; an older server omits it.
  * The server must authorize every operation against the run's swarm, return
  * a reason on refusal, and atomically reject a stale or already answered visit.
  * Gate metadata and a positive, safe-integer visitSequence come from the server.
@@ -40,10 +42,19 @@ export interface RunNode {
   finishedAt?: string;
 }
 
+/** Identity of a definition: in the catalog, or as a swarm pinned it. */
+export interface SnapshotIdentity {
+  name: string;
+  version: number;
+  revision: string;
+}
+
 export interface PipelineRun {
   id: string;
   /** Name of the graph definition, not of the swarm. */
   name: string;
+  /** The snapshot the first start pinned; a newer catalog version leaves it. */
+  definition?: SnapshotIdentity;
   status: RunStatus;
   swarmId?: string;
   swarmName?: string;

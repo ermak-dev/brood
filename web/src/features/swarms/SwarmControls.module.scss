@@ -1,0 +1,155 @@
+/* Запуск и остановка роя (#218): личность снимка рядом с графом и диалог
+ * запуска. Цвета — токены темы, граф предпросмотра красится тем же
+ * pipelines.module.scss, что граф роя. */
+
+/* Личность снимка: подписанные значения в строку, ревизия переносится. */
+.snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, #{$radius-md});
+  background: var(--bg-secondary);
+}
+
+.snapshotLabel {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.snapshotFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 0;
+  font-size: 13px;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  dt {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.revision {
+  font-family: $font-mono;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.snapshotHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* Выбор определения: радиогруппа карточками, выбранная — контуром. */
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+
+  legend {
+    padding: 0;
+    margin-bottom: 6px;
+  }
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 10px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, #{$radius-md});
+  background: var(--bg-primary);
+  cursor: pointer;
+  transition: border-color var(--dur-hover) var(--ease-out-strong);
+
+  &:hover {
+    border-color: var(--text-tertiary);
+  }
+
+  &:has(input:checked) {
+    border-color: var(--primary-color);
+    background: var(--bg-secondary);
+  }
+
+  &:has(input:focus-visible) {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+
+  input {
+    grid-row: span 2;
+    margin: 0;
+    accent-color: var(--primary-color);
+  }
+}
+
+.optionName {
+  font-family: $font-mono;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.optionMeta {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Предпросмотр: граф в своём размере, широкий прокручивается внутри. */
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md, #{$radius-md});
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option {
+    transition: none;
+  }
+}
