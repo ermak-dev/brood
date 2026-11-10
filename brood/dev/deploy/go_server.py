@@ -192,6 +192,62 @@ def registry_endpoint(raw):
     return {"url": f"http://{address}:5000", "ip": str(address)}
 
 
+REVISION = "deployment.kubernetes.io/revision"
+# Поток ~310 МБ в норме уходит за десятки секунд; 600 с — с запасом на медленный
+# API server, но не 48 минут зависшего exec (#246).
+ARTIFACT_PUBLISH_TIMEOUT = 600
+UNEXPECTED_OBJECTS = "guest bootstrap artifact publish cannot choose a pod: unexpected deployment/brood-go objects"
+
+
+def controller_of(meta):
+    return next((owner for owner in meta.get("ownerReferences") or [] if owner.get("controller")), {})
+
+
+def serving(pod):
+    status = pod.get("status") or {}
+    return (not pod["metadata"].get("deletionTimestamp") and status.get("phase") == "Running"
+            and any(c.get("type") == "Ready" and c.get("status") == "True" for c in status.get("conditions") or []))
+
+
+def artifact_pod(deployment, replicasets, pods):
+    """Deployment, его ReplicaSet и поды -> имя пода для публикации артефактов.
+
+    #246: kubectl exec deployment/brood-go выбирает под сам и попал в старый,
+    уже Killing. Цель доказывается цепочкой UID владельцев, которую ведёт
+    контроллер: ReplicaSet текущей ревизии Deployment (revision после
+    observedGeneration — ревизия применённого шаблона) с controller-ссылкой
+    на UID Deployment, под с controller-ссылкой на UID этого ReplicaSet и его
+    pod-template-hash. Одна метка не доказательство: её может нести и чужой
+    под. Под — Running, Ready, без deletionTimestamp; ровно один, иначе отказ."""
+    try:
+        meta = deployment["metadata"]
+        revision = (meta.get("annotations") or {}).get(REVISION)
+        if not revision or (deployment.get("status") or {}).get("observedGeneration", 0) < meta.get("generation", 1):
+            raise RuntimeError("guest bootstrap artifact publish refused: deployment/brood-go is not rolled out "
+                               "to an observed revision")
+        current = [rs for rs in replicasets
+                   if (rs["metadata"].get("annotations") or {}).get(REVISION) == revision
+                   and controller_of(rs["metadata"]).get("kind") == "Deployment"
+                   and controller_of(rs["metadata"]).get("uid") == meta["uid"]]
+        if len(current) != 1:
+            raise RuntimeError("guest bootstrap artifact publish needs exactly one ReplicaSet of "
+                               f"deployment/brood-go revision {revision}, found {len(current)}")
+        rs = current[0]["metadata"]
+        template_hash = rs["labels"]["pod-template-hash"]
+        targets = sorted(p["metadata"]["name"] for p in pods
+                         if controller_of(p["metadata"]).get("kind") == "ReplicaSet"
+                         and controller_of(p["metadata"]).get("uid") == rs["uid"]
+                         and (p["metadata"].get("labels") or {}).get("pod-template-hash") == template_hash
+                         and serving(p))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise RuntimeError(UNEXPECTED_OBJECTS) from None
+    if len(targets) != 1:
+        raise RuntimeError("guest bootstrap artifact publish needs exactly one running ready pod of "
+                           f"deployment/brood-go revision {revision}, found {len(targets)}"
+                           + (": " + ", ".join(targets) if targets else ""))
+    return targets[0]
+
+
 def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False,
               proxy_api_key=False, actor_llm_settings=(), git_remotes=False):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
@@ -503,9 +559,39 @@ class Deploy:
             name.encode() + b"\0" + str((work / name).stat().st_size).encode() + b"\0"
             + (work / name).read_bytes()
             for name in ("bro", "brood-guest", "claude"))
-        code, _, err = self.cluster.shell.output_bytes(
-            ("kubectl", f"--context={local.CONTEXT}", "-n", "brood", "exec", "-i",
-             "deployment/brood-go", "--", "/brood", "artifacts", "--dir", "/data/artifacts"),
-            input=stream)
+        # Под выбирается после сборки, перед самым exec: минута сборки не
+        # отделяет выбор от записи.
+        target = self.publish_target()
+        try:
+            code, _, err = self.cluster.shell.output_bytes(
+                ("kubectl", f"--context={local.CONTEXT}", "-n", "brood", "exec", "-i",
+                 "pod/" + target, "--", "/brood", "artifacts", "--dir", "/data/artifacts"),
+                input=stream, timeout=ARTIFACT_PUBLISH_TIMEOUT)
+        except TimeoutError:
+            # brood artifacts заменяет каталог rename только после полного потока:
+            # убитый exec оставляет на томе прежний набор либо новый целиком.
+            raise RuntimeError(f"guest bootstrap artifact publish timed out after {ARTIFACT_PUBLISH_TIMEOUT} s; "
+                               f"kubectl exec to pod/{target} was killed and a partial stream is never published; "
+                               "rerun the deploy; in existing mode remove the brood-go-deploy lease first "
+                               "(docs/DEPLOY.md, guest bootstrap artifacts)") from None
         if code:
             raise RuntimeError("guest bootstrap artifact publish failed: " + err[-2000:])
+
+    def publish_target(self):
+        """Читает Deployment, его ReplicaSet и поды; выбор — artifact_pod."""
+        objects = []
+        for resource in (("deployment", "brood-go"), ("replicasets", "-l", "app=brood-go"),
+                         ("pods", "-l", "app=brood-go")):
+            code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "-n", "brood",
+                "get", *resource, "-o", "json", "--request-timeout=15s")
+            if code:
+                raise RuntimeError(f"guest bootstrap artifact publish cannot read {resource[0]} of deployment/brood-go")
+            try:
+                objects.append(json.loads(out))
+            except ValueError:
+                raise RuntimeError(UNEXPECTED_OBJECTS) from None
+        deployment, replicasets, pods = objects
+        try:
+            return artifact_pod(deployment, replicasets["items"], pods["items"])
+        except (KeyError, TypeError):
+            raise RuntimeError(UNEXPECTED_OBJECTS) from None
