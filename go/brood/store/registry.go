@@ -29,7 +29,7 @@ var schemaModules = []schemaModule{
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
 	{id: "git-credential", create: func() string { return projectGitCredentialSchema }, verify: verifyProjectGitCredentialSchema},
-	{id: "pipelines", create: func() string { return swarmStepsSchema }, verify: verifySwarmStepsSchema},
+	{id: "pipelines", create: swarmStepsFullSchema, verify: verifySwarmStepsSchema},
 	{id: "swarm-roles", create: func() string { return swarmRoleBindingSchema }, verify: verifySwarmRoleSchema},
 	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},
 	{id: "pipeline-source", create: pipelineSourceFullSchema, verify: verifyPipelineSourcesSchema},
@@ -146,9 +146,12 @@ func verifyOriginSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkSchema(ctx, tx, managedOriginSchema())
 }
 
-// verifySwarmStepsSchema сверяет шаги роя.
+// verifySwarmStepsSchema сверяет шаги роя и ограждение их отчёта.
 func verifySwarmStepsSchema(ctx context.Context, tx *sql.Tx) error {
-	return checkSchema(ctx, tx, swarmStepsSchema)
+	if err := checkSchema(ctx, tx, swarmStepsSchema); err != nil {
+		return err
+	}
+	return checkObject(ctx, tx, "trigger", "swarm_steps_report_fence", swarmStepReportFence)
 }
 
 // verifySwarmRoleSchema сверяет привязки ролей роёв.

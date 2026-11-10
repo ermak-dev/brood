@@ -141,7 +141,7 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CompletePipelineActorVisit(ctx, master.SwarmID, master.SwarmID, v.Sequence, "req", master.UID, master.Incarnation, "success"); err != nil {
+	if err := s.CompletePipelineActorVisit(ctx, master.SwarmID, master.SwarmID, v.Sequence, "req", master.UID, master.Incarnation, "success", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "completed", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "req"}); err != nil {

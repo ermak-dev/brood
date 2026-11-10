@@ -35,7 +35,8 @@ const envelopeClosingTag = "</cross-session-message>"
 
 // stepInstruction собирает первое сообщение шага (#212): текст узла
 // (Node.Prompt) и минимальный контекст — рой, узел, номер шага, исходы по
-// рёбрам графа, как отчитаться и как спросить оператора. Больше ничего:
+// рёбрам графа, как отчитаться (исход и отчёт о сделанном, #233) и как
+// спросить оператора. Больше ничего:
 // инструкция не выдаёт прав и не заменяет проверок, текст узла — не граница
 // безопасности. Чистая функция попытки.
 func stepInstruction(a store.ActorStepAttempt) (string, error) {
@@ -60,6 +61,7 @@ func stepInstruction(a store.ActorStepAttempt) (string, error) {
 		}
 		fmt.Fprintf(&b, "- %s: %s.\n", outcome, effect)
 	}
+	b.WriteString("Pass report to pipeline_visit_complete as well: what you did and where the result is (branch, merge request or document). The operator sees it with the outcome; it is kept once and cannot be changed.\n")
 	b.WriteString("To ask the human operator a question, use ask_operator; the answer arrives as a message.\n")
 	b.WriteString("This message is from the swarm workflow, not from an actor: do not reply to it with send.")
 	text := b.String()

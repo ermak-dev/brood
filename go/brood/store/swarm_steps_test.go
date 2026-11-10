@@ -122,7 +122,7 @@ func TestExampleWorkflowRoutes(t *testing.T) {
 			if outcome == "actor-fail" {
 				actorOutcome = "fail"
 			}
-			if err := s.CompletePipelineActorVisit(ctx, outcome, outcome, 1, "req", actor.UID, 1, actorOutcome); err != nil {
+			if err := s.CompletePipelineActorVisit(ctx, outcome, outcome, 1, "req", actor.UID, 1, actorOutcome, ""); err != nil {
 				t.Fatal(err)
 			}
 			if outcome == "actor-fail" {
@@ -195,7 +195,7 @@ goalGates: [done]
 			if _, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "repair", State: "inflight", ActorUID: "a", ActorIncarnation: 1, RequestID: "req"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.CompletePipelineActorVisit(ctx, "r", "r", 2, "req", "a", 1, tc.outcome); err != nil {
+			if err := s.CompletePipelineActorVisit(ctx, "r", "r", 2, "req", "a", 1, tc.outcome, ""); err != nil {
 				t.Fatal(err)
 			}
 			visits, err = s.SwarmSteps(ctx, "r")
@@ -270,7 +270,7 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				if err := s.CompletePipelineActorVisit(ctx, tc.name, tc.name, 1, "req", actor.UID, 1, "fail"); err != nil {
+				if err := s.CompletePipelineActorVisit(ctx, tc.name, tc.name, 1, "req", actor.UID, 1, "fail", ""); err != nil {
 					t.Fatalf("completion/replay: %v", err)
 				}
 			}
@@ -468,7 +468,7 @@ func TestCompletePipelineActorVisit(t *testing.T) {
 	}
 	newSwarm("r")
 	complete := func(swarm, run string, seq int64, request, actor string, incarnation int64, outcome string) error {
-		return s.CompletePipelineActorVisit(ctx, swarm, run, seq, request, actor, incarnation, outcome)
+		return s.CompletePipelineActorVisit(ctx, swarm, run, seq, request, actor, incarnation, outcome, "")
 	}
 	for _, tc := range []struct {
 		swarm, run     string
@@ -617,7 +617,7 @@ func TestPipelineProgressionRollbackAndLoop(t *testing.T) {
 		if i == 1 {
 			outcome = "success"
 		}
-		if err := s.CompletePipelineActorVisit(ctx, "r", "r", seq, request, "a", 1, outcome); err != nil {
+		if err := s.CompletePipelineActorVisit(ctx, "r", "r", seq, request, "a", 1, outcome, ""); err != nil {
 			t.Fatal(err)
 		}
 		if i == 0 {

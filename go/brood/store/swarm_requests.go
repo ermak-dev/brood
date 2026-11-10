@@ -127,8 +127,10 @@ func (s *Store) GetSwarmRequest(ctx context.Context, swarmID, id string) (SwarmR
 
 // openNodeRequest заводит запрос человеческого шага. Вызывается в
 // транзакции, которая создаёт посещение в состоянии waiting: шаг и запрос
-// появляются вместе или не появляются.
-func (s *Store) openNodeRequest(ctx context.Context, swarmID string, sequence int64, n pipeline.Node) error {
+// появляются вместе или не появляются. material — то, что оператор
+// одобряет: отчёт шага, который ввёл граф в узел (#233); пустой — без
+// материала.
+func (s *Store) openNodeRequest(ctx context.Context, swarmID string, sequence int64, n pipeline.Node, material string) error {
 	options := make([]RequestOption, 0, len(n.Options))
 	for _, o := range n.Options {
 		options = append(options, RequestOption{Label: o.Label, Outcome: o.Outcome})
@@ -137,8 +139,8 @@ func (s *Store) openNodeRequest(ctx context.Context, swarmID string, sequence in
 	if err != nil {
 		return err
 	}
-	_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,sequence,origin,kind,question,options,state,created_at) VALUES (?,?,?,'node','choice',?,?,'open',?)`,
-		NewID(), swarmID, sequence, n.Question, encoded, nowRFC3339())
+	_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,sequence,origin,kind,question,context,options,state,created_at) VALUES (?,?,?,'node','choice',?,NULLIF(?,''),?,'open',?)`,
+		NewID(), swarmID, sequence, n.Question, material, encoded, nowRFC3339())
 	return err
 }
 
@@ -453,7 +455,7 @@ func (s *Store) advanceNodeRequest(ctx context.Context, w Swarm, req SwarmReques
 	if n, ok := d.Nodes[node]; !ok || n.Type != "human" {
 		return errors.New("visit is not a human node")
 	}
-	return s.progressPipeline(ctx, w, d, *req.Sequence, node, "answered", outcome)
+	return s.progressPipeline(ctx, w, d, *req.Sequence, node, "answered", outcome, "")
 }
 
 // CancelSwarmRequest отменяет открытый запрос. Отмена узлового запроса

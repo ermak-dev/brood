@@ -5,12 +5,21 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"brood.dev/go/brood/pipeline"
 )
 
 // ErrPipelineVisitConflict indicates that a visit can no longer be answered.
 var ErrPipelineVisitConflict = errors.New("pipeline visit is no longer awaiting an answer")
+
+// ErrStepReportInvalid: the actor's step report is not plain bounded text.
+var ErrStepReportInvalid = errors.New("invalid step report")
+
+// MaxStepReportBytes bounds the actor's step report.
+const MaxStepReportBytes = 16384
 
 // MaxPipelineGraphBytes bounds the persisted document before parsing.
 const MaxPipelineGraphBytes = 1 << 20
@@ -32,6 +41,8 @@ type PipelineVisit struct {
 	AttestedCommit string
 	// Detail is the operator-facing reason of a refused or unconfirmed step.
 	Detail string
+	// Report is the actor's account of a completed step (#233).
+	Report string
 	// ActorName is filled by reads when the stage actor is known: the managed
 	// actor with ActorUID in the step's own swarm.
 	ActorName string
@@ -71,11 +82,11 @@ func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit
 // swarmStepSelect resolves managed names by UID within the step's own swarm,
 // including deleted actors whose names may since have been reused (#206:
 // join к запуску исчез — шаг принадлежит рою напрямую).
-const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.attested_commit,''),COALESCE(s.detail,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
+const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.attested_commit,''),COALESCE(s.detail,''),COALESCE(s.report,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
 
 func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 	var v PipelineVisit
-	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.AttestedCommit, &v.Detail, &v.ActorName)
+	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.AttestedCommit, &v.Detail, &v.Report, &v.ActorName)
 	return v, err
 }
 
@@ -208,7 +219,7 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 		return v, ErrPipelineVisitConflict
 	}
 	if err == nil && v.State == "waiting" {
-		err = s.openNodeRequest(ctx, swarmID, v.Sequence, n)
+		err = s.openNodeRequest(ctx, swarmID, v.Sequence, n, "")
 	}
 	return v, err
 }
@@ -222,21 +233,32 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 // ErrPipelineSourceUnverified. The step must be the latest one of a running
 // graph and be delivering (the actor answered before the server recorded the
 // delivery) or inflight; an unconfirmed, refused, stopped or finished step is
-// ErrPipelineVisitConflict. An exact retry of the recorded outcome writes
-// nothing and succeeds.
-func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyRunID string, sequence int64, requestID, actorUID string, incarnation int64, outcome string) error {
+// ErrPipelineVisitConflict.
+//
+// The optional report (#233) is the actor's account of the step: what was
+// done and where the result is. It is written once, in the same update as the
+// outcome, and a human node entered right after the step gets it as the
+// material of its node request. A report that is not valid UTF-8, has control
+// characters other than newline and tab or exceeds MaxStepReportBytes is
+// ErrStepReportInvalid before anything is read. An exact retry, the recorded
+// outcome with the recorded report, writes nothing and succeeds; any other
+// outcome or report for the completed step is ErrPipelineVisitConflict.
+func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyRunID string, sequence int64, requestID, actorUID string, incarnation int64, outcome, report string) error {
 	if legacyRunID != swarmID || !validPipelineField(swarmID) || sequence < 1 || !validPipelineField(requestID) || !validPipelineField(actorUID) || incarnation < 1 || (outcome != "success" && outcome != "fail") {
 		return errors.New("invalid pipeline actor completion")
+	}
+	if err := validStepReport(report); err != nil {
+		return err
 	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
 		w, err := s.GetSwarm(ctx, swarmID)
 		if err != nil {
 			return err
 		}
-		var node, state, request, actor, attested string
+		var node, state, request, actor, attested, recorded string
 		var inc int64
 		var prior sql.NullString
-		err = s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,COALESCE(request_id,''),COALESCE(actor_uid,''),COALESCE(actor_incarnation,0),outcome,COALESCE(attested_commit,'') FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&node, &state, &request, &actor, &inc, &prior, &attested)
+		err = s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,COALESCE(request_id,''),COALESCE(actor_uid,''),COALESCE(actor_incarnation,0),outcome,COALESCE(attested_commit,''),COALESCE(report,'') FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&node, &state, &request, &actor, &inc, &prior, &attested, &recorded)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrPipelineVisitConflict
 		}
@@ -249,7 +271,7 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 		if w.Source != nil && attested != w.Source.Commit {
 			return ErrPipelineSourceUnverified
 		}
-		if state == "completed" && prior.Valid && prior.String == outcome {
+		if state == "completed" && prior.Valid && prior.String == outcome && recorded == report {
 			return nil
 		}
 		if (state != "inflight" && state != "delivering") || !activeExecution(w.Execution) {
@@ -266,7 +288,7 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 		if err := s.requireRoleActor(ctx, swarmID, n.Role, actorUID, incarnation); err != nil {
 			return fmt.Errorf("%w: role %q: %w", ErrPipelineVisitConflict, n.Role, err)
 		}
-		return s.progressPipeline(ctx, w, d, sequence, node, "completed", outcome)
+		return s.progressPipeline(ctx, w, d, sequence, node, "completed", outcome, report)
 	})
 
 }
@@ -291,7 +313,11 @@ func supportedPipeline(d *pipeline.Document) error { return pipeline.Supported(d
 // завершённых шагов — finished_at), the successor visit and the swarm
 // execution follow the transition. Всё выполняется в транзакции
 // вызывающего, так что неудачная запись откатывается без частичного шага.
-func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Document, sequence int64, node, state, value string) error {
+// report — отчёт актора завершённого шага (#233), у ответа оператора пуст:
+// он пишется тем же UPDATE, что исход, и становится материалом узлового
+// запроса, если преемник — human-узел. Преемник — следующий шаг того же
+// прохода, поэтому материал никогда не приходит из прошлого прохода.
+func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Document, sequence int64, node, state, value, report string) error {
 	var latest int64
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT MAX(sequence) FROM swarm_steps WHERE swarm_id=?`, w.ID).Scan(&latest); err != nil {
 		return err
@@ -310,7 +336,7 @@ func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Docum
 		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,finished_at=? WHERE swarm_id=? AND sequence=?`, state, nowRFC3339(), w.ID, sequence); err != nil {
 			return err
 		}
-	} else if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,outcome=?,finished_at=? WHERE swarm_id=? AND sequence=?`, state, value, nowRFC3339(), w.ID, sequence); err != nil {
+	} else if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,outcome=?,finished_at=?,report=NULLIF(?,'') WHERE swarm_id=? AND sequence=?`, state, value, nowRFC3339(), report, w.ID, sequence); err != nil {
 		return err
 	}
 	if transition.Terminal {
@@ -321,12 +347,38 @@ func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Docum
 		return err
 	}
 	if next := d.Nodes[transition.Next]; next.Type == "human" && transition.NextState == "waiting" {
-		if err := s.openNodeRequest(ctx, w.ID, sequence+1, next); err != nil {
+		if err := s.openNodeRequest(ctx, w.ID, sequence+1, next, stepReportContext(sequence, node, value, report)); err != nil {
 			return err
 		}
 	}
 	_, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=? WHERE id=?`, executionOfTransition(transition.Execution), w.ID)
 	return err
+}
+
+// stepReportContext — материал узлового запроса из отчёта шага, который
+// ввёл граф в human-узел: номер шага, узел и исход в первой строке, затем
+// отчёт как есть. Шаг без отчёта материала не даёт.
+func stepReportContext(sequence int64, node, outcome, report string) string {
+	if report == "" {
+		return ""
+	}
+	return fmt.Sprintf("Report of step %d (node %s, outcome %s):\n\n%s", sequence, node, outcome, report)
+}
+
+// validStepReport: отчёт — валидный UTF-8 не длиннее MaxStepReportBytes без
+// управляющих символов, кроме перевода строки и табуляции. Пустой отчёт —
+// его отсутствие.
+func validStepReport(report string) error {
+	if len(report) > MaxStepReportBytes {
+		return fmt.Errorf("%w: the report exceeds %d bytes", ErrStepReportInvalid, MaxStepReportBytes)
+	}
+	if !utf8.ValidString(report) {
+		return fmt.Errorf("%w: the report is not valid UTF-8", ErrStepReportInvalid)
+	}
+	if strings.IndexFunc(report, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }) >= 0 {
+		return fmt.Errorf("%w: the report has control characters other than newline and tab", ErrStepReportInvalid)
+	}
+	return nil
 }
 
 // executionOfTransition переводит статус прогона чистого движка (#207)
