@@ -3240,5 +3240,64 @@
     "read_only": "只有活动群组的所有者和编辑者可以回答。",
     "cancelled_hint": "未回答即已关闭。",
     "unknown_kind": "此版本的面板无法回答这类请求。"
+  },
+  "swarm_roles": {
+    "title": "角色",
+    "hint": "图中每个执行者节点都指定一个角色。启动要求图中的每个角色都绑定到此蜂群中正在运行的托管执行者。",
+    "graph_pinned": "快照 {{name}}（版本 {{version}}）的角色。",
+    "graph_definition": "在启动对话框中选择的 {{name}}（版本 {{version}}）的角色。首次启动会固定此定义。",
+    "graph_none": "尚无图。在启动对话框中选择定义后，其角色会显示在这里。",
+    "empty": "图中没有角色，也没有已绑定的角色。",
+    "empty_no_graph": "没有已绑定的角色。",
+    "busy": "蜂群运行或等待回答期间，绑定不会改变。停止蜂群后才能修改。",
+    "read_only": "只有活动蜂群的所有者和编辑者可以绑定角色。",
+    "not_in_graph": "不在图中",
+    "actor": "执行者",
+    "actor_none": "未绑定",
+    "actor_hidden": "此蜂群之外的执行者",
+    "actor_gone": "该执行者已不存在",
+    "states": {
+      "ready": "就绪",
+      "unbound": "未绑定",
+      "stale": "已过期",
+      "inactive": "执行者未运行",
+      "foreign": "执行者不在蜂群中",
+      "missing": "执行者缺失"
+    },
+    "state_hints": {
+      "ready": "此角色的步骤交给它的执行者。",
+      "unbound": "没有执行者担任此角色；在绑定之前启动会被拒绝。",
+      "stale": "绑定后执行者已被重新创建。请重新绑定角色以使用其新实例。",
+      "inactive": "执行者未运行或不应运行。请启动它，或绑定其他执行者。",
+      "foreign": "执行者已离开此蜂群或其 atespace。请绑定此蜂群的执行者。",
+      "missing": "绑定的执行者已不存在。请绑定其他执行者。"
+    },
+    "phases": {
+      "provisioning": "启动中",
+      "running": "运行中"
+    },
+    "choose": "角色 {{role}} 的执行者",
+    "choose_placeholder": "选择执行者",
+    "actor_option": "{{name}}（{{phase}}）",
+    "actors_hint": "只有此蜂群中正在运行或启动中的托管执行者可以担任角色。",
+    "actors_none": "此蜂群中没有正在运行或启动中的托管执行者。",
+    "actors_link": "在“执行者”页面创建或启动一个",
+    "actors_error": "无法读取此蜂群的执行者：{{reason}}",
+    "bind": "绑定",
+    "rebind": "重新绑定",
+    "unbind": "解除绑定",
+    "bind_role": "绑定角色 {{role}}",
+    "rebind_role": "重新绑定角色 {{role}}",
+    "unbind_role": "解除角色 {{role}} 的绑定",
+    "bound": "角色 {{role}} 已绑定到 {{actor}}。",
+    "unbound_done": "角色 {{role}} 已解除绑定。",
+    "refused": "已拒绝：{{reason}}",
+    "start": {
+      "checking": "正在检查图的角色。",
+      "ready": "图中的每个角色都已绑定到此蜂群中正在运行的执行者。",
+      "unready": "在图中的每个角色都绑定到此蜂群中正在运行的执行者之前，启动会被拒绝。未就绪：",
+      "where": "请在蜂群页面的“角色”部分绑定角色；它显示此处所选定义的角色。",
+      "failed": "无法检查角色：{{reason}}"
+    }
   }
 }

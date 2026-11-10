@@ -3243,5 +3243,64 @@
     "read_only": "Only owners and editors of an active swarm can answer.",
     "cancelled_hint": "Closed without an answer.",
     "unknown_kind": "This panel version cannot answer this kind of request."
+  },
+  "swarm_roles": {
+    "title": "Roles",
+    "hint": "Each actor node of the graph names a role. A start needs every role of the graph bound to a running managed actor of this swarm.",
+    "graph_pinned": "Roles of the snapshot {{name}}, version {{version}}.",
+    "graph_definition": "Roles of {{name}}, version {{version}}, chosen in the start dialog. The first start pins this definition.",
+    "graph_none": "No graph yet. The roles of a definition show here once it is chosen in the start dialog.",
+    "empty": "The graph names no roles and no role is bound.",
+    "empty_no_graph": "No role is bound.",
+    "busy": "Bindings do not change while the swarm runs or waits for an answer. Stop the swarm to change them.",
+    "read_only": "Only owners and editors of an active swarm can bind roles.",
+    "not_in_graph": "not in the graph",
+    "actor": "Actor",
+    "actor_none": "not bound",
+    "actor_hidden": "an actor outside this swarm",
+    "actor_gone": "the actor no longer exists",
+    "states": {
+      "ready": "Ready",
+      "unbound": "Not bound",
+      "stale": "Stale",
+      "inactive": "Actor not running",
+      "foreign": "Actor outside the swarm",
+      "missing": "Actor missing"
+    },
+    "state_hints": {
+      "ready": "Steps of this role go to its actor.",
+      "unbound": "No actor holds this role; a start is refused until one does.",
+      "stale": "The actor was recreated after the binding. Bind the role again to take its new incarnation.",
+      "inactive": "The actor is not running or is not meant to run. Start it, or bind another actor.",
+      "foreign": "The actor left this swarm or its atespace. Bind an actor of this swarm.",
+      "missing": "The bound actor no longer exists. Bind another actor."
+    },
+    "phases": {
+      "provisioning": "starting",
+      "running": "running"
+    },
+    "choose": "Actor for role {{role}}",
+    "choose_placeholder": "Choose an actor",
+    "actor_option": "{{name}} ({{phase}})",
+    "actors_hint": "Only managed actors of this swarm that are running or starting can take a role.",
+    "actors_none": "No managed actor of this swarm is running or starting.",
+    "actors_link": "Create or start one on the Actors page",
+    "actors_error": "The actors of this swarm could not be read: {{reason}}",
+    "bind": "Bind",
+    "rebind": "Rebind",
+    "unbind": "Unbind",
+    "bind_role": "Bind role {{role}}",
+    "rebind_role": "Rebind role {{role}}",
+    "unbind_role": "Unbind role {{role}}",
+    "bound": "Role {{role}} is bound to {{actor}}.",
+    "unbound_done": "Role {{role}} is unbound.",
+    "refused": "Refused: {{reason}}",
+    "start": {
+      "checking": "Checking the roles of the graph.",
+      "ready": "Every role of the graph is bound to a running actor of this swarm.",
+      "unready": "The start is refused until every role of the graph is bound to a running actor of this swarm. Not ready:",
+      "where": "Bind roles in the Roles section of the swarm page; it shows the roles of the definition chosen here.",
+      "failed": "The roles could not be checked: {{reason}}"
+    }
   }
 }
