@@ -21,6 +21,11 @@ var ErrSwarmRequestStale = errors.New("swarm request actor is stale")
 // ErrSwarmRequestInvalid: содержимое запроса или ответа нарушает правила.
 var ErrSwarmRequestInvalid = errors.New("invalid swarm request")
 
+// ErrSwarmRequestLimit: у актора уже открыт предельный набор вопросов.
+// Идёт вместе с ErrSwarmRequestInvalid; отдельный признак нужен, чтобы
+// гость получил причину отказа фиксированным текстом (#210).
+var ErrSwarmRequestLimit = errors.New("too many open swarm requests")
+
 const (
 	// MaxSwarmRequestTextBytes ограничивает вопрос, материал и ответ.
 	MaxSwarmRequestTextBytes = 16384
@@ -55,6 +60,9 @@ type SwarmRequest struct {
 	Outcome *string
 	// Response — свободный текст; в выборе ребра не участвует.
 	Response *string
+	// Delivery — доставка ответа спросившему актору (#210): pending,
+	// delivered или failed у отвеченного запроса актора, иначе пусто.
+	Delivery string
 }
 
 // OptionLabel восстанавливает подпись варианта по сохранённому исходу.
@@ -70,12 +78,12 @@ func (r SwarmRequest) OptionLabel() (string, bool) {
 	return "", false
 }
 
-const swarmRequestCols = `id,swarm_id,sequence,origin,COALESCE(actor_uid,''),COALESCE(actor_incarnation,0),kind,question,COALESCE(context,''),options,state,created_at,answered_at,COALESCE(answered_by,''),outcome,response`
+const swarmRequestCols = `id,swarm_id,sequence,origin,COALESCE(actor_uid,''),COALESCE(actor_incarnation,0),kind,question,COALESCE(context,''),options,state,created_at,answered_at,COALESCE(answered_by,''),outcome,response,COALESCE(delivery,'')`
 
 func scanSwarmRequest(row interface{ Scan(...any) error }) (SwarmRequest, error) {
 	var r SwarmRequest
 	var options []byte
-	err := row.Scan(&r.ID, &r.SwarmID, &r.Sequence, &r.Origin, &r.ActorUID, &r.ActorIncarnation, &r.Kind, &r.Question, &r.Context, &options, &r.State, &r.CreatedAt, &r.AnsweredAt, &r.AnsweredBy, &r.Outcome, &r.Response)
+	err := row.Scan(&r.ID, &r.SwarmID, &r.Sequence, &r.Origin, &r.ActorUID, &r.ActorIncarnation, &r.Kind, &r.Question, &r.Context, &options, &r.State, &r.CreatedAt, &r.AnsweredAt, &r.AnsweredBy, &r.Outcome, &r.Response, &r.Delivery)
 	if err != nil {
 		return r, err
 	}
@@ -209,7 +217,7 @@ func (s *Store) OpenActorRequest(ctx context.Context, in ActorRequestInput) (Swa
 			return err
 		}
 		if open >= maxOpenActorRequests {
-			return fmt.Errorf("%w: too many open requests from this actor", ErrSwarmRequestInvalid)
+			return fmt.Errorf("%w: %w from this actor", ErrSwarmRequestInvalid, ErrSwarmRequestLimit)
 		}
 		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,context,options,state,created_at) VALUES (?,?,'actor',?,?,?,?,NULLIF(?,''),?,'open',?)`,
 			id, in.SwarmID, in.ActorUID, in.ActorIncarnation, in.Kind, in.Question, in.Context, encoded, nowRFC3339())
@@ -477,15 +485,17 @@ func (s *Store) CancelSwarmRequest(ctx context.Context, swarmID, id, userID stri
 // recordAnswer закрывает открытый запрос ответом. Условие state='open' в
 // UPDATE делает запись атомарным compare-and-set; автор обязателен — аудит
 // answered_by полный, ответа без пользователя нет: проигравший гонку
-// получает ErrPipelineVisitConflict.
+// получает ErrPipelineVisitConflict. Ответ актору фиксируется с доставкой
+// pending: сама доставка идёт после коммита (#210).
 func (s *Store) recordAnswer(ctx context.Context, req SwarmRequest, userID, outcome, response string) error {
 	if !validPipelineField(userID) {
 		return ErrSwarmRequestDenied
 	}
 	routed := sql.NullString{String: outcome, Valid: req.Origin == "node"}
 	text := sql.NullString{String: response, Valid: response != ""}
-	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_requests SET state='answered',answered_at=?,answered_by=?,outcome=?,response=? WHERE swarm_id=? AND id=? AND state='open'`,
-		nowRFC3339(), userID, routed, text, req.SwarmID, req.ID)
+	delivery := sql.NullString{String: "pending", Valid: req.Origin == "actor"}
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_requests SET state='answered',answered_at=?,answered_by=?,outcome=?,response=?,delivery=? WHERE swarm_id=? AND id=? AND state='open'`,
+		nowRFC3339(), userID, routed, text, delivery, req.SwarmID, req.ID)
 	if err != nil {
 		return err
 	}
@@ -495,4 +505,36 @@ func (s *Store) recordAnswer(ctx context.Context, req SwarmRequest, userID, outc
 		return ErrPipelineVisitConflict
 	}
 	return nil
+}
+
+// RecordSwarmRequestDelivery записывает исход доставки ответа спросившему
+// актору (#210). Доставка идёт после коммита ответа, поэтому её сбой не
+// откатывает ответ, а запись исхода не трогает ни ответ, ни граф. Пишется
+// только у отвеченного запроса актора с доставкой pending или failed:
+// доставленный ответ не переоткрывается, у узлового запроса адресата нет —
+// иначе ErrPipelineVisitConflict. Запрос чужого роя — ErrNotFound.
+func (s *Store) RecordSwarmRequestDelivery(ctx context.Context, swarmID, id string, delivered bool) (SwarmRequest, error) {
+	if !validPipelineField(swarmID) || !validPipelineField(id) {
+		return SwarmRequest{}, ErrNotFound
+	}
+	state := "failed"
+	if delivered {
+		state = "delivered"
+	}
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_requests SET delivery=? WHERE swarm_id=? AND id=? AND origin='actor' AND state='answered' AND delivery IN ('pending','failed')`, state, swarmID, id)
+	if err != nil {
+		return SwarmRequest{}, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return SwarmRequest{}, err
+	}
+	req, err := s.GetSwarmRequest(ctx, swarmID, id)
+	if err != nil {
+		return SwarmRequest{}, err
+	}
+	if n != 1 {
+		return SwarmRequest{}, ErrPipelineVisitConflict
+	}
+	return req, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math"
 	"path/filepath"
 	"reflect"
@@ -283,7 +284,7 @@ func TestManagedClusterCollisionAndConfirmedReuse(t *testing.T) {
 	}
 }
 func TestManagedDamagedSchemaRefusedWithoutMutation(t *testing.T) {
-	for _, change := range []string{`DROP INDEX managed_actors_live_ctid`, `DROP TABLE managed_actors`, `DROP TRIGGER managed_swarm_delete_guard`, `ALTER TABLE managed_actors DROP COLUMN stage`, `PRAGMA user_version=20`, `ALTER TABLE managed_actors DROP COLUMN role`, `ALTER TABLE managed_actors DROP COLUMN delegator_id`, `ALTER TABLE managed_actors DROP COLUMN parent_uid`, `ALTER TABLE managed_connections DROP COLUMN runtime_config`} {
+	for _, change := range []string{`DROP INDEX managed_actors_live_ctid`, `DROP TABLE managed_actors`, `DROP TRIGGER managed_swarm_delete_guard`, `ALTER TABLE managed_actors DROP COLUMN stage`, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion+1), `ALTER TABLE managed_actors DROP COLUMN role`, `ALTER TABLE managed_actors DROP COLUMN delegator_id`, `ALTER TABLE managed_actors DROP COLUMN parent_uid`, `ALTER TABLE managed_connections DROP COLUMN runtime_config`} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "db.sqlite3")

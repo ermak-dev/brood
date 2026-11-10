@@ -235,7 +235,8 @@ func TestOpenRequestQuotaCountsOnlyTheCurrentIncarnation(t *testing.T) {
 		actorRequest(t, s, "text", nil)
 	}
 	in := ActorRequestInput{SwarmID: "s", ActorUID: "worker", ActorIncarnation: 1, Kind: "text", Question: "q"}
-	if _, err := s.OpenActorRequest(ctx, in); !errors.Is(err, ErrSwarmRequestInvalid) {
+	// Предел — отдельная причина (#210): гость получает её публичным текстом.
+	if _, err := s.OpenActorRequest(ctx, in); !errors.Is(err, ErrSwarmRequestInvalid) || !errors.Is(err, ErrSwarmRequestLimit) {
 		t.Fatalf("over quota: %v", err)
 	}
 	if _, err := s.db.Exec(`UPDATE managed_actors SET incarnation=2 WHERE uid='worker'`); err != nil {
