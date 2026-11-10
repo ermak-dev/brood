@@ -109,9 +109,11 @@ bro secret --project PROJECT git remove NAME...
 ```
 
 Git credential — имя, точный repository, к которому он привязан, и пара
-HTTP Basic `username`/`token`. Им пользуется только серверный шлюз Git
-([PROXMOX.md](PROXMOX.md), «Origin актора и серверный шлюз Git»): сервер
-подставляет его в upstream-запрос к этому repository. Актору, его окружению,
+HTTP Basic `username`/`token`. Им пользуется только сервер: шлюз Git
+([PROXMOX.md](PROXMOX.md), «Origin актора и серверный шлюз Git») и
+разрешение ветки проекта при первом запуске роя без commit
+([MODEL.md](MODEL.md), «Запуск и остановка роя»). Сервер подставляет его в
+upstream-запрос к этому repository. Актору, его окружению,
 проекции секретов, bundle, образу, workspace endpoint, публичным DTO и логам
 значение не передаётся. Это не `var`/`file`: credentials хранятся в отдельных
 таблицах, не меняют revision доставляемых секретов и не включают отказ native

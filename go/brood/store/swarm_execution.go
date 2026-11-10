@@ -17,9 +17,12 @@ package store
 // источников и снял бы инвариант #206 ради возможности, которой задача не
 // требует; другое определение или commit — новый рой. Каталог после первого
 // запуска не читается: расхождение снимка и каталога — нормальное состояние
-// (#218), подменять одно другим нельзя. Commit первого запуска называет
-// вызывающий: источник обязателен с #198, а серверного разрешения ветки в
-// commit нет; repository берётся из проекта.
+// (#218), подменять одно другим нельзя. Источник обязателен с #198,
+// repository берётся из проекта. Commit первого запуска называет вызывающий,
+// а без него сервер разрешает HEAD repository до транзакции (#228): сеть в
+// транзакции записи держала бы блокировку SQLite на время upstream. Поэтому
+// транзакция сверяет repository, из которого commit разрешён (SwarmStart.Origin),
+// с текущим repository проекта.
 // RESULT: IMPLEMENTED — схема не меняется, версия схемы прежняя.
 // STATUS: DONE
 
@@ -51,6 +54,10 @@ var ErrWorkflowGraphInvalid = errors.New("workflow graph is not executable")
 // project has no repository or the commit is missing or malformed.
 var ErrSwarmSourceInvalid = errors.New("swarm source is invalid")
 
+// ErrSwarmSourceChanged: the project repository changed after the server
+// resolved the commit of the first start from it.
+var ErrSwarmSourceChanged = errors.New("swarm source changed during start")
+
 // SwarmStart is a request to start a new pass of the swarm graph.
 type SwarmStart struct {
 	SwarmID, UserID string
@@ -58,9 +65,14 @@ type SwarmStart struct {
 	// start; a restart must name the definition of the pinned snapshot.
 	Definition string
 	// Commit is the full commit of the project repository the first start
-	// pins as the source snapshot. A restart runs on the pinned source; a
-	// non-empty Commit must then equal it.
+	// pins as the source snapshot; the first start requires it, the server
+	// resolves it when the caller names none. A restart runs on the pinned
+	// source; a non-empty Commit must then equal it.
 	Commit string
+	// Origin, when set, is the repository the server resolved Commit from
+	// before the transaction (#228). The first start refuses with
+	// ErrSwarmSourceChanged if the project repository is another by then.
+	Origin string
 }
 
 // passPlan — проверенный запуск до первой записи.
@@ -205,7 +217,7 @@ func (s *Store) catalogPass(ctx context.Context, w Swarm, in SwarmStart) (passPl
 	if err != nil {
 		return passPlan{}, fmt.Errorf("%w: workflow %q: %v", ErrWorkflowGraphInvalid, def.Name, err)
 	}
-	source, err := s.startSource(ctx, w.ProjectID, in.Commit)
+	source, err := s.startSource(ctx, w.ProjectID, in)
 	if err != nil {
 		return passPlan{}, err
 	}
@@ -235,7 +247,10 @@ func pinnedPass(w Swarm, in SwarmStart) (passPlan, error) {
 
 // startSource — снимок источника первого запуска: repository проекта и
 // названный commit. Без repository или без полного commit пиннить нечего.
-func (s *Store) startSource(ctx context.Context, projectID, commit string) (*PipelineSource, error) {
+// Commit, который сервер разрешил до транзакции (#228), принадлежит
+// repository in.Origin: сменившийся с тех пор repository проекта — отказ, а не
+// снимок из commit одного repository и адреса другого.
+func (s *Store) startSource(ctx context.Context, projectID string, in SwarmStart) (*PipelineSource, error) {
 	origin, err := s.ProjectRepository(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -243,10 +258,13 @@ func (s *Store) startSource(ctx context.Context, projectID, commit string) (*Pip
 	if origin == "" {
 		return nil, fmt.Errorf("%w: the project has no repository to pin the source to", ErrSwarmSourceInvalid)
 	}
-	if commit == "" {
+	if in.Origin != "" && in.Origin != origin {
+		return nil, fmt.Errorf("%w: the project repository changed while its branch was resolved; start again", ErrSwarmSourceChanged)
+	}
+	if in.Commit == "" {
 		return nil, fmt.Errorf("%w: the first start requires the commit to pin", ErrSwarmSourceInvalid)
 	}
-	source, err := canonicalPipelineSource(&PipelineSource{Origin: origin, Commit: commit})
+	source, err := canonicalPipelineSource(&PipelineSource{Origin: origin, Commit: in.Commit})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSwarmSourceInvalid, err)
 	}

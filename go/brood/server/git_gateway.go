@@ -36,7 +36,8 @@ const (
 // gitGateway — серверное посредничество Git для managed-акторов (#146):
 // гость не достаёт до частного Git установки, сервер подставляет учётные
 // данные remote только в upstream-запрос. Тела запросов и ответов потоковые,
-// не журналируются; redirect не выполняется.
+// не журналируются; redirect не выполняется. Тот же транспорт разрешает
+// ветку проекта при запуске роя (#228) в пределах headTimeout.
 type gitGateway struct {
 	remotes      gitRemotes
 	transport    *http.Transport
@@ -45,6 +46,7 @@ type gitGateway struct {
 	uploadLimit  int64
 	receiveLimit int64
 	perActor     int
+	headTimeout  time.Duration
 	mu           sync.Mutex
 	active       map[string]int
 }
@@ -121,7 +123,7 @@ func newGitGateway(remotes gitRemotes) *gitGateway {
 	if remotes == nil {
 		remotes = gitRemotes{}
 	}
-	g := &gitGateway{remotes: remotes, timeout: gitGatewayTimeout, uploadLimit: gitUploadPackLimit, receiveLimit: gitReceivePackLimit, perActor: gitGatewayPerActor, active: map[string]int{}}
+	g := &gitGateway{remotes: remotes, timeout: gitGatewayTimeout, uploadLimit: gitUploadPackLimit, receiveLimit: gitReceivePackLimit, perActor: gitGatewayPerActor, headTimeout: gitHeadTimeout, active: map[string]int{}}
 	// Без прокси окружения: единственные адресаты — настроенные remotes.
 	g.transport = &http.Transport{
 		Proxy:                  nil,

@@ -66,7 +66,8 @@ func (s *Server) visibleSwarmUser(w http.ResponseWriter, r *http.Request) (store
 	return user, true
 }
 
-// handleSwarmStart: POST /api/swarms/{id}/start {definition, commit}.
+// handleSwarmStart: POST /api/swarms/{id}/start {definition, commit?}. Без
+// commit первый запуск пиннит HEAD repository проекта, разрешённый сервером.
 func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.visibleSwarmUser(w, r)
 	if !ok {
@@ -77,6 +78,15 @@ func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.SwarmID, in.UserID = r.PathValue("id"), user.ID
+	if in.Commit == "" {
+		// Сеть — до транзакции записи и вне её (#228).
+		origin, commit, err := s.startCommit(r.Context(), in.SwarmID, user.ID)
+		if err != nil {
+			swarmExecutionError(w, r, err)
+			return
+		}
+		in.Origin, in.Commit = origin, commit
+	}
 	sw, err := s.store.StartSwarm(r.Context(), in, func(ctx context.Context) bool {
 		return secretRequestSession(ctx, s, r, user.ID)
 	})
@@ -145,14 +155,17 @@ func readSwarmStart(w http.ResponseWriter, r *http.Request) (store.SwarmStart, b
 // причина отказа уходит вызывающему строкой.
 func swarmExecutionError(w http.ResponseWriter, r *http.Request, err error) {
 	var fit *store.RoleFitError
+	var head *gitHeadError
 	switch {
+	case errors.As(err, &head):
+		writeDetail(w, head.status, head.Error())
 	case errors.Is(err, store.ErrSwarmRequestDenied):
 		writeDetail(w, http.StatusForbidden, "swarm management denied")
 	case errors.Is(err, store.ErrWorkflowDefinitionMissing):
 		writeDetail(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeDetail(w, http.StatusNotFound, "swarm not found")
-	case errors.Is(err, store.ErrSwarmExecutionState), errors.Is(err, store.ErrSwarmGraphPinned), errors.As(err, &fit):
+	case errors.Is(err, store.ErrSwarmExecutionState), errors.Is(err, store.ErrSwarmGraphPinned), errors.Is(err, store.ErrSwarmSourceChanged), errors.As(err, &fit):
 		writeDetail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrWorkflowGraphInvalid), errors.Is(err, store.ErrSwarmSourceInvalid):
 		writeDetail(w, http.StatusUnprocessableEntity, err.Error())

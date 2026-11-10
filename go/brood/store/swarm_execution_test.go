@@ -210,6 +210,17 @@ func TestStartSwarmFirstPass(t *testing.T) {
 	}
 }
 
+// TestStartSwarmResolvedOrigin — commit, разрешённый сервером из repository
+// проекта до транзакции (#228), пиннится, пока repository прежний.
+func TestStartSwarmResolvedOrigin(t *testing.T) {
+	s := startStore(t)
+	w, err := s.StartSwarm(context.Background(), SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Commit: startCommit, Origin: startOrigin}, allow)
+	mustNil(t, err)
+	if w.Source == nil || *w.Source != (PipelineSource{Origin: startOrigin, Commit: startCommit}) {
+		t.Fatalf("source snapshot: %+v", w.Source)
+	}
+}
+
 func TestStartSwarmActorStartNode(t *testing.T) {
 	ctx := context.Background()
 	s := startStore(t)
@@ -263,6 +274,8 @@ func TestStartSwarmRefusesBeforeWrite(t *testing.T) {
 		{name: "project without repository", setup: func(t *testing.T, s *Store) { mustNil(t, s.SetProjectRepository(ctx, "one", "")) }, want: ErrSwarmSourceInvalid, text: "repository"},
 		{name: "commit missing", in: SwarmStart{Commit: "-"}, want: ErrSwarmSourceInvalid, text: "commit"},
 		{name: "commit abbreviated", in: SwarmStart{Commit: "0123456"}, want: ErrSwarmSourceInvalid, text: "commit"},
+		{name: "repository changed after the commit was resolved", in: SwarmStart{Origin: "https://git.example.org/team/other.git"}, want: ErrSwarmSourceChanged, text: "repository changed"},
+		{name: "repository cleared after the commit was resolved", setup: func(t *testing.T, s *Store) { mustNil(t, s.SetProjectRepository(ctx, "one", "")) }, in: SwarmStart{Origin: startOrigin}, want: ErrSwarmSourceInvalid, text: "repository"},
 		{name: "session revoked", deny: true, want: ErrSwarmRequestDenied},
 		{name: "viewer", in: SwarmStart{UserID: "v"}, want: ErrSwarmRequestDenied},
 		{name: "missing swarm", in: SwarmStart{SwarmID: "absent"}, want: ErrNotFound},
@@ -282,6 +295,7 @@ func TestStartSwarmRefusesBeforeWrite(t *testing.T) {
 			if tc.in.Definition != "" {
 				in.Definition = tc.in.Definition
 			}
+			in.Origin = tc.in.Origin
 			switch tc.in.Commit {
 			case "":
 			case "-":
