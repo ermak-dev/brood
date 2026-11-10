@@ -45,18 +45,23 @@ func ReceiveSession(ctx context.Context, req relay.SessionRequest) relay.Session
 	}
 }
 
+// sessionOutput keeps the helper's response within relay.MaxSessionBytes. The
+// buffer is a field, not embedded: os/exec copies the pipe with io.Copy, which
+// would take a promoted bytes.Buffer.ReadFrom over the capped Write.
 type sessionOutput struct {
-	bytes.Buffer
+	buf    bytes.Buffer
 	cancel context.CancelFunc
 }
 
 func (b *sessionOutput) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > relay.MaxSessionBytes {
+	if b.buf.Len()+len(p) > relay.MaxSessionBytes {
 		b.cancel()
 		return 0, errors.New("session helper output exceeds size limit")
 	}
-	return b.Buffer.Write(p)
+	return b.buf.Write(p)
 }
+
+func (b *sessionOutput) Bytes() []byte { return b.buf.Bytes() }
 
 // NewSessionHandler creates private attachment state for one relay connection.
 // Cancellation discards metadata only; neither the PTY host nor Claude is stopped.
