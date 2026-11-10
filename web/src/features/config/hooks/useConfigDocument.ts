@@ -508,6 +508,8 @@ export function useConfigDocument({
     diffModalOpen,
     serverYaml,
     mergedYaml,
+    /** Raw server YAML of the latest read: the base of unsaved edits. */
+    baseYaml: previewServerYaml,
     loadConfig,
     handleSave,
     handleConfirmSave,

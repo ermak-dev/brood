@@ -218,7 +218,11 @@
     "model_alias_placeholder": "模型別名（選填）",
     "invalid_provider_index": "無效的供應商索引。",
     "unsaved_changes_title": "未儲存的變更",
-    "unsaved_changes_message": "你有未儲存的變更，離開後將遺失這些變更。確定要離開嗎？"
+    "unsaved_changes_message": "你有未儲存的變更，離開後將遺失這些變更。確定要離開嗎？",
+    "unsaved_draft_title": "還原未儲存的變更？",
+    "unsaved_draft_message": "此編輯器關閉時有未儲存的變更。請還原或捨棄這些變更。",
+    "unsaved_draft_restore": "還原",
+    "unsaved_draft_discard": "捨棄"
   },
   "title": {
     "login": "Brood 管理中心",

@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AuthState, LoginCredentials, ConnectionStatus } from '@/types';
 import { STORAGE_KEY_AUTH } from '@/utils/constants';
 import { obfuscatedStorage } from '@/services/storage/secureStorage';
+import { unsavedDrafts } from '@/services/storage/unsavedDrafts';
 import { apiClient } from '@/services/api/client';
 import * as broodSession from '@/services/brood/session';
 import { useConfigStore } from './useConfigStore';
@@ -33,6 +34,8 @@ function clearCaches(): void {
 function disconnect(): void {
   apiClient.setConfig({ apiBase: '', managementKey: '' });
   clearCaches();
+  // Черновики редакторов принадлежат сессии пользователя, как и кэши.
+  unsavedDrafts.clear();
   useProjectStore.getState().bindUser('');
   useAuthStore.setState({
     isAuthenticated: false,

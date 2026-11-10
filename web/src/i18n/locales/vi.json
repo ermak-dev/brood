@@ -218,7 +218,11 @@
     "model_alias_placeholder": "Bí danh model (tùy chọn)",
     "invalid_provider_index": "Chỉ mục provider không hợp lệ.",
     "unsaved_changes_title": "Thay đổi chưa lưu",
-    "unsaved_changes_message": "Bạn có thay đổi chưa lưu. Rời đi bây giờ sẽ mất các thay đổi đó. Bạn có muốn rời đi không?"
+    "unsaved_changes_message": "Bạn có thay đổi chưa lưu. Rời đi bây giờ sẽ mất các thay đổi đó. Bạn có muốn rời đi không?",
+    "unsaved_draft_title": "Khôi phục thay đổi chưa lưu?",
+    "unsaved_draft_message": "Trình chỉnh sửa này đã đóng khi còn thay đổi chưa lưu. Hãy khôi phục hoặc hủy bỏ chúng.",
+    "unsaved_draft_restore": "Khôi phục",
+    "unsaved_draft_discard": "Hủy bỏ"
   },
   "title": {
     "login": "Trung tâm Quản lý Brood",

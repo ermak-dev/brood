@@ -218,7 +218,11 @@
     "model_alias_placeholder": "模型别名 (可选)",
     "invalid_provider_index": "无效的提供商索引。",
     "unsaved_changes_title": "未保存的更改",
-    "unsaved_changes_message": "你有未保存的更改，离开后将丢失这些更改。确定要离开吗？"
+    "unsaved_changes_message": "你有未保存的更改，离开后将丢失这些更改。确定要离开吗？",
+    "unsaved_draft_title": "恢复未保存的更改？",
+    "unsaved_draft_message": "此编辑器关闭时有未保存的更改。请恢复或放弃这些更改。",
+    "unsaved_draft_restore": "恢复",
+    "unsaved_draft_discard": "放弃"
   },
   "title": {
     "login": "Brood 管理中心",

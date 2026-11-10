@@ -12,12 +12,17 @@ import {
   type ExcludedModelsCatalogState,
 } from '@/components/excludedModels';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
+import { useDraftRecovery } from '@/hooks/useDraftRecovery';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { useAuthStore, useNotificationStore } from '@/stores';
 import { authFilesApi } from '@/services/api';
 import { buildOAuthProviderOptions, normalizeProviderKey } from '@/features/authFiles/constants';
-import { getStringSetSignature, isOAuthEditorDirty } from '@/features/authFiles/oauthEditorState';
+import {
+  getStringSetSignature,
+  isOAuthEditorDirty,
+  parseExcludedModelsDraft,
+} from '@/features/authFiles/oauthEditorState';
 import type { AuthFileItem, OAuthModelAliasEntry } from '@/types';
 import { getErrorMessage } from '@/utils/helpers';
 import styles from '@/features/authFiles/components/OAuthEditor.module.scss';
@@ -114,9 +119,19 @@ export function AuthFilesOAuthExcludedEditPage() {
     }),
     [t]
   );
+  // Правила исключения моделей не секретны: черновик переживает и перезагрузку вкладки.
+  const { discard: discardDraft } = useDraftRecovery({
+    key: resolvedProviderKey ? `oauth-excluded:${resolvedProviderKey}` : '',
+    ready: baselineReady && !initialLoading,
+    persistence: 'session',
+    read: () => (contentDirty ? effectiveRules : null),
+    parse: (value) => parseExcludedModelsDraft(value, baselineModelsSignature),
+    restore: (rules) => setSelectedModels(new Set(normalizeExcludedRules(rules))),
+  });
   const { allowNextNavigation, allowNavigationTo } = useUnsavedChangesGuard({
     shouldBlock: isDirty,
     dialog: unsavedChangesDialog,
+    onDiscard: discardDraft,
   });
 
   const title = useMemo(() => {
@@ -323,6 +338,7 @@ export function AuthFilesOAuthExcludedEditPage() {
         await authFilesApi.deleteOauthExcludedEntry(normalizedProvider);
       }
       showNotification(t('oauth_excluded.save_success'), 'success');
+      discardDraft();
       allowNextNavigation();
       handleBack();
     } catch (err: unknown) {
@@ -331,7 +347,16 @@ export function AuthFilesOAuthExcludedEditPage() {
     } finally {
       setSaving(false);
     }
-  }, [allowNextNavigation, effectiveRules, handleBack, isEditing, provider, showNotification, t]);
+  }, [
+    allowNextNavigation,
+    discardDraft,
+    effectiveRules,
+    handleBack,
+    isEditing,
+    provider,
+    showNotification,
+    t,
+  ]);
 
   const canSave =
     !disableControls &&

@@ -1,3 +1,4 @@
+import type { OAuthModelAliasEntry } from '@/types';
 import { normalizeProviderKey } from './constants';
 
 type ModelAliasDraftEntry = {
@@ -41,3 +42,35 @@ export const isOAuthEditorDirty = (
 ): boolean =>
   normalizeProviderKey(initialProvider) !== normalizeProviderKey(currentProvider) ||
   baselineContentSignature !== currentContentSignature;
+
+// Сохранённый черновик редактора (useDraftRecovery) — непроверенные данные хранилища.
+const isModelAliasEntry = (value: unknown): value is OAuthModelAliasEntry => {
+  if (!value || typeof value !== 'object') return false;
+  const { name, alias, fork, forceMapping } = value as Record<string, unknown>;
+  return (
+    typeof name === 'string' &&
+    typeof alias === 'string' &&
+    (fork === undefined || typeof fork === 'boolean') &&
+    (forceMapping === undefined || typeof forceMapping === 'boolean')
+  );
+};
+
+export const parseModelAliasDraft = (
+  value: unknown,
+  baselineSignature: string
+): OAuthModelAliasEntry[] | null =>
+  Array.isArray(value) &&
+  value.every(isModelAliasEntry) &&
+  getModelAliasDraftSignature(value) !== baselineSignature
+    ? value
+    : null;
+
+export const parseExcludedModelsDraft = (
+  value: unknown,
+  baselineSignature: string
+): string[] | null =>
+  Array.isArray(value) &&
+  value.every((rule): rule is string => typeof rule === 'string') &&
+  getStringSetSignature(value) !== baselineSignature
+    ? value
+    : null;

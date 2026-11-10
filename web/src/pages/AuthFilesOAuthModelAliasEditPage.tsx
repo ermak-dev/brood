@@ -8,6 +8,7 @@ import { IconInfo, IconNetwork, IconPlus } from '@/components/ui/icons';
 import { OAuthEditorProviderCard } from '@/features/authFiles/components/OAuthEditorProviderCard';
 import { OAuthAliasMappingRow } from '@/features/authFiles/components/OAuthAliasMappingRow';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
+import { useDraftRecovery } from '@/hooks/useDraftRecovery';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { useAuthStore, useNotificationStore } from '@/stores';
@@ -16,6 +17,7 @@ import { buildOAuthProviderOptions, normalizeProviderKey } from '@/features/auth
 import {
   getModelAliasDraftSignature,
   isOAuthEditorDirty,
+  parseModelAliasDraft,
 } from '@/features/authFiles/oauthEditorState';
 import type { AuthFileItem, OAuthModelAliasEntry } from '@/types';
 import { generateId, getErrorMessage } from '@/utils/helpers';
@@ -125,9 +127,27 @@ export function AuthFilesOAuthModelAliasEditPage() {
     }),
     [t]
   );
+  // Алиасы моделей не секретны: черновик переживает и перезагрузку вкладки.
+  const { discard: discardDraft } = useDraftRecovery({
+    key: resolvedProviderKey ? `oauth-model-alias:${resolvedProviderKey}` : '',
+    ready: baselineReady && !initialLoading,
+    persistence: 'session',
+    read: () =>
+      contentDirty
+        ? mappings.map(({ name, alias, fork, forceMapping }) => ({
+            name,
+            alias,
+            fork,
+            forceMapping,
+          }))
+        : null,
+    parse: (value) => parseModelAliasDraft(value, baselineMappingsSignature),
+    restore: (entries) => setMappings(normalizeMappingEntries(entries)),
+  });
   const { allowNextNavigation, allowNavigationTo } = useUnsavedChangesGuard({
     shouldBlock: isDirty,
     dialog: unsavedChangesDialog,
+    onDiscard: discardDraft,
   });
   const title = isEditing
     ? t('oauth_model_alias.edit_title', { provider: provider.trim() || resolvedProviderKey })
@@ -383,6 +403,7 @@ export function AuthFilesOAuthModelAliasEditPage() {
         await authFilesApi.deleteOauthModelAlias(channel);
       }
       showNotification(t('oauth_model_alias.save_success'), 'success');
+      discardDraft();
       allowNextNavigation();
       handleBack();
     } catch (err: unknown) {
@@ -391,7 +412,16 @@ export function AuthFilesOAuthModelAliasEditPage() {
     } finally {
       setSaving(false);
     }
-  }, [allowNextNavigation, handleBack, isEditing, mappings, provider, showNotification, t]);
+  }, [
+    allowNextNavigation,
+    discardDraft,
+    handleBack,
+    isEditing,
+    mappings,
+    provider,
+    showNotification,
+    t,
+  ]);
 
   const canSave =
     !disableControls &&

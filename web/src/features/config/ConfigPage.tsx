@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useRevealGroup } from '@/hooks/motion';
+import { useDraftRecovery } from '@/hooks/useDraftRecovery';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { useVisualConfig } from '@/hooks/useVisualConfig';
 import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
@@ -28,6 +29,7 @@ import {
 } from './uiState';
 import { findConfigFieldById } from './searchIndex';
 import { shouldReloadVisualDraft, useConfigDocument } from './hooks/useConfigDocument';
+import { parseConfigDraft, resolveConfigDraft, type ConfigDraft } from './unsavedDraft';
 import { useFieldJump } from './hooks/useFieldJump';
 import { useSourceSearch } from './hooks/useSourceSearch';
 import { ConfigHeader } from './components/ConfigHeader';
@@ -125,10 +127,35 @@ export function ConfigPage() {
     [t]
   );
 
+  // config.yaml несёт ключи доступа: черновик только в памяти вкладки, без sessionStorage;
+  // перезагрузку и закрытие вкладки предупреждает beforeunload защиты.
+  const { discard: discardDraft } = useDraftRecovery<ConfigDraft>({
+    key: 'config',
+    ready: !doc.loading && !doc.error,
+    persistence: 'memory',
+    read: () => {
+      if (!doc.isDirty) return null;
+      if (doc.sourceDirty) return { base: doc.baseYaml, yaml: doc.content, mode: 'source' };
+      const yaml = applyVisualChangesToYaml(doc.baseYaml, 'draft');
+      return { base: doc.baseYaml, yaml, mode: 'visual' };
+    },
+    parse: (value) => parseConfigDraft(value, doc.content),
+    restore: (draft) => {
+      const restored = resolveConfigDraft(draft, doc.content);
+      const visual =
+        restored.mode === 'visual' && rebaseVisualValuesFromYaml(doc.content, restored.yaml).ok;
+      const nextMode = visual ? 'visual' : 'source';
+      setMode(nextMode);
+      localStorage.setItem(CONFIG_MODE_STORAGE_KEY, nextMode);
+      if (!visual) doc.handleChange(restored.yaml);
+    },
+  });
+
   useUnsavedChangesGuard({
     enabled: isCurrentLayer,
     shouldBlock: doc.isDirty,
     dialog: unsavedChangesDialog,
+    onDiscard: discardDraft,
   });
 
   // YAML 解析失败：切换到源码模式；修复后仍可重试进入可视化模式。
