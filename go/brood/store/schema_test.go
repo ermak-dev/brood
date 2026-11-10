@@ -98,7 +98,7 @@ func TestOpenIdempotentOnReopen(t *testing.T) {
 // обновляется, а отвергается. Отказ обязан назвать обе версии и не
 // тронуть файл: сравниваем снимок sqlite_master и user_version.
 func TestOpenRejectsForeignSchemaVersion(t *testing.T) {
-	for _, version := range []int{0, 7, 15, 16, 17, 18, 20, 99} {
+	for _, version := range []int{0, 7, 15, 16, 17, 18, 19, 21, 99} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "db.sqlite3")

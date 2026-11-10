@@ -138,6 +138,32 @@ owner-прав — 403, постороннему рой скрыт как 404. N
 не заменяют эту проверку. `GET /api/identities` — отдельный admin-каталог native
 SA и уже встреченных principals, не превращение локальных login в native identities.
 
+## Запросы роя
+
+Устройство и инварианты — [MODEL.md](../docs/MODEL.md), «Запросы роя» (#209, #210).
+
+- `GET /api/swarms/{id}/requests` — `{"results": [...]}` открытых запросов,
+  `?all=1` — всех; любая роль роя. Элемент: `id`, `swarmId`, `origin`
+  (`node`/`actor`), `sequence`/`nodeId` узлового запроса, `actor`
+  (`name`, `incarnation`) запроса актора, `kind`, `question`, `context`,
+  `options` (`label`, `outcome`), `state`, `createdAt`, после ответа
+  `answeredAt`, `answeredBy` (username), `outcome`, `optionLabel`, `response`
+  и у запроса актора `delivery` (`pending`/`delivered`/`failed`).
+- `POST /api/swarms/{id}/requests/{request}/answer` — ровно
+  `{outcome?, response?}`, owner/editor/administrator; 200 — запрос после
+  ответа. Сбой доставки ответа актору — не отказ: `delivery: "failed"` и
+  `deliveryError` из фиксированного набора. Отказы: 404 рой или запрос не
+  найден (в том числе запрос чужого роя), 403 права или сессия изменились,
+  409 запрос закрыт или актор устарел, 400 ответ не подходит запросу.
+- `POST /api/swarms/{id}/requests/{request}/deliver` — повтор доставки
+  записанного ответа актору, те же права; доставленный ответ не отправляется
+  снова, запрос без доставки — 409.
+
+Тексты отказов — фиксированный публичный набор; текст ошибок хранилища и
+адаптеров клиенту не возвращается. Старый `POST
+/api/pipeline-runs/{run}/nodes/{node}/answer` — обёртка над тем же ответом,
+пока панель не перешла на API роя (#216).
+
 ## Ёмкость проекта
 
 `GET /api/projects/{id}` доступен участнику/администратору и возвращает id/name,

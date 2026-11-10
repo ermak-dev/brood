@@ -351,22 +351,10 @@ func (s *Server) pipelineDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, view)
 }
-func pipelineAnswerError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, store.ErrNotFound) {
-		writeDetail(w, 404, "pipeline run not found")
-	} else if errors.Is(err, store.ErrPipelineVisitConflict) {
-		writeDetail(w, 409, "pipeline visit is no longer awaiting an answer")
-	} else if errors.Is(err, store.ErrSwarmRequestDenied) {
-		writeDetail(w, 403, "answer authorization changed or access denied")
-	} else if errors.Is(err, store.ErrSwarmRequestStale) {
-		writeDetail(w, 409, "request actor is stale")
-	} else if errors.Is(err, store.ErrSwarmRequestInvalid) {
-		writeDetail(w, 400, err.Error())
-	} else {
-		apiError(w, r, err)
-	}
-}
 
+// pipelineAnswer — старый вход ответа шлюза, пока панель не перешла на
+// API запросов роя (#216): тонкая обёртка над answerSwarmRequest, которая
+// находит узловой запрос по шагу и отдаёт вид прогона.
 func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 	sw, ok := s.pipelineFind(w, r, app.ActionManageSwarm)
 	if !ok {
@@ -405,11 +393,9 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 	// Повтор потерянного ответа решает хранилище в той же транзакции: он
 	// принимается только от автора с действующей сессией и правами, с тем же
 	// исходом и текстом; иначе 409.
-	_, err = s.store.AnswerSwarmRequest(r.Context(), store.SwarmAnswer{SwarmID: sw.ID, RequestID: req.ID, UserID: user.ID, Outcome: input.Answer, Response: input.Response}, func(ctx context.Context) bool {
-		return secretRequestSession(ctx, s, r, user.ID)
-	})
+	_, _, err = s.answerSwarmRequest(r, user, store.SwarmAnswer{SwarmID: sw.ID, RequestID: req.ID, UserID: user.ID, Outcome: input.Answer, Response: input.Response})
 	if err != nil {
-		pipelineAnswerError(w, r, err)
+		swarmRequestError(w, r, err)
 		return
 	}
 	current, err := s.store.GetSwarm(r.Context(), sw.ID)

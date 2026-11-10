@@ -56,6 +56,9 @@ type Server struct {
 
 	managedLLM  http.Handler
 	adminModels *adminModelClient
+
+	// deliveries сериализует доставку ответа на запрос роя (#210).
+	deliveries deliveryLocks
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -271,6 +274,7 @@ func (s *Server) mount() {
 	s.mountAccessAPI()
 	s.mountPipelineAPI()
 	s.mountSwarmExecutionAPI()
+	s.mountSwarmRequests()
 	// Actor/template/policy роя, воркеры и глобальная политика — тонкий
 	// прокси к ateapi с проверкой владения роем (#32); он же подключает
 	// маршруты proxy под /api/swarms/{id}/proxy/.

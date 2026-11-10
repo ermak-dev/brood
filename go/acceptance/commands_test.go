@@ -37,7 +37,7 @@ func TestRealCommandCatalog(t *testing.T) {
 	for _, tc := range []struct {
 		args  []string
 		tools int
-	}{{[]string{"mcp"}, 28}, {[]string{"--guest", "mcp"}, 22}} {
+	}{{[]string{"mcp"}, 29}, {[]string{"--guest", "mcp"}, 23}} {
 		output := f.cli("catalog-state", input, 0, tc.args...)
 		found := false
 		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {

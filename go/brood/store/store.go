@@ -30,7 +30,8 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // пересоздания, поэтому версия растёт, а не остаётся.
 // 19: нет pipeline_preparations, её триггеров и колонок native_* у
 // swarm_steps (#223): модель «актор под узел» закрыта в #208.
-const schemaVersion = 19
+// 20: состояние доставки ответа актору swarm_requests.delivery (#210).
+const schemaVersion = 20
 
 //go:embed schema.sql
 var currentSchema string

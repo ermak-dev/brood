@@ -40,19 +40,9 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 		if err := json.Unmarshal(validated.Arguments, &args); err != nil {
 			return relay.SwarmResponse{Text: "invalid pipeline completion", Outcome: "refused"}
 		}
-		actor, checkedSwarm, err := m.authorizeCommandActor(ctx, from)
-		if err == nil {
-			err = m.server.store.WithTx(ctx, func(ctx context.Context) error {
-				current, swarm, err := m.authorizeCommandActorDurable(ctx, actor)
-				if err != nil {
-					return err
-				}
-				if swarm.AtespaceName != checkedSwarm.AtespaceName || swarm.AtespaceUID != checkedSwarm.AtespaceUID {
-					return app.ErrConflict
-				}
-				return m.server.store.CompletePipelineActorVisit(ctx, current.SwarmID, args.RunID, args.Sequence, args.RequestID, current.UID, current.Incarnation, args.Outcome)
-			})
-		}
+		err = m.inCommandActorTx(ctx, from, func(ctx context.Context, current store.ManagedActor) error {
+			return m.server.store.CompletePipelineActorVisit(ctx, current.SwarmID, args.RunID, args.Sequence, args.RequestID, current.UID, current.Incarnation, args.Outcome)
+		})
 		if err != nil {
 			switch {
 			case errors.Is(err, app.ErrNotAllowed):
@@ -64,6 +54,8 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 			}
 		}
 		return relay.SwarmResponse{OK: true, Text: "pipeline visit completed", Outcome: "completed"}
+	case "ask_operator":
+		return m.askOperator(ctx, from, inv)
 	case "profile":
 		data, _ := json.Marshal(map[string]any{"self": from.Name, "role": from.Role, "swarm_id": from.SwarmID, "provider": "proxmox", "integration_branch": nil})
 		return relay.SwarmResponse{OK: true, Text: string(data)}

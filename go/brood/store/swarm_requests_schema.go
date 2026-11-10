@@ -5,7 +5,9 @@ package store
 // графа: исход выбирает маршрут, свободный текст маршрута не касается.
 // Запрос актора (origin='actor') — вопрос по его инициативе: граф он не
 // продвигает, исхода у него нет. Подпись нажатого варианта восстановима из
-// options по сохранённому исходу. CHECK держат правила и при записи мимо
+// options по сохранённому исходу. delivery — доставка ответа спросившему
+// актору (#210): есть ровно у отвеченного запроса актора; у узлового запроса
+// адресата нет. CHECK держат правила и при записи мимо
 // кода: транзакционная проверка в Go — первая линия, схема — вторая.
 // Регистрация — schemaModules ("swarm-requests") и
 // verifySwarmRequestsSchema в registry.go (#205).
@@ -26,6 +28,7 @@ const swarmRequestsSchema = `CREATE TABLE swarm_requests (
     answered_by TEXT REFERENCES users(id),
     outcome TEXT,
     response TEXT,
+    delivery TEXT CHECK (delivery IN ('pending', 'delivered', 'failed')),
     FOREIGN KEY (swarm_id, sequence) REFERENCES swarm_steps(swarm_id, sequence),
     CHECK (origin <> 'node' OR (sequence IS NOT NULL AND kind = 'choice' AND actor_uid IS NULL)),
     CHECK (origin <> 'actor' OR (sequence IS NULL AND actor_uid IS NOT NULL AND actor_incarnation > 0 AND outcome IS NULL)),
@@ -33,7 +36,8 @@ const swarmRequestsSchema = `CREATE TABLE swarm_requests (
     CHECK (kind <> 'choice' OR options IS NOT NULL),
     CHECK (state = 'answered' OR (answered_at IS NULL AND answered_by IS NULL AND outcome IS NULL AND response IS NULL)),
     CHECK (state <> 'answered' OR (answered_at IS NOT NULL AND answered_by IS NOT NULL)),
-    CHECK (origin <> 'node' OR state <> 'answered' OR outcome IS NOT NULL)
+    CHECK (origin <> 'node' OR state <> 'answered' OR outcome IS NOT NULL),
+    CHECK ((delivery IS NOT NULL) = (origin = 'actor' AND state = 'answered'))
 )`
 
 // swarmRequestOpenNode: граф ждёт оператора не более чем по одному запросу.
@@ -44,7 +48,10 @@ const swarmRequestStep = `CREATE UNIQUE INDEX swarm_requests_step ON swarm_reque
 
 // swarmRequestFence: после ответа или отмены строка не меняется, а у
 // открытой не меняется личность: ответ нельзя переписать и перенести.
-const swarmRequestFence = `CREATE TRIGGER swarm_requests_fence BEFORE UPDATE ON swarm_requests WHEN OLD.state <> 'open' OR NEW.id IS NOT OLD.id OR NEW.swarm_id IS NOT OLD.swarm_id OR NEW.sequence IS NOT OLD.sequence OR NEW.origin IS NOT OLD.origin OR NEW.actor_uid IS NOT OLD.actor_uid OR NEW.actor_incarnation IS NOT OLD.actor_incarnation OR NEW.kind IS NOT OLD.kind OR NEW.question IS NOT OLD.question OR NEW.context IS NOT OLD.context OR NEW.options IS NOT OLD.options OR NEW.created_at IS NOT OLD.created_at BEGIN SELECT RAISE(ABORT, 'swarm request is immutable'); END`
+// Исключение — состояние доставки ответа актору (#210): оно пишется после
+// коммита ответа, из pending или failed только в delivered или failed;
+// доставленный ответ не переоткрывается.
+const swarmRequestFence = `CREATE TRIGGER swarm_requests_fence BEFORE UPDATE ON swarm_requests WHEN (OLD.state <> 'open' AND (NEW.state IS NOT OLD.state OR NEW.answered_at IS NOT OLD.answered_at OR NEW.answered_by IS NOT OLD.answered_by OR NEW.outcome IS NOT OLD.outcome OR NEW.response IS NOT OLD.response OR (NEW.delivery IS NOT OLD.delivery AND ((OLD.delivery IS NOT 'pending' AND OLD.delivery IS NOT 'failed') OR NEW.delivery IS 'pending')))) OR NEW.id IS NOT OLD.id OR NEW.swarm_id IS NOT OLD.swarm_id OR NEW.sequence IS NOT OLD.sequence OR NEW.origin IS NOT OLD.origin OR NEW.actor_uid IS NOT OLD.actor_uid OR NEW.actor_incarnation IS NOT OLD.actor_incarnation OR NEW.kind IS NOT OLD.kind OR NEW.question IS NOT OLD.question OR NEW.context IS NOT OLD.context OR NEW.options IS NOT OLD.options OR NEW.created_at IS NOT OLD.created_at BEGIN SELECT RAISE(ABORT, 'swarm request is immutable'); END`
 
 // swarmRequestNoDelete: запрос живёт, пока жив его рой. Каскад удаления роя
 // проходит: к моменту удаления дочерних строк родителя в swarms уже нет.

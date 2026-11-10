@@ -122,7 +122,7 @@ func TestPipelineAnswerErrorClassification(t *testing.T) {
 		{errors.New("database unavailable"), 500},
 	} {
 		w := httptest.NewRecorder()
-		pipelineAnswerError(w, httptest.NewRequest("POST", "/", nil), tc.err)
+		swarmRequestError(w, httptest.NewRequest("POST", "/", nil), tc.err)
 		if w.Code != tc.status {
 			t.Errorf("%v: got %d, want %d", tc.err, w.Code, tc.status)
 		}
