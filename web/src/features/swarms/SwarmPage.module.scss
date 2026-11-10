@@ -1,0 +1,222 @@
+@use '../../styles/mixins' as *;
+@use '../../styles/variables' as *;
+
+/* Страница роя (#215): сведения о рое, два раздельных состояния, граф,
+ * выбранный узел и история шагов. Цвета — токены темы; состояния шагов —
+ * общие --pip-* из pipelines.module.scss (.timeline), как у графа. */
+
+/* Сведения роя: подписанные значения в строку, на телефоне — столбиком. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin: 0;
+  font-size: 13px;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  dt {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  dd {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  a {
+    color: var(--primary-color);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  a:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+.id {
+  font-family: $font-mono;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Инфраструктура и исполнение — две отдельные карточки: состояние роя
+ * в Substrate и состояние его графа не сводятся к одному значку. */
+.states {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, #{$radius-md});
+  background: var(--bg-primary);
+}
+
+.stateLabel {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-tertiary);
+}
+
+.stateText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Текстовая кнопка: узел по имени, выбирает его на графе. */
+.nodeButton {
+  @include button-reset;
+  color: var(--primary-color);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  &[aria-pressed='true'] {
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+}
+
+.nodeCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, #{$radius-md});
+  background: var(--bg-primary);
+}
+
+.nodeHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.kind {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.instruction {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* История шагов — таймлайн: точка состояния, затем строка шага. */
+.step {
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: var(--radius-md, #{$radius-md});
+}
+
+.stepSelected {
+  background: color-mix(in srgb, var(--primary-color) 7%, transparent);
+}
+
+.stepBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.stepTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.stepNumber {
+  font-family: $font-mono;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.stepFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+
+  > div {
+    display: inline-flex;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  dt::after {
+    content: ':';
+  }
+
+  dd {
+    margin: 0;
+    min-width: 0;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+}
+
+/* На телефоне сведения — в две колонки, длинный ID — на всю ширину. */
+@include mobile {
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 16px;
+  }
+
+  .factWide {
+    grid-column: 1 / -1;
+  }
+}

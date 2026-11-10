@@ -5,12 +5,16 @@ const STATUS_ORDER: Record<RunStatus, number> = {
   running: 0,
   waiting_human: 1,
   failed: 2,
-  succeeded: 3,
+  stopped: 3,
+  succeeded: 4,
+  idle: 5,
 };
 
+/** Остановленный и ещё не начатый проход — не сбой: приглушены. */
 export function runTone(status: RunStatus): 'success' | 'warning' | 'danger' | 'muted' {
   if (status === 'succeeded' || status === 'running') return 'success';
   if (status === 'waiting_human') return 'warning';
+  if (status === 'stopped' || status === 'idle') return 'muted';
   return 'danger';
 }
 

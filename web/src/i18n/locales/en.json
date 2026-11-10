@@ -3105,7 +3105,9 @@
       "running": "Running",
       "waiting_human": "Waiting for human",
       "succeeded": "Succeeded",
-      "failed": "Failed"
+      "failed": "Failed",
+      "idle": "Not started",
+      "stopped": "Stopped"
     },
     "kind": {
       "actor": "actor",
@@ -3127,5 +3129,59 @@
     "gate_confirm": "Confirm",
     "gate_confirm_hint": "The answer goes to the run and cannot be taken back. Confirm to send it.",
     "gate_no_options": "The gate offers no options; the server sent none."
+  },
+  "swarm_page": {
+    "project": "Project",
+    "owner": "Owner",
+    "your_role": "Your role",
+    "id": "Swarm ID",
+    "copy_id": "Copy swarm ID",
+    "infrastructure": "Infrastructure",
+    "atespace": "Atespace",
+    "execution": "Execution",
+    "execution_states": {
+      "idle": "Not started",
+      "running": "Running",
+      "waiting": "Waiting for answer",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "stopped": "Stopped"
+    },
+    "execution_hints": {
+      "no_graph": "No graph is attached to this swarm yet.",
+      "idle": "The graph has not started.",
+      "running": "The graph is advancing.",
+      "waiting": "The graph waits for an operator answer and does not advance without it.",
+      "succeeded": "The graph reached its exit.",
+      "failed": "The graph ended on a failed step.",
+      "stopped": "The graph is stopped and does not advance."
+    },
+    "current_node": "Current node",
+    "graph": "Graph",
+    "graph_hint": "Snapshot of the {{name}} definition. Select a node to see its instruction, outcome and actor.",
+    "graph_label": "Graph of swarm {{name}}",
+    "node": "Selected node",
+    "node_hint": "Select a node on the graph to see its instruction, outcome and actor.",
+    "prompt": "Instruction",
+    "question": "Question",
+    "actor": "Actor",
+    "outcome": "Outcome",
+    "started": "Started",
+    "finished": "Finished",
+    "visits": "Visits",
+    "node_states": {
+      "unvisited": "Not visited",
+      "pending": "Pending",
+      "active": "Active",
+      "done": "Done",
+      "failed": "Failed",
+      "skipped": "Skipped",
+      "unconfirmed": "Outcome unknown"
+    },
+    "steps": "Step history",
+    "steps_hint": "Every visit of a graph node, oldest first. A node name shows that node on the graph.",
+    "steps_empty": "No steps yet.",
+    "management": "Access and lifecycle",
+    "management_hint": "Who can use this swarm, its ownership and its deletion."
   }
 }

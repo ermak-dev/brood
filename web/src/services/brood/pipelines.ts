@@ -4,21 +4,27 @@
  * Pipeline run API contract.
  * GET /api/swarms/{swarm}/pipeline-runs lists runs visible in that swarm;
  * GET /api/pipeline-runs/{run} returns the run and its current gate, and
- * GET /api/pipeline-runs/{run}/graph returns {svg} with state styling embedded.
+ * GET /api/pipeline-runs/{run}/graph returns {svg} with state styling embedded,
+ * and may list the graph nodes with the instruction each one carries.
  * POST /api/pipeline-runs/{run}/nodes/{node}/answer accepts {answer, visitSequence}.
+ * Since #206 the graph and its execution belong to the swarm: {run} is the
+ * swarm ID, and a visible swarm without a graph answers 404 (getSwarmRun).
  * The server must authorize every operation against the run's swarm, return
  * a reason on refusal, and atomically reject a stale or already answered visit.
  * Gate metadata and a positive, safe-integer visitSequence come from the server.
  */
 
-import { request } from './http';
+import { BroodApiError, request } from './http';
 
-export type RunStatus = 'running' | 'waiting_human' | 'succeeded' | 'failed';
+/** The swarm execution on the run wire: the server names `waiting` as
+ * `waiting_human` and passes `idle` and `stopped` through (#206). */
+export type RunStatus = 'idle' | 'running' | 'waiting_human' | 'succeeded' | 'failed' | 'stopped';
 
 export type NodeStatus = 'pending' | 'active' | 'done' | 'failed' | 'skipped' | 'unconfirmed';
 
 export type NodeKind = 'actor' | 'human' | 'condition' | 'land' | 'exit' | 'start';
 
+/** One step: a visit of a graph node, in sequence order. */
 export interface RunNode {
   id: string;
   kind: NodeKind;
@@ -26,12 +32,25 @@ export interface RunNode {
   label: string;
   /** What the node concluded: success text, refusal reason or verdict. */
   outcome?: string;
+  /** Name of the actor that served the step, when the server knows it. */
+  actorName?: string;
+  /** Step number and recorded moments; absent when the server sends none. */
+  sequence?: number;
+  startedAt?: string;
+  finishedAt?: string;
 }
 
 export interface PipelineRun {
   id: string;
+  /** Name of the graph definition, not of the swarm. */
   name: string;
   status: RunStatus;
+  swarmId?: string;
+  swarmName?: string;
+  projectId?: string;
+  projectName?: string;
+  /** Username of the swarm owner. */
+  owner?: string;
   /** Null when the run has no recorded start time. */
   startedAt: string | null;
   finishedAt?: string;
@@ -61,8 +80,18 @@ export interface HumanGate {
   deadline?: string;
 }
 
+/** A graph node with what the graph asks of it: the actor prompt or the
+ * operator question. */
+export interface GraphNode {
+  id: string;
+  kind: NodeKind;
+  prompt?: string;
+  question?: string;
+}
+
 export interface RunGraph {
   svg: string;
+  nodes?: GraphNode[];
 }
 
 export interface WorkflowDefinition {
@@ -110,6 +139,16 @@ export const pipelinesApi = {
   listRuns: (swarmId: string) =>
     request<PipelineRun[]>('GET', `/api/swarms/${segment(swarmId)}/pipeline-runs`),
   getRun: (id: string) => request<PipelineRun>('GET', runPath(id)),
+  /** The execution of a swarm the caller can already read; null when the
+   * swarm has no graph yet (the run route answers 404 for it). */
+  getSwarmRun: async (swarmId: string): Promise<PipelineRun | null> => {
+    try {
+      return await request<PipelineRun>('GET', runPath(swarmId));
+    } catch (error) {
+      if (error instanceof BroodApiError && error.status === 404) return null;
+      throw error;
+    }
+  },
   answerGate: (runId: string, nodeId: string, answer: string, visitSequence: number) =>
     request<PipelineRun>('POST', `${runPath(runId)}/nodes/${segment(nodeId)}/answer`, {
       answer,

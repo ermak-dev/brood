@@ -3111,7 +3111,9 @@
       "running": "Đang chạy",
       "waiting_human": "Chờ người quyết định",
       "succeeded": "Thành công",
-      "failed": "Thất bại"
+      "failed": "Thất bại",
+      "idle": "Chưa bắt đầu",
+      "stopped": "Đã dừng"
     },
     "kind": {
       "actor": "actor",
@@ -3133,5 +3135,59 @@
     "gate_confirm": "Xác nhận",
     "gate_confirm_hint": "Câu trả lời sẽ được gửi vào lần chạy và không thể thu hồi. Xác nhận để gửi.",
     "gate_no_options": "Cổng không đưa ra lựa chọn nào; máy chủ đã không gửi tùy chọn nào."
+  },
+  "swarm_page": {
+    "project": "Dự án",
+    "owner": "Chủ sở hữu",
+    "your_role": "Vai trò của bạn",
+    "id": "ID bầy",
+    "copy_id": "Sao chép ID bầy",
+    "infrastructure": "Hạ tầng",
+    "atespace": "Atespace",
+    "execution": "Thực thi",
+    "execution_states": {
+      "idle": "Chưa bắt đầu",
+      "running": "Đang chạy",
+      "waiting": "Chờ trả lời",
+      "succeeded": "Thành công",
+      "failed": "Thất bại",
+      "stopped": "Đã dừng"
+    },
+    "execution_hints": {
+      "no_graph": "Bầy này chưa được gắn đồ thị.",
+      "idle": "Đồ thị chưa bắt đầu.",
+      "running": "Đồ thị đang tiến triển.",
+      "waiting": "Đồ thị đang chờ người vận hành trả lời và sẽ không tiến triển nếu không có câu trả lời.",
+      "succeeded": "Đồ thị đã đến điểm kết thúc.",
+      "failed": "Đồ thị kết thúc ở một bước thất bại.",
+      "stopped": "Đồ thị đã dừng và không tiến triển."
+    },
+    "current_node": "Nút hiện tại",
+    "graph": "Đồ thị",
+    "graph_hint": "Ảnh chụp của định nghĩa {{name}}. Chọn một nút để xem chỉ dẫn, kết quả và actor của nút.",
+    "graph_label": "Đồ thị của bầy {{name}}",
+    "node": "Nút đã chọn",
+    "node_hint": "Chọn một nút trên đồ thị để xem chỉ dẫn, kết quả và actor của nút.",
+    "prompt": "Chỉ dẫn",
+    "question": "Câu hỏi",
+    "actor": "Actor",
+    "outcome": "Kết quả",
+    "started": "Bắt đầu",
+    "finished": "Kết thúc",
+    "visits": "Số lần ghé",
+    "node_states": {
+      "unvisited": "Chưa ghé",
+      "pending": "Đang chờ",
+      "active": "Đang hoạt động",
+      "done": "Hoàn tất",
+      "failed": "Thất bại",
+      "skipped": "Bỏ qua",
+      "unconfirmed": "Chưa rõ kết quả"
+    },
+    "steps": "Lịch sử bước",
+    "steps_hint": "Mỗi lần ghé một nút của đồ thị, từ cũ đến mới. Tên nút hiển thị nút đó trên đồ thị.",
+    "steps_empty": "Chưa có bước nào.",
+    "management": "Quyền truy cập và vòng đời",
+    "management_hint": "Ai có thể dùng bầy này, quyền sở hữu và việc xóa bầy."
   }
 }

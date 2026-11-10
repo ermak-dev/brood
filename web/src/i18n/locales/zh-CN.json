@@ -3102,7 +3102,9 @@
       "running": "运行中",
       "waiting_human": "等待人工",
       "succeeded": "已成功",
-      "failed": "已失败"
+      "failed": "已失败",
+      "idle": "未开始",
+      "stopped": "已停止"
     },
     "kind": {
       "actor": "Actor",
@@ -3124,5 +3126,59 @@
     "gate_confirm": "确认",
     "gate_confirm_hint": "回答会发送到运行且无法撤回。确认发送。",
     "gate_no_options": "该关卡未提供选项；服务器没有发送任何选项。"
+  },
+  "swarm_page": {
+    "project": "项目",
+    "owner": "所有者",
+    "your_role": "你的角色",
+    "id": "群组 ID",
+    "copy_id": "复制群组 ID",
+    "infrastructure": "基础设施",
+    "atespace": "Atespace",
+    "execution": "执行",
+    "execution_states": {
+      "idle": "未开始",
+      "running": "运行中",
+      "waiting": "等待答复",
+      "succeeded": "已成功",
+      "failed": "已失败",
+      "stopped": "已停止"
+    },
+    "execution_hints": {
+      "no_graph": "此群组尚未附加图。",
+      "idle": "图尚未开始。",
+      "running": "图正在推进。",
+      "waiting": "图正在等待操作员答复，没有答复不会推进。",
+      "succeeded": "图已到达出口。",
+      "failed": "图在失败的步骤上结束。",
+      "stopped": "图已停止，不会推进。"
+    },
+    "current_node": "当前节点",
+    "graph": "图",
+    "graph_hint": "定义 {{name}} 的快照。选择节点以查看其指令、结果和 Actor。",
+    "graph_label": "群组 {{name}} 的图",
+    "node": "所选节点",
+    "node_hint": "在图上选择节点以查看其指令、结果和 Actor。",
+    "prompt": "指令",
+    "question": "问题",
+    "actor": "Actor",
+    "outcome": "结果",
+    "started": "开始",
+    "finished": "结束",
+    "visits": "访问次数",
+    "node_states": {
+      "unvisited": "未访问",
+      "pending": "排队中",
+      "active": "进行中",
+      "done": "已完成",
+      "failed": "已失败",
+      "skipped": "已跳过",
+      "unconfirmed": "结果未知"
+    },
+    "steps": "步骤历史",
+    "steps_hint": "图节点的每次访问，按从早到晚排列。点击节点名称可在图上显示该节点。",
+    "steps_empty": "暂无步骤。",
+    "management": "访问与生命周期",
+    "management_hint": "谁可以使用此群组、其所有权以及删除。"
   }
 }

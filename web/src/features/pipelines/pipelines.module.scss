@@ -9,11 +9,13 @@
   align-items: flex-start;
 }
 
-/* Единственный источник состояний: таймлайн и граф красят одними
-   токенами. Значения — ссылки на переменные темы, поэтому тёмная тема
-   резолвит их сама: медиа-запросы внутри разметки больше не нужны. */
+/* Единственный источник состояний: таймлайн, граф и подпись состояния
+   узла (.nodeState, страница роя #215) красят одними токенами. Значения —
+   ссылки на переменные темы, поэтому тёмная тема резолвит их сама:
+   медиа-запросы внутри разметки больше не нужны. */
 .graph,
-.timeline {
+.timeline,
+.nodeState {
   --pip-node-fill: var(--bg-primary);
   --pip-active-fill: var(--amber-10);
   --pip-active-stroke: var(--amber-color);
@@ -119,6 +121,16 @@
 .svg g[aria-pressed='true'] rect {
   stroke: var(--text-primary);
   stroke-width: 3.5;
+}
+
+/* Состояние узла словами рядом с точкой таймлайна: цвет не единственный
+   признак. */
+.nodeState {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .timeline {

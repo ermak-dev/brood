@@ -5,6 +5,7 @@ import { AccessProjectsPage } from '@/features/access/ProjectsPage';
 import { SwarmsPage } from '@/features/access/SwarmsPage';
 import { UsersPage } from '@/features/access/UsersPage';
 import { ProjectDetailPage } from '@/features/access/ProjectDetailPage';
+import { SwarmPage } from '@/features/swarms/SwarmPage';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
@@ -73,6 +74,8 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/projects/:project/members', element: <LegacyProjectRoute section="members" /> },
   { path: '/users', element: <UsersPage /> },
   { path: '/swarms', element: <LegacyProjectRoute section="swarms" /> },
+  // Рой — главный объект (#215): у него свой адрес, проект берётся из роя.
+  { path: '/swarms/:id', element: <SwarmPage /> },
   { path: '/permissions', element: <LegacyProjectRoute section="members" /> },
   { path: '/substrate-projects', element: <Navigate to="/projects" replace /> },
   { path: '/actors', element: <ActorsPage /> },

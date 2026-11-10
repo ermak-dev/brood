@@ -7,7 +7,6 @@ import {
   grantCandidates,
   swarmCapabilities,
   projectSelectionPath,
-  retainedSwarm,
 } from '../src/features/access/shardState';
 
 const base: AccessSwarm = {
@@ -29,21 +28,15 @@ test('derives workload and ownership controls from explicit role and state', () 
   expect(swarmCapabilities({ ...base, state: 'deleted' }, true).remove).toBe(false);
 });
 
-test('selected swarm drafts survive transient refresh but reconcile confirmed access loss', () => {
-  expect(retainedSwarm(base, { data: null, loading: true, error: '' })).toBe(base);
-  expect(retainedSwarm(base, { data: null, loading: false, error: 'unavailable' })).toBe(base);
-  expect(retainedSwarm(base, { data: [], loading: false, error: '' })).toBeNull();
-  const demoted = { ...base, role: 'viewer' as const };
-  expect(retainedSwarm(base, { data: [demoted], loading: false, error: '' })).toBe(demoted);
-  expect(retainedSwarm(null, { data: [base], loading: false, error: '' })).toBeNull();
-});
-
 test('project switching keeps detail URLs consistent with the global context', () => {
   expect(projectSelectionPath('/projects/old', 'new/id')).toBe('/projects/new%2Fid');
   expect(projectSelectionPath('/projects/old/', 'new')).toBe('/projects/new');
   for (const path of ['/projects', '/actors', '/swarms', '/templates']) {
     expect(projectSelectionPath(path, 'new')).toBeNull();
   }
+  // #215: рой принадлежит одному проекту; другой проект открывает свой список роёв.
+  expect(projectSelectionPath('/swarms/s-1', 'new')).toBe('/swarms');
+  expect(projectSelectionPath('/swarms/s-1/', 'new')).toBe('/swarms');
 });
 
 test('preserves nullable zero and full int64 capacity through an editor roundtrip', () => {

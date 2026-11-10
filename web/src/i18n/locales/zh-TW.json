@@ -3130,7 +3130,9 @@
       "running": "執行中",
       "waiting_human": "等待人工",
       "succeeded": "已成功",
-      "failed": "已失敗"
+      "failed": "已失敗",
+      "idle": "未開始",
+      "stopped": "已停止"
     },
     "kind": {
       "actor": "Actor",
@@ -3152,5 +3154,59 @@
     "gate_confirm": "確認",
     "gate_confirm_hint": "回答會送出到執行且無法撤回。確認送出。",
     "gate_no_options": "該關卡未提供選項；伺服器沒有傳送任何選項。"
+  },
+  "swarm_page": {
+    "project": "專案",
+    "owner": "擁有者",
+    "your_role": "你的角色",
+    "id": "群組 ID",
+    "copy_id": "複製群組 ID",
+    "infrastructure": "基礎設施",
+    "atespace": "Atespace",
+    "execution": "執行",
+    "execution_states": {
+      "idle": "未開始",
+      "running": "執行中",
+      "waiting": "等待答覆",
+      "succeeded": "已成功",
+      "failed": "已失敗",
+      "stopped": "已停止"
+    },
+    "execution_hints": {
+      "no_graph": "此群組尚未附加圖。",
+      "idle": "圖尚未開始。",
+      "running": "圖正在推進。",
+      "waiting": "圖正在等待操作員答覆，沒有答覆不會推進。",
+      "succeeded": "圖已抵達出口。",
+      "failed": "圖在失敗的步驟上結束。",
+      "stopped": "圖已停止，不會推進。"
+    },
+    "current_node": "目前節點",
+    "graph": "圖",
+    "graph_hint": "定義 {{name}} 的快照。選擇節點以查看其指令、結果與 Actor。",
+    "graph_label": "群組 {{name}} 的圖",
+    "node": "所選節點",
+    "node_hint": "在圖上選擇節點以查看其指令、結果與 Actor。",
+    "prompt": "指令",
+    "question": "問題",
+    "actor": "Actor",
+    "outcome": "結果",
+    "started": "開始",
+    "finished": "結束",
+    "visits": "造訪次數",
+    "node_states": {
+      "unvisited": "未造訪",
+      "pending": "排隊中",
+      "active": "進行中",
+      "done": "已完成",
+      "failed": "已失敗",
+      "skipped": "已略過",
+      "unconfirmed": "結果未知"
+    },
+    "steps": "步驟歷程",
+    "steps_hint": "圖節點的每次造訪，依時間由早到晚排列。點選節點名稱可在圖上顯示該節點。",
+    "steps_empty": "尚無步驟。",
+    "management": "存取與生命週期",
+    "management_hint": "誰可以使用此群組、其擁有權與刪除。"
   }
 }
