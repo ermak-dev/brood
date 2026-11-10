@@ -3146,9 +3146,20 @@
       "published": "發布於 {{time}}",
       "choose": "選擇一個定義，在啟動前查看其圖。",
       "preview": "{{name}} 的圖，版本 {{version}}",
+      "goal": "本輪任務",
+      "goal_hint": "每次啟動都必須填寫：本輪要做什麼，例如要處理的 issue。本輪每個步驟的指令都會把它作為文字交給參與者；它不授予任何權限。",
+      "goal_bytes": "{{bytes}} / {{limit}} 位元組",
+      "goal_problems": {
+        "empty": "請輸入本輪任務。",
+        "too_long": "任務超過 {{limit}} 位元組（UTF-8）。",
+        "invalid_utf8": "任務包含無效的 UTF-8 字元。",
+        "control": "任務包含換行與定位字元以外的控制字元。",
+        "envelope": "任務包含訊息信封的結束標籤 </cross-session-message>。"
+      },
       "commit": "Commit",
       "commit_hint": "專案儲存庫的完整提交 SHA；首次啟動會將其固定為來源。留空則從預設分支的目前提交開始。",
       "restart_text": "新一輪將在此群組首次啟動時固定的快照上開始，使用相同的提交。先前的步驟保留在歷史中；不會讀取目錄。",
+      "previous_goal": "上一輪任務",
       "stop_text": "圖將停止推進，向操作員提出的未決問題會被取消。Actor、其容器與 workspace 維持不變；刪除 Actor 是獨立的操作。",
       "submit_start": "啟動",
       "submit_stop": "停止",
@@ -3176,6 +3187,10 @@
       "stopped": "圖已停止，不會推進。"
     },
     "current_node": "目前節點",
+    "pass_goal": {
+      "label": "本輪任務",
+      "pass": "第 {{number}} 輪，從步驟 #{{step}} 開始"
+    },
     "graph": "圖",
     "graph_hint": "定義 {{name}} 的快照。選擇節點以查看其指令、結果與 Actor。",
     "graph_label": "群組 {{name}} 的圖",

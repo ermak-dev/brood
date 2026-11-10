@@ -3127,9 +3127,20 @@
       "published": "xuất bản {{time}}",
       "choose": "Chọn một định nghĩa để xem đồ thị của nó trước khi khởi chạy.",
       "preview": "Đồ thị của {{name}}, phiên bản {{version}}",
+      "goal": "Nhiệm vụ của lượt",
+      "goal_hint": "Bắt buộc ở mỗi lần khởi chạy: lượt này để làm gì, ví dụ issue cần xử lý. Mỗi chỉ dẫn bước của lượt mang nó dưới dạng văn bản cho các tác nhân; nó không cấp quyền nào.",
+      "goal_bytes": "{{bytes}} / {{limit}} byte",
+      "goal_problems": {
+        "empty": "Nhập nhiệm vụ của lượt này.",
+        "too_long": "Nhiệm vụ dài hơn {{limit}} byte UTF-8.",
+        "invalid_utf8": "Nhiệm vụ có ký tự không hợp lệ trong UTF-8.",
+        "control": "Nhiệm vụ có ký tự điều khiển ngoài xuống dòng và tab.",
+        "envelope": "Nhiệm vụ chứa thẻ đóng phong bì tin nhắn </cross-session-message>."
+      },
       "commit": "Commit",
       "commit_hint": "SHA đầy đủ của commit trong kho mã của dự án; lần khởi chạy đầu tiên ghim nó làm nguồn. Để trống để bắt đầu từ commit hiện tại của nhánh mặc định.",
       "restart_text": "Một lượt mới bắt đầu trên ảnh chụp mà bầy đã ghim ở lần khởi chạy đầu tiên, từ cùng commit. Các bước trước vẫn ở trong lịch sử; danh mục không được đọc.",
+      "previous_goal": "Nhiệm vụ của lượt trước",
       "stop_text": "Đồ thị ngừng tiến triển và câu hỏi đang mở cho người vận hành bị hủy. Các actor, container và workspace của chúng được giữ nguyên; xóa actor là một thao tác riêng.",
       "submit_start": "Khởi chạy",
       "submit_stop": "Dừng",
@@ -3157,6 +3168,10 @@
       "stopped": "Đồ thị đã dừng và không tiến triển."
     },
     "current_node": "Nút hiện tại",
+    "pass_goal": {
+      "label": "Nhiệm vụ của lượt",
+      "pass": "Lượt {{number}}, từ bước #{{step}}"
+    },
     "graph": "Đồ thị",
     "graph_hint": "Ảnh chụp của định nghĩa {{name}}. Chọn một nút để xem chỉ dẫn, kết quả và actor của nút.",
     "graph_label": "Đồ thị của bầy {{name}}",

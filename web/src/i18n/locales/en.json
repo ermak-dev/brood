@@ -3121,9 +3121,20 @@
       "published": "published {{time}}",
       "choose": "Choose a definition to see its graph before the start.",
       "preview": "Graph of {{name}}, version {{version}}",
+      "goal": "Pass goal",
+      "goal_hint": "Required on every start: what this pass is for, for example the issue to work on. Every step instruction of the pass carries it as text for the actors; it grants them no rights.",
+      "goal_bytes": "{{bytes}} / {{limit}} bytes",
+      "goal_problems": {
+        "empty": "Enter the goal of this pass.",
+        "too_long": "The goal is longer than {{limit}} bytes of UTF-8.",
+        "invalid_utf8": "The goal has characters that are not valid UTF-8.",
+        "control": "The goal has control characters other than newline and tab.",
+        "envelope": "The goal contains the message envelope closing tag </cross-session-message>."
+      },
       "commit": "Commit",
       "commit_hint": "Full commit SHA of the project repository; the first start pins it as the source. Leave it empty to start from the current commit of the project's default branch.",
       "restart_text": "A new pass starts on the snapshot this swarm pinned at its first start, from the same commit. Earlier steps stay in the history; the catalog is not read.",
+      "previous_goal": "Goal of the previous pass",
       "stop_text": "The graph stops advancing, and an open question to the operator is cancelled. Actors, their containers and workspaces stay as they are; deleting an actor is a separate action.",
       "submit_start": "Start",
       "submit_stop": "Stop",
@@ -3151,6 +3162,10 @@
       "stopped": "The graph is stopped and does not advance."
     },
     "current_node": "Current node",
+    "pass_goal": {
+      "label": "Pass goal",
+      "pass": "Pass {{number}}, from step #{{step}}"
+    },
     "graph": "Graph",
     "graph_hint": "Snapshot of the {{name}} definition. Select a node to see its instruction, outcome and actor.",
     "graph_label": "Graph of swarm {{name}}",

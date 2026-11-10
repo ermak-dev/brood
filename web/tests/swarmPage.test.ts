@@ -4,7 +4,9 @@
 // owner and actors are shown instead of IDs, and the full swarm ID is a
 // separate copy element; infrastructure and execution state are separate,
 // and a stopped swarm reads differently from one waiting for an answer;
-// the selected graph node drives the node details below the graph.
+// the selected graph node drives the node details below the graph. The page
+// shows the goal of the current pass, and the step history splits into
+// passes, each under its own goal (#242).
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import type { AccessProject, AccessSwarm } from '@/services/brood/access';
@@ -13,11 +15,13 @@ import {
   executionTone,
   hasStepTimes,
   nodeView,
+  passGoal,
   releaseCommand,
   runIsLive,
   selectedNodeId,
   shortCommit,
   stepMark,
+  stepPasses,
   swarmExecution,
   swarmProjectName,
 } from '@/features/swarms/swarmState';
@@ -299,6 +303,63 @@ describe('actor step states (#212, #238)', () => {
   test('a commit is shown by its short form; a short value stays whole', () => {
     expect(shortCommit('0123456789abcdef0123456789abcdef01234567')).toBe('01234567');
     expect(shortCommit('abc')).toBe('abc');
+  });
+});
+
+describe('passes', () => {
+  const step = (sequence: number, pass?: number, goal?: string) => ({
+    id: `node-${sequence}`,
+    kind: 'actor' as const,
+    label: `node-${sequence}`,
+    status: 'done' as const,
+    sequence,
+    ...(pass === undefined ? {} : { pass }),
+    ...(goal === undefined ? {} : { goal }),
+  });
+
+  test('steps split into passes in order, each with the goal its first step keeps', () => {
+    const steps = [
+      step(1, 1, 'Fix issue #12'),
+      step(2, 1),
+      step(3, 3, 'Fix issue #13\nand land it'),
+      step(4, 3),
+      step(5, 3),
+    ];
+    expect(stepPasses(steps)).toEqual([
+      { pass: 1, number: 1, goal: 'Fix issue #12', steps: [steps[0], steps[1]] },
+      { pass: 3, number: 2, goal: 'Fix issue #13\nand land it', steps: steps.slice(2) },
+    ]);
+  });
+
+  test('a pass whose first step is not listed has no goal rather than a borrowed one', () => {
+    const steps = [step(4, 3), step(5, 3)];
+    expect(stepPasses(steps)).toEqual([{ pass: 3, number: 1, steps }]);
+  });
+
+  test('steps of a server without passes stay one list without a pass', () => {
+    const steps = [step(1), step(2)];
+    expect(stepPasses(steps)).toEqual([{ steps }]);
+    expect(stepPasses([])).toEqual([]);
+  });
+
+  test('the goal of the current pass comes from the run, its pass from the last step', () => {
+    const nodes = [step(1, 1, 'Fix issue #12'), step(2, 2, 'Fix issue #13'), step(3, 2)];
+    expect(passGoal(run({ goal: 'Fix issue #13', nodes }))).toEqual({
+      goal: 'Fix issue #13',
+      pass: 2,
+      number: 2,
+    });
+    // A run without passes on its steps still shows the goal it names.
+    expect(passGoal(run({ goal: 'Fix issue #12', nodes: [step(1)] }))).toEqual({
+      goal: 'Fix issue #12',
+    });
+  });
+
+  test('a run without a goal, or with something other than text, has none', () => {
+    expect(passGoal(null)).toBeNull();
+    expect(passGoal(run())).toBeNull();
+    expect(passGoal(run({ goal: '' }))).toBeNull();
+    expect(passGoal(run({ goal: 12 as unknown as string }))).toBeNull();
   });
 });
 

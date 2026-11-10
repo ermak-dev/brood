@@ -148,6 +148,52 @@
   border-radius: var(--radius-md, #{$radius-md});
 }
 
+/* Задача прохода (#242): многострочное поле, под ним причина и счётчик. */
+.goal {
+  min-height: 96px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  tab-size: 4;
+  resize: vertical;
+
+  &[aria-invalid='true'] {
+    border-color: var(--viz-failure);
+  }
+}
+
+.goalMeta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.goalBytes {
+  margin: 0 0 0 auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+
+  &[data-over] {
+    color: var(--viz-failure);
+    font-weight: 600;
+  }
+}
+
+/* Задача прошлого прохода — подсказкой у пустого поля нового. */
+.previousGoal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md, #{$radius-md});
+  background: var(--bg-secondary);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .option {
     transition: none;

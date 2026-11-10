@@ -4,7 +4,7 @@
  */
 import type { BadgeTone } from '@/features/access/state';
 import type { AccessProject, AccessSwarm } from '@/services/brood/access';
-import type { NodeStatus, PipelineRun, RunGraph } from '@/services/brood/pipelines';
+import type { NodeStatus, PipelineRun, RunGraph, RunNode } from '@/services/brood/pipelines';
 
 /** Состояние исполнения роя (#206). Оно не смешивается с состоянием
  * инфраструктуры (provisioning, active, ...): у каждого свой значок. */
@@ -169,6 +169,58 @@ export function nodeView(run: PipelineRun | null, graph: RunGraph | null, id: st
  * колонка была бы сплошным прочерком. */
 export function hasStepTimes(run: PipelineRun | null): boolean {
   return (run?.nodes ?? []).some((step) => Boolean(step.startedAt || step.finishedAt));
+}
+
+/** Проход роя в истории шагов (#242): его первый шаг (pass), порядковый
+ * номер среди проходов, задача и шаги по порядку. У сервера без проходов
+ * группа одна и без pass. */
+export interface PassView {
+  pass?: number;
+  number?: number;
+  goal?: string;
+  steps: RunNode[];
+}
+
+const text = (value: unknown): string | undefined =>
+  typeof value === 'string' && value !== '' ? value : undefined;
+
+/** Шаги по проходам: подряд идущие шаги одного pass — один проход. Задачу
+ * сервер отдаёт только у первого шага прохода; если его в списке нет,
+ * у прохода нет задачи, а не чужая. */
+export function stepPasses(steps: RunNode[]): PassView[] {
+  const passes: PassView[] = [];
+  let number = 0;
+  for (const step of steps) {
+    const pass = Number.isSafeInteger(step.pass) ? step.pass : undefined;
+    let last = passes[passes.length - 1];
+    if (!last || last.pass !== pass) {
+      last = { steps: [] };
+      if (pass !== undefined) {
+        number += 1;
+        last.pass = pass;
+        last.number = number;
+      }
+      passes.push(last);
+    }
+    const goal = pass !== undefined && step.sequence === pass ? text(step.goal) : undefined;
+    if (goal !== undefined) last.goal = goal;
+    last.steps.push(step);
+  }
+  return passes;
+}
+
+/** Задача текущего прохода: текст — из исполнения, первый шаг прохода и
+ * его номер — по последнему шагу. Без задачи (до первого запуска, старый
+ * сервер) — null. */
+export function passGoal(
+  run: PipelineRun | null
+): { goal: string; pass?: number; number?: number } | null {
+  const goal = text(run?.goal);
+  if (!run || goal === undefined) return null;
+  const passes = stepPasses(run.nodes);
+  const current = passes[passes.length - 1];
+  if (current?.pass === undefined) return { goal };
+  return { goal, pass: current.pass, number: current.number };
 }
 
 /** Имя проекта роя: из каталога проектов, затем из исполнения того же

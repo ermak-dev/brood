@@ -32,11 +32,13 @@ import {
   executionTone,
   hasStepTimes,
   nodeView,
+  passGoal,
   releaseCommand,
   runIsLive,
   selectedNodeId,
   shortCommit,
   stepMark,
+  stepPasses,
   swarmExecution,
   swarmProjectName,
   type NodeView,
@@ -195,10 +197,11 @@ export interface SwarmViewProps {
   management?: ReactNode;
 }
 
-/** Рой целиком: сведения, два раздельных состояния, запросы оператору
- * (#216), граф сверху вниз, выбранный узел и история шагов, затем доступ
- * и удаление. Запуск и остановка (#218) — в действиях заголовка; рядом с
- * графом — личность снимка роя, а не текущее определение каталога. */
+/** Рой целиком: сведения, два раздельных состояния и задача текущего
+ * прохода (#242), запросы оператору (#216), граф сверху вниз, выбранный
+ * узел и история шагов по проходам, затем доступ и удаление. Запуск и
+ * остановка (#218) — в действиях заголовка; рядом с графом — личность
+ * снимка роя, а не текущее определение каталога. */
 export function SwarmView({
   swarm,
   projectName,
@@ -222,6 +225,7 @@ export function SwarmView({
 }: SwarmViewProps) {
   const { t } = useTranslation();
   const identity = snapshotIdentity(run);
+  const current = passGoal(run);
   return (
     <div className={styles.page}>
       <PageHeader title={swarm.name} meta={[<SwarmsLink key="list" />]} actions={actions} />
@@ -245,6 +249,7 @@ export function SwarmView({
             <ExecutionState run={run} selected={selected} onSelect={onSelect} />
           </LoadState>
         </StateCard>
+        {current && <PassGoal {...current} />}
       </div>
       {requests}
       {roles}
@@ -334,6 +339,30 @@ function StateCard({ label, children }: { label: string; children: ReactNode }) 
         {label}
       </p>
       {children}
+    </section>
+  );
+}
+
+/** Задача текущего прохода (#242) — на всю ширину под состояниями: текст
+ * оператора как набран, переводы строк сохранены, разметка — текстом. */
+function PassGoal({ goal, pass, number }: { goal: string; pass?: number; number?: number }) {
+  const { t } = useTranslation();
+  const labelId = useId();
+  return (
+    <section
+      className={`${local.state} ${local.passGoal}`}
+      aria-labelledby={labelId}
+      data-pass-goal=""
+    >
+      <p id={labelId} className={local.stateLabel}>
+        {t('swarm_page.pass_goal.label')}
+      </p>
+      {pass !== undefined && (
+        <p className={local.stateText}>{t('swarm_page.pass_goal.pass', { number, step: pass })}</p>
+      )}
+      <p className={local.goalText} data-goal-text="">
+        {goal}
+      </p>
     </section>
   );
 }
@@ -534,7 +563,9 @@ function NodeDetails({
 /** История шагов — таймлайн посещений по порядку. Имя узла выбирает его
  * на графе; шаги выбранного узла подсвечены. У шага — состояние словом,
  * причина, подтверждённый commit и свёрнутый отчёт, если сервер их отдал;
- * моменты — только если сервер их записал. */
+ * моменты — только если сервер их записал. Шаги проходов (#242) идут под
+ * заголовком своего прохода с его задачей; у сервера без проходов список
+ * один. */
 function StepHistory({
   steps,
   selected,
@@ -546,74 +577,149 @@ function StepHistory({
   onSelect: (node: string) => void;
   times: boolean;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   if (steps.length === 0) return <p className={local.hint}>{t('swarm_page.steps_empty')}</p>;
-  return (
+  const passes = stepPasses(steps);
+  // Номер шага — его sequence, у старого сервера без него — место в истории.
+  const numbers = new Map(steps.map((step, index) => [step, step.sequence ?? index + 1]));
+  const list = (items: RunNode[]) => (
     <ol className={graphStyles.timeline}>
-      {steps.map((step, index) => {
-        const number = step.sequence ?? index + 1;
-        const chosen = step.id === selected;
-        const facts: Array<{ label: string; value: ReactNode }> = [];
-        if (step.kind === 'actor') {
-          facts.push({ label: t('swarm_page.actor'), value: step.actorName || DASH });
-        }
-        if (step.outcome) facts.push({ label: t('swarm_page.outcome'), value: step.outcome });
-        if (step.detail) facts.push({ label: t('swarm_page.reason'), value: step.detail });
-        if (step.commit) {
-          facts.push({ label: t('swarm_page.commit'), value: <StepCommit commit={step.commit} /> });
-        }
-        if (times) {
-          facts.push({
-            label: t('swarm_page.started'),
-            value: moment(step.startedAt, i18n.language),
-          });
-          facts.push({
-            label: t('swarm_page.finished'),
-            value: moment(step.finishedAt, i18n.language),
-          });
-        }
+      {items.map((step) => {
+        const number = numbers.get(step) ?? 0;
         return (
-          <li
+          <StepItem
             key={number}
-            className={[graphStyles['timeline-node'], local.step, chosen ? local.stepSelected : '']
-              .filter(Boolean)
-              .join(' ')}
-          >
-            <StepDot status={step.status} />
-            <div className={local.stepBody}>
-              <div className={local.stepTitle}>
-                <span className={local.stepNumber}>#{number}</span>
-                <button
-                  type="button"
-                  className={local.nodeButton}
-                  aria-pressed={chosen}
-                  onClick={() => onSelect(step.id)}
-                >
-                  {step.label}
-                </button>
-                <span className={local.kind}>{kindName(t, step.kind)}</span>
-                <span>{stateWord(t, step.status)}</span>
-              </div>
-              {facts.length > 0 && (
-                <dl className={local.stepFacts}>
-                  {facts.map((fact) => (
-                    <div key={fact.label}>
-                      <dt>{fact.label}</dt>
-                      <dd>{fact.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-              {step.report && (
-                <details className={local.stepReport}>
-                  <summary>{t('swarm_page.report')}</summary>
-                  <p className={local.instruction}>{step.report}</p>
-                </details>
-              )}
-            </div>
-          </li>
+            step={step}
+            number={number}
+            selected={selected}
+            onSelect={onSelect}
+            times={times}
+          />
         );
       })}
     </ol>
+  );
+  if (passes.every((pass) => pass.pass === undefined)) return list(steps);
+  return (
+    <div className={local.passes}>
+      {passes.map((pass, index) =>
+        pass.pass === undefined ? (
+          <Fragment key={`steps-${index}`}>{list(pass.steps)}</Fragment>
+        ) : (
+          <PassSteps key={pass.pass} pass={pass.pass} number={pass.number} goal={pass.goal}>
+            {list(pass.steps)}
+          </PassSteps>
+        )
+      )}
+    </div>
+  );
+}
+
+/** Проход в истории шагов: номер, первый шаг и задача прохода над его шагами. */
+function PassSteps({
+  pass,
+  number,
+  goal,
+  children,
+}: {
+  pass: number;
+  number?: number;
+  goal?: string;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  return (
+    <section className={local.pass} aria-labelledby={titleId} data-pass={pass}>
+      <div className={local.passHead}>
+        <h4 id={titleId} className={local.passTitle}>
+          {t('swarm_page.pass_goal.pass', { number, step: pass })}
+        </h4>
+        {goal && (
+          <p className={local.goalText} data-goal-text="">
+            {goal}
+          </p>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Шаг истории: номер, узел кнопкой, вид и состояние словом, затем актор,
+ * исход, причина, подтверждённый commit и моменты, свёрнутый отчёт. */
+function StepItem({
+  step,
+  number,
+  selected,
+  onSelect,
+  times,
+}: {
+  step: RunNode;
+  number: number;
+  selected?: string;
+  onSelect: (node: string) => void;
+  times: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const chosen = step.id === selected;
+  const facts: Array<{ label: string; value: ReactNode }> = [];
+  if (step.kind === 'actor') {
+    facts.push({ label: t('swarm_page.actor'), value: step.actorName || DASH });
+  }
+  if (step.outcome) facts.push({ label: t('swarm_page.outcome'), value: step.outcome });
+  if (step.detail) facts.push({ label: t('swarm_page.reason'), value: step.detail });
+  if (step.commit) {
+    facts.push({ label: t('swarm_page.commit'), value: <StepCommit commit={step.commit} /> });
+  }
+  if (times) {
+    facts.push({
+      label: t('swarm_page.started'),
+      value: moment(step.startedAt, i18n.language),
+    });
+    facts.push({
+      label: t('swarm_page.finished'),
+      value: moment(step.finishedAt, i18n.language),
+    });
+  }
+  return (
+    <li
+      className={[graphStyles['timeline-node'], local.step, chosen ? local.stepSelected : '']
+        .filter(Boolean)
+        .join(' ')}
+    >
+      <StepDot status={step.status} />
+      <div className={local.stepBody}>
+        <div className={local.stepTitle}>
+          <span className={local.stepNumber}>#{number}</span>
+          <button
+            type="button"
+            className={local.nodeButton}
+            aria-pressed={chosen}
+            onClick={() => onSelect(step.id)}
+          >
+            {step.label}
+          </button>
+          <span className={local.kind}>{kindName(t, step.kind)}</span>
+          <span>{stateWord(t, step.status)}</span>
+        </div>
+        {facts.length > 0 && (
+          <dl className={local.stepFacts}>
+            {facts.map((fact) => (
+              <div key={fact.label}>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        {step.report && (
+          <details className={local.stepReport}>
+            <summary>{t('swarm_page.report')}</summary>
+            <p className={local.instruction}>{step.report}</p>
+          </details>
+        )}
+      </div>
+    </li>
   );
 }

@@ -4,6 +4,8 @@
 // execution are separate; stopped and waiting read differently; the
 // selected node shows its instruction, outcome and actor; /swarms/:id
 // opens exactly the addressed swarm; the swarm list leads to the page.
+// The goal of the current pass stands under the states as text, line breaks
+// kept; the step history splits into passes under their goals (#242).
 import { afterAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { act, createElement, type ReactNode } from 'react';
@@ -362,6 +364,99 @@ describe('actor step states (#212, #238)', () => {
     expect(text).not.toContain(` ${en.swarm_page.reason} `);
     expect(text).not.toContain(` ${en.swarm_page.commit} `);
     expect(text).not.toContain(` ${en.swarm_page.report} `);
+  });
+});
+
+describe('pass goal', () => {
+  const goal = 'Fix issue #12\n\t- keep the API\n<b>as is</b>';
+  const passes = run({
+    goal: 'Fix issue #13',
+    nodes: [
+      {
+        id: 'architecture',
+        kind: 'actor',
+        label: 'architecture',
+        status: 'done',
+        sequence: 1,
+        pass: 1,
+        goal,
+      },
+      { id: 'decision', kind: 'human', label: 'decision', status: 'done', sequence: 2, pass: 1 },
+      {
+        id: 'architecture',
+        kind: 'actor',
+        label: 'architecture',
+        status: 'active',
+        sequence: 3,
+        pass: 3,
+        goal: 'Fix issue #13',
+      },
+    ],
+  });
+  const goalCard = (html: string) => {
+    const start = html.indexOf('data-pass-goal');
+    return start < 0 ? '' : html.slice(start, html.indexOf('</section>', start));
+  };
+
+  test('the goal of the current pass is shown as text, line breaks and markup kept', () => {
+    const html = render({ run: run({ goal, nodes: passes.nodes.slice(0, 2) }) });
+    const card = goalCard(html);
+    expect(card).toContain(en.swarm_page.pass_goal.label);
+    expect(card).toContain(
+      'data-goal-text="">Fix issue #12\n\t- keep the API\n&lt;b&gt;as is&lt;/b&gt;</'
+    );
+    expect(card).not.toContain('<b>');
+    // The pass is named by its first step.
+    expect(visibleText(card)).toContain(
+      en.swarm_page.pass_goal.pass.replace('{{number}}', '1').replace('{{step}}', '1')
+    );
+  });
+
+  test('the card follows the current pass, not an earlier one', () => {
+    const card = goalCard(render({ run: passes }));
+    expect(card).toContain('Fix issue #13');
+    expect(card).not.toContain('Fix issue #12');
+    expect(visibleText(card)).toContain(
+      en.swarm_page.pass_goal.pass.replace('{{number}}', '2').replace('{{step}}', '3')
+    );
+  });
+
+  test('a swarm that has not started a pass has no goal card', () => {
+    expect(goalCard(render())).toBe('');
+    expect(goalCard(render({ run: null, graph: null, selected: undefined }))).toBe('');
+  });
+
+  test('the goal text keeps its line breaks on screen', () => {
+    const styles = source('features/swarms/SwarmPage.module.scss');
+    const rule = styles.slice(styles.indexOf('.goalText'));
+    expect(rule.slice(0, rule.indexOf('}'))).toContain('white-space: pre-wrap');
+  });
+
+  test('the step history splits into passes, each under its own goal', () => {
+    const html = render({ run: passes, selected: undefined });
+    const history = html.slice(html.indexOf(`>${en.swarm_page.steps}<`));
+    const first = history.indexOf('data-pass="1"');
+    const second = history.indexOf('data-pass="3"');
+    expect(first).toBeGreaterThan(0);
+    expect(second).toBeGreaterThan(first);
+    const earlier = history.slice(first, second);
+    const later = history.slice(second);
+    expect(earlier).toContain('&lt;b&gt;as is&lt;/b&gt;');
+    expect(earlier).toContain('#1<');
+    expect(earlier).toContain('#2<');
+    expect(earlier).not.toContain('#3<');
+    expect(later).toContain('Fix issue #13');
+    expect(later).toContain('#3<');
+    expect(visibleText(later)).toContain(
+      en.swarm_page.pass_goal.pass.replace('{{number}}', '2').replace('{{step}}', '3')
+    );
+  });
+
+  test('steps without passes keep the plain history', () => {
+    const html = render({ selected: undefined });
+    expect(html).not.toContain('data-pass=');
+    expect(html).toContain('#1<');
+    expect(html).toContain('#2<');
   });
 });
 

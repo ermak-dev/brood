@@ -10,6 +10,9 @@
  * swarm ID, and a visible swarm without a graph answers 404 (getSwarmRun).
  * The run carries `definition`, the identity of the snapshot its first start
  * pinned (#218), not the current catalog definition; an older server omits it.
+ * Since #242 the run carries `goal`, the goal of the current pass, and each
+ * step `pass`, the sequence of the first step of its pass; the goal text is
+ * only on that first step. Before the first start neither is there.
  * GET /api/projects/{project}/workflow-catalog lists published definitions and
  * GET /api/projects/{project}/workflows/{name}/graph?version=&revision= draws
  * one of them for the first start of a swarm (#218).
@@ -68,6 +71,10 @@ export interface RunNode {
   commit?: string;
   /** Actor report of the finished step, plain text (#233); older servers omit it. */
   report?: string;
+  /** Sequence of the first step of this step's pass (#242). */
+  pass?: number;
+  /** Goal of the pass, only on its first step: not repeated on every step. */
+  goal?: string;
 }
 
 /** Identity of a definition: in the catalog, or as a swarm pinned it. */
@@ -83,6 +90,8 @@ export interface PipelineRun {
   name: string;
   /** The snapshot the first start pinned; a newer catalog version leaves it. */
   definition?: SnapshotIdentity;
+  /** Goal of the current pass (#242); absent before the first start. */
+  goal?: string;
   status: RunStatus;
   swarmId?: string;
   swarmName?: string;
