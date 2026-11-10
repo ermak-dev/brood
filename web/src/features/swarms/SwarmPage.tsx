@@ -10,8 +10,9 @@ import {
   type RunGraph as Graph,
   type RunNode,
 } from '@/services/brood/pipelines';
-import { LoadState, StatusBadge } from '@/features/access/shared';
+import { LoadState, StatusBadge, useAdministrator } from '@/features/access/shared';
 import { swarmTone } from '@/features/access/state';
+import { swarmCapabilities } from '@/features/access/shardState';
 import { SwarmManagement } from '@/features/access/SwarmManagement';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
 import { RunGraph } from '@/features/pipelines/RunDetailPage';
@@ -25,6 +26,8 @@ import { SWARMS_PATH } from './routes';
 import { nodeRequest } from './requestState';
 import { RequestCard, RequestInbox } from './SwarmRequests';
 import { useSwarmRequests } from './useSwarmRequests';
+import { SnapshotFacts, SwarmExecutionControl } from './SwarmControls';
+import { executionAction, snapshotIdentity } from './swarmControl';
 import {
   executionTone,
   hasStepTimes,
@@ -68,6 +71,7 @@ function SwarmScreen({ id }: { id: string }) {
     void execution.refresh();
     void graph.refresh();
   });
+  const administrator = useAdministrator();
   useInterval(
     () => {
       void execution.refresh();
@@ -96,10 +100,27 @@ function SwarmScreen({ id }: { id: string }) {
   }
   const selected = selectedNodeId(run, graph.data, chosen);
   const asked = nodeRequest(inbox.requests, selected);
+  const projectName = swarmProjectName(data, projects.data, run);
+  // Исполнение, которое не прочитано или не перечитывается, действия не даёт:
+  // по устаревшему состоянию кнопка предложила бы не то.
+  const known = execution.data !== null && !execution.error ? run : undefined;
   return (
     <SwarmView
       swarm={data}
-      projectName={swarmProjectName(data, projects.data, run)}
+      projectName={projectName}
+      actions={
+        swarmCapabilities(data, administrator).manage && (
+          <SwarmExecutionControl
+            swarm={data}
+            projectName={projectName}
+            run={run}
+            action={executionAction(data, administrator, known)}
+            changed={async () => {
+              await Promise.all([execution.refresh(), graph.refresh(), inbox.refresh()]);
+            }}
+          />
+        )
+      }
       refreshError={swarm.error ?? ''}
       run={run}
       runLoading={execution.loading}
@@ -133,6 +154,8 @@ function SwarmsLink() {
 export interface SwarmViewProps {
   swarm: AccessSwarm;
   projectName: string;
+  /** Действие исполнения роя в шапке: запуск или остановка (#218). */
+  actions?: ReactNode;
   /** Сбой перечитывания уже показанного роя: данные остаются, причина видна. */
   refreshError?: string;
   /** Исполнение роя; null — графа у роя нет. */
@@ -157,11 +180,12 @@ export interface SwarmViewProps {
 
 /** Рой целиком: сведения, два раздельных состояния, запросы оператору
  * (#216), граф сверху вниз, выбранный узел и история шагов, затем доступ
- * и удаление. Запуск и остановка (#211) встанут в действия заголовка;
- * пока их нет, место под них пустует без неработающих кнопок. */
+ * и удаление. Запуск и остановка (#218) — в действиях заголовка; рядом с
+ * графом — личность снимка роя, а не текущее определение каталога. */
 export function SwarmView({
   swarm,
   projectName,
+  actions,
   refreshError,
   run,
   runLoading,
@@ -179,9 +203,10 @@ export function SwarmView({
   management,
 }: SwarmViewProps) {
   const { t } = useTranslation();
+  const identity = snapshotIdentity(run);
   return (
     <div className={styles.page}>
-      <PageHeader title={swarm.name} meta={[<SwarmsLink key="list" />]} />
+      <PageHeader title={swarm.name} meta={[<SwarmsLink key="list" />]} actions={actions} />
       <SwarmFacts swarm={swarm} projectName={projectName} />
       {refreshError && (
         <p className={`${styles.notice} ${styles.operationFailure}`} role="alert">
@@ -210,6 +235,7 @@ export function SwarmView({
             title={t('swarm_page.graph')}
             hint={t('swarm_page.graph_hint', { name: run.name })}
           >
+            {identity && <SnapshotFacts identity={identity} />}
             <LoadState loading={graphLoading} error={graphError} retry={retryGraph}>
               {graph?.svg ? (
                 <RunGraph
