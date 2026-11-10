@@ -6,11 +6,11 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useInterval } from '@/hooks/useInterval';
 import type { AccessSwarm } from '@/services/brood/access';
 import { errorMessage } from '@/services/brood/http';
 import { requestsApi, type RequestAnswer, type SwarmRequest } from '@/services/brood/requests';
 import { canAnswerRequests } from './requestState';
+import { useSwarmTick } from './useSwarmPolling';
 
 /** Где показана карточка: в инбоксе или у выбранного узла графа. */
 export type RequestPlace = 'inbox' | 'node';
@@ -45,10 +45,6 @@ export interface RequestInboxModel {
   deliver: (request: SwarmRequest) => Promise<void>;
 }
 
-/** Запросы перечитываются, пока рой живой: вопрос актора приходит без
- * изменения графа, и ждать его до ручного обновления нельзя. */
-const POLL_MS = 5000;
-
 export function useSwarmRequests(
   swarmId: string,
   swarm: AccessSwarm | null,
@@ -79,7 +75,10 @@ export function useSwarmRequests(
     void refresh();
   }, [refresh]);
   useHeaderRefresh(refresh);
-  useInterval(() => void refresh(), swarm?.state === 'active' ? POLL_MS : null);
+  // Запросы перечитываются каждым тиком страницы (#257), пока она опрашивает:
+  // вопрос актора приходит без изменения графа, и ждать его до ручного
+  // обновления нельзя.
+  useSwarmTick(refresh);
 
   // Ответ сервера на действие — самое свежее состояние запроса.
   const settle = useCallback((request: SwarmRequest) => {

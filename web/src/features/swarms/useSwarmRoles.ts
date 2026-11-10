@@ -5,7 +5,6 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
-import { useInterval } from '@/hooks/useInterval';
 import type { AccessSwarm } from '@/services/brood/access';
 import { errorMessage } from '@/services/brood/http';
 import type { PipelineRun } from '@/services/brood/pipelines';
@@ -18,6 +17,8 @@ import {
   rolesRefreshKey,
   type RoleControl,
 } from './roleState';
+import { swarmExecution } from './swarmState';
+import { shouldRefetchRoles, useSwarmTick } from './useSwarmPolling';
 
 /** Итог последнего действия над ролью: кому привязана, снята или отказ.
  * Живёт до следующего действия над той же ролью. */
@@ -49,10 +50,6 @@ export interface SwarmRolesModel {
   bind: (role: string, actor: RoleActor) => Promise<void>;
   unbind: (role: string) => Promise<void>;
 }
-
-/** Роли перечитываются, пока рой активен: актор стартует или
- * останавливается сам, и состояние роли меняется без действия здесь. */
-const POLL_MS = 5000;
 
 /** Последнее чтение побеждает: ответ, начатый раньше записи или смены
  * определения, не ложится поверх нового. */
@@ -116,7 +113,10 @@ export function useSwarmRoles(
     await Promise.all([refreshView(), editing ? refreshActors() : undefined]);
   }, [editing, refreshActors, refreshView]);
   useHeaderRefresh(refreshAll);
-  useInterval(() => void refreshView(), swarm.state === 'active' ? POLL_MS : null);
+  // Роли перечитываются тиком страницы (#257), пока исполнение не идёт и не
+  // ждёт: актор стартует или останавливается сам, и состояние роли меняется
+  // без действия здесь. Конец исполнения перечитывает их ключом выше.
+  useSwarmTick(refreshView, shouldRefetchRoles(swarmExecution(run ?? null)));
 
   const note = (role: string, notice: RoleNotice) =>
     setNotices((all) => ({ ...all, [role]: notice }));
