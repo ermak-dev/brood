@@ -24,6 +24,7 @@ import (
 const maxInput = 16 * 1024
 const maxConnections = 32
 const queueFrames = 32
+const writeTimeout = 2 * time.Second
 
 type child struct {
 	cmd      *exec.Cmd
@@ -523,20 +524,40 @@ func (h *Host) attachLocked(c net.Conn, br *bufio.Reader, r Request) {
 	done := make(chan struct{})
 	go func() { defer close(done); h.readAttachment(s, br) }()
 	defer func() { _ = c.Close(); <-done }()
+	forwardFrames(c, s.frames, done)
+}
+
+// forwardFrames пишет кадры подписки до терминального кадра, ошибки записи
+// или выхода читателя attach (done).
+func forwardFrames(c net.Conn, frames <-chan Frame, done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
-			return
-		case frame := <-s.frames:
-			_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			if err = WriteMessage(c, frame); err != nil {
-				return
+			// Читатель ставит отказ в очередь до выхода, а select выбирает готовый
+			// done наравне с ним: без дренажа наблюдатель получал EOF вместо
+			// причины (#239). Снимок длины ограничивает дренаж кадрами, уже
+			// стоявшими в очереди, хотя readPTY ещё может добавлять вывод; один
+			// writeTimeout на весь дренаж, а не на кадр, ограничивает его время.
+			_ = c.SetWriteDeadline(time.Now().Add(writeTimeout))
+			for n := len(frames); n > 0; n-- {
+				if !sendFrame(c, <-frames) {
+					return
+				}
 			}
-			if frame.Type == "closed" || frame.Type == "error" {
+			return
+		case frame := <-frames:
+			_ = c.SetWriteDeadline(time.Now().Add(writeTimeout))
+			if !sendFrame(c, frame) {
 				return
 			}
 		}
 	}
+}
+
+// sendFrame пишет кадр и сообщает, продолжать ли поток: после ошибки записи
+// и после терминального кадра соединение закрывается.
+func sendFrame(c net.Conn, frame Frame) bool {
+	return WriteMessage(c, frame) == nil && frame.Type != "closed" && frame.Type != "error"
 }
 func (h *Host) readAttachment(s *subscription, br *bufio.Reader) {
 	for {
