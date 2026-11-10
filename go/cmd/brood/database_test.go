@@ -91,6 +91,21 @@ INSERT INTO users VALUES ('private-synthetic-user', 'private-synthetic-hash', 1,
 			t.Fatalf("overwrite: %v, %s, %s", err, out, stderr)
 		}
 	})
+	t.Run("verify", func(t *testing.T) {
+		// Synthetic non-brood schema: the CLI must refuse it, say nothing about rows.
+		hash := strings.Repeat("0", 64)
+		for _, args := range [][]string{
+			{"verify", "--path", path},
+			{"verify", "--path", path, "--sha256", "bad"},
+			{"verify", "--path", path, "--sha256", hash},
+			{"verify", "--path", path, "--sha256", hash, "--output", "/tmp/private-x"},
+		} {
+			out, stderr, err := invoke(args...)
+			if err == nil || out != "" || stderr == "" {
+				t.Fatalf("verify %v: %v, %s, %s", args, err, out, stderr)
+			}
+		}
+	})
 	t.Run("refusals", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing.sqlite")
 		for _, args := range [][]string{
