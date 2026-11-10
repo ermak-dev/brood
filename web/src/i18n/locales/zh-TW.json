@@ -290,7 +290,6 @@
     "workers": "工作節點",
     "policy": "存取政策",
     "worker_pools": "工作節點池",
-    "workflows": "工作流程",
     "project": "專案",
     "overview": "總覽"
   },
@@ -323,7 +322,6 @@
     "workers": "承載 actor 的池",
     "policy": "角色與主體",
     "worker_pools": "建立池以提供工作節點容量。",
-    "workflows": "工作流程執行及其人工確認",
     "project": "目前專案詳情"
   },
   "dashboard": {
@@ -3115,25 +3113,6 @@
     "delete_unversioned": "伺服器未傳回 uid 和 resourceVersion，無法依此版本核對刪除。請重新整理清單。"
   },
   "pipelines": {
-    "definitions": "已發布的定義",
-    "definitions_empty": "沒有已發布的工作流程",
-    "definition_version": "版本 {{version}}",
-    "definition_graph": "定義圖：{{name}}",
-    "runs": "群組執行",
-    "title": "工作流程",
-    "name": "名稱",
-    "status": "狀態",
-    "started": "開始時間",
-    "current_node": "目前節點",
-    "empty": "還沒有流水線執行",
-    "statuses": {
-      "running": "執行中",
-      "waiting_human": "等待人工",
-      "succeeded": "已成功",
-      "failed": "已失敗",
-      "idle": "未開始",
-      "stopped": "已停止"
-    },
     "kind": {
       "actor": "Actor",
       "human": "人工",
@@ -3144,16 +3123,8 @@
       "parallel": "並行",
       "fan_in": "匯合"
     },
-    "timeline": "節點",
     "graph_label": "執行圖",
-    "graph_empty": "暫無圖表",
-    "gate_title": "人工決策",
-    "gate_deadline": "請在 {{deadline}} 前回答",
-    "gate_freeform_hint": "輸入你的回答",
-    "gate_submit": "提交",
-    "gate_confirm": "確認",
-    "gate_confirm_hint": "回答會送出到執行且無法撤回。確認送出。",
-    "gate_no_options": "該關卡未提供選項；伺服器沒有傳送任何選項。"
+    "graph_empty": "暫無圖表"
   },
   "swarm_page": {
     "project": "專案",

@@ -1,13 +1,6 @@
-/* Pipeline runs (#169): gate form, graph container and node timeline.
+/* Граф исполнения и таймлайн шагов (#169, страница роя #215).
    #214: граф инлайновый; состояния узлов и таймлайна берутся из одних
    переменных --pip-* ниже, чтобы два представления не расходились. */
-
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-start;
-}
 
 /* Единственный источник состояний: таймлайн, граф и подпись состояния
    узла (.nodeState, страница роя #215) красят одними токенами. Значения —
@@ -186,61 +179,4 @@
   @extend %timelineDot;
   background: var(--pip-skipped-fill);
   border-color: var(--pip-skipped-stroke);
-}
-
-.timeline-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.timeline-outcome {
-  color: var(--text-tertiary);
-  overflow-wrap: anywhere;
-}
-
-.timeline-kind {
-  color: var(--text-tertiary);
-}
-
-.gateQuestion {
-  margin: 0 0 12px;
-  overflow-wrap: anywhere;
-}
-
-.gateDeadline {
-  margin: 0 0 12px;
-  color: var(--amber-color);
-}
-
-.gateOptions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.gateAccelerator {
-  color: var(--text-tertiary);
-  margin-left: 4px;
-}
-
-.gateFreeform {
-  width: 100%;
-  min-height: 96px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font: inherit;
-  resize: vertical;
-}
-
-.gateHint {
-  margin: 8px 0 0;
-  color: var(--text-tertiary);
-}
-
-.gateError {
-  margin: 8px 0 0;
-  color: var(--viz-failure);
 }

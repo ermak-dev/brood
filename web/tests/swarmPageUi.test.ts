@@ -214,6 +214,28 @@ describe('selected node', () => {
       `>${en.swarm_page.started}<`
     );
   });
+
+  // BUG: An unconfirmed actor visit had no visible uncertainty in the timeline.
+  // HYPOTHESIS: The timeline displayed outcomes but not the unconfirmed state.
+  // SOLUTION: Show the localized unknown-outcome state, in words.
+  // RESULT: FIXED in the run page; the step history keeps it after #217.
+  // STATUS: FIXED
+  test('an unconfirmed step says its outcome is unknown, not that it failed', () => {
+    const unconfirmed = run({
+      nodes: [
+        {
+          id: 'architecture',
+          kind: 'actor',
+          label: 'architecture',
+          status: 'unconfirmed',
+          sequence: 1,
+        },
+      ],
+    });
+    const text = visibleText(render({ run: unconfirmed, selected: undefined }));
+    expect(text).toContain(en.swarm_page.node_states.unconfirmed);
+    expect(text).not.toContain(en.swarm_page.node_states.failed);
+  });
 });
 
 describe('route and list', () => {

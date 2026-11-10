@@ -290,7 +290,6 @@
     "workers": "Workers",
     "policy": "Access Policy",
     "worker_pools": "Worker pools",
-    "workflows": "Workflows",
     "project": "Project",
     "overview": "Overview"
   },
@@ -323,7 +322,6 @@
     "workers": "The pool hosting actors",
     "policy": "Roles and principals",
     "worker_pools": "Create a pool to provide worker capacity.",
-    "workflows": "Workflow runs and their human gates",
     "project": "Current project details"
   },
   "dashboard": {
@@ -3090,25 +3088,6 @@
     "delete_unversioned": "The server did not return uid and resourceVersion, so deletion cannot be checked against this version. Refresh the list."
   },
   "pipelines": {
-    "definitions": "Published definitions",
-    "definitions_empty": "No published workflows",
-    "definition_version": "Version {{version}}",
-    "definition_graph": "Definition graph: {{name}}",
-    "runs": "Swarm runs",
-    "title": "Workflows",
-    "name": "Name",
-    "status": "Status",
-    "started": "Started",
-    "current_node": "Current node",
-    "empty": "No workflow runs yet",
-    "statuses": {
-      "running": "Running",
-      "waiting_human": "Waiting for human",
-      "succeeded": "Succeeded",
-      "failed": "Failed",
-      "idle": "Not started",
-      "stopped": "Stopped"
-    },
     "kind": {
       "actor": "actor",
       "human": "human",
@@ -3119,16 +3098,8 @@
       "parallel": "parallel",
       "fan_in": "fan-in"
     },
-    "timeline": "Nodes",
     "graph_label": "Run graph",
-    "graph_empty": "No graph available",
-    "gate_title": "Human decision",
-    "gate_deadline": "Answer before {{deadline}}",
-    "gate_freeform_hint": "Type your answer",
-    "gate_submit": "Submit",
-    "gate_confirm": "Confirm",
-    "gate_confirm_hint": "The answer goes to the run and cannot be taken back. Confirm to send it.",
-    "gate_no_options": "The gate offers no options; the server sent none."
+    "graph_empty": "No graph available"
   },
   "swarm_page": {
     "project": "Project",

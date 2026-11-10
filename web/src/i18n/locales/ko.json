@@ -290,7 +290,6 @@
     "workers": "워커",
     "policy": "접근 정책",
     "worker_pools": "워커 풀",
-    "workflows": "워크플로",
     "project": "프로젝트",
     "overview": "개요"
   },
@@ -323,7 +322,6 @@
     "workers": "actor를 호스팅하는 풀",
     "policy": "역할과 주체",
     "worker_pools": "워커 용량을 제공할 풀을 만드세요.",
-    "workflows": "워크플로 실행과 사람의 승인",
     "project": "현재 프로젝트 정보"
   },
   "dashboard": {
@@ -3090,25 +3088,6 @@
     "delete_unversioned": "서버가 uid 및 resourceVersion을 반환하지 않아 이 버전 기준으로 삭제를 확인할 수 없습니다. 목록을 새로 고치세요."
   },
   "pipelines": {
-    "definitions": "게시된 정의",
-    "definitions_empty": "게시된 워크플로가 없습니다",
-    "definition_version": "버전 {{version}}",
-    "definition_graph": "정의 그래프: {{name}}",
-    "runs": "스웜 실행",
-    "title": "워크플로",
-    "name": "이름",
-    "status": "상태",
-    "started": "시작",
-    "current_node": "현재 노드",
-    "empty": "아직 파이프라인 실행이 없습니다",
-    "statuses": {
-      "running": "실행 중",
-      "waiting_human": "사람 대기 중",
-      "succeeded": "성공",
-      "failed": "실패",
-      "idle": "시작 전",
-      "stopped": "중지됨"
-    },
     "kind": {
       "actor": "액터",
       "human": "사람",
@@ -3119,16 +3098,8 @@
       "parallel": "병렬",
       "fan_in": "합류"
     },
-    "timeline": "노드",
     "graph_label": "실행 그래프",
-    "graph_empty": "그래프가 없습니다",
-    "gate_title": "사람의 결정",
-    "gate_deadline": "{{deadline}}까지 답하세요",
-    "gate_freeform_hint": "답을 입력하세요",
-    "gate_submit": "제출",
-    "gate_confirm": "확인",
-    "gate_confirm_hint": "답은 실행으로 전송되며 되돌릴 수 없습니다. 전송을 확인하세요.",
-    "gate_no_options": "이 관문은 선택지를 제공하지 않습니다. 서버가 옵션을 보내지 않았습니다."
+    "graph_empty": "그래프가 없습니다"
   },
   "swarm_page": {
     "project": "프로젝트",

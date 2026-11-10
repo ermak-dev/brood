@@ -2,7 +2,8 @@
 // SPEC: Groups follow the level of the object: resources of the active
 // project, installation infrastructure, administration, the gateway and the
 // system. Each object type has its own icon. Members see the same sections as
-// before. Pipelines became Workflows; old addresses redirect and keep the id.
+// before. The work of a swarm lives on its page (#217): no menu entry or link
+// leads to the old Workflows and Pipelines addresses, which only redirect.
 import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -11,11 +12,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { navSections, isNavigationActive } from '@/components/layout/navigation';
 import { visibleAccessPath } from '@/features/access/permissions';
-import {
-  legacyPipelinePath,
-  workflowRunPath,
-  WORKFLOWS_PATH,
-} from '@/features/pipelines/routes';
 
 const sourceRoot = fileURLToPath(new URL('../src/', import.meta.url));
 const source = (path: string) => readFileSync(join(sourceRoot, path), 'utf8');
@@ -36,7 +32,7 @@ const layout = (administrator: boolean, plugins: boolean) =>
     section.entries.map((entry) => entry.path),
   ]);
 
-const projectLevel = ['project', ['/project', '/swarms', '/actors', '/templates', '/workflows']];
+const projectLevel = ['project', ['/project', '/swarms', '/actors', '/templates']];
 
 describe('navigation groups', () => {
   test('an administrator sees every object level in order', () => {
@@ -113,7 +109,9 @@ describe('active project navigation', () => {
 });
 
 describe('member visibility', () => {
-  test('the active project and workflows are open to members', () => {
+  // Старые адреса прогона открыты участнику, чтобы его ссылка дошла до
+  // переадресации на рой, а не упала в список проектов.
+  test('the active project and the old run addresses are open to members', () => {
     for (const path of [
       '/project',
       '/workflows',
@@ -153,30 +151,10 @@ describe('member visibility', () => {
   });
 });
 
-describe('workflows replace pipelines', () => {
-  test('old addresses map to the workflow list and keep the run id', () => {
-    expect(WORKFLOWS_PATH).toBe('/workflows');
-    expect(legacyPipelinePath(undefined, '')).toBe('/workflows');
-    expect(legacyPipelinePath('', '')).toBe('/workflows');
-    expect(legacyPipelinePath('run-1', '')).toBe('/workflows/runs/run-1');
-    expect(legacyPipelinePath('a/b c', '')).toBe('/workflows/runs/a%2Fb%20c');
-    expect(legacyPipelinePath('run-1', '?project=p')).toBe('/workflows/runs/run-1?project=p');
-    expect(legacyPipelinePath(undefined, '?project=p')).toBe('/workflows?project=p');
-    expect(workflowRunPath('x?y')).toBe('/workflows/runs/x%3Fy');
-  });
-
-  test('routes serve workflows and redirect the old addresses', () => {
-    const routes = source('router/MainRoutes.tsx');
-    expect(routes).toContain("path: '/workflows', element: <PipelinesPage />");
-    expect(routes).toContain("path: '/workflows/runs/:id', element: <RunDetailPage />");
-    expect(routes).toContain("path: '/pipelines', element: <LegacyPipelineRoute />");
-    expect(routes).toContain("path: '/pipelines/:id', element: <LegacyPipelineRoute />");
-    expect(routes).toContain('legacyPipelinePath(id, search)');
-    expect(source('features/pipelines/PipelinesPage.tsx')).toContain('workflowRunPath(run.id)');
-    expect(source('features/pipelines/RunDetailPage.tsx')).toContain('to={WORKFLOWS_PATH}');
-  });
-
-  test('no internal link points to the old address', () => {
+describe('old run addresses', () => {
+  // Ссылки на прогоны разошлись по задачам и комментариям (#217): адреса
+  // живут только в таблице переадресаций и в списке открытых участнику.
+  test('no internal link points to the Workflows or Pipelines address', () => {
     const files = (dir: string): string[] =>
       readdirSync(dir).flatMap((name) => {
         const path = join(dir, name);
@@ -186,19 +164,7 @@ describe('workflows replace pipelines', () => {
       .filter((path) => /\.(ts|tsx)$/.test(path))
       .filter((path) => !path.endsWith(join('router', 'MainRoutes.tsx')))
       .filter((path) => !path.endsWith(join('features', 'access', 'permissions.ts')))
-      .filter((path) => /['"`]\/pipelines\b/.test(readFileSync(path, 'utf8')));
+      .filter((path) => /['"`]\/(workflows|pipelines)\b/.test(readFileSync(path, 'utf8')));
     expect(offenders).toEqual([]);
-  });
-
-  test('every locale names the section Workflows in the menu and on the page', () => {
-    for (const name of locales) {
-      const translations = locale(name);
-      expect(translations.nav?.pipelines).toBeUndefined();
-      expect(translations.nav_meta?.pipelines).toBeUndefined();
-      expect(typeof translations.nav?.workflows).toBe('string');
-      expect(translations.pipelines?.title).toBe(translations.nav.workflows);
-    }
-    expect(locale('en').nav.workflows).toBe('Workflows');
-    expect(locale('en').pipelines.empty).toBe('No workflow runs yet');
   });
 });

@@ -15,8 +15,7 @@ import { swarmTone } from '@/features/access/state';
 import { swarmCapabilities } from '@/features/access/shardState';
 import { SwarmManagement } from '@/features/access/SwarmManagement';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
-import { RunGraph } from '@/features/pipelines/RunDetailPage';
-import { runIsLive } from '@/features/pipelines/state';
+import { RunGraph } from '@/features/pipelines/RunGraph';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { Section } from '@/features/substrate/components/form';
 import { useResource } from '@/features/substrate/hooks';
@@ -32,6 +31,7 @@ import {
   executionTone,
   hasStepTimes,
   nodeView,
+  runIsLive,
   selectedNodeId,
   swarmExecution,
   swarmProjectName,

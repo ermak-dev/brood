@@ -290,7 +290,6 @@
     "workers": "Worker",
     "policy": "Chính sách truy cập",
     "worker_pools": "Nhóm worker",
-    "workflows": "Quy trình",
     "project": "Dự án",
     "overview": "Tổng quan"
   },
@@ -323,7 +322,6 @@
     "workers": "Pool chứa actor",
     "policy": "Vai trò và chủ thể",
     "worker_pools": "Tạo nhóm để cung cấp tài nguyên worker.",
-    "workflows": "Các lần chạy quy trình và bước xác nhận",
     "project": "Chi tiết dự án hiện tại"
   },
   "dashboard": {
@@ -3096,25 +3094,6 @@
     "delete_unversioned": "Máy chủ không trả về uid và resourceVersion nên không thể đối chiếu việc xóa với phiên bản này. Hãy làm mới danh sách."
   },
   "pipelines": {
-    "definitions": "Định nghĩa đã xuất bản",
-    "definitions_empty": "Không có quy trình đã xuất bản",
-    "definition_version": "Phiên bản {{version}}",
-    "definition_graph": "Sơ đồ định nghĩa: {{name}}",
-    "runs": "Lượt chạy của nhóm",
-    "title": "Quy trình",
-    "name": "Tên",
-    "status": "Trạng thái",
-    "started": "Bắt đầu",
-    "current_node": "Nút hiện tại",
-    "empty": "Chưa có lần chạy pipeline nào",
-    "statuses": {
-      "running": "Đang chạy",
-      "waiting_human": "Chờ người quyết định",
-      "succeeded": "Thành công",
-      "failed": "Thất bại",
-      "idle": "Chưa bắt đầu",
-      "stopped": "Đã dừng"
-    },
     "kind": {
       "actor": "actor",
       "human": "người",
@@ -3125,16 +3104,8 @@
       "parallel": "song song",
       "fan_in": "hợp nhánh"
     },
-    "timeline": "Các nút",
     "graph_label": "Đồ thị lần chạy",
-    "graph_empty": "Không có đồ thị",
-    "gate_title": "Quyết định của người",
-    "gate_deadline": "Trả lời trước {{deadline}}",
-    "gate_freeform_hint": "Nhập câu trả lời của bạn",
-    "gate_submit": "Gửi",
-    "gate_confirm": "Xác nhận",
-    "gate_confirm_hint": "Câu trả lời sẽ được gửi vào lần chạy và không thể thu hồi. Xác nhận để gửi.",
-    "gate_no_options": "Cổng không đưa ra lựa chọn nào; máy chủ đã không gửi tùy chọn nào."
+    "graph_empty": "Không có đồ thị"
   },
   "swarm_page": {
     "project": "Dự án",

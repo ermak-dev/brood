@@ -22,7 +22,7 @@ import {
   SVG_ELEMENT_ALLOWLIST,
   SVG_ATTRIBUTE_ALLOWLIST,
 } from '@/features/pipelines/svgFilter';
-import { RunGraph } from '@/features/pipelines/RunDetailPage';
+import { RunGraph } from '@/features/pipelines/RunGraph';
 import { installTestDOM } from './helpers/dom';
 import en from '@/i18n/locales/en.json';
 

@@ -13,6 +13,7 @@ import {
   executionTone,
   hasStepTimes,
   nodeView,
+  runIsLive,
   selectedNodeId,
   swarmExecution,
   swarmProjectName,
@@ -77,6 +78,15 @@ describe('execution state', () => {
     expect(executionTone('succeeded')).toBe('success');
     expect(executionTone('idle')).toBe('muted');
     expect(executionTone('paused')).toBe('muted');
+  });
+
+  test('a finished execution stops polling; unread, running and waiting keep it', () => {
+    expect(runIsLive(null)).toBe(true);
+    expect(runIsLive(run({ status: 'running' }))).toBe(true);
+    expect(runIsLive(run({ status: 'waiting_human' }))).toBe(true);
+    for (const status of ['idle', 'succeeded', 'failed', 'stopped'] as const) {
+      expect(runIsLive(run({ status }))).toBe(false);
+    }
   });
 });
 
@@ -218,6 +228,12 @@ describe('API', () => {
       message: 'internal error',
     });
   });
+
+  test('the graph of a swarm is read by its escaped ID', async () => {
+    reply({ svg: '<svg></svg>' });
+    expect(await pipelinesApi.getRunGraph('a/b')).toEqual({ svg: '<svg></svg>' });
+    expect(calls).toEqual(['/api/pipeline-runs/a%2Fb/graph']);
+  });
 });
 
 describe('locales', () => {
@@ -237,8 +253,7 @@ describe('locales', () => {
   };
   const tokens = (value: string) => (value.match(/\{\{[^}]+\}\}/g) ?? []).sort().join('|');
   const english = flatten(read('en'));
-  const owned = (key: string) =>
-    key.startsWith('swarm_page.') || key.startsWith('pipelines.statuses.');
+  const owned = (key: string) => key.startsWith('swarm_page.');
 
   test('every locale carries every swarm page key with the same interpolations', () => {
     const keys = Object.keys(english).filter(owned);
