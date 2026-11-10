@@ -35,12 +35,9 @@ def settings(get):
     for key in required:
         if not values[key] or any(char in values[key] for char in "\r\n\0"):
             raise RuntimeError(f"public Go deployment needs valid {key} in .env")
-    minimums = [("BROOD_SESSION_SECRET", 32)]
-    if mode == "initial":
-        minimums.append(("BROOD_ADMIN_PASSWORD", 12))
-    for key, minimum in minimums:
-        if len(values[key]) < minimum:
-            raise RuntimeError(f"{key} must contain at least {minimum} characters")
+    # Ключ подписи сессий, а не пароль: длину пароля администратора выбирает оператор.
+    if len(values["BROOD_SESSION_SECRET"]) < 32:
+        raise RuntimeError("BROOD_SESSION_SECRET must contain at least 32 characters")
     if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", values["BROOD_PUBLIC_HOST"]):
         raise RuntimeError("BROOD_PUBLIC_HOST must be a DNS hostname")
     port = values["BROOD_HTTPS_PORT"]
