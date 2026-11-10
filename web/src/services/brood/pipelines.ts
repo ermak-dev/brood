@@ -1,19 +1,21 @@
 /**
- * brood: pipeline runs and their human gates (#169, engine #168).
+ * brood: the execution and graph of a swarm (#169, engine #168, swarm #206)
+ * and the project workflow catalog.
  *
- * Pipeline run API contract.
- * GET /api/swarms/{swarm}/pipeline-runs lists runs visible in that swarm;
- * GET /api/pipeline-runs/{run} returns the run and its current gate, and
+ * Pipeline run API contract, as the swarm page reads it.
+ * GET /api/pipeline-runs/{run} returns the swarm execution and
  * GET /api/pipeline-runs/{run}/graph returns {svg} with state styling embedded,
  * and may list the graph nodes with the instruction each one carries.
- * POST /api/pipeline-runs/{run}/nodes/{node}/answer accepts {answer, visitSequence}.
  * Since #206 the graph and its execution belong to the swarm: {run} is the
  * swarm ID, and a visible swarm without a graph answers 404 (getSwarmRun).
  * The run carries `definition`, the identity of the snapshot its first start
  * pinned (#218), not the current catalog definition; an older server omits it.
- * The server must authorize every operation against the run's swarm, return
- * a reason on refusal, and atomically reject a stale or already answered visit.
- * Gate metadata and a positive, safe-integer visitSequence come from the server.
+ * GET /api/projects/{project}/workflow-catalog lists published definitions and
+ * GET /api/projects/{project}/workflows/{name}/graph?version=&revision= draws
+ * one of them for the first start of a swarm (#218).
+ * Operator questions are answered through the swarm request API (#216,
+ * requests.ts), not through the run. The server must authorize every
+ * operation against the run's swarm and return a reason on refusal.
  */
 
 import { BroodApiError, request } from './http';
@@ -68,27 +70,6 @@ export interface PipelineRun {
   /** Label of the node the run is on now. */
   currentNode?: string;
   nodes: RunNode[];
-  /** Present only for the current waiting human gate. */
-  gate?: HumanGate;
-}
-
-export type GateKind = 'yes_no' | 'multiple_choice' | 'freeform' | 'confirmation';
-
-export interface GateOption {
-  id: string;
-  label: string;
-  accelerator?: string;
-}
-
-export interface HumanGate {
-  runId: string;
-  nodeId: string;
-  /** Monotonic visit identity, checked atomically by the server on answer. */
-  visitSequence: number;
-  question: string;
-  kind: GateKind;
-  options: GateOption[];
-  deadline?: string;
 }
 
 /** A graph node with what the graph asks of it: the actor prompt or the
@@ -147,9 +128,6 @@ export const pipelinesApi = {
       'GET',
       `${projectPath(projectId)}/workflows/${segment(name)}/graph?version=${version}&revision=${segment(revision)}`
     ),
-  listRuns: (swarmId: string) =>
-    request<PipelineRun[]>('GET', `/api/swarms/${segment(swarmId)}/pipeline-runs`),
-  getRun: (id: string) => request<PipelineRun>('GET', runPath(id)),
   /** The execution of a swarm the caller can already read; null when the
    * swarm has no graph yet (the run route answers 404 for it). */
   getSwarmRun: async (swarmId: string): Promise<PipelineRun | null> => {
@@ -160,10 +138,5 @@ export const pipelinesApi = {
       throw error;
     }
   },
-  answerGate: (runId: string, nodeId: string, answer: string, visitSequence: number) =>
-    request<PipelineRun>('POST', `${runPath(runId)}/nodes/${segment(nodeId)}/answer`, {
-      answer,
-      visitSequence,
-    }),
   getRunGraph: (id: string) => request<RunGraph>('GET', `${runPath(id)}/graph`),
 };

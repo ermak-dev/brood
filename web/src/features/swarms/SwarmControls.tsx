@@ -21,7 +21,7 @@ import {
   type WorkflowDefinition,
 } from '@/services/brood/pipelines';
 import { LoadState } from '@/features/access/shared';
-import { RunGraph } from '@/features/pipelines/RunDetailPage';
+import { RunGraph } from '@/features/pipelines/RunGraph';
 import { useResource } from '@/features/substrate/hooks';
 import { formatDateTimeValue } from '@/utils/format';
 import {

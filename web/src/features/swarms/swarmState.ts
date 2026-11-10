@@ -18,6 +18,12 @@ export function swarmExecution(run: PipelineRun | null): string {
   return run.status === 'waiting_human' ? 'waiting' : run.status;
 }
 
+/** Завершённое исполнение дальше не опрашивать; ещё не прочитанное и
+ * идущее или ждущее ответа — опрашивать. */
+export function runIsLive(run: PipelineRun | null): boolean {
+  return run === null || run.status === 'running' || run.status === 'waiting_human';
+}
+
 /** Остановленный и ждущий ответа рой различимы и цветом, и текстом:
  * ждущий требует оператора, остановленный — нет. */
 export function executionTone(execution: string): BadgeTone {

@@ -6,6 +6,7 @@ import { SwarmsPage } from '@/features/access/SwarmsPage';
 import { UsersPage } from '@/features/access/UsersPage';
 import { ProjectDetailPage } from '@/features/access/ProjectDetailPage';
 import { SwarmPage } from '@/features/swarms/SwarmPage';
+import { LegacyRunRoute } from '@/features/swarms/LegacyRunRoute';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
@@ -14,9 +15,6 @@ import { PolicyPage } from '@/features/substrate/PolicyPage';
 import { TemplatesPage } from '@/features/substrate/TemplatesPage';
 import { WorkersPage } from '@/features/substrate/WorkersPage';
 import { WorkerPoolsPage } from '@/features/substrate/WorkerPoolsPage';
-import { PipelinesPage } from '@/features/pipelines/PipelinesPage';
-import { RunDetailPage } from '@/features/pipelines/RunDetailPage';
-import { legacyPipelinePath } from '@/features/pipelines/routes';
 import { ProvidersWorkbenchPage } from '@/features/providers/ProvidersWorkbenchPage';
 import { AuthFilesPage } from '@/features/authFiles/AuthFilesPage';
 import { AuthFilesOAuthExcludedEditPage } from '@/pages/AuthFilesOAuthExcludedEditPage';
@@ -56,13 +54,6 @@ function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' | 'deta
   return section === 'swarms' ? <SwarmsPage /> : <ProjectDetailPage />;
 }
 
-function LegacyPipelineRoute() {
-  const { id } = useParams();
-  const [params] = useSearchParams();
-  const search = params.toString() ? `?${params.toString()}` : '';
-  return <Navigate to={legacyPipelinePath(id, search)} replace />;
-}
-
 const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/', element: <DashboardPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
@@ -82,10 +73,11 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/templates', element: <TemplatesPage /> },
   { path: '/workers', element: <WorkersPage /> },
   { path: '/worker-pools', element: <WorkerPoolsPage /> },
-  { path: '/workflows', element: <PipelinesPage /> },
-  { path: '/workflows/runs/:id', element: <RunDetailPage /> },
-  { path: '/pipelines', element: <LegacyPipelineRoute /> },
-  { path: '/pipelines/:id', element: <LegacyPipelineRoute /> },
+  // Работа роя — на его странице (#217): старые адреса прогона ведут туда.
+  { path: '/workflows', element: <LegacyRunRoute /> },
+  { path: '/workflows/runs/:id', element: <LegacyRunRoute /> },
+  { path: '/pipelines', element: <LegacyRunRoute /> },
+  { path: '/pipelines/:id', element: <LegacyRunRoute /> },
   { path: '/policy', element: <LegacyProjectRoute section="members" /> },
   { path: '/substrate-policy', element: <PolicyPage /> },
   { path: '/settings', element: <Navigate to="/config" replace /> },

@@ -19,11 +19,9 @@ import {
   IconSidebarUsers,
   IconSidebarWorkerPools,
   IconSidebarWorkers,
-  IconSidebarWorkflows,
   type IconProps,
 } from '@/components/ui/icons';
 import { visibleAccessPath } from '@/features/access/permissions';
-import { WORKFLOWS_PATH } from '@/features/pipelines/routes';
 
 export function isNavigationActive(path: string, pathname: string, routerActive: boolean): boolean {
   if (/^\/projects\/[^/]+\/?$/.test(pathname)) {
@@ -73,12 +71,6 @@ const sections = (plugins: boolean): NavSection[] => [
         labelKey: 'nav.templates',
         metaKey: 'nav_meta.templates',
         icon: IconSidebarTemplates,
-      },
-      {
-        path: WORKFLOWS_PATH,
-        labelKey: 'nav.workflows',
-        metaKey: 'nav_meta.workflows',
-        icon: IconSidebarWorkflows,
       },
     ],
   },

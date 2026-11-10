@@ -290,7 +290,6 @@
     "workers": "Воркеры",
     "policy": "Политика доступа",
     "worker_pools": "Пулы воркеров",
-    "workflows": "Workflow",
     "project": "Проект",
     "overview": "Обзор"
   },
@@ -323,7 +322,6 @@
     "workers": "Пул: где живут акторы",
     "policy": "Роли и принципалы",
     "worker_pools": "Создайте пул, чтобы добавить воркеры.",
-    "workflows": "Прогоны workflow и их вопросы",
     "project": "Данные текущего проекта"
   },
   "dashboard": {
@@ -3087,25 +3085,6 @@
     "delete_unversioned": "Сервер не вернул uid и resourceVersion, поэтому удаление не сверить с этой версией. Обновите список."
   },
   "pipelines": {
-    "definitions": "Опубликованные определения",
-    "definitions_empty": "Нет опубликованных workflow",
-    "definition_version": "Версия {{version}}",
-    "definition_graph": "Граф определения: {{name}}",
-    "runs": "Прогоны роёв",
-    "title": "Workflow",
-    "name": "Имя",
-    "status": "Статус",
-    "started": "Начат",
-    "current_node": "Текущий узел",
-    "empty": "Проходов пайплайнов пока нет",
-    "statuses": {
-      "running": "Идёт",
-      "waiting_human": "Ждёт человека",
-      "succeeded": "Завершён",
-      "failed": "Провален",
-      "idle": "Не запущен",
-      "stopped": "Остановлен"
-    },
     "kind": {
       "actor": "актор",
       "human": "человек",
@@ -3116,16 +3095,8 @@
       "parallel": "параллель",
       "fan_in": "слияние"
     },
-    "timeline": "Узлы",
     "graph_label": "Граф прохода",
-    "graph_empty": "Граф недоступен",
-    "gate_title": "Решение человека",
-    "gate_deadline": "Ответить до {{deadline}}",
-    "gate_freeform_hint": "Введите ответ",
-    "gate_submit": "Отправить",
-    "gate_confirm": "Подтвердить",
-    "gate_confirm_hint": "Ответ уходит в проход и вернуть его нельзя. Подтвердите отправку.",
-    "gate_no_options": "Вопрос не предлагает вариантов: сервер их не прислал."
+    "graph_empty": "Граф недоступен"
   },
   "swarm_page": {
     "project": "Проект",
