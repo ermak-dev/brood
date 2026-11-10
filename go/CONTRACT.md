@@ -198,6 +198,44 @@ Workflows, пока её не удалит #217.
 - 422 `the repository has no default branch`, `the repository HEAD is not a branch`,
   `the repository HEAD is not a SHA-1 commit`.
 
+## Привязка ролей роя к акторам
+
+Устройство и инварианты — [MODEL.md](../docs/MODEL.md), «Привязка ролей»
+(#208, #235). Все три маршрута отвечают представлением ролей:
+`{"swarmId", "execution", "graph", "roles"}`. `graph` — `null` или
+`pinned` (снимок роя или определение каталога), `name`, `version`,
+`revision`. Элемент `roles` по имени роли: `role`, `inGraph`, `state`
+(`ready`, `unbound`, `stale`, `inactive`, `foreign`, `missing`) и у
+привязанной роли `actorUid`, `actorName` (только у актора этого роя),
+`actorIncarnation` — записанная инкарнация.
+
+- `GET /api/swarms/{id}/roles[?definition=NAME]` — любая роль роя. Отказы:
+  404 `swarm not found`, 404 `workflow definition is not in the project
+  catalog` (в том числе определение чужого проекта), 409 `swarm graph is
+  pinned to another workflow definition`, 422 `workflow graph is not
+  executable`.
+- `PUT /api/swarms/{id}/roles/{role}` — ровно `{"actorUid": "...",
+  "actorIncarnation": N}`, инкарнация необязательна и положительна;
+  owner/editor/administrator, Origin/CSRF; 200 после записи.
+- `DELETE /api/swarms/{id}/roles/{role}` — те же права; 200 после записи.
+
+Отказы изменения, без записи: 400 `invalid swarm role binding: expected
+{actorUid, actorIncarnation?}` (неизвестное или повторное поле, не строка,
+не положительное целое), 400 `swarm role must be a lowercase DNS label`,
+403 `swarm management denied` (viewer, отзыв права или сессии), 404 `swarm
+not found` (посторонний), 404 `swarm role is not bound` (`DELETE`), 409
+`swarm is not active`, 409 `swarm execution is running or waiting; stop
+the swarm before changing role bindings`, 409 `actor is not an actor of
+this swarm` (в том числе неизвестный UID), 409 `actor is not live: it must
+be provisioning or running and meant to run`, 409 `actor incarnation
+changed; list the swarm actors and bind again`. Текст ошибок хранилища
+клиенту не возвращается.
+
+`bro swarm roles|bind|unbind` ходит в эти маршруты по bro login сессии;
+актора по имени или UID разрешает через `GET /api/swarms/{id}/actors`
+(строки `provider: proxmox`, инкарнация — `generation`). Из тела отказа
+`clientapi` берёт только причину из перечисленного набора.
+
 ## Ёмкость проекта
 
 `GET /api/projects/{id}` доступен участнику/администратору и возвращает id/name,
