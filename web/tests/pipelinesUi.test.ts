@@ -211,7 +211,10 @@ describe('locales', () => {
   const tokens = (value: string): string[] => value.match(/\{\{[^}]+\}\}/g) ?? [];
 
   test('every locale covers the new pipelines keys with matching interpolations', () => {
-    const englishKeys = Object.keys(flatten(en)).filter(
+    // Английский разворачивается один раз: развёртка квадратична по числу
+    // ключей, и повтор на каждый ключ упирал тест в таймаут.
+    const english = flatten(en);
+    const englishKeys = Object.keys(english).filter(
       (key) => key.startsWith('pipelines.') || key === 'nav.pipelines' || key === 'nav_meta.pipelines'
     );
     expect(englishKeys.length).toBeGreaterThan(0);
@@ -221,7 +224,7 @@ describe('locales', () => {
       );
       const missing = englishKeys.filter((key) => !(key in other));
       const mismatched = englishKeys.filter((key) => key in other).filter(
-        (key) => tokens(flatten(en)[key]).sort().join('|') !== tokens(other[key]).sort().join('|')
+        (key) => tokens(english[key]).sort().join('|') !== tokens(other[key]).sort().join('|')
       );
       expect([locale, missing, mismatched]).toEqual([locale, [], []]);
     }

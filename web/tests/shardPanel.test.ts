@@ -24,8 +24,9 @@ test('editors preserve drafts through refresh and label controls do not submit',
   expect(detail).toContain('capacity={editing}');
   const grants = source('features/access/SwarmAccess.tsx');
   expect(grants).toMatch(/\(!editing \|\| !canOwn\) &&/);
-  const swarms = source('features/access/SwarmsPage.tsx');
-  expect(swarms).toContain('retainedSwarm(selectedAccess, resource)');
+  // #215: лист доступа открывается со страницы роя и получает её свежий рой.
+  const swarms = source('features/access/SwarmManagement.tsx');
+  expect(swarms).toMatch(/<SwarmAccess\s+key=\{swarm\.id\}\s+swarm=\{swarm\}/);
 });
 
 test('project detail exposes exact usage and capacity without another project picker', () => {

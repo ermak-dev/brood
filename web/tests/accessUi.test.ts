@@ -125,7 +125,6 @@ function entityTables(text: string): string[] {
 test('page tables open an object panel instead of carrying row buttons', () => {
   const pages = {
     ProjectsPage: 'projectPlan(admin)',
-    SwarmsPage: 'swarmPlan(swarm, admin)',
     UsersPage: 'userPlan()',
     PermissionsPage: 'memberPlan(admin)',
   };
@@ -144,6 +143,15 @@ test('page tables open an object panel instead of carrying row buttons', () => {
   // Таблица внутри листа доступа к рою -- вложенная, её строки сохраняют
   // свои кнопки (EntityTable: actions только для таблиц внутри панели).
   expect(entityTables(source('features/access/SwarmAccess.tsx'))[0]).toContain('actions=');
+  // #215: строка роя ведёт на его страницу, а не в панель; действия роя
+  // по тому же плану живут на странице, без кнопок в строке.
+  const swarms = entityTables(source('features/access/SwarmsPage.tsx'));
+  expect(swarms.length).toBe(1);
+  expect(swarms[0]).toContain('onRowClick={(swarm) => navigate(swarmPath(swarm.id))}');
+  expect(swarms[0]).not.toContain('actions=');
+  expect(source('features/access/SwarmManagement.tsx')).toContain(
+    'panelGroups(swarmPlan(swarm, admin)'
+  );
 });
 
 // Перенос в панель не меняет подтверждений: те же заголовок, текст и
@@ -159,7 +167,7 @@ test('panel actions keep the confirmations of the former row buttons', () => {
   const members = source('features/access/PermissionsPage.tsx');
   expect(members).toContain("t('access.confirm_member', { name: member.username })");
   expect(members).toContain('accessApi.removeMember(projectId, member.username)');
-  const swarms = source('features/access/SwarmsPage.tsx');
+  const swarms = source('features/access/SwarmManagement.tsx');
   expect(swarms).toContain('confirm(swarm.name, async () => {');
   expect(swarms).toContain('await accessApi.deleteSwarm(swarm.id)');
   // Повтор создания идёт без вопроса, как и прежде: он продолжает
@@ -205,7 +213,7 @@ test('access editors pick a user from a list instead of typing a username', () =
   expect(members).toContain('memberCandidates(users.data, members.data)');
   // Второго, текстового способа исключить участника больше нет.
   expect(members).not.toContain("setEditor('remove')");
-  const swarms = source('features/access/SwarmsPage.tsx');
+  const swarms = source('features/access/SwarmManagement.tsx');
   expect(swarms).toContain("type: 'select'");
   expect(swarms).toContain('options: owners');
   for (const page of [members, swarms]) {
@@ -218,12 +226,16 @@ test('access editors pick a user from a list instead of typing a username', () =
 });
 
 test('project sections register one refresh for tables and picker resources', () => {
-  for (const page of ['PermissionsPage', 'SwarmsPage']) {
-    const text = source(`features/access/${page}.tsx`);
-    expect(text).toContain('useHeaderRefresh(');
-    expect(text.match(/headerRefresh: false/g)?.length).toBe(2);
-    expect(text).toContain('Promise.all(');
-  }
+  const text = source('features/access/PermissionsPage.tsx');
+  expect(text).toContain('useHeaderRefresh(');
+  expect(text.match(/headerRefresh: false/g)?.length).toBe(2);
+  expect(text).toContain('Promise.all(');
+  // #215: у списка роёв один ресурс, он сам подписан на обновление из шапки;
+  // участники для передачи грузятся на странице роя и тоже обновляются.
+  const swarms = source('features/access/SwarmsPage.tsx');
+  expect(swarms).toContain('useAccessResource(load)');
+  expect(swarms).not.toContain('headerRefresh: false');
+  expect(source('features/access/SwarmManagement.tsx')).toContain('useAccessResource(loadMembers)');
   expect(source('features/substrate/components/ProjectScope.tsx')).toContain(
     'headerRefresh: false'
   );

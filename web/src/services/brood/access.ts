@@ -136,6 +136,8 @@ export const accessApi = {
   removeMember: (projectId: string, username: string) =>
     request<void>('DELETE', `${projectPath(projectId)}/members/${segment(username)}`),
   swarms: (projectId: string) => request<AccessSwarm[]>('GET', `${projectPath(projectId)}/swarms`),
+  /** Один рой по ID; чужой рой сервер не отличает от отсутствующего (404). */
+  swarm: (id: string) => request<AccessSwarm>('GET', swarmPath(id)),
   swarmMembers: (id: string) => request<SwarmMember[]>('GET', `${swarmPath(id)}/members`),
   setSwarmMember: (id: string, username: string, role: SwarmRole) =>
     request<void>('POST', `${swarmPath(id)}/members`, { username, role }),

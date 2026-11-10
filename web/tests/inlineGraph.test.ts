@@ -383,7 +383,9 @@ describe('shared state tokens', () => {
   });
 
   test('graph and timeline define one pip variable set without media queries', () => {
-    expect(module).toContain('.graph,\n.timeline {');
+    // #215: подпись состояния узла на странице роя берёт тот же набор.
+    expect(module).toContain('.graph,\n.timeline,\n.nodeState {');
+    expect(module.match(/--pip-done-fill:/g)?.length).toBe(1);
     for (const token of [
       '--pip-node-fill',
       '--pip-active-fill',

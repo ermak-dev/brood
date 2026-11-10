@@ -1,19 +1,12 @@
 import type { AccessSwarm, AccessUser, ShardCapacity, SwarmMember } from '@/services/brood/access';
 import { userOption } from './state';
 
-export function retainedSwarm(
-  selected: AccessSwarm | null,
-  resource: { data: AccessSwarm[] | null; loading: boolean; error: string }
-): AccessSwarm | null {
-  if (!selected) return null;
-  if (resource.loading || resource.error) return selected;
-  return resource.data?.find((swarm) => swarm.id === selected.id) ?? null;
-}
-
+/** Куда перейти при смене проекта в шапке: детали проекта — к деталям
+ * нового, страница роя — к списку роёв нового проекта (рой принадлежит
+ * одному проекту, #215). Остальные разделы и так следуют контексту. */
 export function projectSelectionPath(pathname: string, project: string): string | null {
-  return /^\/projects\/[^/]+\/?$/.test(pathname)
-    ? `/projects/${encodeURIComponent(project)}`
-    : null;
+  if (/^\/projects\/[^/]+\/?$/.test(pathname)) return `/projects/${encodeURIComponent(project)}`;
+  return /^\/swarms\/[^/]+\/?$/.test(pathname) ? '/swarms' : null;
 }
 
 export function swarmCapabilities(swarm: AccessSwarm, administrator: boolean) {
