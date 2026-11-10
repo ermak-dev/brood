@@ -3,8 +3,11 @@
 package sessionctl
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -26,12 +29,16 @@ const workspaceStopTimeout = 4 * time.Second
 const workspaceStartTimeout = 8 * time.Second
 const workspacePollInterval = 100 * time.Millisecond
 
+// Одна команда Git укладывается в общий бюджет с запасом на соседние шаги.
+const workspaceStepTimeout = 4 * time.Second
+
 type workspaceEngine struct {
-	root  string
-	git   func(context.Context, ...string) (string, error)
-	call  ptyCall
-	prove func(context.Context) (identity, error)
-	quiet func(context.Context) (bool, error)
+	root   string
+	git    func(context.Context, ...string) (string, error)
+	stream func(context.Context, []string, func(*bufio.Reader) error) error
+	call   ptyCall
+	prove  func(context.Context) (identity, error)
+	quiet  func(context.Context) (bool, error)
 }
 
 type workspaceFacts struct {
@@ -52,6 +59,8 @@ func RunWorkspace(ctx context.Context, req relay.SessionRequest) relay.SessionRe
 	defer cancel()
 	e := workspaceEngine{root: fixedWorkspace, git: func(ctx context.Context, args ...string) (string, error) {
 		return runWorkspaceGit(ctx, actorHome, fixedWorkspace, args...)
+	}, stream: func(ctx context.Context, args []string, consume func(*bufio.Reader) error) error {
+		return streamWorkspaceGit(ctx, actorHome, fixedWorkspace, args, consume)
 	}, call: callPTY, prove: proveLive, quiet: workspaceQuiet}
 	return e.handle(ctx, req)
 }
@@ -96,9 +105,9 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		facts := workspaceFacts{Path: fixedWorkspace, Git: "unknown"}
 		if err := e.repository(ctx); err != nil {
 			facts.Reason = err.Error()
-		} else if status, err := e.git(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"); err != nil {
-			facts.Reason = "Git status unavailable or exceeds output limit"
-		} else if status != "" {
+		} else if dirty, err := e.dirty(ctx); err != nil {
+			facts.Reason = "Git status unavailable: " + err.Error()
+		} else if dirty {
 			facts.Git = "dirty"
 		} else {
 			facts.Git = "clean"
@@ -220,7 +229,8 @@ func (e *workspaceEngine) clean(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return errors.New("workspace operation canceled before cleanup")
 	}
-	if _, err = e.git(ctx, "reset", "--hard", "HEAD", "--"); err != nil {
+	// Отчёты reset и clean растут с клоном и не нужны: --quiet.
+	if _, err = e.git(ctx, "reset", "--hard", "--quiet", "HEAD", "--"); err != nil {
 		return &workspaceEffectError{"Git reset result is unknown"}
 	}
 	// После первого эффекта любой отказ означает частично выполненную операцию.
@@ -231,11 +241,11 @@ func (e *workspaceEngine) clean(ctx context.Context) error {
 	if err = e.repository(ctx); err != nil {
 		return &workspaceEffectError{"repository proof lost after reset"}
 	}
-	if _, err = e.git(ctx, "clean", "-ffdx", "--"); err != nil {
+	if _, err = e.git(ctx, "clean", "-ffdx", "--quiet", "--"); err != nil {
 		return &workspaceEffectError{"Git cleanup result is unknown"}
 	}
-	status, err := e.git(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
-	if err != nil || status != "" || ctx.Err() != nil {
+	dirty, err := e.dirty(ctx)
+	if err != nil || dirty || ctx.Err() != nil {
 		return &workspaceEffectError{"workspace cleanliness is not confirmed after cleanup"}
 	}
 	return nil
@@ -247,16 +257,49 @@ func (e *workspaceEngine) repository(ctx context.Context) error {
 	if err := repositoryLayout(ctx, e.root, e.git, true, nil); err != nil {
 		return err
 	}
-	index, err := e.git(ctx, "ls-files", "--stage", "-z")
-	if err != nil {
-		return errors.New("Git index unavailable or exceeds output limit")
-	}
-	for _, entry := range strings.Split(index, "\x00") {
-		if strings.HasPrefix(entry, "160000 ") {
+	return e.stream(ctx, indexArgs, refuseGitlinks)
+}
+
+// dirty reads status as a stream: it lists every changed, untracked and
+// ignored path, so it grows with the work in the clone; only emptiness counts.
+func (e *workspaceEngine) dirty(ctx context.Context) (bool, error) {
+	listed := int64(0)
+	err := e.stream(ctx, []string{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"}, func(r *bufio.Reader) (err error) {
+		listed, err = io.Copy(io.Discard, r)
+		return err
+	})
+	return listed > 0, err
+}
+
+// indexArgs lists the index, one "<mode> <object> <stage>\t<path>" per NUL.
+var indexArgs = []string{"ls-files", "--stage", "-z"}
+
+// Индекс бывает длиннее рабочего дерева: стадии конфликта, staged-удаления,
+// skip-worktree. Запас вдвое против бюджета файлов, как у snapshotObjectLimit.
+const indexEntryLimit = 2 * workspaceFileLimit
+
+// refuseGitlinks is the index check of workspace operations and checkout.
+func refuseGitlinks(r *bufio.Reader) error { return scanIndex(r, indexEntryLimit) }
+
+// scanIndex reads an index listing one entry at a time, so memory stays within
+// the buffer of r whatever the size of the index. It refuses a gitlink, an
+// entry longer than the buffer, a truncated listing and more than limit entries.
+func scanIndex(r *bufio.Reader, limit int) error {
+	for n := 0; ; n++ {
+		entry, err := r.ReadSlice(0)
+		switch {
+		case err == io.EOF && len(entry) == 0:
+			return nil
+		case err == bufio.ErrBufferFull:
+			return fmt.Errorf("Git index has an entry over %d bytes", r.Size())
+		case err != nil:
+			return errors.New("Git index listing is truncated")
+		case n == limit:
+			return fmt.Errorf("Git index has more than %d entries", limit)
+		case bytes.HasPrefix(entry, []byte("160000 ")):
 			return errors.New("submodule workspaces are not supported")
 		}
 	}
-	return nil
 }
 
 // repositoryLayout holds the checks shared by workspace operations and the
@@ -413,14 +456,25 @@ func gitFlags(byteExact bool) []string {
 }
 
 func runWorkspaceGit(ctx context.Context, home, root string, args ...string) (string, error) {
-	return workspaceExec(ctx, root, gitEnv(home, root), "/usr/bin/git", append(gitFlags(false), args...)...)
+	return helperGit{home: home, root: root}.run(ctx, workspaceStepTimeout, nil, args...)
 }
-func workspaceExec(parent context.Context, root string, env []string, exe string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, args...)
-	cmd.Dir = root
-	cmd.Env = env
+
+func streamWorkspaceGit(ctx context.Context, home, root string, args []string, consume func(*bufio.Reader) error) error {
+	return helperGit{home: home, root: root}.stream(ctx, workspaceStepTimeout, nil, nil, args, consume)
+}
+
+// helperGit runs helper Git in the clone at root with gitEnv and gitFlags,
+// each command in its own process group, killed with its context.
+type helperGit struct {
+	home, root string
+	byteExact  bool
+}
+
+func (g helperGit) command(ctx context.Context, env, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "/usr/bin/git", append(gitFlags(g.byteExact), args...)...)
+	cmd.Dir = g.root
+	// Повтор ключа в Env: os/exec берёт последнее значение.
+	cmd.Env = append(gitEnv(g.home, g.root), env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -428,15 +482,54 @@ func workspaceExec(parent context.Context, root string, env []string, exe string
 		}
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-	output := &cappedOutput{cancel: cancel}
-	cmd.Stdout = output
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = time.Second
+	return cmd
+}
+
+// run returns the output of one bounded command, refused past the cap of
+// cappedOutput. Listings that grow with the clone go through stream instead.
+func (g helperGit) run(parent context.Context, timeout time.Duration, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	cmd := g.command(ctx, env, args)
+	output := &cappedOutput{cancel: cancel}
+	cmd.Stdout = output
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 	return output.String(), err
+}
+
+// stream hands stdout to consume; an early consumer error stops Git.
+func (g helperGit) stream(parent context.Context, timeout time.Duration, env []string, stdin io.Reader, args []string, consume func(*bufio.Reader) error) error {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	cmd := g.command(ctx, env, args)
+	cmd.Stdin = stdin
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return errors.New("Git output unavailable")
+	}
+	if err := cmd.Start(); err != nil {
+		return errors.New("Git unavailable")
+	}
+	consumed := consume(bufio.NewReaderSize(stdout, 64<<10))
+	if consumed != nil {
+		cancel()
+	}
+	waited := cmd.Wait()
+	if consumed != nil {
+		return consumed
+	}
+	if ctx.Err() != nil {
+		return errors.New("Git timed out")
+	}
+	if waited != nil {
+		return errors.New("Git failed")
+	}
+	return nil
 }
 
 // EnsureSession asks the trusted PTY holder to ensure its fixed command exists.
