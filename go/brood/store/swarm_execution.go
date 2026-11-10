@@ -282,8 +282,9 @@ func (s *Store) startSource(ctx context.Context, projectID string, in SwarmStart
 // beginPass открывает проход: первый шаг стартового узла получает
 // следующий номер роя, шаги прошлых проходов не трогаются. Шаг узла-человека
 // открывает свой запрос в той же транзакции, как у преемника в
-// progressPipeline. Условие на исполнение повторяет проверку запуска в
-// самой записи.
+// progressPipeline, но без материала: предыдущий шаг роя принадлежит
+// прошлому проходу, и его отчёт не то, что одобряют сейчас (#233). Условие
+// на исполнение повторяет проверку запуска в самой записи.
 func (s *Store) beginPass(ctx context.Context, swarmID string, plan passPlan) error {
 	var sequence int64
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0)+1 FROM swarm_steps WHERE swarm_id=?`, swarmID).Scan(&sequence); err != nil {
@@ -293,7 +294,7 @@ func (s *Store) beginPass(ctx context.Context, swarmID string, plan passPlan) er
 		return err
 	}
 	if plan.entry.NextState == "waiting" {
-		if err := s.openNodeRequest(ctx, swarmID, sequence, plan.doc.Nodes[plan.entry.Next]); err != nil {
+		if err := s.openNodeRequest(ctx, swarmID, sequence, plan.doc.Nodes[plan.entry.Next], ""); err != nil {
 			return err
 		}
 	}

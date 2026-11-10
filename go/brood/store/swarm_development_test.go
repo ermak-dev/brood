@@ -66,7 +66,7 @@ func TestRootSwarmWorkflowProgression(t *testing.T) {
 				if _, err := s.AppendPipelineVisit(ctx, "s", "s", PipelineVisit{NodeID: node, State: "inflight", ActorUID: actor, ActorIncarnation: 1, RequestID: request}); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.CompletePipelineActorVisit(ctx, "s", "s", sequence, request, actor, 1, "success"); err != nil {
+				if err := s.CompletePipelineActorVisit(ctx, "s", "s", sequence, request, actor, 1, "success", ""); err != nil {
 					t.Fatal(err)
 				}
 			}

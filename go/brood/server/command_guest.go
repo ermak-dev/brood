@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"brood.dev/go/brood/app"
 
@@ -11,6 +12,10 @@ import (
 	"brood.dev/go/brood/proxmox/relay"
 	"brood.dev/go/brood/store"
 )
+
+// stepReportRefusal — фиксированная причина отказа неверному отчёту шага
+// (#233): гость узнаёт, что поправить, а исход не записан.
+var stepReportRefusal = fmt.Sprintf("invalid pipeline report: at most %d bytes of UTF-8 text without control characters other than newline and tab; the outcome was not recorded", store.MaxStepReportBytes)
 
 func commandSwarmResponse(result command.Result) relay.SwarmResponse {
 	ok := true
@@ -36,15 +41,18 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 			Sequence  int64  `json:"sequence"`
 			RequestID string `json:"request_id"`
 			Outcome   string `json:"outcome"`
+			Report    string `json:"report"`
 		}
 		if err := json.Unmarshal(validated.Arguments, &args); err != nil {
 			return relay.SwarmResponse{Text: "invalid pipeline completion", Outcome: "refused"}
 		}
 		err = m.inCommandActorTx(ctx, from, func(ctx context.Context, current store.ManagedActor) error {
-			return m.server.store.CompletePipelineActorVisit(ctx, current.SwarmID, args.RunID, args.Sequence, args.RequestID, current.UID, current.Incarnation, args.Outcome)
+			return m.server.store.CompletePipelineActorVisit(ctx, current.SwarmID, args.RunID, args.Sequence, args.RequestID, current.UID, current.Incarnation, args.Outcome, args.Report)
 		})
 		if err != nil {
 			switch {
+			case errors.Is(err, store.ErrStepReportInvalid):
+				return relay.SwarmResponse{Text: stepReportRefusal, Outcome: "refused"}
 			case errors.Is(err, app.ErrNotAllowed):
 				return relay.SwarmResponse{Text: "pipeline completion not authorized", Outcome: "refused"}
 			case errors.Is(err, app.ErrConflict), errors.Is(err, store.ErrPipelineVisitConflict):

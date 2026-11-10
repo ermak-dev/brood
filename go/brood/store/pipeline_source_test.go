@@ -238,7 +238,7 @@ func TestBoundSwarmRefusesActorEffects(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id) VALUES ('s',1,'actor','attesting','uid',1,'request')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CompletePipelineActorVisit(ctx, "s", "s", 1, "request", "uid", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
+	if err := s.CompletePipelineActorVisit(ctx, "s", "s", 1, "request", "uid", 1, "success", ""); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("completion: %v", err)
 	}
 	if visits, err := s.SwarmSteps(ctx, "s"); err != nil || len(visits) != 1 || visits[0].State != "attesting" {
@@ -336,7 +336,7 @@ func TestSwarmStepTimestamps(t *testing.T) {
 	if err != nil || len(visits) != 2 || visits[1].StartedAt == nil || *visits[1].StartedAt == "" {
 		t.Fatalf("inflight step has no started_at: %+v %v", visits, err)
 	}
-	if err := s.CompletePipelineActorVisit(ctx, "r", "r", v.Sequence, "req", "a", 1, "success"); err != nil {
+	if err := s.CompletePipelineActorVisit(ctx, "r", "r", v.Sequence, "req", "a", 1, "success", ""); err != nil {
 		t.Fatal(err)
 	}
 	visits, err = s.SwarmSteps(ctx, "r")

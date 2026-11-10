@@ -149,6 +149,9 @@ SA и уже встреченных principals, не превращение ло
   `options` (`label`, `outcome`), `state`, `createdAt`, после ответа
   `answeredAt`, `answeredBy` (username), `outcome`, `optionLabel`, `response`
   и у запроса актора `delivery` (`pending`/`delivered`/`failed`).
+  `context` узлового запроса — отчёт шага, который ввёл граф в узел в этом
+  проходе (#233): строка `Report of step <n> (node <узел>, outcome <исход>):`,
+  пустая строка и отчёт как есть; без отчёта поля нет.
 - `POST /api/swarms/{id}/requests/{request}/answer` — ровно
   `{outcome?, response?}`, owner/editor/administrator; 200 — запрос после
   ответа. Сбой доставки ответа актору — не отказ: `delivery: "failed"` и
@@ -250,7 +253,8 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   `delivering`, `inflight` и `waiting` — `active`.
 - `step.detail` ответа запуска и остановки и `detail` узла прогона —
   причина `refused` или `unconfirmed` для оператора; `commit` узла прогона —
-  commit источника, который подтвердил workspace актора шага.
+  commit источника, который подтвердил workspace актора шага; `report` узла
+  прогона — отчёт актора о завершённом шаге (#233), без отчёта поля нет.
 - Подтверждение: сервер зовёт `workspace_attest` (`brood-session-rpc-v1`,
   docs/PROXMOX.md) с ровно `swarm`, `step` (`request_id` попытки), `origin`,
   `commit` и `challenge`, `caller` — `swarm:<id роя>`. На время вызова
@@ -265,14 +269,20 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   имя привязанного актора, `waitSec` 0. Тело: `[brood swarm <имя>] Step <n>,
   node <узел>.`, текст узла, строка с `run_id`, `sequence` и `request_id` для
   `pipeline_visit_complete`, по строке на исход `success` и `fail` с тем,
-  куда он ведёт граф, и подсказка про `ask_operator`. Не больше 64 КиБ; тело с
-  закрывающим тегом конверта сообщения или такое, чей NDJSON у гостя
-  (auth-кадр, конверт, экранированное тело) превысит 128 КиБ, не
+  куда он ведёт граф, просьба приложить `report` (что сделано и где
+  результат: ветка, MR, документ) и подсказка про `ask_operator`. Не больше
+  64 КиБ; тело с закрывающим тегом конверта сообщения или такое, чей NDJSON у
+  гостя (auth-кадр, конверт, экранированное тело) превысит 128 КиБ, не
   отправляется (`refused`).
 - `pipeline_visit_complete` принимается от актора шага той же инкарнации с
   тем же `request_id`, пока он привязан к роли узла и рой идёт; шаг роя с
   источником — только с записанным подтверждением. Иначе гость получает
   `pipeline completion conflict` или `pipeline completion unavailable`.
+- Необязательный `report` — до 16384 байт UTF-8 без управляющих символов,
+  кроме перевода строки и табуляции; иначе `refused` с текстом
+  `invalid pipeline report: ...`, исход не записан. Отчёт хранится один раз
+  вместе с исходом: точный повтор (тот же исход и отчёт) успешен, другой
+  отчёт к завершённому шагу — `pipeline completion conflict`.
 
 ## Ёмкость проекта
 

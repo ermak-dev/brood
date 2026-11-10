@@ -9,7 +9,9 @@ package store
 // (инструкция доставлена) → completed; unconfirmed — исход эффекта у гостя
 // неизвестен, refused — инструкция заведомо не ушла (#212). attested_commit
 // — commit, который подтвердил гость для этой попытки (#183); detail —
-// причина отказа или неопределённости для оператора.
+// причина отказа или неопределённости для оператора. report — отчёт актора
+// о шаге (#233): есть только у завершённого шага, пишется вместе с исходом
+// и не меняется (swarmStepReportFence); предел — MaxStepReportBytes.
 // Регистрация в общей схеме — schemaModules ("pipelines") и
 // verifySwarmStepsSchema в registry.go (#205); правило «шаг роя с
 // источником уходит актору только подтверждённым» — swarmStepAttested в
@@ -27,9 +29,21 @@ const swarmStepsSchema = `CREATE TABLE swarm_steps (
     request_id TEXT,
     attested_commit TEXT CHECK (attested_commit IS NULL OR (length(attested_commit) = 40 AND attested_commit NOT GLOB '*[^0-9a-f]*')),
     detail TEXT CHECK (detail IS NULL OR length(CAST(detail AS BLOB)) BETWEEN 1 AND 1024),
+    report TEXT CHECK (report IS NULL OR length(CAST(report AS BLOB)) BETWEEN 1 AND 16384),
     PRIMARY KEY (swarm_id, sequence),
-    UNIQUE (swarm_id, request_id)
+    UNIQUE (swarm_id, request_id),
+    CHECK (report IS NULL OR (state = 'completed' AND outcome IS NOT NULL))
 )`
+
+// swarmStepReportFence: отчёт пишется только тем UPDATE, что завершает шаг,
+// и после не меняется и не стирается. Вместе с CHECK «отчёт только у
+// завершённого шага» это и есть «один раз вместе с исходом» мимо кода.
+const swarmStepReportFence = `CREATE TRIGGER swarm_steps_report_fence BEFORE UPDATE ON swarm_steps WHEN NEW.report IS NOT OLD.report AND (OLD.report IS NOT NULL OR OLD.state = 'completed') BEGIN SELECT RAISE(ABORT, 'step report is written once with the outcome'); END`
+
+// swarmStepsFullSchema — таблица шагов и ограждение отчёта.
+func swarmStepsFullSchema() string {
+	return swarmStepsSchema + ";" + swarmStepReportFence
+}
 
 // swarmStepAttested: шаг роя со снимком источника уходит актору и принимает
 // исход (delivering, inflight) только с подтверждённым commit этого

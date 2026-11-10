@@ -17,7 +17,8 @@ import (
 // FinishedAt — номер шага и его записанные моменты (#206), без них
 // страница роя не может показать, когда шаг шёл (#215). Commit — commit
 // источника, который подтвердил workspace актора шага (#183), Detail —
-// причина refused или unconfirmed шага (#212).
+// причина refused или unconfirmed шага (#212), Report — отчёт актора о
+// завершённом шаге (#233).
 type pipelineNodeJSON struct {
 	ID         string  `json:"id"`
 	Sequence   int64   `json:"sequence"`
@@ -30,6 +31,7 @@ type pipelineNodeJSON struct {
 	FinishedAt *string `json:"finishedAt,omitempty"`
 	Commit     string  `json:"commit,omitempty"`
 	Detail     string  `json:"detail,omitempty"`
+	Report     string  `json:"report,omitempty"`
 }
 
 // pipelineGraphNodeJSON — узел графа роя с тем, что граф ему поручает:
@@ -225,7 +227,7 @@ func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store
 	}
 	for _, v := range steps {
 		n := d.Nodes[v.NodeID]
-		row := pipelineNodeJSON{ID: v.NodeID, Sequence: v.Sequence, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName, StartedAt: v.StartedAt, FinishedAt: v.FinishedAt, Commit: v.AttestedCommit, Detail: v.Detail}
+		row := pipelineNodeJSON{ID: v.NodeID, Sequence: v.Sequence, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName, StartedAt: v.StartedAt, FinishedAt: v.FinishedAt, Commit: v.AttestedCommit, Detail: v.Detail, Report: v.Report}
 		switch v.State {
 		case "waiting", "inflight", "attesting", "delivering":
 			row.Status = "active"

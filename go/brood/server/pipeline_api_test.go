@@ -68,7 +68,7 @@ func TestPipelineWireContract(t *testing.T) {
 	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", master.UID, master.Incarnation, "success"); err != nil {
+	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", master.UID, master.Incarnation, "success", ""); err != nil {
 		t.Fatal(err)
 	}
 	visits, err := ts.srv.store.SwarmSteps(ctx, swarm)
@@ -173,7 +173,7 @@ func TestPipelineActorStates(t *testing.T) {
 			if err := ts.srv.store.BindSwarmRole(ctx, store.SwarmRoleBinding{SwarmID: swarm, Role: "development", ActorUID: master.UID}); err != nil {
 				t.Fatal(err)
 			}
-			err = ts.srv.store.CompletePipelineActorVisit(ctx, target[tc.id], target[tc.id], v.Sequence, "request", master.UID, master.Incarnation, "fail")
+			err = ts.srv.store.CompletePipelineActorVisit(ctx, target[tc.id], target[tc.id], v.Sequence, "request", master.UID, master.Incarnation, "fail", "")
 		} else {
 			err = ts.srv.store.RecoverPipelineActions(ctx)
 		}
@@ -477,7 +477,7 @@ func TestPipelineStepTimesAndNodeInstructions(t *testing.T) {
 	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", master.UID, master.Incarnation, "success"); err != nil {
+	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", master.UID, master.Incarnation, "success", ""); err != nil {
 		t.Fatal(err)
 	}
 	steps, err := ts.srv.store.SwarmSteps(ctx, swarm)

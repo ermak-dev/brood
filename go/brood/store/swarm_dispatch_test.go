@@ -318,7 +318,7 @@ func TestActorStepAttestationGate(t *testing.T) {
 	ctx := context.Background()
 	s := dispatchStore(t)
 	a := reserveOne(t, s, "req")
-	if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
+	if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("completion before attestation: %v", err)
 	}
 	for name, record := range map[string]func() error{
@@ -404,7 +404,7 @@ func TestActorStepDeliveryOutcomes(t *testing.T) {
 		if _, err := s.ReserveActorStep(ctx, "one", "again", "swarm:one"); !errors.Is(err, ErrNoActorStep) {
 			t.Fatalf("delivered step reserved again: %v", err)
 		}
-		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success"))
+		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""))
 		if w, err := s.GetSwarm(ctx, "one"); err != nil || w.Execution != "succeeded" || stepCount(t, s) != 2 {
 			t.Fatalf("completion did not advance: %+v %v", w, err)
 		}
@@ -413,7 +413,7 @@ func TestActorStepDeliveryOutcomes(t *testing.T) {
 		s := dispatchStore(t)
 		a := attestOne(t, s, "req")
 		// Актор получил инструкцию и ответил раньше, чем сервер записал итог.
-		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success"))
+		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""))
 		if err := s.FinishActorStepDelivery(ctx, a); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("late delivery record: %v", err)
 		}
@@ -430,7 +430,7 @@ func TestActorStepDeliveryOutcomes(t *testing.T) {
 		if v.State != "unconfirmed" || v.ActorUID != "a" || v.ActorIncarnation != 1 || v.RequestID != "req" || v.AttestedCommit != startCommit || !strings.Contains(v.Detail, "unknown") {
 			t.Fatalf("unconfirmed step: %+v", v)
 		}
-		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success"); !errors.Is(err, ErrPipelineVisitConflict) {
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("completion of an unconfirmed step: %v", err)
 		}
 		for name, replay := range map[string]func() error{
@@ -459,10 +459,10 @@ func TestActorStepCompletionIdentity(t *testing.T) {
 		a := attestOne(t, s, "req")
 		mustNil(t, s.FinishActorStepDelivery(ctx, a))
 		mustNil(t, s.BindSwarmRole(ctx, SwarmRoleBinding{SwarmID: "one", Role: "build", ActorUID: "b"}))
-		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success"); !errors.Is(err, ErrPipelineVisitConflict) {
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("completion from an actor no longer bound: %v", err)
 		}
-		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "b", 1, "success"); !errors.Is(err, ErrPipelineVisitConflict) {
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "b", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("completion from the new actor of the role: %v", err)
 		}
 		if v := stepOf(t, s, 1); v.State != "inflight" || stepCount(t, s) != 1 {
@@ -476,7 +476,7 @@ func TestActorStepCompletionIdentity(t *testing.T) {
 		setActor(t, s, "a", "incarnation=2")
 		rebindAt(t, s, "one", "a", "build", 2)
 		for _, incarnation := range []int64{1, 2} {
-			if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", incarnation, "success"); !errors.Is(err, ErrPipelineVisitConflict) {
+			if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", incarnation, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
 				t.Fatalf("completion from incarnation %d: %v", incarnation, err)
 			}
 		}
@@ -485,13 +485,13 @@ func TestActorStepCompletionIdentity(t *testing.T) {
 		s := dispatchStore(t)
 		a := attestOne(t, s, "req")
 		mustNil(t, s.FinishActorStepDelivery(ctx, a))
-		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "fail"))
+		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "fail", ""))
 		before := dumpTables(t, s, executionTables...)
-		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success"); !errors.Is(err, ErrPipelineVisitConflict) {
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("second outcome of a finished step: %v", err)
 		}
 		// Точный повтор подтверждает уже записанный исход и ничего не пишет.
-		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "fail"))
+		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "fail", ""))
 		if after := dumpTables(t, s, executionTables...); after != before {
 			t.Fatalf("outcome for a finished step wrote:\n%s\nwant\n%s", after, before)
 		}
@@ -536,7 +536,7 @@ func TestStopSwarmDuringAttestationAndDelivery(t *testing.T) {
 		if err := s.FinishActorStepDelivery(ctx, a); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("delivery recorded after stop: %v", err)
 		}
-		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success"); !errors.Is(err, ErrPipelineVisitConflict) {
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("completion after stop: %v", err)
 		}
 	})
