@@ -48,11 +48,6 @@ var ErrSwarmRoleUnbound = errors.New("node role is not bound to an actor of the 
 // other than the one bound to the node's role.
 var ErrSwarmRoleMismatch = errors.New("step actor is not the actor bound to the node's role")
 
-// ErrPipelineNodeActorCreation indicates a request to create or reserve an
-// actor for a workflow node. A node names a role, the swarm binds the role
-// to an existing actor and a step addresses that actor (#204, #208).
-var ErrPipelineNodeActorCreation = errors.New("workflow nodes do not get actors of their own: a step addresses the actor bound to the node's role")
-
 // patternSwarmRole — роль та же DNS label, что и имя узла-актора.
 var patternSwarmRole = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 

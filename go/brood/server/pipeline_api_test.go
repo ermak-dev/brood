@@ -57,7 +57,7 @@ func TestPipelineWireContract(t *testing.T) {
 	// Шаг актора кладётся напрямую: тест провода читает шаги, а привязку
 	// роли к актору проверяет хранилище (#208).
 	entry := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
-	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry, ""); err != nil {
+	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry); err != nil {
 		t.Fatal(err)
 	}
 	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", "worker", 1, "success"); err != nil {
@@ -155,7 +155,7 @@ func TestPipelineActorStates(t *testing.T) {
 			t.Fatal(err)
 		}
 		v := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
-		if err := insertSwarmStep(ctx, ts.testServer, target[tc.id], v, ""); err != nil {
+		if err := insertSwarmStep(ctx, ts.testServer, target[tc.id], v); err != nil {
 			t.Fatal(err)
 		}
 		if tc.id == "failure" {

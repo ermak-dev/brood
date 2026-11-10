@@ -17,10 +17,6 @@ const swarmStepsSchema = `CREATE TABLE swarm_steps (
     actor_uid TEXT,
     actor_incarnation INTEGER,
     request_id TEXT,
-    native_actor_name TEXT,
-    native_template_name TEXT,
-    native_template_uid TEXT,
-    native_template_digest TEXT,
     PRIMARY KEY (swarm_id, sequence),
     UNIQUE (swarm_id, request_id)
 )`
