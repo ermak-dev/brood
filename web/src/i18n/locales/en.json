@@ -218,7 +218,11 @@
     "model_alias_placeholder": "Model alias (optional)",
     "invalid_provider_index": "Invalid provider index.",
     "unsaved_changes_title": "Unsaved changes",
-    "unsaved_changes_message": "You have unsaved changes. Leaving now will discard them. Do you want to leave?"
+    "unsaved_changes_message": "You have unsaved changes. Leaving now will discard them. Do you want to leave?",
+    "unsaved_draft_title": "Restore unsaved changes?",
+    "unsaved_draft_message": "This editor was closed with unsaved changes. Restore them or discard them.",
+    "unsaved_draft_restore": "Restore",
+    "unsaved_draft_discard": "Discard"
   },
   "title": {
     "login": "Brood Management Center",

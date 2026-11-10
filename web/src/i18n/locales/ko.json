@@ -218,7 +218,11 @@
     "model_alias_placeholder": "모델 별칭 (선택 사항)",
     "invalid_provider_index": "유효하지 않은 공급자 인덱스입니다.",
     "unsaved_changes_title": "저장되지 않은 변경 사항",
-    "unsaved_changes_message": "저장되지 않은 변경 사항이 있습니다. 지금 나가면 변경 사항이 삭제됩니다. 나가시겠습니까?"
+    "unsaved_changes_message": "저장되지 않은 변경 사항이 있습니다. 지금 나가면 변경 사항이 삭제됩니다. 나가시겠습니까?",
+    "unsaved_draft_title": "저장되지 않은 변경 사항을 복원할까요?",
+    "unsaved_draft_message": "이 편집기는 저장되지 않은 변경 사항이 있는 상태로 닫혔습니다. 복원하거나 삭제하세요.",
+    "unsaved_draft_restore": "복원",
+    "unsaved_draft_discard": "삭제"
   },
   "title": {
     "login": "Brood 관리 센터",
