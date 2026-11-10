@@ -175,6 +175,64 @@ test('panel actions keep the confirmations of the former row buttons', () => {
   expect(swarms).toContain('run(() => accessApi.createSwarm(swarm.project_id, swarm.name))');
 });
 
+// #255: подсказки списка роёв -- в пустом состоянии, не над таблицей; все
+// состояния инфраструктуры и исполнения переведены в каждой локали.
+test('the swarm list keeps its hints for the empty state and names every state', () => {
+  const swarms = source('features/access/SwarmsPage.tsx');
+  expect(swarms).not.toContain("<p className={styles.sectionHint}>{t('access.swarm_access_hint')}</p>");
+  expect(swarms).toContain('<EmptyState');
+  expect(swarms).toContain("description={t('access.swarm_access_hint')}");
+  expect(swarms).toContain('swarmOrder(');
+  expect(swarms).toContain('useSwarmActivityStore');
+  for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW', 'ko', 'vi']) {
+    const access = JSON.parse(source(`i18n/locales/${locale}.json`)).access;
+    for (const state of ['provisioning', 'active', 'deleting', 'error', 'deleted', 'stopped']) {
+      expect([locale, state, typeof access.states[state]]).toEqual([locale, state, 'string']);
+    }
+    for (const execution of ['idle', 'running', 'waiting', 'succeeded', 'failed', 'stopped']) {
+      expect([locale, execution, typeof access.execution_states[execution]]).toEqual([
+        locale,
+        execution,
+        'string',
+      ]);
+    }
+    for (const key of ['execution', 'open_requests', 'swarm_count', 'activity_limited']) {
+      expect([locale, key, typeof access[key]]).toEqual([locale, key, 'string']);
+    }
+    expect(access.activity_limited).toContain('{{count}}');
+  }
+});
+
+// Группы акторов и шаблонов сворачиваются; отказ загрузки собирается в одну
+// плашку над группами, а не повторяется под каждым роем.
+test('actor and template groups collapse and share one failure notice', () => {
+  const sections = source('features/substrate/components/SwarmSections.tsx');
+  expect(sections).toContain('<details');
+  expect(sections).toContain('<summary');
+  expect(sections).toContain('groupFailures(');
+  expect(sections).toContain('role="alert"');
+  for (const page of ['features/substrate/ActorsPage.tsx', 'features/substrate/TemplatesPage.tsx']) {
+    const text = source(page);
+    expect(text).toContain('useSwarmSectionFailure(');
+    expect(text).not.toContain("<EmptyState title={t('substrate.load_failed')}");
+  }
+});
+
+// Страница настроек: отказ сервера -- его `detail`, а не сырой JSON;
+// рекламного блока апстрима нет.
+test('the config page has no upstream sponsor block', () => {
+  expect(source('features/config/components/fields/sharedFields.tsx')).not.toContain('sponsor');
+  expect(source('features/config/components/fields/sharedFields.tsx')).not.toContain('SPONSORS');
+  expect(() => source('features/config/sponsors.ts')).toThrow();
+  expect(() => source('assets/icons/bestproxy.png')).toThrow();
+  expect(source('features/config/components/fields/Field.module.scss')).not.toContain('Sponsor');
+  for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW', 'ko', 'vi']) {
+    const network = JSON.parse(source(`i18n/locales/${locale}.json`)).config_management.visual
+      .sections.network;
+    expect(network.proxy_url_sponsor_hint).toBeUndefined();
+  }
+});
+
 test('all locales explain actual permissions without dead claims', () => {
   for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW', 'ko', 'vi']) {
     const translations = JSON.parse(source(`i18n/locales/${locale}.json`));

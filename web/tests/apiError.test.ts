@@ -42,6 +42,22 @@ describe('Management API error parsing', () => {
     });
   });
 
+  // Go API отвечает {"detail": ...}; текстовый ответ (config.yaml читается
+  // как text) приходит строкой JSON, и показывать её сырой нельзя.
+  test('reads the Go detail envelope, also when the body arrived as text', () => {
+    const reason =
+      'LLM backend is not configured: CLIPROXY_URL and (for management) CLIPROXY_MANAGEMENT_KEY are required';
+    expect(parseApiErrorResponse({ detail: reason }, 'Request failed with status code 503')).toEqual(
+      { message: reason, apiCode: undefined }
+    );
+    expect(
+      parseApiErrorResponse(JSON.stringify({ detail: reason }), 'Request failed with status code 503')
+    ).toEqual({ message: reason, apiCode: undefined });
+    expect(parseApiErrorResponse('not json {', 'Network Error')).toEqual({
+      message: 'not json {',
+    });
+  });
+
   test('uses the transport message for an unknown response shape', () => {
     expect(parseApiErrorResponse({ error: null }, 'Network Error')).toEqual({
       message: 'Network Error',

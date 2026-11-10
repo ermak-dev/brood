@@ -82,7 +82,12 @@ export function LoadState({
 
 /** Бейдж состояния в сводке панели: те же стили, что у объектов Substrate. */
 export function StatusBadge({ tone, children }: { tone: BadgeTone; children: ReactNode }) {
-  return <span className={`${styles.badge} ${styles[`tone-${tone}`]}`}>{children}</span>;
+  // data-tone: тон виден в разметке и без CSS-модуля (тесты, инспектор).
+  return (
+    <span className={`${styles.badge} ${styles[`tone-${tone}`]}`} data-tone={tone}>
+      {children}
+    </span>
+  );
 }
 
 export interface Detail {

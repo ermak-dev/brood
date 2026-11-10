@@ -130,7 +130,8 @@
       "active": "활성",
       "deleting": "삭제 중",
       "error": "오류",
-      "deleted": "삭제됨"
+      "deleted": "삭제됨",
+      "stopped": "중지됨"
     },
     "repository": {
       "title": "저장소",
@@ -161,7 +162,20 @@
       "reset_password_hint": "새 비밀번호를 설정하고 사용자의 모든 세션을 종료합니다.",
       "delete_user_hint": "계정을 삭제하고 세션과 구성원 관계를 해제합니다.",
       "remove_member_hint": "프로젝트와 그 안의 해당 구성원 스웜에 대한 접근 권한을 회수합니다."
-    }
+    },
+    "execution": "실행",
+    "execution_states": {
+      "idle": "시작되지 않음",
+      "running": "실행 중",
+      "waiting": "답변 대기",
+      "succeeded": "완료됨",
+      "failed": "멈춤",
+      "stopped": "중지됨"
+    },
+    "open_requests": "미답변 질문",
+    "swarm_count": "스웜 수",
+    "activity_limited": "처음 {{count}}개의 활성 스웜만 실행 상태를 읽습니다. 나머지는 서버 요약이 도착할 때까지 대시로 표시됩니다.",
+    "failed_swarms": "스웜: {{names}}"
   },
   "common": {
     "login": "로그인",
@@ -292,7 +306,8 @@
     "policy": "접근 정책",
     "worker_pools": "워커 풀",
     "project": "프로젝트",
-    "overview": "개요"
+    "overview": "개요",
+    "waiting_swarms": "답변 대기: {{count}}"
   },
   "nav_groups": {
     "project": "프로젝트",
@@ -1612,7 +1627,6 @@
           "title": "네트워크 설정",
           "description": "프록시, 재시도 및 라우팅 설정",
           "proxy_url": "프록시 URL",
-          "proxy_url_sponsor_hint": "적합한 프록시가 없나요?",
           "request_retry": "요청 재시도 횟수",
           "max_retry_credentials": "최대 재시도 자격 증명 수",
           "max_retry_credentials_hint": "설정하지 않으려면 비워 두세요. 사용 가능한 모든 자격 증명을 시도하려면 0 또는 음의 정수를 입력하세요.",

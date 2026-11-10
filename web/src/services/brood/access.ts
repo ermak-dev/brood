@@ -49,6 +49,10 @@ export interface AccessSwarm {
   state: string;
   created_at: string;
   updated_at: string;
+  /** Сводка исполнения в строке списка (#234): пока сервер её не отдаёт,
+   * панель собирает её сама (features/access/swarmActivity.ts). */
+  execution?: string;
+  openRequests?: number;
 }
 
 export interface AccessUser {

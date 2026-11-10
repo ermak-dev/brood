@@ -9,9 +9,8 @@ import { useAdministrator } from '@/features/access/shared';
 import { EntityPanel } from './components/EntityPanel';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
-import { PageHeader } from './components/PageHeader';
 import { ProjectScope } from './components/ProjectScope';
-import { SwarmSections } from './components/SwarmSections';
+import { GroupBar, SwarmSections, useSwarmSectionFailure } from './components/SwarmSections';
 import { DASH, formatCpu, formatDate, formatMemory, selectorText } from './format';
 import { useActions, useResource } from './hooks';
 import { TemplateEditor } from './TemplateEditor';
@@ -61,6 +60,8 @@ function Templates({
   const { t, i18n } = useTranslation();
   const load = useCallback(() => templatesApi.list(project), [project]);
   const { data, error, loading, refresh } = useResource(load);
+  // Отказ загрузки уходит в общую плашку над группами (#255).
+  useSwarmSectionFailure(project, name, error);
   const { run, confirm } = useActions(refresh);
   // Ключ, а не объект: после обновления списка панель показывает свежий
   // шаблон (статус золотого снапшота), а удалённый закрывает её сам.
@@ -132,20 +133,14 @@ function Templates({
 
   return (
     <div className={styles.page}>
-      <PageHeader
-        title={name}
-        headingLevel={2}
+      <GroupBar
         meta={[data && t('templates.meta_count', { count: data.length })]}
         actions={create}
       />
 
       {loading ? (
         <LoadingSpinner />
-      ) : error ? (
-        <div className={styles.empty}>
-          <EmptyState title={t('substrate.load_failed')} description={error} />
-        </div>
-      ) : data && data.length > 0 ? (
+      ) : error ? null : data && data.length > 0 ? (
         <EntityTable
           columns={columns}
           rows={data}
