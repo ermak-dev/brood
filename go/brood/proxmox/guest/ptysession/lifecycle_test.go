@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -48,15 +49,33 @@ func TestResizeChangesRealPTY(t *testing.T) {
 	mustOK(t, rpc(t, path, Request{Action: "input", Proof: r.Proof, Data: []byte("x")}))
 	awaitScreen(t, path, r.Proof, "size=110x35")
 }
+
 func TestSlowReaderDisconnectDoesNotBlockChild(t *testing.T) {
 	h, path := fixture(t, "fixture:flood")
 	r := mustOK(t, rpc(t, path, Request{Action: "ensure"}))
 	awaitScreen(t, path, r.Proof, "ready")
 	c, _, a := attach(t, path, true)
 	mustOK(t, a)
-	_ = c.(*net.UnixConn).SetReadBuffer(1024)
+	// Читатель, который не читает, удерживает не больше полной очереди host и
+	// SO_SNDBUF сокета. Двойной запас покрывает буферы PTY и поток до второго
+	// байта; больше значит, что host держал читателя после переполнения,
+	// например до таймаута записи.
+	limit := 2 * (queueFrames*maxInput + subscriberSendBuffer(t, h))
+	// Первый байт запускает поток, второй останавливает его после отключения:
+	// child пишет, пока host не сбросит читателя, сколько бы ни вмещали буферы.
 	mustOK(t, rpc(t, path, Request{Action: "input", Proof: r.Proof, Data: []byte("x")}))
-	awaitScreen(t, path, r.Proof, "finished")
+	awaitHangup(t, c)
+	mustOK(t, rpc(t, path, Request{Action: "input", Proof: r.Proof, Data: []byte("x")}))
+	screen := awaitScreen(t, path, r.Proof, "finished").Screen
+	var flooded int
+	if _, report, _ := strings.Cut(screen, "flooded="); report == "" {
+		t.Fatalf("flood size missing: %q", screen)
+	} else if _, err := fmt.Sscanf(report, "%d", &flooded); err != nil {
+		t.Fatalf("flood size unreadable: %v", err)
+	}
+	if flooded > limit {
+		t.Fatalf("slow reader stayed attached for %d bytes of output, limit %d", flooded, limit)
+	}
 	h.mu.Lock()
 	count := len(h.subscribers)
 	h.mu.Unlock()
@@ -67,6 +86,62 @@ func TestSlowReaderDisconnectDoesNotBlockChild(t *testing.T) {
 		t.Fatal("slow reader killed child")
 	}
 }
+
+// awaitHangup ждёт, пока host закроет свою сторону соединения. Данные не
+// читаются: чтение сделало бы читателя быстрым. Для AF_UNIX stream закрытие
+// peer видно как POLLRDHUP сразу, даже с непрочитанной очередью; SetReadBuffer
+// клиента здесь ничего не ограничивает, очередь учитывает SO_SNDBUF отправителя.
+func awaitHangup(t *testing.T, c net.Conn) {
+	t.Helper()
+	raw, err := c.(*net.UnixConn).SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hungUp := false
+	deadline := time.Now().Add(15 * time.Second)
+	err = raw.Control(func(fd uintptr) {
+		for !hungUp && time.Now().Before(deadline) {
+			fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLRDHUP}}
+			n, pollErr := unix.Poll(fds, 10)
+			hungUp = pollErr == nil && n > 0 && fds[0].Revents&(unix.POLLRDHUP|unix.POLLHUP) != 0
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hungUp {
+		t.Fatal("host kept the slow reader attached")
+	}
+}
+
+// subscriberSendBuffer возвращает SO_SNDBUF серверной стороны единственной
+// подписки: размер задаёт net.core.wmem_default машины, а не код.
+func subscriberSendBuffer(t *testing.T, h *Host) int {
+	t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.subscribers) != 1 {
+		t.Fatalf("subscribers=%d, want 1", len(h.subscribers))
+	}
+	size := 0
+	for s := range h.subscribers {
+		raw, err := s.conn.(*net.UnixConn).SyscallConn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sockErr error
+		if err = raw.Control(func(fd uintptr) {
+			size, sockErr = unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_SNDBUF)
+		}); err == nil {
+			err = sockErr
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return size
+}
+
 func TestCloseConfirmsProcessExitAndClosesIdleClients(t *testing.T) {
 	h, path := fixture(t, "ready")
 	r := mustOK(t, rpc(t, path, Request{Action: "ensure"}))
