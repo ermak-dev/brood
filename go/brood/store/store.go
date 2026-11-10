@@ -28,7 +28,9 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // 18: swarm_requests и их триггеры (#209), у swarm_steps нет колонки answer.
 // DDL несовместим с 17: база версии 17 открывается кодом 18 только после
 // пересоздания, поэтому версия растёт, а не остаётся.
-const schemaVersion = 18
+// 19: нет pipeline_preparations, её триггеров и колонок native_* у
+// swarm_steps (#223): модель «актор под узел» закрыта в #208.
+const schemaVersion = 19
 
 //go:embed schema.sql
 var currentSchema string

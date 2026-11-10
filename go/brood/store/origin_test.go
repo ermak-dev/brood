@@ -54,7 +54,7 @@ func TestOriginSchemaDamageRefusedWithoutMutation(t *testing.T) {
 		`ALTER TABLE managed_actors DROP COLUMN origin`,
 		`DROP TABLE project_repositories`,
 		`DROP TABLE project_repositories; CREATE TABLE project_repositories (project_id TEXT PRIMARY KEY, origin TEXT)`,
-		`PRAGMA user_version=19`,
+		`PRAGMA user_version=20`,
 	} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()

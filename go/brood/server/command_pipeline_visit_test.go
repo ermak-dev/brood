@@ -136,7 +136,7 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	}
 	// Шаг чужого роя с актором этого роя производственный путь не запишет
 	// (#208); строка кладётся напрямую, чтобы проверить отказ завершения.
-	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"}, ""); err != nil {
+	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"}); err != nil {
 		t.Fatal(err)
 	}
 	// Отдельный рой без графа: run_id на него — не прогон.

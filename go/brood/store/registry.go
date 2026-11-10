@@ -32,7 +32,6 @@ var schemaModules = []schemaModule{
 	{id: "swarm-roles", create: func() string { return swarmRoleBindingSchema }, verify: verifySwarmRoleSchema},
 	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},
 	{id: "pipeline-source", create: pipelineSourceFullSchema, verify: verifyPipelineSourcesSchema},
-	{id: "pipeline-preparation", create: pipelinePreparationFullSchema, verify: verifyPipelinePreparationsSchema},
 	{id: "swarm-requests", create: swarmRequestsFullSchema, verify: verifySwarmRequestsSchema},
 }
 
@@ -78,17 +77,6 @@ const swarmNoReplace = `CREATE TRIGGER swarms_no_replace BEFORE INSERT ON swarms
 // Это и защита идентичности запуска вместо бывшего
 // pipeline_runs_no_replace: подменить строку роя — подменить прогон.
 const swarmGraphImmutable = `CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms WHEN OLD.graph IS NOT NULL AND (NEW.graph IS NOT OLD.graph OR NEW.definition_name IS NOT OLD.definition_name OR NEW.definition_version IS NOT OLD.definition_version OR NEW.definition_revision IS NOT OLD.definition_revision) BEGIN SELECT RAISE(ABORT, 'swarm graph is immutable'); END`
-
-// pipelinePreparationFullSchema — намерения выделения акторов и их
-// триггеры целостности (#163). Семантика оплачена ревью; регистрация
-// перенесена в общий список без изменений (#205).
-func pipelinePreparationFullSchema() string {
-	statements := []string{pipelinePreparationSchema}
-	for _, trigger := range pipelinePreparationTriggers() {
-		statements = append(statements, trigger.statement)
-	}
-	return strings.Join(statements, ";")
-}
 
 // verifyCoreSchema сверяет базовые таблицы.
 func verifyCoreSchema(ctx context.Context, tx *sql.Tx) error {
@@ -198,20 +186,6 @@ func verifyPipelineSourcesSchema(ctx context.Context, tx *sql.Tx) error {
 		"swarms_no_replace":           swarmNoReplace,
 	} {
 		if err := checkObject(ctx, tx, "trigger", name, expected); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// verifyPipelinePreparationsSchema сверяет таблицу намерений и её
-// триггеры целостности.
-func verifyPipelinePreparationsSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, pipelinePreparationSchema); err != nil {
-		return err
-	}
-	for _, trigger := range pipelinePreparationTriggers() {
-		if err := checkObject(ctx, tx, "trigger", trigger.name, trigger.statement); err != nil {
 			return err
 		}
 	}

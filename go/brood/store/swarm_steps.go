@@ -27,8 +27,8 @@ type PipelineVisit struct {
 	ActorUID              string
 	ActorIncarnation      int64
 	RequestID             string
-	// ActorName is filled by reads when the stage actor is known: the reserved
-	// native name, else the managed actor with ActorUID in the run's swarm.
+	// ActorName is filled by reads when the stage actor is known: the managed
+	// actor with ActorUID in the step's own swarm.
 	ActorName string
 	// Replay means the request was already reserved and must not be sent again.
 	Replay bool
@@ -66,7 +66,7 @@ func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit
 // swarmStepSelect resolves managed names by UID within the step's own swarm,
 // including deleted actors whose names may since have been reused (#206:
 // join к запуску исчез — шаг принадлежит рою напрямую).
-const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.native_actor_name,m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
+const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
 
 func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 	var v PipelineVisit

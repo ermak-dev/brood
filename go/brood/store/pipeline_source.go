@@ -29,7 +29,7 @@ const pipelineSourceNoDelete = `CREATE TRIGGER pipeline_sources_no_delete BEFORE
 
 // Триггеры неизменности источника оплачены ревью (#158, #160); ключ
 // перевешан с запуска на рой без изменения смысла (#206): снимок
-// источника и резерв подготовки остаются fail-closed. Идентичность
+// источника остаётся fail-closed. Идентичность
 // запуска (бывший pipeline_runs_no_replace) защищает неизменность
 // снимка графа роя: swarmGraphNoReplace в registry.go.
 

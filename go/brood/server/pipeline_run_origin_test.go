@@ -14,9 +14,9 @@ import (
 // stage actors (#191, #206).
 // SPEC: List, detail and answer responses carry swarmId, swarmName, projectId,
 // projectName and the owner username of the run's own swarm — the swarm is
-// the run. A visit carries actorName from the native reservation or the
-// managed actor of the same swarm, and omits it otherwise. Callers who
-// cannot read the swarm still get the same 404 as for a missing run.
+// the run. A visit carries actorName from the managed actor of the same
+// swarm, and omits it otherwise. Callers who cannot read the swarm still
+// get the same 404 as for a missing run.
 // IMPLEMENTATION: Render the swarm row; actor names come from a
 // swarm-scoped step read.
 // RESULT: IMPLEMENTED — the panel can link a run to its swarm, project and actors.
@@ -128,20 +128,14 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 	if err := s.CreateSwarm(ctx, store.Swarm{ID: "foreign", ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, Name: "foreign", AtespaceName: "foreign", AtespaceUID: strPtr("foreign-namespace"), State: "active"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateSwarm(ctx, store.Swarm{ID: "native", ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, Name: "native", AtespaceName: "native", AtespaceUID: strPtr("native-namespace"), State: "active"}); err != nil {
-		t.Fatal(err)
-	}
 	if err := insertSwarmGraph(ctx, ts.testServer, master.SwarmID, []byte(actorVisitGraph), "running"); err != nil {
-		t.Fatal(err)
-	}
-	if err := insertSwarmGraph(ctx, ts.testServer, "native", []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
 	if err := insertSwarmGraph(ctx, ts.testServer, "foreign", []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
 	// Роль узла привязана к мастеру его же роя: шаг адресует привязанного
-	// актора (#208). Чужой рой и нативное имя производственный путь больше
+	// актора (#208). Шаг с актором чужого роя производственный путь больше
 	// не пишет; строки кладутся напрямую, чтобы проверить чтение имён.
 	if err := s.BindSwarmRole(ctx, store.SwarmRoleBinding{SwarmID: master.SwarmID, Role: "build", ActorUID: master.UID}); err != nil {
 		t.Fatal(err)
@@ -153,14 +147,10 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 	if err := s.CompletePipelineActorVisit(ctx, master.SwarmID, master.SwarmID, v.Sequence, "req", master.UID, master.Incarnation, "success"); err != nil {
 		t.Fatal(err)
 	}
-	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "completed", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "req"}, ""); err != nil {
+	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "completed", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "req"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 2, NodeID: "done", State: "completed"}, ""); err != nil {
-		t.Fatal(err)
-	}
-	const nativeName = "pipeline-native-actor"
-	if err := insertSwarmStep(ctx, ts.testServer, "native", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "inflight", RequestID: "req"}, nativeName); err != nil {
+	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 2, NodeID: "done", State: "completed"}); err != nil {
 		t.Fatal(err)
 	}
 	actors := func(nodes any) string {
@@ -182,7 +172,6 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 	}
 	for _, tc := range []struct{ id, want string }{
 		{master.SwarmID, "actor=" + master.Name + " done="},
-		{"native", "actor=" + nativeName},
 		{"foreign", "actor= done="},
 	} {
 		r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+tc.id, "", nil)
@@ -194,11 +183,11 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 	r, b, raw := ts.do(alice, "GET", "/api/swarms/"+master.SwarmID+"/pipeline-runs", "", nil)
 	expectStatus(t, "list", r, b, http.StatusOK)
 	var runs []map[string]any
-	if err := json.Unmarshal([]byte(raw), &runs); err != nil || len(runs) != 3 {
+	if err := json.Unmarshal([]byte(raw), &runs); err != nil || len(runs) != 2 {
 		t.Fatalf("list: %s", raw)
 	}
-	// Рои идут в порядке создания: master, foreign, native.
-	if got := actors(runs[0]["nodes"]) + " | " + actors(runs[1]["nodes"]) + " | " + actors(runs[2]["nodes"]); got != "actor="+master.Name+" done= | actor= done= | actor="+nativeName {
+	// Рои идут в порядке создания: master, foreign.
+	if got := actors(runs[0]["nodes"]) + " | " + actors(runs[1]["nodes"]); got != "actor="+master.Name+" done= | actor= done=" {
 		t.Fatalf("listed actors: %q", got)
 	}
 }

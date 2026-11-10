@@ -42,7 +42,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_preparations", "pipeline_sources", "project_capacity", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "swarm_members", "swarm_requests", "swarm_role_bindings", "swarm_steps", "swarms", "users", "workflow_definitions", "workflow_revision_counters"}
+	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_sources", "project_capacity", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "swarm_members", "swarm_requests", "swarm_role_bindings", "swarm_steps", "swarms", "users", "workflow_definitions", "workflow_revision_counters"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}
@@ -98,7 +98,7 @@ func TestOpenIdempotentOnReopen(t *testing.T) {
 // обновляется, а отвергается. Отказ обязан назвать обе версии и не
 // тронуть файл: сравниваем снимок sqlite_master и user_version.
 func TestOpenRejectsForeignSchemaVersion(t *testing.T) {
-	for _, version := range []int{0, 7, 15, 16, 17, 19, 99} {
+	for _, version := range []int{0, 7, 15, 16, 17, 18, 20, 99} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "db.sqlite3")
@@ -186,7 +186,7 @@ func TestSchemaModulesCoverExpectedTables(t *testing.T) {
 			seen[table] = true
 		}
 	}
-	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "pipeline_preparations", "swarm_role_bindings", "swarm_requests"}
+	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "swarm_role_bindings", "swarm_requests"}
 	for _, table := range want {
 		if !seen[table] {
 			t.Errorf("table %s is missing from schemaModules DDL", table)
@@ -199,13 +199,84 @@ func TestSchemaModulesCoverExpectedTables(t *testing.T) {
 	}
 }
 
+// FEATURE: Модель «актор под узел» удалена из схемы (#223).
+// SPEC: Узел называет роль, рой не создаёт актора под узел (#204, #208).
+// Ни реестр модулей, ни созданная им база не несут таблицы
+// pipeline_preparations, её триггеров и колонок native_* у swarm_steps.
+// База версии 18, где они ещё есть, отвергается с обеими версиями и без
+// изменения файла; та же база, помеченная текущей версией, тоже
+// отвергается: шаг с колонками native_* не совпадает с реестром.
+// IMPLEMENTATION: Модуль pipeline-preparation и колонки убраны из
+// schemaModules, schemaVersion поднята.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestSchemaWithoutNodeActorModel(t *testing.T) {
+	for _, module := range schemaModules {
+		ddl := module.create()
+		for _, dead := range []string{"pipeline_preparation", "native_"} {
+			if strings.Contains(ddl, dead) {
+				t.Errorf("module %s DDL still declares %s", module.id, dead)
+			}
+		}
+	}
+	ctx := context.Background()
+	for _, version := range []int{18, schemaVersion} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "db.sqlite3")
+			s, err := Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var leftovers int
+			if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name LIKE 'pipeline_preparations%' OR sql LIKE '%pipeline_preparations%' OR sql LIKE '%native\_%' ESCAPE '\'`).Scan(&leftovers); err != nil || leftovers != 0 {
+				t.Fatalf("fresh database keeps %d node actor objects, error = %v", leftovers, err)
+			}
+			// База прежнего выпуска: колонки шага из схемы 18 и, в сокращённом
+			// виде, таблица подготовки с одним из её триггеров.
+			if _, err := s.db.ExecContext(ctx, `
+				ALTER TABLE swarm_steps ADD COLUMN native_actor_name TEXT;
+				ALTER TABLE swarm_steps ADD COLUMN native_template_name TEXT;
+				ALTER TABLE swarm_steps ADD COLUMN native_template_uid TEXT;
+				ALTER TABLE swarm_steps ADD COLUMN native_template_digest TEXT;
+				CREATE TABLE pipeline_preparations (
+				    swarm_id TEXT NOT NULL REFERENCES swarms(id) ON DELETE CASCADE,
+				    sequence INTEGER NOT NULL CHECK (sequence > 0),
+				    actor_uid TEXT NOT NULL REFERENCES managed_actors(uid),
+				    state TEXT NOT NULL CHECK (state IN ('reserved','unconfirmed')),
+				    PRIMARY KEY (swarm_id, sequence)
+				);
+				CREATE TRIGGER pipeline_preparations_swarm_no_delete BEFORE DELETE ON swarms WHEN EXISTS (SELECT 1 FROM pipeline_preparations WHERE swarm_id=OLD.id) BEGIN SELECT RAISE(ABORT, 'pipeline preparation remains unresolved'); END`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version=%d`, version)); err != nil {
+				t.Fatal(err)
+			}
+			before := schemaSnapshot(t, s.db)
+			s.Close()
+			reopened, err := Open(ctx, path)
+			if reopened != nil {
+				reopened.Close()
+			}
+			want := fmt.Sprintf("found %d, want %d", version, schemaVersion)
+			if version == schemaVersion {
+				want = "table swarm_steps differs from current schema"
+			}
+			if err == nil || !strings.Contains(err.Error(), "incompatible database schema") || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Open error = %v, want incompatible database schema naming %q", err, want)
+			}
+			if err := assertDatabaseUnchanged(t, path, version, before); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 // TestOpenRejectsDamagedTriggers: подменённый или отсутствующий триггер
 // целостности ловится при открытии базы текущей версии.
 func TestOpenRejectsDamagedTriggers(t *testing.T) {
 	for name, change := range map[string]string{
 		"missing trigger":                     `DROP TRIGGER pipeline_sources_immutable`,
 		"different trigger":                   `DROP TRIGGER swarm_graph_immutable; CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms BEGIN SELECT RAISE(ABORT, 'other'); END`,
-		"missing preparation trigger":         `DROP TRIGGER pipeline_preparations_actor_fence`,
 		"missing index":                       `DROP INDEX swarms_live_name`,
 		"missing live name index for managed": `DROP INDEX managed_pools_live_name`,
 	} {

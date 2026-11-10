@@ -199,7 +199,7 @@ func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store
 		n := d.Nodes[v.NodeID]
 		row := pipelineNodeJSON{ID: v.NodeID, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName}
 		switch v.State {
-		case "waiting", "inflight", "preparing":
+		case "waiting", "inflight":
 			row.Status = "active"
 		case "answered":
 			row.Status = "done"

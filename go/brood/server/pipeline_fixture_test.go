@@ -27,8 +27,8 @@ func insertSwarmGraph(ctx context.Context, ts *testServer, swarmID string, graph
 // insertSwarmStep пишет шаг роя напрямую, минуя AppendPipelineVisit с его
 // проверкой привязки роли (#208): тесты провода читают и такие строки,
 // которые производственный путь больше не создаёт, — шаг с актором чужого
-// роя или с нативным именем. Пустые поля пишутся как NULL.
-func insertSwarmStep(ctx context.Context, ts *testServer, swarmID string, v store.PipelineVisit, nativeName string) error {
+// роя. Пустые поля пишутся как NULL.
+func insertSwarmStep(ctx context.Context, ts *testServer, swarmID string, v store.PipelineVisit) error {
 	db, err := sql.Open("sqlite", ts.dbPath)
 	if err != nil {
 		return err
@@ -37,7 +37,7 @@ func insertSwarmStep(ctx context.Context, ts *testServer, swarmID string, v stor
 	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000`); err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,started_at,actor_uid,actor_incarnation,request_id,native_actor_name) VALUES (?,?,?,?,'now',NULLIF(?,''),NULLIF(?,0),NULLIF(?,''),NULLIF(?,''))`,
-		swarmID, v.Sequence, v.NodeID, v.State, v.ActorUID, v.ActorIncarnation, v.RequestID, nativeName)
+	_, err = db.ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,started_at,actor_uid,actor_incarnation,request_id) VALUES (?,?,?,?,'now',NULLIF(?,''),NULLIF(?,0),NULLIF(?,''))`,
+		swarmID, v.Sequence, v.NodeID, v.State, v.ActorUID, v.ActorIncarnation, v.RequestID)
 	return err
 }

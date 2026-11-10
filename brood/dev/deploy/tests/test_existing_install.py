@@ -2293,7 +2293,7 @@ class HelperFailureTests(IsolatedTestCase):
         causes = ("table swarms differs from current schema", "missing table swarm_steps",
                   "index swarms_live_name differs from current schema", "missing index managed_pools_live_name",
                   "trigger swarm_graph_immutable differs from current schema",
-                  "missing trigger pipeline_preparations_no_delete", "found 15, want 16",
+                  "missing trigger pipeline_sources_no_delete", "found 15, want 16",
                   "swarm primary owner has no owner grant", "workflow revision counters differ from definitions")
         for cause in causes:
             with self.subTest(cause=cause):

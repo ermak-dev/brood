@@ -229,15 +229,6 @@ func TestBoundSwarmRefusesActorEffects(t *testing.T) {
 	if _, err := s.AppendPipelineVisit(ctx, "s", "s", visit); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("inflight: %v", err)
 	}
-	reservation := PipelineNativeReservation{SwarmID: "s", RunID: "s", Sequence: 1, NodeID: "actor", RequestID: "request", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
-	// Нативное создание актора под узел закрыто целиком (#208), не только
-	// для роя с источником.
-	if _, err := s.ReservePipelineNativeActor(ctx, reservation); !errors.Is(err, ErrPipelineNodeActorCreation) {
-		t.Fatalf("reservation: %v", err)
-	}
-	if err := s.BindPipelineNativeActor(ctx, reservation, "uid", 1); !errors.Is(err, ErrPipelineNodeActorCreation) {
-		t.Fatalf("binding: %v", err)
-	}
 	if err := s.CompletePipelineActorVisit(ctx, "s", "s", 1, "request", "uid", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("completion: %v", err)
 	}
