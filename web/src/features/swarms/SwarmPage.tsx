@@ -31,11 +31,15 @@ import {
   executionTone,
   hasStepTimes,
   nodeView,
+  releaseCommand,
   runIsLive,
   selectedNodeId,
+  shortCommit,
+  stepMark,
   swarmExecution,
   swarmProjectName,
   type NodeView,
+  type StepGuidance,
 } from './swarmState';
 import styles from '@/features/substrate/substrate.module.scss';
 import graphStyles from '@/features/pipelines/pipelines.module.scss';
@@ -254,6 +258,7 @@ export function SwarmView({
             {selected ? (
               <NodeDetails
                 node={nodeView(run, graph, selected)}
+                swarmId={swarm.id}
                 gate={selected === gateNode ? gate : null}
               />
             ) : (
@@ -358,17 +363,67 @@ function ExecutionState({
   );
 }
 
-/** Состояние узла словами рядом с точкой: точка красится токенами графа. */
+/** Точка состояния шага: метка stepMark, красится токенами графа. */
+function StepDot({ status }: { status: string }) {
+  return <span className={graphStyles[`timeline-${stepMark(status)}`]} aria-hidden="true" />;
+}
+
+type Translate = (key: string, options?: { defaultValue?: string }) => string;
+
+/** Состояние шага словом; незнакомое (сервер новее панели) — как есть. */
+function stateWord(t: Translate, status: string) {
+  return t(`swarm_page.node_states.${status}`, { defaultValue: status });
+}
+
+/** Состояние узла словами рядом с точкой: цвет точки только дублирует слово. */
 function NodeState({ status }: { status: string }) {
   const { t } = useTranslation();
   return (
     <span className={graphStyles.nodeState}>
-      <span
-        className={graphStyles[`timeline-${status}`] ?? graphStyles['timeline-pending']}
-        aria-hidden="true"
-      />
-      {t(`swarm_page.node_states.${status}`, { defaultValue: status })}
+      <StepDot status={status} />
+      {stateWord(t, status)}
     </span>
+  );
+}
+
+/** Подтверждённый commit шага: короткий на экране, полный — в подсказке и
+ * в копировании. */
+function StepCommit({ commit }: { commit: string }) {
+  const { t } = useTranslation();
+  return (
+    <span className={local.commit}>
+      <code className={local.id} title={commit}>
+        {shortCommit(commit)}
+      </code>
+      <CopyButton value={commit} label={t('swarm_page.copy_commit')} />
+    </span>
+  );
+}
+
+/** Что делать с шагом, на котором встал проход (docs/MODEL.md, «Шаг
+ * актора»): refused — устранить причину, остановить рой и запустить новый
+ * проход; unconfirmed — решение оператора, а неподтверждённую lease
+ * workspace отпускает администратор по ID операции из причины. */
+function StepAdvice({
+  guidance,
+  swarmId,
+  actorName,
+}: {
+  guidance: StepGuidance;
+  swarmId: string;
+  actorName?: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className={local.guidance} data-guidance={guidance} role="note">
+      <p>{t(`swarm_page.step_guidance.${guidance}`)}</p>
+      {guidance === 'unconfirmed' && (
+        <>
+          <p>{t('swarm_page.step_guidance.release')}</p>
+          <code className={local.command}>{releaseCommand(swarmId, actorName)}</code>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -377,13 +432,22 @@ function moment(value: string | undefined, language: string): string {
   return (value && formatDateTimeValue(value, language)) || DASH;
 }
 
-function kindName(t: (key: string, options?: { defaultValue?: string }) => string, kind: string) {
+function kindName(t: Translate, kind: string) {
   return kind === '' ? '' : t(`pipelines.kind.${kind}`, { defaultValue: kind });
 }
 
-/** Выбранный узел: что поручает граф, исход, актор и моменты последнего
- * посещения. Вопрос оператору этого узла — форма ответа здесь же. */
-function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
+/** Выбранный узел: что поручает граф, исход, актор, причина, commit, отчёт
+ * и моменты последнего посещения; у шага, на котором встал проход, — что
+ * делать. Вопрос оператору этого узла — форма ответа здесь же. */
+function NodeDetails({
+  node,
+  swarmId,
+  gate,
+}: {
+  node: NodeView;
+  swarmId: string;
+  gate?: ReactNode;
+}) {
   const { t, i18n } = useTranslation();
   const rows: Array<{ label: string; value: ReactNode }> = [];
   if (node.prompt) {
@@ -404,6 +468,21 @@ function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
   if (node.visits > 0) {
     rows.push({ label: t('swarm_page.outcome'), value: node.outcome ?? DASH });
   }
+  if (node.detail) {
+    rows.push({
+      label: t('swarm_page.reason'),
+      value: <p className={local.instruction}>{node.detail}</p>,
+    });
+  }
+  if (node.commit) {
+    rows.push({ label: t('swarm_page.commit'), value: <StepCommit commit={node.commit} /> });
+  }
+  if (node.report) {
+    rows.push({
+      label: t('swarm_page.report'),
+      value: <p className={local.instruction}>{node.report}</p>,
+    });
+  }
   if (node.startedAt) {
     rows.push({ label: t('swarm_page.started'), value: moment(node.startedAt, i18n.language) });
   }
@@ -421,6 +500,9 @@ function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
         <span className={local.kind}>{kindName(t, node.kind)}</span>
         <NodeState status={node.visits === 0 ? 'unvisited' : node.status} />
       </p>
+      {node.guidance && (
+        <StepAdvice guidance={node.guidance} swarmId={swarmId} actorName={node.actorName} />
+      )}
       <dl className={styles.details}>
         {rows.map((row) => (
           <Fragment key={row.label}>
@@ -435,8 +517,9 @@ function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
 }
 
 /** История шагов — таймлайн посещений по порядку. Имя узла выбирает его
- * на графе; шаги выбранного узла подсвечены. Моменты шага показываются,
- * только если сервер их записал. */
+ * на графе; шаги выбранного узла подсвечены. У шага — состояние словом,
+ * причина, подтверждённый commit и свёрнутый отчёт, если сервер их отдал;
+ * моменты — только если сервер их записал. */
 function StepHistory({
   steps,
   selected,
@@ -455,11 +538,15 @@ function StepHistory({
       {steps.map((step, index) => {
         const number = step.sequence ?? index + 1;
         const chosen = step.id === selected;
-        const facts: Array<{ label: string; value: string }> = [];
+        const facts: Array<{ label: string; value: ReactNode }> = [];
         if (step.kind === 'actor') {
           facts.push({ label: t('swarm_page.actor'), value: step.actorName || DASH });
         }
         if (step.outcome) facts.push({ label: t('swarm_page.outcome'), value: step.outcome });
+        if (step.detail) facts.push({ label: t('swarm_page.reason'), value: step.detail });
+        if (step.commit) {
+          facts.push({ label: t('swarm_page.commit'), value: <StepCommit commit={step.commit} /> });
+        }
         if (times) {
           facts.push({
             label: t('swarm_page.started'),
@@ -477,10 +564,7 @@ function StepHistory({
               .filter(Boolean)
               .join(' ')}
           >
-            <span
-              className={graphStyles[`timeline-${step.status}`] ?? graphStyles['timeline-pending']}
-              aria-hidden="true"
-            />
+            <StepDot status={step.status} />
             <div className={local.stepBody}>
               <div className={local.stepTitle}>
                 <span className={local.stepNumber}>#{number}</span>
@@ -493,9 +577,7 @@ function StepHistory({
                   {step.label}
                 </button>
                 <span className={local.kind}>{kindName(t, step.kind)}</span>
-                <span>
-                  {t(`swarm_page.node_states.${step.status}`, { defaultValue: step.status })}
-                </span>
+                <span>{stateWord(t, step.status)}</span>
               </div>
               {facts.length > 0 && (
                 <dl className={local.stepFacts}>
@@ -506,6 +588,12 @@ function StepHistory({
                     </div>
                   ))}
                 </dl>
+              )}
+              {step.report && (
+                <details className={local.stepReport}>
+                  <summary>{t('swarm_page.report')}</summary>
+                  <p className={local.instruction}>{step.report}</p>
+                </details>
               )}
             </div>
           </li>

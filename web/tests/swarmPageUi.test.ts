@@ -13,7 +13,7 @@ import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { AccessSwarm } from '@/services/brood/access';
-import type { PipelineRun, RunGraph } from '@/services/brood/pipelines';
+import type { NodeStatus, PipelineRun, RunGraph, RunNode } from '@/services/brood/pipelines';
 import { SwarmView } from '@/features/swarms/SwarmPage';
 import { installTestDOM } from './helpers/dom';
 import en from '@/i18n/locales/en.json';
@@ -235,6 +235,133 @@ describe('selected node', () => {
     const text = visibleText(render({ run: unconfirmed, selected: undefined }));
     expect(text).toContain(en.swarm_page.node_states.unconfirmed);
     expect(text).not.toContain(en.swarm_page.node_states.failed);
+  });
+});
+
+describe('actor step states (#212, #238)', () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567';
+  const actorStep = (over: Partial<RunNode> = {}): RunNode => ({
+    id: 'architecture',
+    kind: 'actor',
+    label: 'architecture',
+    status: 'refused',
+    actorName: 'architect',
+    sequence: 1,
+    ...over,
+  });
+  const stuck = (over: Partial<RunNode> = {}, nodes: RunNode[] = []) =>
+    run({ status: 'running', currentNode: 'architecture', nodes: [...nodes, actorStep(over)] });
+  const count = (text: string, part: string) => text.split(part).length - 1;
+  /** Видимый текст с раскрытыми сущностями: апостроф перевода — не &#x27;. */
+  const shown = (html: string) =>
+    visibleText(html)
+      .replace(/&#x27;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  /** Панель узла и история шагов: то, что ниже графа. */
+  const work = (html: string) => shown(html.slice(html.indexOf(`>${en.swarm_page.node}<`)));
+  const states = en.swarm_page.node_states as Record<string, string>;
+  const guidance = en.swarm_page.step_guidance;
+
+  test('every step state reads in words in the node panel and in the history', () => {
+    for (const status of [
+      'pending',
+      'attesting',
+      'delivering',
+      'inflight',
+      'active',
+      'completed',
+      'done',
+      'refused',
+      'unconfirmed',
+      'stopped',
+    ] as NodeStatus[]) {
+      const text = work(render({ run: stuck({ status }), selected: 'architecture' }));
+      expect({ status, word: states[status], shown: count(text, ` ${states[status]} `) }).toEqual({
+        status,
+        word: expect.any(String),
+        shown: 2,
+      });
+    }
+  });
+
+  test('a refused step names its reason and says what to do once', () => {
+    const detail = 'actor architect is not connected to the relay; no instruction was sent';
+    const html = render({ run: stuck({ detail }), selected: 'architecture' });
+    const text = shown(html);
+    // The reason is on the node and on its step in the history.
+    expect(count(text, detail)).toBe(2);
+    expect(text).toContain(` ${en.swarm_page.reason} `);
+    expect(count(text, guidance.refused)).toBe(1);
+    expect(text).not.toContain(guidance.unconfirmed);
+    expect(text).not.toContain('bro dispatch');
+    expect(html).toContain('role="note"');
+  });
+
+  test('an unconfirmed step leaves the decision to the operator, with the lease release', () => {
+    const detail =
+      'workspace attestation outcome is unknown; workspace operation op-7 stays reserved until an operator releases it; no instruction was sent';
+    const text = shown(
+      render({ run: stuck({ status: 'unconfirmed', detail }), selected: 'architecture' })
+    );
+    expect(count(text, detail)).toBe(2);
+    expect(count(text, guidance.unconfirmed)).toBe(1);
+    expect(text).toContain(guidance.release);
+    expect(text).toContain('bro dispatch architect --request-id');
+    expect(text).toContain(`--action release --swarm ${swarm.id}`);
+    expect(text).not.toContain(guidance.refused);
+    expect(text).not.toContain(` ${states.failed} `);
+  });
+
+  test('a refusal an earlier pass already answered gives no instruction', () => {
+    const detail = 'the step changed before workspace attestation; no instruction was sent';
+    const later = run({
+      status: 'running',
+      currentNode: 'decision',
+      nodes: [
+        actorStep({ detail }),
+        { id: 'decision', kind: 'human', label: 'decision', status: 'active', sequence: 2 },
+      ],
+    });
+    const text = shown(render({ run: later, selected: 'architecture' }));
+    expect(count(text, detail)).toBe(2);
+    expect(text).not.toContain(guidance.refused);
+  });
+
+  test('the confirmed commit is short on screen, whole in its title and its copy button', () => {
+    const html = render({
+      run: stuck({ status: 'done', outcome: 'success', commit: sha }),
+      selected: 'architecture',
+    });
+    const text = visibleText(html);
+    expect(count(text, sha.slice(0, 8))).toBe(2);
+    expect(text).not.toContain(sha);
+    expect(count(html, `title="${sha}"`)).toBe(2);
+    expect(count(html, `aria-label="${en.swarm_page.copy_commit}"`)).toBe(2);
+    expect(text).toContain(en.swarm_page.commit);
+  });
+
+  test('the step report is text with its line breaks, never markup', () => {
+    const report = 'Done: <b>branch</b> feat/x\nMR !12 & docs';
+    const html = render({
+      run: stuck({ status: 'done', outcome: 'success', report }),
+      selected: 'architecture',
+    });
+    expect(html).not.toContain('<b>branch</b>');
+    expect(html).toContain('Done: &lt;b&gt;branch&lt;/b&gt; feat/x\nMR !12 &amp; docs');
+    // Full in the node panel, folded in the history.
+    expect(count(html, '&lt;b&gt;branch')).toBe(2);
+    expect(html).toContain('<details');
+    expect(html).toContain(`>${en.swarm_page.report}</summary>`);
+  });
+
+  test('a step without reason, commit or report shows none of them', () => {
+    const text = shown(render({ run: stuck({ status: 'inflight' }), selected: 'architecture' }));
+    expect(text).not.toContain(` ${en.swarm_page.reason} `);
+    expect(text).not.toContain(` ${en.swarm_page.commit} `);
+    expect(text).not.toContain(` ${en.swarm_page.report} `);
   });
 });
 

@@ -208,6 +208,74 @@
   }
 }
 
+/* Подтверждённый commit шага: короткий SHA и копирование полного. */
+.commit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Что делать с шагом, на котором встал проход: заметка с полосой слева.
+ * Полоса повторяет метку шага (отказ — цвет провала, неизвестный исход —
+ * цвет внимания), но смысл несёт текст. */
+.guidance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--amber-color);
+  border-radius: var(--radius-md, #{$radius-md});
+  background: var(--bg-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+
+  &[data-guidance='refused'] {
+    border-left-color: var(--viz-failure);
+  }
+
+  p {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+.command {
+  display: block;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, #{$radius-sm});
+  background: var(--bg-tertiary);
+  font-family: $font-mono;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* Отчёт шага в истории свёрнут: полный — в панели выбранного узла. */
+.stepReport {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+
+  summary {
+    width: fit-content;
+    cursor: pointer;
+    color: var(--primary-color);
+  }
+
+  summary:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  p {
+    margin-top: 4px;
+    color: var(--text-primary);
+  }
+}
+
 /* На телефоне сведения — в две колонки, длинный ID — на всю ширину. */
 @include mobile {
   .facts {

@@ -3176,6 +3176,10 @@
     "started": "Bắt đầu",
     "finished": "Kết thúc",
     "visits": "Số lần ghé",
+    "reason": "Lý do",
+    "commit": "Commit đã xác nhận",
+    "copy_commit": "Sao chép commit",
+    "report": "Báo cáo",
     "node_states": {
       "unvisited": "Chưa ghé",
       "pending": "Đang chờ",
@@ -3183,7 +3187,20 @@
       "done": "Hoàn tất",
       "failed": "Thất bại",
       "skipped": "Bỏ qua",
-      "unconfirmed": "Chưa rõ kết quả"
+      "unconfirmed": "Chưa rõ kết quả",
+      "attesting": "Đang kiểm tra workspace",
+      "delivering": "Đang gửi chỉ dẫn",
+      "inflight": "Đang thực hiện",
+      "waiting": "Chờ trả lời",
+      "answered": "Đã trả lời",
+      "completed": "Đã kết thúc",
+      "refused": "Bị từ chối",
+      "stopped": "Đã dừng"
+    },
+    "step_guidance": {
+      "refused": "Bước đã đóng mà không có tác dụng, và đồ thị sẽ không tự tiến triển. Hãy khắc phục lý do (gắn vai trò, commit hoặc hoàn tác thay đổi trong workspace của actor, kết nối actor), dừng bầy nếu nó vẫn đang chạy, rồi bắt đầu một lượt mới trên cùng ảnh chụp.",
+      "unconfirmed": "Máy chủ không biết bước kết thúc ra sao, nên không thử lại và không cho đồ thị tiến triển. Quyết định là của bạn: tìm hiểu chuyện gì đã xảy ra ở actor, dừng bầy nếu nó vẫn đang chạy, rồi bắt đầu một lượt mới.",
+      "release": "Nếu lý do nêu một thao tác workspace đang được giữ, quản trị viên kiểm tra workspace và giải phóng nó theo ID của thao tác đó; nếu không, lượt mới sẽ bị từ chối vì workspace đang bận:"
     },
     "steps": "Lịch sử bước",
     "steps_hint": "Mỗi lần ghé một nút của đồ thị, từ cũ đến mới. Tên nút hiển thị nút đó trên đồ thị.",
