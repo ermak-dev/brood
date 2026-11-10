@@ -24,7 +24,8 @@ class LXCImageTests(unittest.TestCase):
         return SimpleNamespace(source=str(source), shell=SimpleNamespace(env={"PATH": "/bin"}), check=Mock())
 
     def test_builds_and_pushes_owned_tag_then_returns_only_registry_digest(self):
-        with tempfile.TemporaryDirectory() as directory:
+        # Имя каталога содержит "ko": путь не должен путать проверку команд.
+        with tempfile.TemporaryDirectory(prefix="tmpgkoi3h99-") as directory:
             cluster = self.cluster(directory)
             shell = Mock()
             shell.output.side_effect = [(0, "amd64", ""), (0, "", ""),
@@ -38,7 +39,11 @@ class LXCImageTests(unittest.TestCase):
             tag = calls[0][1]
             self.assertRegex(tag, r"^localhost:5002/ateworker-lxc:brood-[0-9a-f]{32}$")
             self.assertEqual(calls[1:], [("docker", "push", tag), ("docker", "image", "rm", tag)])
-            self.assertNotIn("ko", str(shell.mock_calls))
+            executables = [call.args[0] for call in shell.mock_calls if call.args]
+            self.assertTrue(executables)
+            for executable in executables:
+                self.assertNotEqual(executable, "ko")
+                self.assertFalse(executable.endswith("/ko"), executable)
 
     def test_never_removes_a_temporary_tag_that_changed_identity(self):
         with tempfile.TemporaryDirectory() as directory:
