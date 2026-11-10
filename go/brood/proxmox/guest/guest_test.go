@@ -449,7 +449,7 @@ func TestStartupFailsClosed(t *testing.T) {
 }
 func TestNFTRules(t *testing.T) {
 	rules := nftRules()
-	for _, required := range []string{"table inet brood_guest", "meta skuid 1000", "redirect to :5353", "tcp dport 53", "udp dport 53", "ip daddr 127.0.0.1", "ip6 daddr ::1", "3128", "5353", "ct direction reply", "reject with icmpx", "hook output", "hook input"} {
+	for _, required := range []string{"table inet brood_guest", "meta skuid 1000", "redirect to :5353", "tcp dport 53", "udp dport 53", "ip daddr 127.0.0.1", "ip6 daddr ::1", `oifname "lo" ip daddr 127.0.0.0/8 meta l4proto { tcp, udp } accept`, `oifname "lo" ip6 daddr ::1 meta l4proto { tcp, udp } accept`, "3128", "5353", "reject with icmpx", "hook output", "hook input"} {
 		if !strings.Contains(rules, required) {
 			t.Errorf("missing %s", required)
 		}

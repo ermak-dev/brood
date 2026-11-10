@@ -28,6 +28,12 @@ func applyRules(ctx context.Context, script string, command RuleCommand) error {
 	return nil
 }
 func nftRules() string {
+	// Loopback для UID 1000 открыт целиком по TCP и UDP (#250): httptest
+	// серверы go test слушают эфемерные порты 127.0.0.1, тесты резолвера
+	// guest шлют UDP на такие же. Root слушает на loopback только 3128, 5353,
+	// 8317 и 8318, и все они были доступны актору до этого; ttyd на 8080 и так
+	// собственный процесс UID 1000. Адреса вне 127.0.0.0/8 и ::1 (включая
+	// собственный адрес eth0, тоже маршрутизируемый через lo) остаются закрыты.
 	// В хуке output oifname остается исходным маршрутом (eth0) и после
 	// redirect на :5353, поэтому перенаправленный DNS актора не проходит
 	// правила oifname "lo"; его пропускает только ct status dnat к локальному
@@ -37,15 +43,12 @@ add chain inet brood_guest dns { type nat hook output priority dstnat; policy ac
 add rule inet brood_guest dns meta skuid 1000 udp dport 53 redirect to :5353
 add rule inet brood_guest dns meta skuid 1000 tcp dport 53 redirect to :5353
 add chain inet brood_guest actor
-add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128, 5353, 8317, 8318 } accept
-add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.1 udp dport 5353 accept
-add rule inet brood_guest actor oifname "lo" ip6 daddr ::1 tcp dport 5353 accept
-add rule inet brood_guest actor oifname "lo" ip6 daddr ::1 udp dport 5353 accept
+add rule inet brood_guest actor oifname "lo" ip daddr 127.0.0.0/8 meta l4proto { tcp, udp } accept
+add rule inet brood_guest actor oifname "lo" ip6 daddr ::1 meta l4proto { tcp, udp } accept
 add rule inet brood_guest actor ct status dnat ip daddr 127.0.0.1 udp dport 5353 accept
 add rule inet brood_guest actor ct status dnat ip daddr 127.0.0.1 tcp dport 5353 accept
 add rule inet brood_guest actor ct status dnat ip6 daddr ::1 udp dport 5353 accept
 add rule inet brood_guest actor ct status dnat ip6 daddr ::1 tcp dport 5353 accept
-add rule inet brood_guest actor oifname "lo" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport 8080 ct direction reply ct state established accept
 add rule inet brood_guest actor reject with icmpx type admin-prohibited
 add chain inet brood_guest output { type filter hook output priority filter; policy accept; }
 add rule inet brood_guest output meta skuid 1000 jump actor

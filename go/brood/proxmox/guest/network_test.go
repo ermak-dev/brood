@@ -147,11 +147,8 @@ func TestActorAcceptsOnlyRedirectedDNS(t *testing.T) {
 		"ct status dnat ip6 daddr ::1 tcp dport 5353 accept",
 	}
 	direct := []string{
-		`oifname "lo" ip daddr 127.0.0.1 tcp dport { 3128, 5353, 8317, 8318 } accept`,
-		`oifname "lo" ip daddr 127.0.0.1 udp dport 5353 accept`,
-		`oifname "lo" ip6 daddr ::1 tcp dport 5353 accept`,
-		`oifname "lo" ip6 daddr ::1 udp dport 5353 accept`,
-		`oifname "lo" ip saddr 127.0.0.1 ip daddr 127.0.0.1 tcp sport 8080 ct direction reply ct state established accept`,
+		`oifname "lo" ip daddr 127.0.0.0/8 meta l4proto { tcp, udp } accept`,
+		`oifname "lo" ip6 daddr ::1 meta l4proto { tcp, udp } accept`,
 		"reject with icmpx type admin-prohibited",
 	}
 	script := nftRules()
@@ -179,6 +176,61 @@ func TestActorAcceptsOnlyRedirectedDNS(t *testing.T) {
 		if strings.Contains(line, "ct status") && (!inActor || !slices.Contains(redirected, rule)) {
 			t.Errorf("redirected traffic accepted beyond the local resolver: %s", line)
 		}
+	}
+}
+
+// BUG: внутри CT актора httptest-серверы пакетов server/clientapi/bro не
+// запускались: цепочка actor принимала по lo только фиксированные порты root
+// сервисов, и SYN UID 1000 к эфемерному порту 127.0.0.1 (как и SYN-ACK его
+// собственного listener'а) упирался в финальный reject (#250).
+// SPEC: до reject цепочка actor принимает весь TCP и UDP UID 1000 через lo
+// к 127.0.0.0/8 и ::1 (UDP нужен тестам резолвера guest); каждый accept
+// цепочки либо ограничен oifname "lo", либо является dnat к локальному
+// резолверу, поэтому egress вне lo по-прежнему заканчивается reject; цепочки
+// input и dns не меняются.
+func TestActorAcceptsLoopbackTCPAndUDP(t *testing.T) {
+	loopback := []string{
+		`oifname "lo" ip daddr 127.0.0.0/8 meta l4proto { tcp, udp } accept`,
+		`oifname "lo" ip6 daddr ::1 meta l4proto { tcp, udp } accept`,
+	}
+	script := nftRules()
+	actor := chainRules(script, "actor")
+	reject := slices.Index(actor, "reject with icmpx type admin-prohibited")
+	if reject != len(actor)-1 {
+		t.Fatalf("actor chain must end with its reject: %q", actor)
+	}
+	for _, rule := range loopback {
+		if at := slices.Index(actor, rule); at < 0 || at > reject {
+			t.Errorf("missing before reject: %s", rule)
+		}
+	}
+	for _, rule := range actor[:reject] {
+		if !strings.HasSuffix(rule, " accept") {
+			t.Errorf("unexpected actor verdict: %s", rule)
+		}
+		if !strings.HasPrefix(rule, `oifname "lo" `) && !strings.HasPrefix(rule, "ct status dnat ") {
+			t.Errorf("egress accepted beyond loopback: %s", rule)
+		}
+		if strings.HasPrefix(rule, "ct status dnat ") && !strings.Contains(rule, " dport 5353 ") {
+			t.Errorf("redirected traffic accepted beyond the local resolver: %s", rule)
+		}
+	}
+	input := []string{
+		`iifname != "lo" tcp dport { 3128, 5353, 8080, 8317, 8318 } reject with icmpx type admin-prohibited`,
+		`iifname != "lo" udp dport 5353 reject with icmpx type admin-prohibited`,
+	}
+	if got := chainRules(script, "input"); !slices.Equal(got, input) {
+		t.Errorf("input chain changed:\n%q\nwant\n%q", got, input)
+	}
+	dns := []string{
+		"meta skuid 1000 udp dport 53 redirect to :5353",
+		"meta skuid 1000 tcp dport 53 redirect to :5353",
+	}
+	if got := chainRules(script, "dns"); !slices.Equal(got, dns) {
+		t.Errorf("dns chain changed:\n%q\nwant\n%q", got, dns)
+	}
+	if got := chainRules(script, "output"); !slices.Equal(got, []string{"meta skuid 1000 jump actor"}) {
+		t.Errorf("output chain changed: %q", got)
 	}
 }
 func TestMalformedProxyAuthority(t *testing.T) {
