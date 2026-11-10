@@ -9,9 +9,9 @@ package store
 // только живому актору своего активного роя, SwarmsRoleBindings читает,
 // ResolveSwarmRole проверяет рой, принадлежность, UID, инкарнацию и
 // активность актора одним снимком.
-// requireRoleActor — единственный вход для записи актора в шаг: роль узла
-// разрешается в транзакции записи, UID и инкарнация шага обязаны совпасть
-// с привязкой.
+// requireRoleActor и stepRoleBinding — единственные входы для записи актора
+// в шаг: роль узла разрешается в транзакции записи, UID и инкарнация шага
+// обязаны совпасть с привязкой (резерв доставки берёт их из неё, #212).
 // Управляющий роем (#235) меняет привязки через BindSwarmRoleAs и
 // UnbindSwarmRoleAs: сессия, рой, право управлять, исполнение и актор
 // проверяются в транзакции записи; при идущем проходе (running, waiting)
@@ -419,13 +419,7 @@ func (s *Store) ResolveSwarmRole(ctx context.Context, swarmID, role string) (Swa
 // или её актора — ErrSwarmRoleUnbound, не ErrNotFound: отказ шагу — конфликт,
 // а не ненайденный ресурс.
 func (s *Store) requireRoleActor(ctx context.Context, swarmID, role, actorUID string, incarnation int64) error {
-	if _, ok := ctx.Value(txKey{}).(*sql.Tx); !ok {
-		return errors.New("swarm role check must run inside the step transaction")
-	}
-	b, err := s.ResolveSwarmRole(ctx, swarmID, role)
-	if errors.Is(err, ErrNotFound) {
-		return fmt.Errorf("%w: role %q: %v", ErrSwarmRoleUnbound, role, err)
-	}
+	b, err := s.stepRoleBinding(ctx, swarmID, role)
 	if err != nil {
 		return err
 	}
@@ -433,4 +427,18 @@ func (s *Store) requireRoleActor(ctx context.Context, swarmID, role, actorUID st
 		return ErrSwarmRoleMismatch
 	}
 	return nil
+}
+
+// stepRoleBinding разрешает роль узла в привязанного актора для записи шага
+// (#212): тот же вердикт, что у requireRoleActor, но актор не задан
+// вызывающим, а берётся из привязки. Вне транзакции записи отказывает.
+func (s *Store) stepRoleBinding(ctx context.Context, swarmID, role string) (SwarmRoleBinding, error) {
+	if _, ok := ctx.Value(txKey{}).(*sql.Tx); !ok {
+		return SwarmRoleBinding{}, errors.New("swarm role check must run inside the step transaction")
+	}
+	b, err := s.ResolveSwarmRole(ctx, swarmID, role)
+	if errors.Is(err, ErrNotFound) {
+		return SwarmRoleBinding{}, fmt.Errorf("%w: role %q: %v", ErrSwarmRoleUnbound, role, err)
+	}
+	return b, err
 }

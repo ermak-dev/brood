@@ -229,12 +229,20 @@ func TestBoundSwarmRefusesActorEffects(t *testing.T) {
 	if _, err := s.AppendPipelineVisit(ctx, "s", "s", visit); !errors.Is(err, ErrPipelineSourceUnverified) {
 		t.Fatalf("inflight: %v", err)
 	}
-	if err := s.CompletePipelineActorVisit(ctx, "s", "s", 1, "request", "uid", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
-		t.Fatalf("completion: %v", err)
-	}
 	visits, err := s.SwarmSteps(ctx, "s")
 	if err != nil || len(visits) != 0 {
 		t.Fatalf("unexpected visit: %+v %v", visits, err)
+	}
+	// Резерв попытки без подтверждения workspace (#212) исход не открывает:
+	// ErrPipelineSourceUnverified снимает только запись подтверждения шага.
+	if _, err := s.db.Exec(`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id) VALUES ('s',1,'actor','attesting','uid',1,'request')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompletePipelineActorVisit(ctx, "s", "s", 1, "request", "uid", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
+		t.Fatalf("completion: %v", err)
+	}
+	if visits, err := s.SwarmSteps(ctx, "s"); err != nil || len(visits) != 1 || visits[0].State != "attesting" {
+		t.Fatalf("unverified completion changed the step: %+v %v", visits, err)
 	}
 }
 

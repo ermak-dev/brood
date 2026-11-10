@@ -1,0 +1,397 @@
+package store
+
+// FEATURE: Доставка инструкции узла привязанному актору (#212), хранилище.
+// SPEC: Шаг actor-узла роя со снимком источника идёт pending → attesting →
+// delivering → inflight. Резерв попытки — привязанный к роли актор, его
+// инкарнация, request_id и workspace-lease подтверждения — пишется одной
+// транзакцией до любого эффекта у гостя. Запись подтверждения workspace
+// (#183) заново проверяет исполнение, привязку роли и источник и только она
+// переводит шаг в delivering с attested_commit: это и снимает
+// ErrPipelineSourceUnverified для шага. Исход доставки пишется из
+// delivering: подтверждена — inflight, неизвестна — unconfirmed. Отказ,
+// после которого инструкция заведомо не ушла, — refused с причиной.
+// Попытка, до гостя не дошедшая (выключение сервера), возвращается в
+// pending вместе с освобождением lease: WithdrawActorStep.
+// IMPLEMENTATION: каждый переход — условный UPDATE по состоянию и
+// request_id: повтор той же попытки и опоздавшая запись после остановки
+// ничего не пишут. Сервер работает одним экземпляром и сериализует
+// диспетчер в процессе, но корректность держат эти условия, а не процесс.
+// Гостевые эффекты (подтверждение, сообщение) делает сервер вне транзакций.
+// RESULT: IMPLEMENTED — схема 22: словарь состояний, attested_commit,
+// detail, триггеры swarm_steps_attested.
+// STATUS: DONE
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"unicode/utf8"
+
+	"brood.dev/go/brood/pipeline"
+)
+
+// ErrNoActorStep: у роя нет шага actor-узла, ждущего доставки: рой не идёт,
+// последний шаг не pending или у снимка нет источника. Ничего не записано.
+var ErrNoActorStep = errors.New("swarm has no actor step awaiting delivery")
+
+// ErrActorStepRefused: шаг закрыт как refused, причина записана в шаг.
+var ErrActorStepRefused = errors.New("actor step was refused")
+
+// WorkspaceAttestOperation — имя workspace-lease подтверждения в
+// coordination_claims: подтверждение останавливает и перезапускает актора,
+// как restart, и исключает те же операции.
+const WorkspaceAttestOperation = "workspace_attest"
+
+// maxStepDetailBytes — предел причины шага; тот же предел держит схема.
+const maxStepDetailBytes = 1024
+
+const (
+	detailStoppedDelivery    = "the swarm stopped during instruction delivery; the delivery outcome is unknown"
+	detailRestartAttestation = "the server restarted during workspace attestation; its outcome is unknown and no instruction was sent"
+	detailRestartDelivery    = "the server restarted during instruction delivery; the delivery outcome is unknown"
+)
+
+// ActorStepAttempt — зарезервированная попытка доставки шага actor-узла.
+type ActorStepAttempt struct {
+	SwarmID, SwarmName string
+	Sequence           int64
+	NodeID             string
+	// RequestID — личность попытки: request_id шага, step подтверждения и
+	// ID workspace-lease.
+	RequestID string
+	// Actor — привязанный к роли узла актор на момент резерва.
+	Actor  ManagedActor
+	Source PipelineSource
+	Graph  *pipeline.Document
+	// Lease — workspace-lease подтверждения; его исход пишет сервер
+	// (FinishActorOperation) после ответа гостя.
+	Lease ActorOperation
+}
+
+// ReserveActorStep reserves the delivery attempt of the swarm's latest step
+// when it is a pending actor step of a running swarm with a source snapshot.
+// In one transaction the node's role is resolved to the bound actor at its
+// current incarnation, the actor's workspace is reserved for the attestation
+// (AcquireActorOperation, operation workspace_attest, ID requestID) and the
+// step becomes attesting with that actor and request ID. Nothing to reserve
+// is ErrNoActorStep without a write. A role that does not resolve to a live
+// bound actor or a busy workspace closes the step as refused with the reason
+// in the same transaction and answers ErrActorStepRefused.
+func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller string) (ActorStepAttempt, error) {
+	if !validPipelineField(swarmID) || !validPipelineField(requestID) || caller == "" {
+		return ActorStepAttempt{}, errors.New("invalid actor step reservation")
+	}
+	var attempt ActorStepAttempt
+	var refusal string
+	err := s.WithTx(ctx, func(ctx context.Context) error {
+		w, sequence, node, d, err := s.awaitingActorStep(ctx, swarmID)
+		if err != nil {
+			return err
+		}
+		n := d.Nodes[node]
+		b, err := s.stepRoleBinding(ctx, swarmID, n.Role)
+		if err != nil {
+			refusal = fmt.Sprintf("role %q has no live bound actor: %v", n.Role, err)
+			return s.refusePendingStep(ctx, swarmID, sequence, refusal)
+		}
+		actor, err := s.GetManagedActor(ctx, b.ActorUID)
+		if err != nil {
+			return err
+		}
+		lease, err := s.AcquireActorOperation(ctx, actor.UID, actor.Incarnation, requestID, caller, WorkspaceAttestOperation)
+		if errors.Is(err, ErrCoordinationConflict) {
+			refusal = fmt.Sprintf("actor %s cannot attest its workspace: %v", actor.Name, err)
+			return s.refusePendingStep(ctx, swarmID, sequence, refusal)
+		}
+		if err != nil {
+			return err
+		}
+		if err := s.markStepAttesting(ctx, swarmID, sequence, actor, requestID); err != nil {
+			return err
+		}
+		attempt = ActorStepAttempt{SwarmID: w.ID, SwarmName: w.Name, Sequence: sequence, NodeID: node, RequestID: requestID, Actor: actor, Source: *w.Source, Graph: d, Lease: lease}
+		return nil
+	})
+	if err != nil {
+		return ActorStepAttempt{}, err
+	}
+	if refusal != "" {
+		return ActorStepAttempt{}, fmt.Errorf("%w: %s", ErrActorStepRefused, refusal)
+	}
+	return attempt, nil
+}
+
+// awaitingActorStep находит последний шаг роя, ждущий доставки: идущий
+// активный рой со снимком графа и источника, шаг pending actor-узла.
+func (s *Store) awaitingActorStep(ctx context.Context, swarmID string) (Swarm, int64, string, *pipeline.Document, error) {
+	w, err := s.GetSwarm(ctx, swarmID)
+	if errors.Is(err, ErrNotFound) {
+		return Swarm{}, 0, "", nil, ErrNoActorStep
+	}
+	if err != nil {
+		return Swarm{}, 0, "", nil, err
+	}
+	// Рой без источника — только мимо запуска (тесты, базы до #198): его
+	// шаги остаются пути AppendPipelineVisit.
+	if w.State != "active" || w.Execution != "running" || w.Graph == nil || w.Source == nil {
+		return Swarm{}, 0, "", nil, ErrNoActorStep
+	}
+	var sequence int64
+	var node, state string
+	err = s.conn(ctx).QueryRowContext(ctx, `SELECT sequence,node_id,state FROM swarm_steps WHERE swarm_id=? ORDER BY sequence DESC LIMIT 1`, swarmID).Scan(&sequence, &node, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Swarm{}, 0, "", nil, ErrNoActorStep
+	}
+	if err != nil {
+		return Swarm{}, 0, "", nil, err
+	}
+	if state != "pending" {
+		return Swarm{}, 0, "", nil, ErrNoActorStep
+	}
+	d, err := pipeline.Parse(string(w.Graph), "pipeline")
+	if err != nil {
+		return Swarm{}, 0, "", nil, err
+	}
+	if n, ok := d.Nodes[node]; !ok || n.Type != "actor" {
+		return Swarm{}, 0, "", nil, fmt.Errorf("pending step %d is not an actor node", sequence)
+	}
+	return w, sequence, node, d, nil
+}
+
+// markStepAttesting записывает попытку в шаг: актор, инкарнация, request_id.
+// Запись сама условна на pending: шаг, который уже не ждёт доставки, она не
+// меняет (ErrNoActorStep), что бы ни показала выборка вызывающего.
+func (s *Store) markStepAttesting(ctx context.Context, swarmID string, sequence int64, actor ManagedActor, requestID string) error {
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='attesting',started_at=COALESCE(started_at,?),actor_uid=?,actor_incarnation=?,request_id=?,detail=NULL WHERE swarm_id=? AND sequence=? AND state='pending'`,
+		nowRFC3339(), actor.UID, actor.Incarnation, requestID, swarmID, sequence)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return err
+	} else if changed != 1 {
+		return ErrNoActorStep
+	}
+	return nil
+}
+
+func (s *Store) refusePendingStep(ctx context.Context, swarmID string, sequence int64, detail string) error {
+	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='refused',finished_at=?,detail=? WHERE swarm_id=? AND sequence=? AND state='pending'`, nowRFC3339(), stepDetail(detail), swarmID, sequence)
+	return err
+}
+
+// RecordActorStepAttestation records the verified workspace attestation of
+// the attempt: origin and commit are those of the consumed claim. In one
+// transaction it checks that the swarm is active and its graph running, that
+// the claim names the swarm's source snapshot, that the step is still
+// attesting for this request, actor and incarnation, and that the node's role
+// is still bound to that actor at that incarnation. Only then the step becomes
+// delivering with attested_commit. A stopped swarm or another attempt is
+// ErrPipelineVisitConflict; another source is ErrPipelineSourceUnverified; a
+// moved or stale role binding is its binding error. Nothing is written on
+// refusal: the caller closes the step with RefuseActorStep.
+func (s *Store) RecordActorStepAttestation(ctx context.Context, a ActorStepAttempt, origin, commit string) error {
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		w, err := s.currentAttempt(ctx, a, "attesting")
+		if err != nil {
+			return err
+		}
+		if w.Source == nil || w.Source.Origin != origin || w.Source.Commit != commit {
+			return ErrPipelineSourceUnverified
+		}
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='delivering',attested_commit=? WHERE swarm_id=? AND sequence=? AND request_id=? AND state='attesting'`, commit, a.SwarmID, a.Sequence, a.RequestID)
+		if err != nil {
+			return err
+		}
+		if changed, err := result.RowsAffected(); err != nil {
+			return err
+		} else if changed != 1 {
+			return ErrPipelineVisitConflict
+		}
+		return nil
+	})
+}
+
+// CheckActorStepAttestation reports whether the attempt may still ask the
+// guest for its workspace attestation: the swarm is active and running, the
+// step is attesting for this request, actor and incarnation, and the role is
+// still bound to that actor. The server calls it right before the guest call,
+// after waiting for the actor's relay; it writes nothing.
+func (s *Store) CheckActorStepAttestation(ctx context.Context, a ActorStepAttempt) error {
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		_, err := s.currentAttempt(ctx, a, "attesting")
+		return err
+	})
+}
+
+// WithdrawActorStep undoes the reservation of an attempt that never reached
+// the guest, as when the server shuts down before the attestation call: in
+// one transaction the step goes back to pending without actor, incarnation,
+// request ID, start or reason, and the attempt's workspace lease is released.
+// The next dispatcher reserves the step anew. A step that is no longer
+// attesting for this request is ErrPipelineVisitConflict and nothing changes.
+func (s *Store) WithdrawActorStep(ctx context.Context, a ActorStepAttempt) error {
+	if !validPipelineField(a.SwarmID) || !validPipelineField(a.RequestID) || a.Sequence < 1 {
+		return errors.New("invalid actor step attempt")
+	}
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='pending',started_at=NULL,actor_uid=NULL,actor_incarnation=NULL,request_id=NULL,detail=NULL WHERE swarm_id=? AND sequence=? AND request_id=? AND state='attesting'`, a.SwarmID, a.Sequence, a.RequestID)
+		if err != nil {
+			return err
+		}
+		if changed, err := result.RowsAffected(); err != nil {
+			return err
+		} else if changed != 1 {
+			return ErrPipelineVisitConflict
+		}
+		return s.FinishActorOperation(ctx, a.Lease, true)
+	})
+}
+
+// CheckActorStepDelivery reports whether the attempt may still be delivered:
+// the swarm is active and running, the step is delivering for this request,
+// actor and incarnation, and the role is still bound to that actor. The
+// server calls it right before and after sending; it writes nothing.
+func (s *Store) CheckActorStepDelivery(ctx context.Context, a ActorStepAttempt) error {
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		_, err := s.currentAttempt(ctx, a, "delivering")
+		return err
+	})
+}
+
+// currentAttempt — общая проверка попытки в транзакции: рой активен и идёт,
+// шаг в состоянии state той же попытки и актора, роль привязана к нему.
+func (s *Store) currentAttempt(ctx context.Context, a ActorStepAttempt, state string) (Swarm, error) {
+	w, err := s.GetSwarm(ctx, a.SwarmID)
+	if err != nil {
+		return Swarm{}, err
+	}
+	if w.State != "active" || !activeExecution(w.Execution) || w.Graph == nil {
+		return Swarm{}, fmt.Errorf("%w: swarm is %s, execution %s", ErrPipelineVisitConflict, w.State, w.Execution)
+	}
+	var node, current, request, actor string
+	var incarnation int64
+	err = s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,COALESCE(request_id,''),COALESCE(actor_uid,''),COALESCE(actor_incarnation,0) FROM swarm_steps WHERE swarm_id=? AND sequence=?`, a.SwarmID, a.Sequence).Scan(&node, &current, &request, &actor, &incarnation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Swarm{}, ErrPipelineVisitConflict
+	}
+	if err != nil {
+		return Swarm{}, err
+	}
+	if current != state || request != a.RequestID || actor != a.Actor.UID || incarnation != a.Actor.Incarnation || node != a.NodeID {
+		return Swarm{}, fmt.Errorf("%w: step %d is %s", ErrPipelineVisitConflict, a.Sequence, current)
+	}
+	d, err := pipeline.Parse(string(w.Graph), "pipeline")
+	if err != nil {
+		return Swarm{}, err
+	}
+	if err := s.requireRoleActor(ctx, a.SwarmID, d.Nodes[node].Role, actor, incarnation); err != nil {
+		return Swarm{}, err
+	}
+	return w, nil
+}
+
+// FinishActorStepDelivery records a confirmed delivery: the step becomes
+// inflight and the actor reports its outcome with pipeline_visit_complete.
+// Only a delivering step of this attempt changes; otherwise (the actor already
+// answered, the swarm stopped, a replay) ErrPipelineVisitConflict.
+func (s *Store) FinishActorStepDelivery(ctx context.Context, a ActorStepAttempt) error {
+	return s.moveAttempt(ctx, a, []string{"delivering"}, "inflight", "", false)
+}
+
+// UnconfirmActorStep records that a guest effect of the attempt ended with an
+// unknown outcome: the attestation or the instruction may have taken effect.
+// The step becomes unconfirmed with the reason and keeps its actor, request ID
+// and attestation: the graph does not advance, the attempt is not repeated
+// and its outcome is not accepted. Only an attesting or delivering step of
+// this attempt changes.
+func (s *Store) UnconfirmActorStep(ctx context.Context, a ActorStepAttempt, detail string) error {
+	return s.moveAttempt(ctx, a, []string{"attesting", "delivering"}, "unconfirmed", detail, false)
+}
+
+// RefuseActorStep closes an attempt whose instruction certainly was not sent:
+// the attestation was refused or rejected, or delivery failed before the send.
+// The step becomes refused with the reason; the graph does not advance. Only
+// an attesting or delivering step of this attempt changes.
+func (s *Store) RefuseActorStep(ctx context.Context, a ActorStepAttempt, detail string) error {
+	return s.moveAttempt(ctx, a, []string{"attesting", "delivering"}, "refused", detail, true)
+}
+
+func (s *Store) moveAttempt(ctx context.Context, a ActorStepAttempt, from []string, to, detail string, finished bool) error {
+	if !validPipelineField(a.SwarmID) || !validPipelineField(a.RequestID) || a.Sequence < 1 {
+		return errors.New("invalid actor step attempt")
+	}
+	var reason any
+	if detail != "" {
+		reason = stepDetail(detail)
+	}
+	var finishedAt any
+	if finished {
+		finishedAt = nowRFC3339()
+	}
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,detail=?,finished_at=COALESCE(?,finished_at) WHERE swarm_id=? AND sequence=? AND request_id=? AND state IN (?,?)`,
+		to, reason, finishedAt, a.SwarmID, a.Sequence, a.RequestID, from[0], from[len(from)-1])
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return err
+	} else if changed != 1 {
+		return ErrPipelineVisitConflict
+	}
+	return nil
+}
+
+// RecoverActorSteps marks attempts whose guest effect may have been cut by the
+// previous server process as unconfirmed: an attestation (attesting) or an
+// instruction being sent (delivering). Neither is repeated. Delivered
+// (inflight) and pending steps keep their state: the actor still reports, the
+// dispatcher still delivers. Call only during exclusive server startup.
+func (s *Store) RecoverActorSteps(ctx context.Context) error {
+	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET detail=CASE state WHEN 'attesting' THEN ? ELSE ? END,state='unconfirmed' WHERE state IN ('attesting','delivering')`, detailRestartAttestation, detailRestartDelivery)
+	return err
+}
+
+// PendingActorStepSwarms lists the swarms whose latest step waits for
+// delivery: a pending actor step of an active running swarm with a source.
+func (s *Store) PendingActorStepSwarms(ctx context.Context) ([]string, error) {
+	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT w.id FROM swarms w JOIN pipeline_sources p ON p.swarm_id=w.id JOIN swarm_steps st ON st.swarm_id=w.id WHERE w.state='active' AND w.execution='running' AND w.graph IS NOT NULL AND st.state='pending' AND st.sequence=(SELECT MAX(sequence) FROM swarm_steps WHERE swarm_id=w.id) ORDER BY w.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result = append(result, id)
+	}
+	return result, rows.Err()
+}
+
+// stepDetail приводит причину к пределу схемы: валидный UTF-8 без
+// управляющих символов, не длиннее maxStepDetailBytes.
+func stepDetail(detail string) string {
+	detail = strings.Map(func(r rune) rune {
+		if r < ' ' || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(detail, "?"))
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return "unspecified"
+	}
+	if len(detail) <= maxStepDetailBytes {
+		return detail
+	}
+	cut := maxStepDetailBytes - len("...")
+	for cut > 0 && !utf8.RuneStart(detail[cut]) {
+		cut--
+	}
+	return detail[:cut] + "..."
+}

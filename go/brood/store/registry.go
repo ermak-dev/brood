@@ -60,11 +60,13 @@ func managedFullSchema() string {
 
 // pipelineSourceFullSchema — таблица источников запусков и триггеры
 // неизменности источника (#158, #160). Идентичность запуска защищена
-// неизменностью снимка графа роя: у роя один снимок (#206).
+// неизменностью снимка графа роя: у роя один снимок (#206). Правило
+// подтверждения шага (#212) живёт здесь: оно читает источник роя.
 func pipelineSourceFullSchema() string {
 	return pipelineSourceSchema + ";" + pipelineSourceImmutable + ";" +
 		pipelineSourceNoReplace + ";" + pipelineSourceNoDelete + ";" +
-		swarmGraphImmutable + ";" + swarmNoReplace
+		swarmGraphImmutable + ";" + swarmNoReplace + ";" +
+		swarmStepAttested + ";" + swarmStepAttestedInsert
 }
 
 // swarmNoReplace запрещает подмену строки роя целиком (INSERT OR REPLACE):
@@ -185,6 +187,8 @@ func verifyPipelineSourcesSchema(ctx context.Context, tx *sql.Tx) error {
 		"pipeline_sources_no_delete":  pipelineSourceNoDelete,
 		"swarm_graph_immutable":       swarmGraphImmutable,
 		"swarms_no_replace":           swarmNoReplace,
+		"swarm_steps_attested":        swarmStepAttested,
+		"swarm_steps_attested_insert": swarmStepAttestedInsert,
 	} {
 		if err := checkObject(ctx, tx, "trigger", name, expected); err != nil {
 			return err

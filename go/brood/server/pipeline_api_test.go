@@ -45,8 +45,12 @@ goalGates: [done]
 // RESULT: FIXED — actor results appear in chronological visits.
 // STATUS: FIXED
 func TestPipelineWireContract(t *testing.T) {
-	ts := newSubstrateServer(t, newFakeAteapi())
-	_, alice, bob, swarm := actorsSetup(t, ts.testServer)
+	// Исход принимается только от актора, привязанного к роли узла (#212):
+	// шаг адресует managed-актора master с привязкой роли development.
+	ts, alice, master, _ := masterSetup(t)
+	swarm := master.SwarmID
+	bob := newClient(t)
+	ts.login(bob, "bob", "bob-password-1")
 	ctx := context.Background()
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
 	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, role: development, prompt: work}\n", 1)
@@ -56,11 +60,14 @@ func TestPipelineWireContract(t *testing.T) {
 	}
 	// Шаг актора кладётся напрямую: тест провода читает шаги, а привязку
 	// роли к актору проверяет хранилище (#208).
-	entry := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
+	if err := ts.srv.store.BindSwarmRole(ctx, store.SwarmRoleBinding{SwarmID: swarm, Role: "development", ActorUID: master.UID}); err != nil {
+		t.Fatal(err)
+	}
+	entry := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "request"}
 	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", "worker", 1, "success"); err != nil {
+	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", master.UID, master.Incarnation, "success"); err != nil {
 		t.Fatal(err)
 	}
 	visits, err := ts.srv.store.SwarmSteps(ctx, swarm)
@@ -135,8 +142,10 @@ func TestPipelineAnswerErrorClassification(t *testing.T) {
 // RESULT: FIXED — confirmed failure and uncertainty remain distinct.
 // STATUS: FIXED
 func TestPipelineActorStates(t *testing.T) {
-	ts := newSubstrateServer(t, newFakeAteapi())
-	_, alice, _, swarm := actorsSetup(t, ts.testServer)
+	// Исход принимается только от актора, привязанного к роли узла (#212):
+	// шаг адресует managed-актора master с привязкой роли development.
+	ts, alice, master, _ := masterSetup(t)
+	swarm := master.SwarmID
 	ctx := context.Background()
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
 	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, role: development, prompt: work}\n", 1)
@@ -154,12 +163,15 @@ func TestPipelineActorStates(t *testing.T) {
 		if err := insertSwarmGraph(ctx, ts.testServer, target[tc.id], []byte(graph), "running"); err != nil {
 			t.Fatal(err)
 		}
-		v := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
+		v := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "request"}
 		if err := insertSwarmStep(ctx, ts.testServer, target[tc.id], v); err != nil {
 			t.Fatal(err)
 		}
 		if tc.id == "failure" {
-			err = ts.srv.store.CompletePipelineActorVisit(ctx, target[tc.id], target[tc.id], v.Sequence, "request", "worker", 1, "fail")
+			if err := ts.srv.store.BindSwarmRole(ctx, store.SwarmRoleBinding{SwarmID: swarm, Role: "development", ActorUID: master.UID}); err != nil {
+				t.Fatal(err)
+			}
+			err = ts.srv.store.CompletePipelineActorVisit(ctx, target[tc.id], target[tc.id], v.Sequence, "request", master.UID, master.Incarnation, "fail")
 		} else {
 			err = ts.srv.store.RecoverPipelineActions(ctx)
 		}
@@ -409,8 +421,8 @@ func TestPipelineCancelledGateIsNotOffered(t *testing.T) {
 // RESULT: IMPLEMENTED — the timing and the instruction are on the wire.
 // STATUS: DONE
 func TestPipelineStepTimesAndNodeInstructions(t *testing.T) {
-	ts := newSubstrateServer(t, newFakeAteapi())
-	_, alice, _, swarm := actorsSetup(t, ts.testServer)
+	ts, alice, master, _ := masterSetup(t)
+	swarm := master.SwarmID
 	ctx := context.Background()
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
 	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, role: development, prompt: Write the plan}\n", 1)
@@ -419,12 +431,16 @@ func TestPipelineStepTimesAndNodeInstructions(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Шаг актора кладётся напрямую, как в TestPipelineWireContract: привязку
-	// роли к актору проверяет хранилище (#208), здесь читается провод.
-	entry := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
+	// роли к актору проверяет хранилище (#208), здесь читается провод. Исход
+	// принимается только от привязанного к роли актора (#212).
+	if err := ts.srv.store.BindSwarmRole(ctx, store.SwarmRoleBinding{SwarmID: swarm, Role: "development", ActorUID: master.UID}); err != nil {
+		t.Fatal(err)
+	}
+	entry := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "request"}
 	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", "worker", 1, "success"); err != nil {
+	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", master.UID, master.Incarnation, "success"); err != nil {
 		t.Fatal(err)
 	}
 	steps, err := ts.srv.store.SwarmSteps(ctx, swarm)

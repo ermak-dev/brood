@@ -173,7 +173,8 @@ Workflows, пока её не удалит #217.
 - `POST /api/swarms/{id}/start` — ровно `{definition, commit?}`, строки,
   owner/editor/administrator, Origin/CSRF; 200 — `swarmId`, `execution`,
   `definition` (`name`, `version`, `revision`), `source` (`origin`,
-  `commit`) и последний шаг `step` (`sequence`, `nodeId`, `state`).
+  `commit`) и последний шаг `step` (`sequence`, `nodeId`, `state`,
+  `detail` у шага актора, «Шаги актора»).
   Полный commit в теле пиннится без сетевого запроса. Без `commit` первый
   запуск пиннит commit, на который сейчас указывает HEAD repository проекта:
   сервер разрешает его до транзакции записи Git-доступом шлюза. Повторный
@@ -235,6 +236,44 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
 актора по имени или UID разрешает через `GET /api/swarms/{id}/actors`
 (строки `provider: proxmox`, инкарнация — `generation`). Из тела отказа
 `clientapi` берёт только причину из перечисленного набора.
+
+## Шаги актора
+
+Устройство и порядок — [MODEL.md](../docs/MODEL.md), «Шаг актора» (#212).
+Маршрута доставки нет: шаг actor-узла берёт серверный диспетчер после
+коммита запуска, узлового ответа и исхода прошлого шага, а также при старте
+сервера.
+
+- Состояния шага (`state` в `step` ответа `POST /api/swarms/{id}/start` и
+  `/stop`, `status` узла в `GET /api/pipeline-runs/{run}`): `pending`,
+  `attesting`, `delivering`, `inflight`, `unconfirmed`, `refused`, `waiting`,
+  `answered`, `completed`, `stopped`. В виде прогона `attesting`,
+  `delivering`, `inflight` и `waiting` — `active`.
+- `step.detail` ответа запуска и остановки и `detail` узла прогона —
+  причина `refused` или `unconfirmed` для оператора; `commit` узла прогона —
+  commit источника, который подтвердил workspace актора шага.
+- Подтверждение: сервер зовёт `workspace_attest` (`brood-session-rpc-v1`,
+  docs/PROXMOX.md) с ровно `swarm`, `step` (`request_id` попытки), `origin`,
+  `commit` и `challenge`, `caller` — `swarm:<id роя>`. На время вызова
+  актор держит workspace-lease с операцией `workspace_attest` и ID попытки;
+  его видно и после потерянного ответа освобождают так же, как
+  неподтверждённый restart: `dispatch --action show|release` оператора.
+  Принимается только ответ с `challenge` этой попытки; ответ другой попытки
+  или инкарнации — `refused`. Остановленный за время ожидания relay рой
+  `workspace_attest` не получает. Выключение сервера до вызова гостя
+  возвращает шаг в `pending`, следующий старт доставляет его заново.
+- Инструкция — одно сообщение канала роя: `from` — `swarm:<id роя>`, `to` —
+  имя привязанного актора, `waitSec` 0. Тело: `[brood swarm <имя>] Step <n>,
+  node <узел>.`, текст узла, строка с `run_id`, `sequence` и `request_id` для
+  `pipeline_visit_complete`, по строке на исход `success` и `fail` с тем,
+  куда он ведёт граф, и подсказка про `ask_operator`. Не больше 64 КиБ; тело с
+  закрывающим тегом конверта сообщения или такое, чей NDJSON у гостя
+  (auth-кадр, конверт, экранированное тело) превысит 128 КиБ, не
+  отправляется (`refused`).
+- `pipeline_visit_complete` принимается от актора шага той же инкарнации с
+  тем же `request_id`, пока он привязан к роли узла и рой идёт; шаг роя с
+  источником — только с записанным подтверждением. Иначе гость получает
+  `pipeline completion conflict` или `pipeline completion unavailable`.
 
 ## Ёмкость проекта
 

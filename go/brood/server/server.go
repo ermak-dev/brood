@@ -59,6 +59,8 @@ type Server struct {
 
 	// deliveries сериализует доставку ответа на запрос роя (#210).
 	deliveries deliveryLocks
+	// steps доставляет инструкции шагов actor-узлов (#212).
+	steps *stepDispatcher
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -99,7 +101,14 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
+	// Попытки шагов, чей эффект у гостя мог оборвать прошлый процесс, —
+	// unconfirmed без повтора (#212); ждущие доставки шаги будит steps.start.
+	if err := st.RecoverActorSteps(ctx); err != nil {
+		catalog.Close()
+		return nil, errors.New("actor step recovery failed")
+	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir}
+	srv.steps = newStepDispatcher(srv)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
 		catalog.Close()
@@ -176,6 +185,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)
 	srv.managed.start(proxyCtx)
+	srv.steps.start(proxyCtx)
 	return srv, nil
 }
 
@@ -202,6 +212,8 @@ func (s *Server) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
+	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
+	s.steps.close()
 	s.proxy.Close()
 	s.managed.close()
 	var errs []error

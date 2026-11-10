@@ -120,8 +120,11 @@ type attempt struct{ swarm, step string }
 // Состояние живёт в памяти сервера: перезапуск забывает выданные challenge,
 // и все прежние подтверждения отвергаются — fail-closed без схемы SQLite.
 // База одна и под Recreate, второго экземпляра, которому нужна общая
-// таблица, нет. Потребитель (#212) вызывает Consume перед транзакцией
-// inflight, а транзакция заново проверяет инкарнацию и привязку роли.
+// таблица, нет. Потребитель (#212) держит challenge ровно на один вызов
+// гостя: ответ с чужим challenge отвергает до Consume, после вызова
+// challenge сжигает (Revoke), а транзакция RecordActorStepAttestation после
+// Consume заново проверяет попытку, инкарнацию, привязку роли и источник и
+// только тогда переводит шаг в delivering.
 type Registry struct {
 	mu       sync.Mutex
 	pending  map[string]pending
@@ -189,6 +192,16 @@ func (r *Registry) Consume(got Attestation, key func(actorUID string, generation
 		return Claim{}, err
 	}
 	return p.claim, nil
+}
+
+// Revoke burns an issued challenge whose call is over without a consumed
+// answer: the guest refused, answered garbage or another attempt's
+// challenge, or the outcome is unknown. Unknown and already burned challenges
+// are ignored.
+func (r *Registry) Revoke(challenge string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.forget(challenge)
 }
 
 func (r *Registry) forget(challenge string) {

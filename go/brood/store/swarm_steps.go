@@ -27,6 +27,11 @@ type PipelineVisit struct {
 	ActorUID              string
 	ActorIncarnation      int64
 	RequestID             string
+	// AttestedCommit is the source commit the bound actor's guest attested
+	// for this attempt (#183, #212); empty until the attestation is recorded.
+	AttestedCommit string
+	// Detail is the operator-facing reason of a refused or unconfirmed step.
+	Detail string
 	// ActorName is filled by reads when the stage actor is known: the managed
 	// actor with ActorUID in the step's own swarm.
 	ActorName string
@@ -66,11 +71,11 @@ func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit
 // swarmStepSelect resolves managed names by UID within the step's own swarm,
 // including deleted actors whose names may since have been reused (#206:
 // join к запуску исчез — шаг принадлежит рою напрямую).
-const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
+const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.attested_commit,''),COALESCE(s.detail,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
 
 func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 	var v PipelineVisit
-	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.ActorName)
+	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.AttestedCommit, &v.Detail, &v.ActorName)
 	return v, err
 }
 
@@ -84,6 +89,11 @@ func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 // ErrPipelineVisitConflict before anything is written. A replay of an
 // already recorded request ID writes nothing and is answered from the
 // stored step without rechecking the binding.
+//
+// No production path writes inflight here: actor steps of a started swarm
+// are delivered by ReserveActorStep and its attestation (#212), and an
+// inflight visit of a swarm with a source snapshot is refused with
+// ErrPipelineSourceUnverified because this path attests nothing.
 func (s *Store) AppendPipelineVisit(ctx context.Context, swarmID, legacyRunID string, v PipelineVisit) (PipelineVisit, error) {
 	if legacyRunID != swarmID {
 		return v, ErrPipelineVisitConflict
@@ -204,6 +214,16 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 }
 
 // CompletePipelineActorVisit records an actor outcome or accepts an exact retry.
+// The caller is the actor recorded in the step: the request ID, UID and
+// incarnation must match it, and the actor must still be the one bound to the
+// node's role at that incarnation (#208), checked in the same transaction. A
+// step of a swarm with a source snapshot takes an outcome only after its
+// workspace attestation is recorded (attested_commit, #212); otherwise
+// ErrPipelineSourceUnverified. The step must be the latest one of a running
+// graph and be delivering (the actor answered before the server recorded the
+// delivery) or inflight; an unconfirmed, refused, stopped or finished step is
+// ErrPipelineVisitConflict. An exact retry of the recorded outcome writes
+// nothing and succeeds.
 func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyRunID string, sequence int64, requestID, actorUID string, incarnation int64, outcome string) error {
 	if legacyRunID != swarmID || !validPipelineField(swarmID) || sequence < 1 || !validPipelineField(requestID) || !validPipelineField(actorUID) || incarnation < 1 || (outcome != "success" && outcome != "fail") {
 		return errors.New("invalid pipeline actor completion")
@@ -213,13 +233,10 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 		if err != nil {
 			return err
 		}
-		if w.Source != nil {
-			return ErrPipelineSourceUnverified
-		}
-		var node, state, request, actor string
+		var node, state, request, actor, attested string
 		var inc int64
 		var prior sql.NullString
-		err = s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,COALESCE(request_id,''),COALESCE(actor_uid,''),COALESCE(actor_incarnation,0),outcome FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&node, &state, &request, &actor, &inc, &prior)
+		err = s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,COALESCE(request_id,''),COALESCE(actor_uid,''),COALESCE(actor_incarnation,0),outcome,COALESCE(attested_commit,'') FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&node, &state, &request, &actor, &inc, &prior, &attested)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrPipelineVisitConflict
 		}
@@ -229,15 +246,25 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 		if request != requestID || actor != actorUID || inc != incarnation {
 			return ErrPipelineVisitConflict
 		}
+		if w.Source != nil && attested != w.Source.Commit {
+			return ErrPipelineSourceUnverified
+		}
 		if state == "completed" && prior.Valid && prior.String == outcome {
 			return nil
 		}
-		if state != "inflight" || !activeExecution(w.Execution) {
+		if (state != "inflight" && state != "delivering") || !activeExecution(w.Execution) {
 			return ErrPipelineVisitConflict
 		}
 		d, err := pipeline.Parse(string(w.Graph), "pipeline")
 		if err != nil {
 			return err
+		}
+		n, ok := d.Nodes[node]
+		if !ok || n.Type != "actor" {
+			return ErrPipelineVisitConflict
+		}
+		if err := s.requireRoleActor(ctx, swarmID, n.Role, actorUID, incarnation); err != nil {
+			return fmt.Errorf("%w: role %q: %w", ErrPipelineVisitConflict, n.Role, err)
 		}
 		return s.progressPipeline(ctx, w, d, sequence, node, "completed", outcome)
 	})
@@ -247,7 +274,9 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 // RecoverPipelineActions marks all inflight actor effects unconfirmed, including
 // bound actors. It neither resends nor reconciles them; they remain fail-closed.
 // Call only with exclusive ownership after the previous server has stopped.
-// This is not wired into startup and does not provide automatic recovery.
+// It belongs to the reservation path of AppendPipelineVisit, where inflight
+// does not tell a delivered instruction from one being sent; startup runs
+// RecoverActorSteps instead, which keeps delivered steps inflight (#212).
 func (s *Store) RecoverPipelineActions(ctx context.Context) error {
 	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='unconfirmed' WHERE state='inflight'`)
 	return err
