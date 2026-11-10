@@ -33,9 +33,15 @@ type MessageRequest struct {
 
 // MessageResponse — вердикт доставки: текст в одном поле, без вложенных
 // структур, чтобы и сервер, и гость показывали его одинаково.
+//
+// NotSent (#244) — гость отказал до записи в сессию Claude (нет единственной
+// живой сессии, нет ключа peer, helper не запустился): сообщение заведомо не
+// ушло, и повтор безопасен. Без поля (false; прежний гость его не пишет) отказ
+// означает неизвестный исход: сообщение могло дойти, повтор дал бы дубль.
 type MessageResponse struct {
 	OK      bool   `json:"ok"`
 	Verdict string `json:"verdict"`
+	NotSent bool   `json:"notSent,omitempty"`
 }
 
 // encodeMessageFrame собирает один NDJSON-кадр запроса. Предел проверяется

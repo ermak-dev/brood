@@ -17,6 +17,11 @@ var (
 	errDeliveryUnconfirmed = errors.New("message delivery is unconfirmed; check before retrying")
 )
 
+// errMessageNotSent — гость ответил notSent (#244): сообщение до сессии
+// Claude заведомо не дошло, повтор безопасен. Клиенту send не уходит:
+// deliverOperatorMessage показывает вердикт гостя, как прежде.
+var errMessageNotSent = errors.New("the actor refused before sending")
+
 func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string, inv command.Invocation) (command.Result, error) {
 	allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
 	if err != nil {
@@ -62,6 +67,11 @@ func (s *Server) deliverOperatorMessage(ctx context.Context, userID, swarmID str
 		return nil
 	}
 	result, _, err := s.deliverToActor(ctx, swarmID, resolve, relay.MessageRequest{From: "operator:" + user.Username, Body: operatorMessageBody(message), WaitSec: wait}, manager)
+	if errors.Is(err, errMessageNotSent) {
+		// send и ответ на запрос сами не повторяют: оператор видит вердикт
+		// гостя, ответ на запрос можно доставить повторно (#210).
+		return result, nil
+	}
 	return result, err
 }
 
@@ -71,7 +81,9 @@ func (s *Server) deliverOperatorMessage(ctx context.Context, userID, swarmID str
 // проверяется прямо перед отправкой и сразу после неё, вместе с
 // неизменной инкарнацией адресата. sent сообщает, ушло ли сообщение в канал:
 // при sent=false эффекта у актора нет, при sent=true с ошибкой исход
-// неизвестен. To заполняется именем адресата.
+// неизвестен. Ответ гостя notSent — sent=false и errMessageNotSent с его
+// вердиктом в Text, если права и адресат за время вызова не изменились.
+// To заполняется именем адресата.
 func (s *Server) deliverToActor(ctx context.Context, swarmID string, resolve func(context.Context) (store.ManagedActor, error), msg relay.MessageRequest, authorize func(context.Context) error) (command.Result, bool, error) {
 	sw, err := s.store.GetSwarm(ctx, swarmID)
 	if err != nil {
@@ -92,10 +104,15 @@ func (s *Server) deliverToActor(ctx context.Context, swarmID string, resolve fun
 	}
 	msg.To = target.Name
 	response, err := s.managed.deliverMessage(ctx, target.UID, target.Incarnation, msg)
+	// notSent вместе с OK противоречив: доставку подтверждает OK.
+	unsent := err == nil && response.NotSent && !response.OK
 	authErr := authorize(ctx)
 	current, targetErr := s.store.GetManagedActor(ctx, target.UID)
 	if authErr != nil || targetErr != nil || current.Incarnation != target.Incarnation {
-		return command.Result{}, true, app.ErrNotAllowed
+		return command.Result{}, !unsent, app.ErrNotAllowed
+	}
+	if unsent {
+		return command.Result{Text: response.Verdict, Outcome: "unconfirmed"}, false, errMessageNotSent
 	}
 	if err != nil {
 		return command.Result{Outcome: "unconfirmed"}, true, errDeliveryUnconfirmed

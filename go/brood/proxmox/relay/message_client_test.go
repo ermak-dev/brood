@@ -52,6 +52,29 @@ func TestGuestMessageHandler(t *testing.T) {
 	}
 }
 
+// TestGuestMessageNotSentCrossesRelay — отказ гостя до записи в сессию
+// доезжает до сервера полем notSent через настоящий канал (#244).
+func TestGuestMessageNotSentCrossesRelay(t *testing.T) {
+	f := setup(t)
+	cfg := f.cfg
+	cfg.HandleMessage = func(context.Context, MessageRequest) MessageResponse {
+		return MessageResponse{Verdict: "no unique live Claude session for this project", NotSent: true}
+	}
+	start(t, f, cfg)
+	frame, _ := json.Marshal(MessageRequest{To: "worker", From: "swarm:s1", Body: "Step 1"})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := f.h.DialMessage(ctx, "actor-uid", 3, frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	resp, err := ReadMessageResponse(c)
+	if err != nil || resp.OK || !resp.NotSent || resp.Verdict != "no unique live Claude session for this project" {
+		t.Fatalf("response: %#v %v", resp, err)
+	}
+}
+
 func TestGuestMessageHandlerCanceledOnDisconnect(t *testing.T) {
 	f := setup(t)
 	entered := make(chan struct{})

@@ -43,26 +43,78 @@ func ReadDeliveryRequest(r io.Reader) (relay.MessageRequest, error) {
 	return req, nil
 }
 
+// actorSessions — каталог файлов сессий Claude актора; читает его только
+// helper под UID 1000.
+const actorSessions = "/workspace/home/.claude/sessions"
+
 // ReceiveMessage runs only inside the fixed, unprivileged delivery helper.
 // Paths from actor-owned session files are never opened by the root supervisor.
-func ReceiveMessage(ctx context.Context, req relay.MessageRequest) (relay.MessageResponse, error) {
+// Refusals before the session inbox write are NotSent (#244).
+func ReceiveMessage(ctx context.Context, req relay.MessageRequest) relay.MessageResponse {
+	return messageReceiver{identity: messageHelperIdentity, session: liveProjectSession, token: func(socket string) (string, error) {
+		return ccmsg.PeerToken(socket, actorSessions)
+	}, exchange: ccmsg.Exchange}.receive(ctx, req)
+}
+
+// messageReceiver — шаги доставки helper-а по порядку. Отказ любого шага до
+// записи в inbox сессии — NotSent: сообщение заведомо не ушло, и сервер может
+// повторить доставку, не рискуя дублем.
+type messageReceiver struct {
+	identity func() error
+	session  func(context.Context) (ccmsg.Session, error)
+	token    func(socket string) (string, error)
+	exchange func(ctx context.Context, socket, token, from, body string, waitSec int) (ccmsg.Delivery, error)
+}
+
+func (m messageReceiver) receive(ctx context.Context, req relay.MessageRequest) relay.MessageResponse {
+	if err := m.identity(); err != nil {
+		return messageNotSent(err.Error())
+	}
+	// Сессии нет и сразу после перезапуска актора (workspace_attest, restart):
+	// новый Claude ещё не записал файл сессии и не слушает inbox.
+	session, err := m.session(ctx)
+	if err != nil {
+		return messageNotSent("no unique live Claude session for this project")
+	}
+	token, err := m.token(session.SocketPath)
+	if err != nil {
+		return messageNotSent("Claude session peer key unavailable")
+	}
+	result, err := m.exchange(ctx, session.SocketPath, token, req.From, req.Body, req.WaitSec)
+	switch {
+	case errors.Is(err, ccmsg.ErrNotSent):
+		return messageNotSent("Claude session message was not sent")
+	case err != nil:
+		return relay.MessageResponse{Verdict: "Claude session message exchange failed"}
+	}
+	return deliveryResponse(result, req.WaitSec)
+}
+
+func messageNotSent(verdict string) relay.MessageResponse {
+	return relay.MessageResponse{Verdict: verdict, NotSent: true}
+}
+
+// messageHelperIdentity — helper ровно UID/GID 1000 без supplementary groups
+// и со сброшенными привилегиями до чтения файлов сессий.
+func messageHelperIdentity() error {
 	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
-		return relay.MessageResponse{}, errors.New("message helper requires UID and GID 1000")
+		return errors.New("message helper requires UID and GID 1000")
 	}
 	groups, err := os.Getgroups()
 	if err != nil {
-		return relay.MessageResponse{}, errors.New("message helper group check failed")
+		return errors.New("message helper group check failed")
 	}
 	for _, g := range groups {
 		if g != 1000 {
-			return relay.MessageResponse{}, errors.New("message helper has unexpected supplementary groups")
+			return errors.New("message helper has unexpected supplementary groups")
 		}
 	}
-	if err := lockPrivileges(); err != nil {
-		return relay.MessageResponse{}, err
-	}
-	const sessions = "/workspace/home/.claude/sessions"
-	session, err := ccmsg.SessionForCWD(sessions, "/workspace/project", func(path string) bool {
+	return lockPrivileges()
+}
+
+// liveProjectSession — единственная сессия /workspace/project с живым inbox.
+func liveProjectSession(ctx context.Context) (ccmsg.Session, error) {
+	return ccmsg.SessionForCWD(actorSessions, "/workspace/project", func(path string) bool {
 		probe, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", path)
 		if err != nil {
 			return false
@@ -70,18 +122,6 @@ func ReceiveMessage(ctx context.Context, req relay.MessageRequest) (relay.Messag
 		probe.Close()
 		return true
 	})
-	if err != nil {
-		return relay.MessageResponse{}, errors.New("no unique live Claude session for this project")
-	}
-	token, err := ccmsg.PeerToken(session.SocketPath, sessions)
-	if err != nil {
-		return relay.MessageResponse{}, errors.New("Claude session peer key unavailable")
-	}
-	result, err := ccmsg.Exchange(ctx, session.SocketPath, token, req.From, req.Body, req.WaitSec)
-	if err != nil {
-		return relay.MessageResponse{}, errors.New("Claude session message exchange failed")
-	}
-	return deliveryResponse(result, req.WaitSec), nil
 }
 
 func deliveryResponse(result ccmsg.Delivery, waitSec int) relay.MessageResponse {
@@ -110,22 +150,24 @@ func (b *boundedMessageOutput) Write(p []byte) (int, error) {
 
 // DeliverMessage is the root relay handler. Only bounded JSON crosses the UID
 // boundary; no actor-provided command or socket path is ever interpreted here.
+// Refusals before the helper starts are NotSent; once it runs, only its own
+// answer may say so.
 func DeliverMessage(ctx context.Context, req relay.MessageRequest) relay.MessageResponse {
 	if os.Geteuid() != 0 {
-		return relay.MessageResponse{Verdict: "message delivery requires guest supervisor"}
+		return messageNotSent("message delivery requires guest supervisor")
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(req.WaitSec)*time.Second+10*time.Second)
 	defer cancel()
 	data, err := json.Marshal(req)
 	if err != nil || len(data) > relay.MaxMessageBytes || ctx.Err() != nil {
-		return relay.MessageResponse{Verdict: "invalid message delivery request"}
+		return messageNotSent("invalid message delivery request")
 	}
 	if _, err := ReadDeliveryRequest(bytes.NewReader(data)); err != nil {
-		return relay.MessageResponse{Verdict: "invalid message delivery request"}
+		return messageNotSent("invalid message delivery request")
 	}
 	cmd, err := guestHelperCommand(messageHelperSpec())
 	if err != nil {
-		return relay.MessageResponse{Verdict: "message helper unavailable"}
+		return messageNotSent("message helper unavailable")
 	}
 	output := &boundedMessageOutput{}
 	cmd.Stdin = bytes.NewReader(data)
@@ -133,7 +175,7 @@ func DeliverMessage(ctx context.Context, req relay.MessageRequest) relay.Message
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
-		return relay.MessageResponse{Verdict: "message helper unavailable"}
+		return messageNotSent("message helper unavailable")
 	}
 	stop := context.AfterFunc(ctx, func() { _ = cmd.Process.Kill() })
 	defer stop()

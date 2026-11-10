@@ -30,6 +30,29 @@ func TestMessageRequestContract(t *testing.T) {
 	}
 }
 
+// TestMessageResponseNotSent — отказ гостя до записи в сессию помечен полем
+// notSent (#244), а не текстом. Ответ без поля (прежний гость) читается как
+// прежде: неизвестный исход, а не «не отправлено».
+func TestMessageResponseNotSent(t *testing.T) {
+	resp, err := json.Marshal(MessageResponse{Verdict: "no unique live Claude session for this project", NotSent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp) != `{"ok":false,"verdict":"no unique live Claude session for this project","notSent":true}` {
+		t.Fatalf("not sent encoding: %s", resp)
+	}
+	for raw, notSent := range map[string]bool{
+		`{"ok":false,"verdict":"no unique live Claude session for this project"}`:                false,
+		`{"ok":false,"verdict":"no unique live Claude session for this project","notSent":true}`: true,
+		`{"ok":false,"verdict":"submitted; delivery unconfirmed","notSent":false}`:               false,
+	} {
+		got, err := readMessageResponse(strings.NewReader(raw + "\n"))
+		if err != nil || got.OK || got.NotSent != notSent {
+			t.Fatalf("%s: %#v %v", raw, got, err)
+		}
+	}
+}
+
 func TestEncodeDecodeMessageFrame(t *testing.T) {
 	frame, err := encodeMessageFrame(MessageRequest{To: "a", Body: "b", From: "c"})
 	if err != nil {
