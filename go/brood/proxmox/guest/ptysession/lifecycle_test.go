@@ -191,6 +191,65 @@ func TestViewerFrameReceivesExplicitRefusal(t *testing.T) {
 	}
 }
 
+// BUG #239: читатель attach ставит явный отказ в очередь и выходит, закрывая
+// done. Если цикл записи ещё не ждал в select, готовы оба случая, select
+// выбирал done наравне с очередью, и наблюдатель получал EOF вместо причины:
+// под нагрузкой TestViewerFrameReceivesExplicitRefusal падал 237 раз из 300.
+// SPEC: Кадры, стоявшие в очереди до выхода читателя, уходят по порядку до
+// закрытия соединения; после терминального кадра запись прекращается.
+func TestForwardFramesSendsRefusalQueuedBeforeReaderExit(t *testing.T) {
+	// Состояние задано до вызова, а не гонкой: done закрыт, отказ в очереди.
+	// select выбирает готовый случай равновероятно, без дренажа итерация
+	// проходит с вероятностью 1/4, все 64 итерации: с вероятностью 2^-128.
+	for i := 0; i < 64; i++ {
+		host, viewer := socketPair(t)
+		frames := make(chan Frame, queueFrames)
+		frames <- Frame{Type: "output", Data: []byte("before")}
+		frames <- Frame{Type: "error", Data: []byte("PTY attachment is not the writer")}
+		frames <- Frame{Type: "output", Data: []byte("after")}
+		done := make(chan struct{})
+		close(done)
+		forwardFrames(host, frames, done)
+		_ = host.Close()
+		reader := bufio.NewReader(viewer)
+		for _, want := range []string{"output:before", "error:PTY attachment is not the writer"} {
+			var frame Frame
+			if err := ReadMessage(reader, &frame); err != nil {
+				t.Fatalf("iteration %d: queued %q lost on disconnect: %v", i, want, err)
+			}
+			if got := frame.Type + ":" + string(frame.Data); got != want {
+				t.Fatalf("iteration %d: frame %q, want %q", i, got, want)
+			}
+		}
+		var extra Frame
+		if err := ReadMessage(reader, &extra); err != io.EOF {
+			t.Fatalf("iteration %d: frame after refusal: %+v err=%v", i, extra, err)
+		}
+	}
+}
+
+// socketPair возвращает связанные AF_UNIX stream соединения, как у attach:
+// ядро буферизует запись, и forwardFrames не ждёт читателя.
+func socketPair(t *testing.T) (net.Conn, net.Conn) {
+	t.Helper()
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conns [2]net.Conn
+	for i, fd := range fds {
+		f := os.NewFile(uintptr(fd), "socketpair")
+		conns[i], err = net.FileConn(f)
+		_ = f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := conns[i]
+		t.Cleanup(func() { _ = c.Close() })
+	}
+	return conns[0], conns[1]
+}
+
 func TestRPCStopDoesNotStealWriter(t *testing.T) {
 	_, path := fixture(t, "ready")
 	r := mustOK(t, rpc(t, path, Request{Action: "ensure"}))
