@@ -140,17 +140,27 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 	if err := insertSwarmGraph(ctx, ts.testServer, "foreign", []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{master.SwarmID, "foreign"} {
-		v, err := s.AppendPipelineVisit(ctx, id, id, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "req"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := s.CompletePipelineActorVisit(ctx, id, id, v.Sequence, "req", master.UID, master.Incarnation, "success"); err != nil {
-			t.Fatal(err)
-		}
+	// Роль узла привязана к мастеру его же роя: шаг адресует привязанного
+	// актора (#208). Чужой рой и нативное имя производственный путь больше
+	// не пишет; строки кладутся напрямую, чтобы проверить чтение имён.
+	if err := s.BindSwarmRole(ctx, store.SwarmRoleBinding{SwarmID: master.SwarmID, Role: "build", ActorUID: master.UID}); err != nil {
+		t.Fatal(err)
 	}
-	native, err := s.ReservePipelineNativeActor(ctx, store.PipelineNativeReservation{SwarmID: "native", RunID: "native", NodeID: "actor", RequestID: "req", Sequence: 1, TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("cd", 32)})
+	v, err := s.AppendPipelineVisit(ctx, master.SwarmID, master.SwarmID, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "req"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompletePipelineActorVisit(ctx, master.SwarmID, master.SwarmID, v.Sequence, "req", master.UID, master.Incarnation, "success"); err != nil {
+		t.Fatal(err)
+	}
+	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "completed", ActorUID: master.UID, ActorIncarnation: master.Incarnation, RequestID: "req"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 2, NodeID: "done", State: "completed"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	const nativeName = "pipeline-native-actor"
+	if err := insertSwarmStep(ctx, ts.testServer, "native", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "inflight", RequestID: "req"}, nativeName); err != nil {
 		t.Fatal(err)
 	}
 	actors := func(nodes any) string {
@@ -172,7 +182,7 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 	}
 	for _, tc := range []struct{ id, want string }{
 		{master.SwarmID, "actor=" + master.Name + " done="},
-		{"native", "actor=" + native.ActorName},
+		{"native", "actor=" + nativeName},
 		{"foreign", "actor= done="},
 	} {
 		r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+tc.id, "", nil)
@@ -188,7 +198,7 @@ func TestPipelineNodeActorNameWire(t *testing.T) {
 		t.Fatalf("list: %s", raw)
 	}
 	// Рои идут в порядке создания: master, foreign, native.
-	if got := actors(runs[0]["nodes"]) + " | " + actors(runs[1]["nodes"]) + " | " + actors(runs[2]["nodes"]); got != "actor="+master.Name+" done= | actor= done= | actor="+native.ActorName {
+	if got := actors(runs[0]["nodes"]) + " | " + actors(runs[1]["nodes"]) + " | " + actors(runs[2]["nodes"]); got != "actor="+master.Name+" done= | actor= done= | actor="+nativeName {
 		t.Fatalf("listed actors: %q", got)
 	}
 }

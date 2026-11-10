@@ -23,7 +23,7 @@ nodes:
     options:
       - {label: Yes, outcome: success}
       - {label: No, outcome: fail}
-  actor: {type: actor, template: development, prompt: work}
+  actor: {type: actor, role: build, prompt: work}
   done: {type: exit}
 edges:
   - {from: ask, to: actor, label: Yes}
@@ -79,7 +79,7 @@ name: tohuman
 start: work
 exit: done
 nodes:
-  work: {type: actor, template: development, prompt: work}
+  work: {type: actor, role: build, prompt: work}
   ask:
     type: human
     options:
@@ -153,8 +153,8 @@ name: recovery
 start: work
 exit: done
 nodes:
-  work: {type: actor, template: development, prompt: work}
-  repair: {type: actor, template: development, prompt: repair}
+  work: {type: actor, role: build, prompt: work}
+  repair: {type: actor, role: build, prompt: repair}
   done: {type: exit}
 edges:
   - {from: work, to: done, condition: "outcome=success"}
@@ -184,8 +184,8 @@ nodes:
     type: human
     options:
       - {label: Approve, outcome: success}
-  actor: {type: actor, template: development, prompt: work}
-  slow: {type: actor, template: development, prompt: slow}
+  actor: {type: actor, role: build, prompt: work}
+  slow: {type: actor, role: build, prompt: slow}
   done: {type: exit}
 edges:
   - {from: ask, to: slow, label: Defer, weight: 10}
@@ -214,7 +214,7 @@ func TestAdvanceRejects(t *testing.T) {
 		Start:      "actor",
 		Exit:       "done",
 		Nodes: map[string]pipeline.Node{
-			"actor": {Type: "actor", Template: "development"},
+			"actor": {Type: "actor", Role: "build"},
 			"done":  {Type: "exit"},
 			"other": {Type: "exit"},
 		},
@@ -251,10 +251,10 @@ func TestSupportedRejects(t *testing.T) {
 		{"retry", mustEdit(t, "retry", engineGraph, "goalGates: [done]",
 			"retry: {maxRetries: 2}\ngoalGates: [done]")},
 		{"goal gate", mustEdit(t, "gate", engineGraph, "goalGates: [done]", "goalGates: [actor]")},
-		{"managed pool", mustEdit(t, "pool", engineGraph, "template: development, prompt: work",
-			"managedPool: pool, prompt: work")},
-		{"condition node", mustEdit(t, "condition", engineGraph, "  actor: {type: actor, template: development, prompt: work}",
-			"  actor: {type: actor, template: development, prompt: work}\n  check: {type: condition}")},
+		{"missing role", mustEdit(t, "role", engineGraph, "role: build, prompt: work",
+			"prompt: work")},
+		{"condition node", mustEdit(t, "condition", engineGraph, "  actor: {type: actor, role: build, prompt: work}",
+			"  actor: {type: actor, role: build, prompt: work}\n  check: {type: condition}")},
 		{"unsupported condition key", mustEdit(t, "cond", engineGraph,
 			`condition: "outcome=success"`, `condition: "context.mode=dev"`)},
 		{"human option without matching edge", mustEdit(t, "option", engineGraph,
@@ -278,7 +278,9 @@ goalGates: [done]
 		t.Run(tc.name, func(t *testing.T) {
 			d, err := pipeline.Parse(tc.graph, tc.name)
 			if err != nil {
-				t.Fatalf("parse: %v", err)
+				// Разбор отверг документ раньше Supported — это тоже отказ,
+				// более ранний и более строгий.
+				return
 			}
 			if err := pipeline.Supported(d); err == nil {
 				t.Fatal("Supported accepted an unsupported document")

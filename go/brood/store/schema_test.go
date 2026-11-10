@@ -42,7 +42,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_preparations", "pipeline_sources", "project_capacity", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "swarm_members", "swarm_steps", "swarms", "users", "workflow_definitions", "workflow_revision_counters"}
+	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_preparations", "pipeline_sources", "project_capacity", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "swarm_members", "swarm_role_bindings", "swarm_steps", "swarms", "users", "workflow_definitions", "workflow_revision_counters"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}
@@ -98,7 +98,7 @@ func TestOpenIdempotentOnReopen(t *testing.T) {
 // обновляется, а отвергается. Отказ обязан назвать обе версии и не
 // тронуть файл: сравниваем снимок sqlite_master и user_version.
 func TestOpenRejectsForeignSchemaVersion(t *testing.T) {
-	for _, version := range []int{0, 7, 15, 17, 99} {
+	for _, version := range []int{0, 7, 15, 16, 18, 99} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "db.sqlite3")
@@ -186,7 +186,7 @@ func TestSchemaModulesCoverExpectedTables(t *testing.T) {
 			seen[table] = true
 		}
 	}
-	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "pipeline_preparations"}
+	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "pipeline_preparations", "swarm_role_bindings"}
 	for _, table := range want {
 		if !seen[table] {
 			t.Errorf("table %s is missing from schemaModules DDL", table)

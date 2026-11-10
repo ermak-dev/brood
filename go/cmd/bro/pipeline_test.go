@@ -57,7 +57,7 @@ func TestPipelineBroodfileWorkflow(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"validate", "--workflow", "inspect", path}, "INFO"},
+		{[]string{"validate", "--workflow", "inspect", path}, ""}, // чистый документ без диагностик: INFO про styles ушёл вместе с styles
 		{[]string{"plan", "--workflow", "inspect", path}, "inspect -> review"},
 		{[]string{"render", "--workflow", "inspect", path, "--dot"}, "inspect -> review"},
 	} {

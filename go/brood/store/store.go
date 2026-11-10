@@ -24,7 +24,7 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 
 // schemaVersion — единственная версия схемы базы. Миграций нет: база
 // создаётся заново, любая другая версия отвергается (#205).
-const schemaVersion = 16
+const schemaVersion = 17
 
 //go:embed schema.sql
 var currentSchema string

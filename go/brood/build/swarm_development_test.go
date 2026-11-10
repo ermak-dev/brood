@@ -2,7 +2,9 @@ package build
 
 // FEATURE: Два определения разработки роем в корневом Broodfile.
 // SPEC: Обычный путь без человека; архитектурный путь пропускает только одобрение.
-// IMPLEMENTATION: Два графа с явной маршрутизацией успешных исходов и отказа.
+// IMPLEMENTATION: Два графа с явной маршрутизацией успешных исходов и отказа;
+// узлы называют роли. Число ролей графа сверяется с принятой константой
+// maxWorkflowRoles, а не с ёмкостью пула (#221).
 // RESULT: IMPLEMENTED — определения проходят общую проверку и проверку маршрутов.
 // STATUS: DONE
 
@@ -14,6 +16,14 @@ import (
 
 	"brood.dev/go/brood/pipeline"
 )
+
+// maxWorkflowRoles — принятая граница числа различных ролей в одном
+// опубликованном графе корневого Broodfile. Это не maxActors пула и не
+// гарантия ёмкости: пул проекта в Broodfile не объявлен, а несколько ролей
+// вправе делиться одним актором. Сверки ёмкости пула с привязками ролей пока
+// нет нигде, её добавит запуск роя (#221); тест лишь ловит рост числа ролей
+// в Broodfile.
+const maxWorkflowRoles = 3
 
 func TestSwarmDevelopmentWorkflows(t *testing.T) {
 	data, err := os.ReadFile("../../../Broodfile")
@@ -72,7 +82,7 @@ func TestSwarmDevelopmentWorkflows(t *testing.T) {
 					if node.Options[0].Outcome != "success" || node.Options[1].Outcome != "fail" {
 						t.Fatalf("decision outcomes: %+v", node.Options)
 					}
-				} else if node.Type != "actor" || node.Template != "coding" || node.Prompt == "" {
+				} else if node.Type != "actor" || node.Role == "" || node.Prompt == "" {
 					t.Fatalf("invalid actor %s: %+v", name, node)
 				}
 				var outgoing []pipeline.Edge
@@ -95,5 +105,70 @@ func TestSwarmDevelopmentWorkflows(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSwarmWorkflowRoleCountBounded — опубликованный граф называет не более
+// maxWorkflowRoles ролей. Ёмкость пула и число акторов тест не проверяет (#221).
+func TestSwarmWorkflowRoleCountBounded(t *testing.T) {
+	data, err := os.ReadFile("../../../Broodfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseDocument(string(data), "Broodfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows, _ := doc["workflows"].(map[string]any)
+	if len(workflows) == 0 {
+		t.Fatal("no published workflows")
+	}
+	for name := range workflows {
+		graph, err := Workflow(doc, name, "Broodfile")
+		if err != nil {
+			t.Fatal(err)
+		}
+		roles := graph.Roles()
+		if len(roles) > maxWorkflowRoles {
+			t.Fatalf("workflow %s names %d roles, expected at most %d", name, len(roles), maxWorkflowRoles)
+		}
+	}
+}
+
+// TestSwarmWorkflowRoleSplit — обзоры и реализация названы разными ролями.
+// Разные ли акторы их займут, решает привязка роя: один актор вправе держать
+// обе роли, и тогда независимость обзора граф не обеспечивает.
+func TestSwarmWorkflowRoleSplit(t *testing.T) {
+	data, err := os.ReadFile("../../../Broodfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ParseDocument(string(data), "Broodfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]map[string]string{
+		"swarm-development": {
+			"triage": "review", "review": "review",
+			"implement": "build", "test": "build", "integrate": "build",
+		},
+		"swarm-architecture": {
+			"triage": "review", "architecture": "review", "review": "review",
+			"implement": "build", "test": "build", "integrate": "build",
+		},
+	}
+	for workflow, nodes := range want {
+		graph, err := Workflow(doc, workflow, "Broodfile")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for node, role := range nodes {
+			if graph.Nodes[node].Role != role {
+				t.Fatalf("%s.%s: role %q, want %q", workflow, node, graph.Nodes[node].Role, role)
+			}
+		}
+		if len(graph.Roles()) != 2 {
+			t.Fatalf("%s: expected exactly two roles, got %v", workflow, graph.Roles())
+		}
 	}
 }

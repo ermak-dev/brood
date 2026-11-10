@@ -25,7 +25,7 @@ workflows:
     start: work
     exit: done
     nodes:
-      work: {type: actor, template: python, prompt: Check the project}
+      work: {type: actor, role: build, prompt: Check the project}
       done: {type: exit}
     edges:
       - {from: work, to: done}
@@ -34,7 +34,7 @@ workflows:
     start: inspect
     exit: end
     nodes:
-      inspect: {type: actor, template: python, prompt: Review the project}
+      inspect: {type: actor, role: build, prompt: Review the project}
       end: {type: exit}
     edges:
       - {from: inspect, to: end}
@@ -71,7 +71,7 @@ func TestBuildRejectsTooManyWorkflowsBeforeSync(t *testing.T) {
 	}
 	fmt.Fprintln(f, "\nworkflows:")
 	for i := 0; i < 257; i++ {
-		fmt.Fprintf(f, "  flow%d:\n    start: work\n    exit: done\n    nodes:\n      work: {type: actor, template: python, prompt: Check}\n      done: {type: exit}\n    edges: [{from: work, to: done}]\n    goalGates: [done]\n", i)
+		fmt.Fprintf(f, "  flow%d:\n    start: work\n    exit: done\n    nodes:\n      work: {type: actor, role: build, prompt: Check}\n      done: {type: exit}\n    edges: [{from: work, to: done}]\n    goalGates: [done]\n", i)
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestBuildPublishesWorkflowSnapshots(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s is not a standalone pipeline: %v", name, err)
 		}
-		if graph.Name != name || graph.Start != want.start || graph.Exit != want.exit || graph.Nodes[want.start].Template != "python" || graph.Nodes[want.start].Prompt != want.prompt || len(graph.Edges) != 1 || graph.Edges[0].From != want.start || graph.Edges[0].To != want.exit {
+		if graph.Name != name || graph.Start != want.start || graph.Exit != want.exit || graph.Nodes[want.start].Role != "build" || graph.Nodes[want.start].Prompt != want.prompt || len(graph.Edges) != 1 || graph.Edges[0].From != want.start || graph.Edges[0].To != want.exit {
 			t.Errorf("%s snapshot = %+v", name, graph)
 		}
 	}

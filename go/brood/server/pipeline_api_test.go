@@ -48,13 +48,15 @@ func TestPipelineWireContract(t *testing.T) {
 	_, alice, bob, swarm := actorsSetup(t, ts.testServer)
 	ctx := context.Background()
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
-	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, template: development, prompt: work}\n", 1)
+	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, role: development, prompt: work}\n", 1)
 	graph = strings.Replace(graph, "  - {from: ask, to: done}", "  - {from: entry, to: ask}\n  - {from: ask, to: ask, condition: \"outcome=success\"}\n  - {from: ask, to: done, condition: \"outcome=fail\"}", 1)
 	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(graph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	entry, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, swarm, store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
-	if err != nil {
+	// Шаг актора кладётся напрямую: тест провода читает шаги, а привязку
+	// роли к актору проверяет хранилище (#208).
+	entry := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
+	if err := insertSwarmStep(ctx, ts.testServer, swarm, entry, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := ts.srv.store.CompletePipelineActorVisit(ctx, swarm, swarm, entry.Sequence, "request", "worker", 1, "success"); err != nil {
@@ -137,7 +139,7 @@ func TestPipelineActorStates(t *testing.T) {
 	_, alice, _, swarm := actorsSetup(t, ts.testServer)
 	ctx := context.Background()
 	graph := strings.Replace(pipelineAPIGraph, "start: ask", "start: entry", 1)
-	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, template: development, prompt: work}\n", 1)
+	graph = strings.Replace(graph, "nodes:\n", "nodes:\n  entry: {type: actor, role: development, prompt: work}\n", 1)
 	graph = strings.Replace(graph, "  - {from: ask, to: done}", "  - {from: entry, to: ask}\n  - {from: ask, to: done}", 1)
 	// Каждый случай — отдельный рой проекта: один рой, один граф (#206).
 	sw, err := ts.srv.store.GetSwarm(ctx, swarm)
@@ -152,8 +154,8 @@ func TestPipelineActorStates(t *testing.T) {
 		if err := insertSwarmGraph(ctx, ts.testServer, target[tc.id], []byte(graph), "running"); err != nil {
 			t.Fatal(err)
 		}
-		v, err := ts.srv.store.AppendPipelineVisit(ctx, target[tc.id], target[tc.id], store.PipelineVisit{NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"})
-		if err != nil {
+		v := store.PipelineVisit{Sequence: 1, NodeID: "entry", State: "inflight", ActorUID: "worker", ActorIncarnation: 1, RequestID: "request"}
+		if err := insertSwarmStep(ctx, ts.testServer, target[tc.id], v, ""); err != nil {
 			t.Fatal(err)
 		}
 		if tc.id == "failure" {

@@ -80,7 +80,7 @@ exit: e
 nodes:
   s:
     type: actor
-    template: example
+    role: build
     prompt: go
   h:
     type: human
@@ -126,7 +126,7 @@ goalGates: [l]
 // STATUS: DONE
 func TestGraphAdapter(t *testing.T) {
 	d := validDocument(t)
-	d.Nodes[d.Start] = Node{Type: "actor", Template: "example", Prompt: "secret payload"}
+	d.Nodes[d.Start] = Node{Type: "actor", Role: "build", Prompt: "secret payload"}
 	d.Edges[0].Label = "a & b"
 	d.Edges[0].Weight = 7
 	g := d.Graph()

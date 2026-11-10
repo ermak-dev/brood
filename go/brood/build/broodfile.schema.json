@@ -761,14 +761,11 @@
                 {
                   "if": {
                     "required": [
-                      "managedPool"
+                      "role"
                     ]
                   },
                   "then": {
                     "properties": {
-                      "template": {
-                        "const": ""
-                      },
                       "type": {
                         "const": "actor"
                       }
@@ -782,11 +779,6 @@
                     "type": "string"
                   },
                   "type": "array"
-                },
-                "managedPool": {
-                  "maxLength": 63,
-                  "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
-                  "type": "string"
                 },
                 "options": {
                   "items": {
@@ -813,10 +805,12 @@
                 "question": {
                   "type": "string"
                 },
-                "target": {
+                "role": {
+                  "maxLength": 63,
+                  "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
                   "type": "string"
                 },
-                "template": {
+                "target": {
                   "type": "string"
                 },
                 "type": {
@@ -860,27 +854,6 @@
           },
           "start": {
             "type": "string"
-          },
-          "styles": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "selectors": {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                "template": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "selectors"
-              ],
-              "type": "object"
-            },
-            "type": "array"
           }
         },
         "required": [

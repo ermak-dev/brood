@@ -29,6 +29,7 @@ var schemaModules = []schemaModule{
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
 	{id: "pipelines", create: func() string { return swarmStepsSchema }, verify: verifySwarmStepsSchema},
+	{id: "swarm-roles", create: func() string { return swarmRoleBindingSchema }, verify: verifySwarmRoleSchema},
 	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},
 	{id: "pipeline-source", create: pipelineSourceFullSchema, verify: verifyPipelineSourcesSchema},
 	{id: "pipeline-preparation", create: pipelinePreparationFullSchema, verify: verifyPipelinePreparationsSchema},
@@ -156,6 +157,11 @@ func verifyOriginSchema(ctx context.Context, tx *sql.Tx) error {
 // verifySwarmStepsSchema сверяет шаги роя.
 func verifySwarmStepsSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkSchema(ctx, tx, swarmStepsSchema)
+}
+
+// verifySwarmRoleSchema сверяет привязки ролей роёв.
+func verifySwarmRoleSchema(ctx context.Context, tx *sql.Tx) error {
+	return checkSchema(ctx, tx, swarmRoleBindingSchema)
 }
 
 // verifyWorkflowSchema сверяет определения и счётчики ревизий, включая

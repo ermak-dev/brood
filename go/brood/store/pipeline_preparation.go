@@ -1,34 +1,23 @@
 package store
 
-import (
-	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"database/sql"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
+import "context"
 
-	"brood.dev/go/brood/pipeline"
-)
+// Подготовка выделенного актора под узел закрыта (#208): узел называет роль,
+// рой связывает её с существующим актором. Таблица pipeline_preparations и
+// её триггеры остаются в схеме, пока она не сменится; записанное прежде
+// намерение по-прежнему неизменно, а RecoverPipelinePreparations переводит
+// его в unconfirmed.
 
-var (
-	// ErrPipelinePreparationConflict indicates that a preparation identity is already bound.
-	ErrPipelinePreparationConflict = errors.New("pipeline preparation conflicts with an existing attempt")
-	// ErrPipelinePreparationDenied indicates that authorization no longer permits preparation.
-	ErrPipelinePreparationDenied = errors.New("pipeline preparation is not authorized")
-)
-
-// PipelinePreparationRequest identifies a new dedicated actor and its workflow visit.
-// The caller must bind authorize to the authenticated user's current session.
+// PipelinePreparationRequest identified a new dedicated actor and its
+// workflow visit; it remains the argument of the closed entry point.
 type PipelinePreparationRequest struct {
 	SwarmID, RunID, NodeID, RequestID, UserID string
 	Sequence                                  int64
 	Actor                                     ManagedActor
 }
 
-// PipelinePreparation is an allocation intent, not permission to deliver work.
-// Challenge is returned only after the first successful commit; a replay never exposes it.
+// PipelinePreparation was an allocation intent, not permission to deliver
+// work; the closed entry point never returns one.
 type PipelinePreparation struct {
 	ActorUID     string
 	Incarnation  int64
@@ -87,174 +76,14 @@ func pipelinePreparationTriggers() []struct{ name, statement string } {
 	}
 }
 
-// ReservePipelinePreparation atomically binds a new managed actor allocation to a visit.
-// It refuses an outer transaction so the returned fresh challenge implies a committed intent.
-// Neither this reservation nor the challenge authorizes actor startup or task delivery.
-func (s *Store) ReservePipelinePreparation(ctx context.Context, req PipelinePreparationRequest, authorize func(context.Context) bool) (PipelinePreparation, error) {
-	if _, nested := ctx.Value(txKey{}).(*sql.Tx); nested {
-		return PipelinePreparation{}, errors.New("pipeline preparation cannot be nested in a transaction")
-	}
-	if authorize == nil || !authorize(ctx) {
-		return PipelinePreparation{}, ErrPipelinePreparationDenied
-	}
-	if !validPipelineField(req.SwarmID) || !validPipelineField(req.RunID) || !validPipelineField(req.NodeID) || !validPipelineField(req.RequestID) || !validPipelineField(req.UserID) || req.Sequence < 1 {
-		return PipelinePreparation{}, errors.New("invalid pipeline preparation identity")
-	}
-	if req.RunID != req.SwarmID {
-		return PipelinePreparation{}, errors.New("pipeline preparation is scoped to the run's own swarm")
-	}
-	input := req.Actor
-	if input.SwarmID != req.SwarmID || (input.Role != "" && input.Role != "worker") || input.DelegatorID != "" || input.ParentUID != "" {
-		return PipelinePreparation{}, errors.New("pipeline preparation requires a dedicated worker in the run's swarm")
-	}
-	actor := ManagedActor{UID: input.UID, Name: input.Name, SwarmID: input.SwarmID, AtespaceUID: input.AtespaceUID, PoolUID: input.PoolUID, Resources: input.Resources, CTID: input.CTID, OwnerNonce: input.OwnerNonce, OperationID: input.OperationID, Role: "worker"}
-	var result PipelinePreparation
-	err := s.WithTx(ctx, func(ctx context.Context) error {
-		if !authorize(ctx) {
-			return ErrPipelinePreparationDenied
-		}
-		user, err := s.GetUser(ctx, req.UserID)
-		if err != nil || user.Disabled {
-			return ErrPipelinePreparationDenied
-		}
-		swarm, err := s.GetSwarm(ctx, req.SwarmID)
-		if err != nil || swarm.State != "active" {
-			return ErrPipelinePreparationDenied
-		}
-		if !user.IsAdmin {
-			member, err := s.IsMember(ctx, swarm.ProjectID, req.UserID)
-			if err != nil {
-				return err
-			}
-			if !member {
-				return ErrPipelinePreparationDenied
-			}
-			role, err := s.GetSwarmRole(ctx, req.SwarmID, req.UserID)
-			if errors.Is(err, ErrNotFound) {
-				return ErrPipelinePreparationDenied
-			}
-			if err != nil {
-				return err
-			}
-			if role != "owner" && role != "editor" {
-				return ErrPipelinePreparationDenied
-			}
-		}
-		if swarm.Graph == nil || swarm.Source == nil || !activeExecution(swarm.Execution) {
-			return ErrPipelinePreparationConflict
-		}
-		if input.Origin != "" && input.Origin != swarm.Source.Origin {
-			return ErrPipelinePreparationConflict
-		}
-		actor.Origin = swarm.Source.Origin
-		doc, err := pipeline.Parse(string(swarm.Graph), "pipeline")
-		if err != nil {
-			return err
-		}
-		if err = doc.Validate(); err != nil {
-			return err
-		}
-		node, ok := doc.Nodes[req.NodeID]
-		if !ok || node.Type != "actor" || node.ManagedPool == "" {
-			return ErrPipelinePreparationConflict
-		}
-		pool, err := s.GetManagedPool(ctx, actor.PoolUID)
-		if err != nil {
-			return err
-		}
-		if pool.Name != node.ManagedPool || pool.State != "enabled" {
-			return ErrPipelinePreparationConflict
-		}
-		fingerprintInput := struct {
-			SwarmID, RunID, NodeID, RequestID, UserID string
-			Sequence                                  int64
-			Actor                                     ManagedActor
-		}{req.SwarmID, req.RunID, req.NodeID, req.RequestID, req.UserID, req.Sequence, actor}
-		encoded, err := json.Marshal(fingerprintInput)
-		if err != nil {
-			return err
-		}
-		digestBytes := sha256.Sum256(encoded)
-		digest := hex.EncodeToString(digestBytes[:])
-		var storedDigest, preparationState string
-		err = s.conn(ctx).QueryRowContext(ctx, `SELECT request_digest,actor_uid,actor_incarnation,pool_uid,pool_revision,state FROM pipeline_preparations WHERE swarm_id=? AND (sequence=? OR request_id=?)`, req.SwarmID, req.Sequence, req.RequestID).Scan(&storedDigest, &result.ActorUID, &result.Incarnation, &result.PoolUID, &result.PoolRevision, &preparationState)
-		if err == nil {
-			if storedDigest != digest || preparationState != "reserved" || pool.UID != result.PoolUID || pool.Revision != result.PoolRevision {
-				return ErrPipelinePreparationConflict
-			}
-			current, err := s.GetManagedActor(ctx, result.ActorUID)
-			if err != nil || current.Incarnation != result.Incarnation || current.SwarmID != req.SwarmID || current.Desired != "running" || (current.Phase != "provisioning" && current.Phase != "running") {
-				return ErrPipelinePreparationConflict
-			}
-			var visitCurrent bool
-			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarm_steps WHERE swarm_id=? AND sequence=? AND sequence=(SELECT MAX(sequence) FROM swarm_steps WHERE swarm_id=?) AND node_id=? AND state='preparing' AND actor_uid=? AND actor_incarnation=? AND request_id=?)`, req.SwarmID, req.Sequence, req.SwarmID, req.NodeID, result.ActorUID, result.Incarnation, req.RequestID).Scan(&visitCurrent); err != nil {
-				return err
-			}
-			if !visitCurrent {
-				return ErrPipelinePreparationConflict
-			}
-			result.Replay = true
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		var count, latest int64
-		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT count(*),COALESCE(MAX(sequence),0) FROM swarm_steps WHERE swarm_id=?`, req.SwarmID).Scan(&count, &latest); err != nil {
-			return err
-		}
-		if count == 0 {
-			if req.Sequence != 1 || req.NodeID != doc.Start {
-				return ErrPipelinePreparationConflict
-			}
-		} else {
-			var nodeID, state string
-			if latest != req.Sequence {
-				return ErrPipelinePreparationConflict
-			}
-			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state FROM swarm_steps WHERE swarm_id=? AND sequence=?`, req.SwarmID, latest).Scan(&nodeID, &state); err != nil {
-				return err
-			}
-			if nodeID != req.NodeID || state != "pending" {
-				return ErrPipelinePreparationConflict
-			}
-		}
-		reserved, err := s.ReserveManagedActor(ctx, actor)
-		if err != nil {
-			return err
-		}
-		if count == 0 {
-			_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,started_at,actor_uid,actor_incarnation,request_id) VALUES (?,?,?,'preparing',?,?,?,?)`, req.SwarmID, req.Sequence, req.NodeID, nowRFC3339(), reserved.UID, reserved.Incarnation, req.RequestID)
-		} else {
-			var updated sql.Result
-			updated, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='preparing',started_at=?,actor_uid=?,actor_incarnation=?,request_id=? WHERE swarm_id=? AND sequence=? AND node_id=? AND state='pending' AND actor_uid IS NULL AND actor_incarnation IS NULL AND request_id IS NULL`, nowRFC3339(), reserved.UID, reserved.Incarnation, req.RequestID, req.SwarmID, req.Sequence, req.NodeID)
-			if err == nil {
-				var n int64
-				n, err = updated.RowsAffected()
-				if err == nil && n != 1 {
-					return ErrPipelinePreparationConflict
-				}
-			}
-		}
-		if err != nil {
-			return err
-		}
-		var challenge [32]byte
-		if _, err := rand.Read(challenge[:]); err != nil {
-			return errors.New("cannot generate pipeline preparation challenge")
-		}
-		hash := sha256.Sum256(challenge[:])
-		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_preparations(swarm_id,sequence,node_id,request_id,actor_uid,actor_incarnation,pool_uid,pool_revision,request_digest,challenge_digest,state,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,'reserved',?)`, req.SwarmID, req.Sequence, req.NodeID, req.RequestID, reserved.UID, reserved.Incarnation, pool.UID, pool.Revision, digest, hex.EncodeToString(hash[:]), nowRFC3339())
-		if err != nil {
-			return err
-		}
-		result = PipelinePreparation{ActorUID: reserved.UID, Incarnation: reserved.Incarnation, PoolUID: pool.UID, PoolRevision: pool.Revision, Challenge: hex.EncodeToString(challenge[:])}
-		return nil
-	})
-	if err != nil {
-		return PipelinePreparation{}, err
-	}
-	return result, nil
+// ReservePipelinePreparation is closed (#208): it reserved a new dedicated
+// managed actor for a workflow visit, and a workflow node no longer gets an
+// actor of its own. A node names a role, the swarm binds the role to an
+// existing actor (BindSwarmRole) and a step addresses that actor
+// (AppendPipelineVisit). It returns ErrPipelineNodeActorCreation before any
+// read or write, whatever the request or authorization.
+func (s *Store) ReservePipelinePreparation(_ context.Context, _ PipelinePreparationRequest, _ func(context.Context) bool) (PipelinePreparation, error) {
+	return PipelinePreparation{}, ErrPipelineNodeActorCreation
 }
 
 // RecoverPipelinePreparations marks interrupted attempts unconfirmed without retrying or freeing actors.

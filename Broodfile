@@ -147,7 +147,7 @@ workflows:
     nodes:
       triage:
         type: actor
-        template: coding
+        role: review
         prompt: >-
           Investigate the issue and existing code. Check for duplicates, establish
           evidence and scope, and report the plan and unknowns. Follow CLAUDE.md.
@@ -156,7 +156,7 @@ workflows:
           if blocked or unable to establish the requirements.
       implement:
         type: actor
-        template: coding
+        role: build
         prompt: >-
           Implement the scoped issue following CLAUDE.md, including the issue and
           branch process, one change per layer, and test-first development where
@@ -164,7 +164,7 @@ workflows:
           on failure or substitute instructions for authorization.
       review:
         type: actor
-        template: coding
+        role: review
         prompt: >-
           Independently review the implementation in a fresh session, without
           relying on the implementer's conclusions. Examine the diff for defects,
@@ -172,7 +172,7 @@ workflows:
           progress if unresolved or independence cannot be established.
       test:
         type: actor
-        template: coding
+        role: build
         prompt: >-
           Run the applicable checks from CLAUDE.md, including brood dev test and
           ruff check, and Go build and tests for Go changes. For panel changes run
@@ -180,7 +180,7 @@ workflows:
           fail on errors, unavailable checks, or unresolved review findings.
       integrate:
         type: actor
-        template: coding
+        role: build
         prompt: >-
           Follow the CLAUDE.md landing process for the approved change: review the
           diff, rebase on main and use one push, with review comments handled in
@@ -201,14 +201,14 @@ workflows:
     nodes:
       triage:
         type: actor
-        template: coding
+        role: review
         prompt: >-
           Investigate the issue, check for duplicates and document evidence,
           scope, and why an architectural decision is needed. Follow CLAUDE.md;
           stop and report blockers rather than claiming success.
       architecture:
         type: actor
-        template: coding
+        role: review
         prompt: >-
           Prepare the architectural decision for a human: describe the problem,
           alternatives, tradeoffs, risks, recommendation and open questions.
@@ -221,7 +221,7 @@ workflows:
           - {label: Reject, outcome: fail}
       implement:
         type: actor
-        template: coding
+        role: build
         prompt: >-
           Implement only the approved architecture and scoped issue, following
           CLAUDE.md, the issue and branch process, layer boundaries and required
@@ -229,7 +229,7 @@ workflows:
           approval or requirements cannot be established.
       review:
         type: actor
-        template: coding
+        role: review
         prompt: >-
           Independently review the implementation in a fresh session, without
           relying on the implementer's conclusions. Examine the diff against the
@@ -237,7 +237,7 @@ workflows:
           if unresolved or independence cannot be established.
       test:
         type: actor
-        template: coding
+        role: build
         prompt: >-
           Run the applicable checks from CLAUDE.md, including brood dev test and
           ruff check, and Go build and tests for Go changes. For panel changes run
@@ -245,7 +245,7 @@ workflows:
           fail on errors, unavailable checks, or unresolved review findings.
       integrate:
         type: actor
-        template: coding
+        role: build
         prompt: >-
           Follow the CLAUDE.md landing process for the approved change: review the
           diff, rebase on main and use one push, with review comments handled in

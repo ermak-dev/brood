@@ -48,7 +48,7 @@ func TestMappingKeyAnchors(t *testing.T) {
 // HYPOTHESIS: yaml.v3 repeats its quadratic duplicate-key check during decoding.
 func TestDecodeStrictCompatibility(t *testing.T) {
 	cases := []string{
-		"apiVersion: brood.dev/v1alpha1\nname: example\nnodes: {a: {type: actor}}\n",
+		"apiVersion: brood.dev/v1alpha1\nname: example\nnodes: {a: {type: actor, role: build}}\n",
 		"apiVersion: brood.dev/v1alpha1\nname: 12\nstart: true\nexit: 1.5\n",
 		"apiVersion: brood.dev/v1alpha1\nname: null\nretry: null\nedges: null\n",
 		"apiVersion: brood.dev/v1alpha1\nretry: {maxRetries: 0x10}\nedges: [{weight: 1.5}]\n",

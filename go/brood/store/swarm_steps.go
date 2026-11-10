@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"brood.dev/go/brood/pipeline"
 )
@@ -76,7 +77,13 @@ func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 // AppendPipelineVisit atomically allocates the next sequence within the
 // swarm graph. The legacy run ID argument names the run's own swarm and
 // must match: guest tooling still addresses visits by run ID (#210
-// заменит провод).
+// заменит провод). A new inflight actor visit names the actor bound to the
+// node's role at its current incarnation; the binding is resolved in the
+// same transaction as the write, and any other actor, incarnation or a
+// stale, foreign, inactive or missing binding is refused with
+// ErrPipelineVisitConflict before anything is written. A replay of an
+// already recorded request ID writes nothing and is answered from the
+// stored step without rechecking the binding.
 func (s *Store) AppendPipelineVisit(ctx context.Context, swarmID, legacyRunID string, v PipelineVisit) (PipelineVisit, error) {
 	if legacyRunID != swarmID {
 		return v, ErrPipelineVisitConflict
@@ -133,6 +140,12 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 	if v.State == "inflight" {
 		if n.Type != "actor" || !validPipelineField(v.ActorUID) || v.ActorIncarnation <= 0 || !validPipelineField(v.RequestID) {
 			return v, errors.New("invalid inflight pipeline visit")
+		}
+		// Узел называет роль (#208): шаг адресует только актора, привязанного
+		// к ней, в нынешней инкарнации. Проверка в транзакции записи — обе
+		// ветки ниже (первый шаг и ожидающий) пишут actor_uid после неё.
+		if err := s.requireRoleActor(ctx, swarmID, n.Role, v.ActorUID, v.ActorIncarnation); err != nil {
+			return v, fmt.Errorf("%w: role %q: %w", ErrPipelineVisitConflict, n.Role, err)
 		}
 	} else if v.State != "waiting" || n.Type != "human" || v.ActorUID != "" || v.ActorIncarnation != 0 || v.RequestID != "" {
 		return v, errors.New("invalid pipeline visit state or metadata")

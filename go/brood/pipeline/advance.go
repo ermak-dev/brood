@@ -30,10 +30,10 @@ type Transition struct {
 }
 
 // Supported rejects execution semantics this runner cannot honor: retries,
-// non-exit goal gates, managed pools, node types it never dispatches,
-// conditions beyond outcome comparisons and human options without an edge.
-// The store runs it before accepting a graph; Advance runs it again so a
-// decision is never made for a document the runner could not execute.
+// non-exit goal gates, node types it never dispatches, conditions beyond
+// outcome comparisons and human options without an edge. The store runs it
+// before accepting a graph; Advance runs it again so a decision is never
+// made for a document the runner could not execute.
 func Supported(d *Document) error {
 	if d.Retry != nil && d.Retry.MaxRetries != 0 {
 		return errors.New("pipeline retries are unsupported")
@@ -44,9 +44,6 @@ func Supported(d *Document) error {
 		}
 	}
 	for id, n := range d.Nodes {
-		if n.Type == "actor" && n.ManagedPool != "" {
-			return errors.New("managed pool pipeline execution is unsupported")
-		}
 		if n.Type != "actor" && n.Type != "human" && n.Type != "exit" {
 			return errors.New("pipeline node type is unsupported")
 		}

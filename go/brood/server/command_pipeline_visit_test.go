@@ -24,12 +24,21 @@ name: test
 start: actor
 exit: done
 nodes:
-  actor: {type: actor, template: development, prompt: work}
+  actor: {type: actor, role: build, prompt: work}
   done: {type: exit}
 edges:
   - {from: actor, to: done}
 goalGates: [done]
 `
+
+// bindWorkerRole привязывает роль build узла actor к актору uid его роя:
+// шаг адресует только привязанного актора (#208).
+func bindWorkerRole(t *testing.T, s *store.Store, swarmID, uid string) {
+	t.Helper()
+	if err := s.BindSwarmRole(context.Background(), store.SwarmRoleBinding{SwarmID: swarmID, Role: "build", ActorUID: uid}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // BUG: Namespace lookup holds the only database connection during completion.
 // HYPOTHESIS: External authorization is invoked inside the completion transaction.
@@ -56,6 +65,7 @@ func TestPipelineCompletionNamespaceOutsideTransaction(t *testing.T) {
 	if err := insertSwarmGraph(ctx, ts.testServer, master.SwarmID, []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
+	bindWorkerRole(t, s, master.SwarmID, worker.UID)
 	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, master.SwarmID, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +90,7 @@ func TestPipelineCompletionReauthorizesAfterNamespaceLookup(t *testing.T) {
 	if err := insertSwarmGraph(ctx, ts.testServer, master.SwarmID, []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
+	bindWorkerRole(t, s, master.SwarmID, worker.UID)
 	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, master.SwarmID, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +119,7 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	if err := insertSwarmGraph(ctx, ts.testServer, master.SwarmID, []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
+	bindWorkerRole(t, s, master.SwarmID, worker.UID)
 	visit, err := s.AppendPipelineVisit(ctx, master.SwarmID, master.SwarmID, store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"})
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +134,9 @@ func TestGuestPipelineVisitCompletion(t *testing.T) {
 	if err := insertSwarmGraph(ctx, ts.testServer, "foreign", []byte(actorVisitGraph), "running"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AppendPipelineVisit(ctx, "foreign", "foreign", store.PipelineVisit{NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"}); err != nil {
+	// Шаг чужого роя с актором этого роя производственный путь не запишет
+	// (#208); строка кладётся напрямую, чтобы проверить отказ завершения.
+	if err := insertSwarmStep(ctx, ts.testServer, "foreign", store.PipelineVisit{Sequence: 1, NodeID: "actor", State: "inflight", ActorUID: worker.UID, ActorIncarnation: worker.Incarnation, RequestID: "req"}, ""); err != nil {
 		t.Fatal(err)
 	}
 	// Отдельный рой без графа: run_id на него — не прогон.

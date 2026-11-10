@@ -230,10 +230,12 @@ func TestBoundSwarmRefusesActorEffects(t *testing.T) {
 		t.Fatalf("inflight: %v", err)
 	}
 	reservation := PipelineNativeReservation{SwarmID: "s", RunID: "s", Sequence: 1, NodeID: "actor", RequestID: "request", TemplateName: "development", TemplateUID: "template-uid", TemplateDigest: "sha256:" + strings.Repeat("a", 64)}
-	if _, err := s.ReservePipelineNativeActor(ctx, reservation); !errors.Is(err, ErrPipelineSourceUnverified) {
+	// Нативное создание актора под узел закрыто целиком (#208), не только
+	// для роя с источником.
+	if _, err := s.ReservePipelineNativeActor(ctx, reservation); !errors.Is(err, ErrPipelineNodeActorCreation) {
 		t.Fatalf("reservation: %v", err)
 	}
-	if err := s.BindPipelineNativeActor(ctx, reservation, "uid", 1); !errors.Is(err, ErrPipelineSourceUnverified) {
+	if err := s.BindPipelineNativeActor(ctx, reservation, "uid", 1); !errors.Is(err, ErrPipelineNodeActorCreation) {
 		t.Fatalf("binding: %v", err)
 	}
 	if err := s.CompletePipelineActorVisit(ctx, "s", "s", 1, "request", "uid", 1, "success"); !errors.Is(err, ErrPipelineSourceUnverified) {
@@ -302,6 +304,7 @@ func TestSwarmStepTimestamps(t *testing.T) {
 	if err := attachTestGraph(ctx, s, "r", runGraph); err != nil {
 		t.Fatal(err)
 	}
+	roleActor(t, s, "r", "a", "build")
 	if _, err := s.AppendPipelineVisit(ctx, "r", "r", PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
 		t.Fatal(err)
 	}
