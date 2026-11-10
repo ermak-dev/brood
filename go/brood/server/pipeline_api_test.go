@@ -13,9 +13,10 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// FEATURE: Serve persisted pipeline runs and human answers.
-// SPEC: Swarm authorization and CSRF apply; answers use the current visit sequence.
-// IMPLEMENTATION: Read scoped runs and persist answers using the store's compare-and-set.
+// FEATURE: Serve persisted pipeline runs; human gates are answered through
+// the swarm request API (#216), the run has no answer route (#217).
+// SPEC: Swarm authorization and CSRF apply; an answer moves the graph once.
+// IMPLEMENTATION: Read scoped runs; answers go through AnswerSwarmRequest.
 // RESULT: IMPLEMENTED — reads and gate answers are available without an execution engine.
 // STATUS: DONE
 const pipelineAPIGraph = `apiVersion: brood.dev/v1alpha1
@@ -68,7 +69,8 @@ func TestPipelineWireContract(t *testing.T) {
 		t.Fatalf("first human visit: %+v %v", visits, err)
 	}
 	sequence := visits[1].Sequence
-	r0, b0, _ := ts.do(alice, "POST", "/api/pipeline-runs/"+swarm+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": sequence})
+	answer := nodeAnswerPath(t, ts.srv, swarm, sequence)
+	r0, b0, _ := ts.do(alice, "POST", answer, ts.csrf(alice), map[string]any{"outcome": "success"})
 	expectStatus(t, "first answer", r0, b0, 200)
 	visits, err = ts.srv.store.SwarmSteps(ctx, swarm)
 	if err != nil || len(visits) != 3 {
@@ -78,7 +80,7 @@ func TestPipelineWireContract(t *testing.T) {
 		t.Fatalf("answer and successor: %+v", visits)
 	}
 	path := "/api/pipeline-runs/" + swarm
-	r, b, _ := ts.do(alice, "POST", path+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": sequence})
+	r, b, _ := ts.do(alice, "POST", answer, ts.csrf(alice), map[string]any{"outcome": "success"})
 	expectStatus(t, "retry before repeated gate", r, b, 200)
 	visits, err = ts.srv.store.SwarmSteps(ctx, swarm)
 	if err != nil || len(visits) != 3 || visits[2].State != "waiting" {
@@ -103,7 +105,7 @@ func TestPipelineWireContract(t *testing.T) {
 	}
 	r, b, _ = ts.do(bob, "GET", path+"/graph", "", nil)
 	expectStatus(t, "hidden graph", r, b, 404)
-	r, b, _ = ts.do(bob, "POST", path+"/nodes/ask/answer", ts.csrf(bob), map[string]any{"answer": "success", "visitSequence": 2})
+	r, b, _ = ts.do(bob, "POST", nodeAnswerPath(t, ts.srv, swarm, sequence+1), ts.csrf(bob), map[string]any{"outcome": "success"})
 	expectStatus(t, "outsider answer", r, b, 404)
 }
 
@@ -192,7 +194,7 @@ func TestPipelineCompletedExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r0, b0, _ := ts.do(alice, "POST", "/api/pipeline-runs/"+swarm+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": v.Sequence})
+	r0, b0, _ := ts.do(alice, "POST", nodeAnswerPath(t, ts.srv, swarm, v.Sequence), ts.csrf(alice), map[string]any{"outcome": "success"})
 	expectStatus(t, "answer", r0, b0, 200)
 	r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+swarm, "", nil)
 	expectStatus(t, "detail", r, b, 200)
@@ -244,26 +246,24 @@ func TestPipelineHTTP(t *testing.T) {
 	if _, ok := b["gate"]; ok {
 		t.Fatalf("viewer must not be offered an answer form: %v", b)
 	}
-	answer := path + "/nodes/ask/answer"
-	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), map[string]any{"answer": "success", "visitSequence": v.Sequence})
+	answer := nodeAnswerPath(t, ts.srv, swarm, v.Sequence)
+	payload := map[string]any{"outcome": "success"}
+	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload)
 	expectStatus(t, "viewer cannot answer", r, b, 404)
-	payload := map[string]any{"answer": "success", "visitSequence": v.Sequence}
 	r, b, _ = ts.do(alice, "POST", answer, "", payload)
 	expectStatus(t, "csrf", r, b, 403)
 	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload)
 	expectStatus(t, "answer", r, b, 200)
+	r, b, _ = ts.do(alice, "GET", path, "", nil)
+	expectStatus(t, "detail after answer", r, b, 200)
 	stored, err := ts.srv.store.GetSwarm(context.Background(), swarm)
 	if err != nil || b["status"] != legacyRunStatus(stored.Execution) {
-		t.Fatalf("answer response status %v, persisted execution %q: %v", b["status"], stored.Execution, err)
+		t.Fatalf("run status after answer %v, persisted execution %q: %v", b["status"], stored.Execution, err)
 	}
 	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload)
 	expectStatus(t, "viewer cannot replay", r, b, 404)
-	r, b, _ = ts.do(alice, "POST", path+"/nodes/done/answer", ts.csrf(alice), payload)
-	expectStatus(t, "wrong node", r, b, 409)
-	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), map[string]any{"answer": "fail", "visitSequence": v.Sequence})
+	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), map[string]any{"outcome": "fail"})
 	expectStatus(t, "conflicting answer", r, b, 409)
-	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": v.Sequence + 1})
-	expectStatus(t, "stale visit", r, b, 409)
 	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload)
 	expectStatus(t, "lost response retry", r, b, 200)
 	visits, err := ts.srv.store.SwarmSteps(context.Background(), swarm)
@@ -272,10 +272,48 @@ func TestPipelineHTTP(t *testing.T) {
 	}
 }
 
+// FEATURE: The run has no answer route of its own (#217).
+// SPEC: The panel answers a gate through the swarm request API (#216), and
+// neither bro nor MCP used the run route, so the old
+// POST /api/pipeline-runs/{run}/nodes/{node}/answer is gone: it answers 404
+// and leaves the gate open, while the run and its graph stay readable.
+// IMPLEMENTATION: The route and its handler are removed from mountPipelineAPI.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestRunAnswerRouteIsGone(t *testing.T) {
+	ts := newSubstrateServer(t, newFakeAteapi())
+	_, alice, _, swarm := actorsSetup(t, ts.testServer)
+	ctx := context.Background()
+	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(pipelineAPIGraph), "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, swarm, store.PipelineVisit{NodeID: "ask", State: "waiting"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/pipeline-runs/" + swarm
+	r, b, _ := ts.do(alice, "POST", path+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": v.Sequence})
+	expectStatus(t, "run answer route", r, b, http.StatusNotFound)
+	requests, err := ts.srv.store.SwarmRequests(ctx, swarm)
+	if err != nil || len(requests) != 1 || requests[0].State != "open" {
+		t.Fatalf("the gate must stay open: %+v %v", requests, err)
+	}
+	steps, err := ts.srv.store.SwarmSteps(ctx, swarm)
+	if err != nil || len(steps) != 1 || steps[0].State != "waiting" {
+		t.Fatalf("the graph must not move: %+v %v", steps, err)
+	}
+	for _, read := range []string{path, path + "/graph", "/api/swarms/" + swarm + "/pipeline-runs"} {
+		r, b, _ = ts.do(alice, "GET", read, "", nil)
+		expectStatus(t, read, r, b, http.StatusOK)
+	}
+	r, b, _ = ts.do(alice, "POST", nodeAnswerPath(t, ts.srv, swarm, v.Sequence), ts.csrf(alice), map[string]any{"outcome": "success"})
+	expectStatus(t, "swarm request answer", r, b, http.StatusOK)
+}
+
 // FEATURE: Human answer carries free text beside the route outcome (#209).
 // SPEC: the response text is stored with the request and never picks the edge;
 // only the answering user may replay the same answer; another manager gets 409.
-// IMPLEMENTATION: pipelineAnswer calls AnswerSwarmRequest with the session check.
+// IMPLEMENTATION: swarmRequestAnswer calls AnswerSwarmRequest with the session check.
 // RESULT: IMPLEMENTED
 // STATUS: DONE
 func TestPipelineAnswerStoresResponseAndRejectsForeignReplay(t *testing.T) {
@@ -289,11 +327,10 @@ func TestPipelineAnswerStoresResponseAndRejectsForeignReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := "/api/pipeline-runs/" + swarm
 	r, b, _ := ts.do(alice, "POST", "/api/swarms/"+swarm+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "editor"})
 	expectStatus(t, "add editor", r, b, 204)
-	answer := path + "/nodes/ask/answer"
-	payload := map[string]any{"answer": "success", "response": "fail, reject, done", "visitSequence": v.Sequence}
+	answer := nodeAnswerPath(t, ts.srv, swarm, v.Sequence)
+	payload := map[string]any{"outcome": "success", "response": "fail, reject, done"}
 	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload)
 	expectStatus(t, "answer", r, b, 200)
 	requests, err := ts.srv.store.SwarmRequests(ctx, swarm)
@@ -327,9 +364,9 @@ func TestPipelineAnswerReplayAuthorAndCancelledGate(t *testing.T) {
 	}
 	r, b, _ := ts.do(alice, "POST", "/api/swarms/"+swarm+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "editor"})
 	expectStatus(t, "add editor", r, b, 204)
-	answer := "/api/pipeline-runs/" + swarm + "/nodes/ask/answer"
+	answer := nodeAnswerPath(t, ts.srv, swarm, v.Sequence)
 	payload := func(text string) map[string]any {
-		return map[string]any{"answer": "success", "response": text, "visitSequence": v.Sequence}
+		return map[string]any{"outcome": "success", "response": text}
 	}
 	stored := func() store.SwarmRequest {
 		all, err := ts.srv.store.SwarmRequests(ctx, swarm)

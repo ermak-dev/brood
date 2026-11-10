@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"sort"
 
@@ -90,7 +88,6 @@ func (s *Server) mountPipelineAPI() {
 	s.mux.HandleFunc("GET /api/swarms/{id}/pipeline-runs", s.pipelineList)
 	s.mux.HandleFunc("GET /api/pipeline-runs/{run}", s.pipelineDetail)
 	s.mux.HandleFunc("GET /api/pipeline-runs/{run}/graph", s.pipelineGraph)
-	s.mux.HandleFunc("POST /api/pipeline-runs/{run}/nodes/{node}/answer", s.pipelineAnswer)
 }
 
 // pipelineList отдаёт рои проекта как список «прогонов»: один рой с
@@ -360,87 +357,4 @@ func (s *Server) pipelineDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, view)
-}
-
-// pipelineAnswer — старый вход ответа шлюза, пока панель не перешла на
-// API запросов роя (#216): тонкая обёртка над answerSwarmRequest, которая
-// находит узловой запрос по шагу и отдаёт вид прогона.
-func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
-	sw, ok := s.pipelineFind(w, r, app.ActionManageSwarm)
-	if !ok {
-		return
-	}
-	var input struct {
-		Answer   string `json:"answer"`
-		Response string `json:"response"`
-		Sequence int64  `json:"visitSequence"`
-	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
-	dec.DisallowUnknownFields()
-	if dec.Decode(&input) != nil || input.Sequence < 1 || input.Sequence > 9007199254740991 || input.Answer == "" {
-		writeDetail(w, 400, "invalid pipeline answer")
-		return
-	}
-	var extra any
-	if dec.Decode(&extra) != io.EOF {
-		writeDetail(w, 400, "invalid pipeline answer")
-		return
-	}
-	user, ok := auth.UserFromContext(r.Context())
-	if !ok {
-		writeDetail(w, 401, "authentication required")
-		return
-	}
-	req, found, err := s.nodeRequestAt(r.Context(), sw.ID, input.Sequence, r.PathValue("node"))
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	if !found {
-		writeDetail(w, 409, "pipeline visit is no longer awaiting an answer")
-		return
-	}
-	// Повтор потерянного ответа решает хранилище в той же транзакции: он
-	// принимается только от автора с действующей сессией и правами, с тем же
-	// исходом и текстом; иначе 409.
-	_, _, err = s.answerSwarmRequest(r, user, store.SwarmAnswer{SwarmID: sw.ID, RequestID: req.ID, UserID: user.ID, Outcome: input.Answer, Response: input.Response})
-	if err != nil {
-		swarmRequestError(w, r, err)
-		return
-	}
-	current, err := s.store.GetSwarm(r.Context(), sw.ID)
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	view, err := s.pipelineRunView(r, current)
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	writeJSON(w, 200, view)
-}
-
-// nodeRequestAt находит узловой запрос посещения: узел из пути должен
-// совпасть с узлом шага, иначе запроса для этого адреса нет.
-func (s *Server) nodeRequestAt(ctx context.Context, swarmID string, sequence int64, node string) (store.SwarmRequest, bool, error) {
-	steps, err := s.store.SwarmSteps(ctx, swarmID)
-	if err != nil {
-		return store.SwarmRequest{}, false, err
-	}
-	requests, err := s.store.SwarmRequests(ctx, swarmID)
-	if err != nil {
-		return store.SwarmRequest{}, false, err
-	}
-	for _, v := range steps {
-		if v.Sequence != sequence || v.NodeID != node {
-			continue
-		}
-		for _, req := range requests {
-			if req.Origin == "node" && req.Sequence != nil && *req.Sequence == sequence {
-				return req, true, nil
-			}
-		}
-	}
-	return store.SwarmRequest{}, false, nil
 }

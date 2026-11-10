@@ -12,7 +12,7 @@ import (
 
 // FEATURE: The pipeline wire names the graph's swarm, project, owner and
 // stage actors (#191, #206).
-// SPEC: List, detail and answer responses carry swarmId, swarmName, projectId,
+// SPEC: List and detail responses carry swarmId, swarmName, projectId,
 // projectName and the owner username of the run's own swarm — the swarm is
 // the run. A visit carries actorName from the managed actor of the same
 // swarm, and omits it otherwise. Callers who cannot read the swarm still
@@ -110,9 +110,6 @@ func TestPipelineRunOriginWire(t *testing.T) {
 	r, b, _ = ts.do(bob, "GET", "/api/pipeline-runs/"+swarm, "", nil)
 	expectStatus(t, "viewer detail", r, b, http.StatusOK)
 	origin("viewer detail", b, alpha)
-	r, b, _ = ts.do(alice, "POST", "/api/pipeline-runs/"+swarm+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": 1})
-	expectStatus(t, "answer", r, b, http.StatusOK)
-	origin("answer", b, alpha)
 }
 
 // The cross-swarm graph reuses a managed UID of the first swarm: an administrator

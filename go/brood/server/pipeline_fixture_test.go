@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"testing"
 
 	"brood.dev/go/brood/store"
 )
@@ -40,4 +41,23 @@ func insertSwarmStep(ctx context.Context, ts *testServer, swarmID string, v stor
 	_, err = db.ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,started_at,actor_uid,actor_incarnation,request_id) VALUES (?,?,?,?,'now',NULLIF(?,''),NULLIF(?,0),NULLIF(?,''))`,
 		swarmID, v.Sequence, v.NodeID, v.State, v.ActorUID, v.ActorIncarnation, v.RequestID)
 	return err
+}
+
+// nodeAnswerPath — адрес ответа на узловой запрос шага sequence. Оператор
+// отвечает через API запросов роя (#216): входа ответа прогона нет (#217).
+// Запрос ищется в любом состоянии: повтор и ответ на закрытый запрос идут
+// тем же адресом.
+func nodeAnswerPath(t *testing.T, srv *Server, swarmID string, sequence int64) string {
+	t.Helper()
+	requests, err := srv.store.SwarmRequests(context.Background(), swarmID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range requests {
+		if req.Origin == "node" && req.Sequence != nil && *req.Sequence == sequence {
+			return "/api/swarms/" + swarmID + "/requests/" + req.ID + "/answer"
+		}
+	}
+	t.Fatalf("no node request at step %d: %+v", sequence, requests)
+	return ""
 }

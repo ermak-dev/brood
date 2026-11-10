@@ -250,7 +250,7 @@ func TestSwarmStartStopWire(t *testing.T) {
 		t.Fatalf("repeated stop reason: %v", b)
 	}
 	frozen := f.executionState(t)
-	r, b, _ = f.ts.do(f.alice, "POST", "/api/pipeline-runs/"+f.swarm+"/nodes/ask/answer", f.ts.csrf(f.alice), map[string]any{"answer": "success", "visitSequence": 1})
+	r, b, _ = f.ts.do(f.alice, "POST", nodeAnswerPath(t, f.ts.srv, f.swarm, 1), f.ts.csrf(f.alice), map[string]any{"outcome": "success"})
 	expectStatus(t, "answer after stop", r, b, http.StatusConflict)
 	if got := f.executionState(t); got != frozen {
 		t.Fatalf("answer after stop advanced the graph:\n%s\nwant\n%s", got, frozen)
@@ -366,7 +366,7 @@ func TestSwarmStopRefusesFinished(t *testing.T) {
 	}
 	r, b = f.start(f.alice, map[string]any{"definition": "approve", "commit": startAPICommit})
 	expectStatus(t, "start", r, b, http.StatusOK)
-	r, b, _ = f.ts.do(f.alice, "POST", "/api/pipeline-runs/"+f.swarm+"/nodes/ask/answer", f.ts.csrf(f.alice), map[string]any{"answer": "success", "visitSequence": 1})
+	r, b, _ = f.ts.do(f.alice, "POST", nodeAnswerPath(t, f.ts.srv, f.swarm, 1), f.ts.csrf(f.alice), map[string]any{"outcome": "success"})
 	expectStatus(t, "approve", r, b, http.StatusOK)
 	before := f.executionState(t)
 	r, b = f.stop(f.alice)
