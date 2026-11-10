@@ -297,12 +297,17 @@ func TestSwarmStartRefusalsWire(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, status: http.StatusConflict, reason: "swarm is error"},
-		{name: "commit missing", body: map[string]any{"definition": "release"}, status: http.StatusUnprocessableEntity, reason: "commit"},
+		{name: "commit missing without server Git access", body: map[string]any{"definition": "release"}, status: http.StatusUnprocessableEntity, reason: "has no server Git access; bind a project Git credential or name the commit"},
 		{name: "project without repository", body: map[string]any{"definition": "release", "commit": startAPICommit}, setup: func(t *testing.T, f startAPIFixture) {
 			if err := f.ts.srv.store.SetProjectRepository(context.Background(), f.project, ""); err != nil {
 				t.Fatal(err)
 			}
 		}, status: http.StatusUnprocessableEntity, reason: "repository"},
+		{name: "project without repository nor commit", body: map[string]any{"definition": "release"}, setup: func(t *testing.T, f startAPIFixture) {
+			if err := f.ts.srv.store.SetProjectRepository(context.Background(), f.project, ""); err != nil {
+				t.Fatal(err)
+			}
+		}, status: http.StatusUnprocessableEntity, reason: "the project has no repository"},
 		{name: "definition absent from body", body: map[string]any{"commit": startAPICommit}, status: http.StatusBadRequest, reason: "definition"},
 		{name: "unknown field", body: map[string]any{"definition": "release", "commit": startAPICommit, "graph": "x"}, status: http.StatusBadRequest, reason: "definition"},
 		{name: "definition not a string", body: map[string]any{"definition": 7, "commit": startAPICommit}, status: http.StatusBadRequest, reason: "definition"},

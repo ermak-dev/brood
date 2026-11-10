@@ -165,6 +165,39 @@ SA и уже встреченных principals, не превращение ло
 страница роя отвечает через API роя (#216), обёрткой пользуется только раздел
 Workflows, пока её не удалит #217.
 
+## Запуск и остановка роя
+
+Устройство и инварианты — [MODEL.md](../docs/MODEL.md), «Запуск и остановка
+роя» (#211, #228).
+
+- `POST /api/swarms/{id}/start` — ровно `{definition, commit?}`, строки,
+  owner/editor/administrator, Origin/CSRF; 200 — `swarmId`, `execution`,
+  `definition` (`name`, `version`, `revision`), `source` (`origin`,
+  `commit`) и последний шаг `step` (`sequence`, `nodeId`, `state`).
+  Полный commit в теле пиннится без сетевого запроса. Без `commit` первый
+  запуск пиннит commit, на который сейчас указывает HEAD repository проекта:
+  сервер разрешает его до транзакции записи Git-доступом шлюза. Повторный
+  запуск идёт на закреплённом источнике; непустой `commit` обязан с ним
+  совпасть.
+- `POST /api/swarms/{id}/stop` — без тела, те же права; 200 — то же тело.
+
+Отказы запуска ничего не пишут. 404 — рой скрыт или определения нет в
+каталоге проекта, 403 — права или сессия, 409 — состояние роя или
+исполнения, другой снимок, непривязанная роль или repository проекта
+сменился, пока сервер разрешал ветку, 422 — неисполнимый граф или источник
+(нет repository, неполный commit). Отказ разрешения ветки — `detail` с
+префиксом `cannot resolve the project branch: ` и одной фиксированной
+причиной, без адреса upstream, его тела и учётных данных:
+
+- 422 `the project repository has no server Git access; bind a project Git credential or name the commit` — запрос не отправляется;
+- 502 `Git upstream request failed`, `Git upstream address denied`,
+  `Git upstream denied access` (401/403), `Git upstream repository not found`
+  (404), `Git upstream redirect denied`, `malformed Git ref advertisement`,
+  `Git ref advertisement too large`;
+- 504 `Git upstream request timed out`;
+- 422 `the repository has no default branch`, `the repository HEAD is not a branch`,
+  `the repository HEAD is not a SHA-1 commit`.
+
 ## Ёмкость проекта
 
 `GET /api/projects/{id}` доступен участнику/администратору и возвращает id/name,
