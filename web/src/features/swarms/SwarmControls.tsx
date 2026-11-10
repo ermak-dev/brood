@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { Markdown } from '@/components/ui/Markdown';
 import { Modal } from '@/components/ui/Modal';
 import { useNotificationStore } from '@/stores';
 import type { AccessSwarm } from '@/services/brood/access';
@@ -515,7 +516,7 @@ function GoalField({
 }
 
 /** Задача прошлого прохода — подсказкой у пустого поля нового: текст как
- * набран, переводы строк сохранены, разметка показана текстом. */
+ * набран, переводы строк сохранены, markdown без HTML (#252). */
 function PreviousGoal({ goal }: { goal: string }) {
   const { t } = useTranslation();
   const labelId = useId();
@@ -524,9 +525,7 @@ function PreviousGoal({ goal }: { goal: string }) {
       <p id={labelId} className={local.snapshotLabel}>
         {t('swarm_page.control.previous_goal')}
       </p>
-      <p className={page.goalText} data-goal-text="">
-        {goal}
-      </p>
+      <Markdown className={page.goalText} data-goal-text="" text={goal} collapsible />
     </section>
   );
 }

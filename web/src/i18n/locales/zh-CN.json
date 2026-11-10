@@ -207,6 +207,7 @@
     "copy": "复制",
     "expand": "展开",
     "collapse": "收起",
+    "show_full": "显示全部",
     "status": "状态",
     "action": "操作",
     "custom_headers_label": "自定义请求头",

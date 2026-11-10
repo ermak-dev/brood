@@ -207,6 +207,7 @@
     "copy": "複製",
     "expand": "展開",
     "collapse": "收起",
+    "show_full": "顯示全部",
     "status": "狀態",
     "action": "操作",
     "custom_headers_label": "自訂請求標頭",

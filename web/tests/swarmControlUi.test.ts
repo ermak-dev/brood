@@ -524,8 +524,10 @@ describe('restart', () => {
     expect(goalField()?.value).toBe('');
     const shown = dialog()?.querySelector('[data-previous-goal]');
     expect(shown?.textContent).toContain(control.previous_goal);
-    // The text as typed: line breaks kept, markup shown as text.
-    expect(shown?.querySelector('[data-goal-text]')?.textContent).toBe(previous);
+    // Markdown without HTML (#252): line breaks kept, the author's tag is text.
+    expect(shown?.querySelector('[data-goal-text]')?.textContent).toBe(
+      'Fix issue #12\n- keep the API\n<b>as is</b>'
+    );
     expect(shown?.querySelector('b')).toBeNull();
     // A restart still needs a goal of its own.
     await submit();

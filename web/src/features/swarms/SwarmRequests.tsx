@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
+import { Markdown } from '@/components/ui/Markdown';
 import type { SwarmRequest } from '@/services/brood/requests';
 import type { BadgeTone } from '@/features/access/state';
 import { LoadState, StatusBadge } from '@/features/access/shared';
@@ -135,15 +136,11 @@ export function RequestCard({
           </time>
         </span>
       </div>
-      {!atNode && (
-        <p id={questionId} className={local.question}>
-          {request.question}
-        </p>
-      )}
+      {!atNode && <Markdown id={questionId} className={local.question} text={request.question} />}
       {request.context && (
         <div className={local.context}>
           <p className={local.label}>{t('swarm_requests.context')}</p>
-          <p className={local.text}>{request.context}</p>
+          <Markdown className={local.text} text={request.context} collapsible />
         </div>
       )}
       {request.state === 'open' &&
@@ -334,7 +331,7 @@ function AnswerDetails({
       label: t(
         request.origin === 'node' ? 'swarm_requests.comment_saved' : 'swarm_requests.answer'
       ),
-      value: summary.text,
+      value: <Markdown text={summary.text} />,
       text: true,
     });
   }
