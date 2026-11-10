@@ -32,6 +32,12 @@ func liveProcessGroup(stat []byte, group int) (bool, error) {
 // Лидер остаётся waitable с WNOWAIT на всём протяжении проверки:
 // его PID не может стать идентификатором чужой process group.
 func finishPinnedGroup(pid int) error {
+	return finishGroupWith(pid, os.ReadFile)
+}
+
+// finishGroupWith получает чтение stat аргументом: тест забирает процесс
+// между open и read детерминированно, а не ждёт гонки под нагрузкой.
+func finishGroupWith(pid int, readStat func(path string) ([]byte, error)) error {
 	if err := unix.Kill(-pid, unix.SIGKILL); err != nil && err != unix.ESRCH {
 		return fmt.Errorf("PTY process group signal failed: %w", err)
 	}
@@ -46,8 +52,13 @@ func finishPinnedGroup(pid int) error {
 			if _, err := strconv.Atoi(entry.Name()); err != nil {
 				continue
 			}
-			stat, err := os.ReadFile("/proc/" + entry.Name() + "/stat")
-			if os.IsNotExist(err) {
+			stat, err := readStat("/proc/" + entry.Name() + "/stat")
+			// Обход видит каждый процесс пространства PID, и любой из них может
+			// завершиться посреди обхода. Забранный до open даёт ENOENT, а
+			// забранный родителем между open и read: ESRCH, ядро не находит задачу
+			// открытого файла. Такой процесс уже не участник группы; прочие отказы
+			// оставляют членство неподтверждённым.
+			if os.IsNotExist(err) || errors.Is(err, unix.ESRCH) {
 				continue
 			}
 			if err != nil {
