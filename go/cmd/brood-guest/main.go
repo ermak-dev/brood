@@ -48,6 +48,8 @@ type service interface {
 type actorRuntime interface {
 	service
 	TerminalDialTarget() string
+	// Quiesce runs its callback while no actor process exists (#183).
+	Quiesce(context.Context, func(context.Context) error) error
 }
 type swarmBroker interface {
 	service
@@ -226,17 +228,16 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	} else {
 		os.Setenv("PATH", "/opt/brood/bin:"+current)
 	}
+	// Capture only the immutable bootstrap identity, never the relay socket.
+	cfg := c.relay
+	var refresh func(context.Context) error
 	if d.secrets != nil {
 		if err := d.secrets(ctx, c.relay); err != nil {
 			cancel()
 			boundedClose(network)
 			return errors.New("guest project secrets initialization failed")
 		}
-		// Capture only the immutable bootstrap identity, never the relay socket.
-		cfg := c.relay
-		c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
-			return guest.NewSessionHandlerWithSecrets(connection, func(ctx context.Context) error { return d.secrets(ctx, cfg) })
-		}
+		refresh = func(ctx context.Context) error { return d.secrets(ctx, cfg) }
 	}
 	if d.origin != nil {
 		origin, err := d.origin(ctx, c.relay, c.hosts)
@@ -284,6 +285,11 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		cancel()
 		boundedClose(network)
 		return errors.New("guest policy or actor initialization failed")
+	}
+	// Подпись — от bootstrap-идентичности root, остановка — через сам runtime.
+	attestor := guest.NewWorkspaceAttestor(cfg, guest.WorkspaceOrigin{Origin: c.origin, Mode: c.originMode}, runtime.Quiesce)
+	c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
+		return guest.NewSupervisorSessionHandler(connection, refresh, attestor)
 	}
 	runtimeDone := make(chan error, 1)
 	go func() { runtimeDone <- runtime.Wait(); cancel() }()

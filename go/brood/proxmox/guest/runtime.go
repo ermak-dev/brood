@@ -54,10 +54,61 @@ type Config struct {
 // Runtime owns the actor and root enforcement services. Start means the child
 // was launched, not that ttyd is ready; the parent may probe TerminalDialTarget.
 type Runtime struct {
-	done chan struct{}
-	stop chan struct{}
-	once sync.Once
-	err  error
+	done    chan struct{}
+	stop    chan struct{}
+	quiesce chan quiesceRequest
+	once    sync.Once
+	err     error
+}
+
+type quiesceRequest struct {
+	ctx   context.Context
+	run   func(context.Context) error
+	reply chan error
+}
+
+// Quiesce stops every actor process, runs fn while none exists and relaunches
+// the fixed actor. UID 1000 is exclusive to the actor, so the same sweep as at
+// shutdown proves the window: no model process can write the workspace or
+// trace the fixed helper that fn starts. An unproven stop or a failed relaunch
+// ends the runtime, as a child exit would.
+func (r *Runtime) Quiesce(ctx context.Context, fn func(context.Context) error) error {
+	q := quiesceRequest{ctx: ctx, run: fn, reply: make(chan error, 1)}
+	select {
+	case r.quiesce <- q:
+	case <-r.done:
+		return errors.New("guest runtime stopped")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return <-q.reply
+}
+
+func (r *Runtime) stopping() bool {
+	select {
+	case <-r.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+// runQuiet runs fn with a context that also ends with the runtime.
+func (r *Runtime) runQuiet(runtime context.Context, q quiesceRequest) error {
+	ctx, cancel := context.WithCancel(q.ctx)
+	defer cancel()
+	stop := context.AfterFunc(runtime, cancel)
+	defer stop()
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-r.stop:
+			cancel()
+		case <-finished:
+		}
+	}()
+	return q.run(ctx)
 }
 
 // TerminalDialTarget is deliberately not configurable by actor or guest env.
@@ -124,7 +175,8 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		return fail(errors.Join(errors.New("guest enforcement service stopped"), err))
 	default:
 	}
-	process, err := d.Launch(ctx, actorSpec(c.Executable))
+	spec := actorSpec(c.Executable)
+	process, err := d.Launch(ctx, spec)
 	if err != nil || process == nil {
 		startErr := errors.Join(errors.New("guest actor start failed"), err)
 		if process != nil {
@@ -136,21 +188,59 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		}
 		return fail(startErr)
 	}
-	r := &Runtime{done: make(chan struct{}), stop: make(chan struct{})}
-	childDone := make(chan error, 1)
-	go func() { childDone <- process.Wait() }()
+	r := &Runtime{done: make(chan struct{}), stop: make(chan struct{}), quiesce: make(chan quiesceRequest)}
+	wait := func(p Process) chan error {
+		done := make(chan error, 1)
+		go func() { done <- p.Wait() }()
+		return done
+	}
+	childDone := wait(process)
 	go func() {
 		defer close(r.done)
 		childExited := false
-		select {
-		case err := <-childDone:
-			r.err = err
-			childExited = true
-		case err := <-services.Done():
-			r.err = errors.Join(errors.New("guest enforcement service stopped"), err)
-		case <-ctx.Done():
-			r.err = ctx.Err()
-		case <-r.stop:
+		for running := true; running; {
+			select {
+			case err := <-childDone:
+				r.err = err
+				childExited = true
+				running = false
+			case err := <-services.Done():
+				r.err = errors.Join(errors.New("guest enforcement service stopped"), err)
+				running = false
+			case <-ctx.Done():
+				r.err = ctx.Err()
+				running = false
+			case <-r.stop:
+				running = false
+			case q := <-r.quiesce:
+				if err := process.Close(); err != nil {
+					// Как при остановке: недоказанная смерть потомков оставляет enforcement.
+					q.reply <- errors.New("actor processes could not be proven stopped; workspace not inspected")
+					cancel()
+					r.err = errors.Join(errors.New("guest actor stop for quiesce failed"), err, services.Close())
+					return
+				}
+				// Код выхода убитого актора — ожидаемое следствие, не отказ.
+				<-childDone
+				runErr := r.runQuiet(ctx, q)
+				if ctx.Err() != nil || r.stopping() {
+					q.reply <- errors.Join(errors.New("guest runtime stopped during quiesce"), runErr)
+					r.err = ctx.Err()
+					childExited, running = true, false
+					continue
+				}
+				next, err := d.Launch(ctx, spec)
+				if next != nil {
+					process, childDone = next, wait(next)
+				}
+				if err != nil || next == nil {
+					q.reply <- errors.Join(errors.New("guest actor relaunch failed"), runErr)
+					r.err = errors.Join(errors.New("guest actor relaunch failed"), err)
+					childExited, running = next == nil, false
+					continue
+				}
+				q.reply <- runErr
+			}
 		}
 		if err := process.Close(); err != nil {
 			// Retain enforcement if descendants cannot be proven dead.

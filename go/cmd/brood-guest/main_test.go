@@ -140,6 +140,9 @@ func (f *fakeService) Close() error {
 	return nil
 }
 func (f *fakeService) TerminalDialTarget() string { return "127.0.0.1:8080" }
+func (f *fakeService) Quiesce(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
+}
 func TestOrchestration(t *testing.T) {
 	for _, failure := range []string{"network", "policy", "relay", "dhcp", "service", "signal"} {
 		t.Run(failure, func(t *testing.T) {

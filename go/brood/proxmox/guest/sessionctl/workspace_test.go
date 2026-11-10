@@ -28,6 +28,12 @@ func workspaceRequest(op, args string) relay.SessionRequest {
 	return relay.SessionRequest{Operation: op, Arguments: json.RawMessage(args)}
 }
 func workspaceFixture(t *testing.T) *workspaceEngine {
+	return workspaceFixtureWith(t, actorHome, nil)
+}
+
+// workspaceFixtureWith commits files next to tracked; helper Git runs with
+// home as HOME.
+func workspaceFixtureWith(t *testing.T, home string, files map[string]string) *workspaceEngine {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "project")
 	if err := os.Mkdir(root, 0700); err != nil {
@@ -37,7 +43,7 @@ func workspaceFixture(t *testing.T) *workspaceEngine {
 		t.Helper()
 		c := exec.Command("/usr/bin/git", args...)
 		c.Dir = root
-		c.Env = workspaceGitEnv()
+		c.Env = gitEnv(actorHome, root)
 		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("fixture git: %s %v", out, err)
 		}
@@ -46,9 +52,16 @@ func workspaceFixture(t *testing.T) *workspaceEngine {
 	if err := os.WriteFile(filepath.Join(root, "tracked"), []byte("original\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	git("add", "tracked")
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", "--all")
 	git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture")
-	return &workspaceEngine{root: root, git: func(ctx context.Context, args ...string) (string, error) { return runWorkspaceGit(ctx, root, args...) }, call: func(context.Context, ptysession.Request) (ptysession.Reply, error) { return liveReply(), nil }, prove: func(context.Context) (identity, error) {
+	return &workspaceEngine{root: root, git: func(ctx context.Context, args ...string) (string, error) {
+		return runWorkspaceGit(ctx, home, root, args...)
+	}, call: func(context.Context, ptysession.Request) (ptysession.Reply, error) { return liveReply(), nil }, prove: func(context.Context) (identity, error) {
 		return identity{PID: 123, SessionID: "old", Process: "start", HolderProof: "holder"}, nil
 	}, quiet: func(context.Context) (bool, error) { return true, nil }}
 }
