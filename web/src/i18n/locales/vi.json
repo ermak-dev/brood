@@ -3115,7 +3115,9 @@
       "condition": "điều kiện",
       "land": "hạ cánh",
       "exit": "thoát",
-      "start": "bắt đầu"
+      "start": "bắt đầu",
+      "parallel": "song song",
+      "fan_in": "hợp nhánh"
     },
     "timeline": "Các nút",
     "graph_label": "Đồ thị lần chạy",

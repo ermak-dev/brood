@@ -3109,7 +3109,9 @@
       "condition": "조건",
       "land": "랜딩",
       "exit": "종료",
-      "start": "시작"
+      "start": "시작",
+      "parallel": "병렬",
+      "fan_in": "합류"
     },
     "timeline": "노드",
     "graph_label": "실행 그래프",

@@ -1,4 +1,6 @@
-/* Pipeline runs (#169): gate form, graph container and node timeline. */
+/* Pipeline runs (#169): gate form, graph container and node timeline.
+   #214: граф инлайновый; состояния узлов и таймлайна берутся из одних
+   переменных --pip-* ниже, чтобы два представления не расходились. */
 
 .form {
   display: flex;
@@ -7,14 +9,116 @@
   align-items: flex-start;
 }
 
+/* Единственный источник состояний: таймлайн и граф красят одними
+   токенами. Значения — ссылки на переменные темы, поэтому тёмная тема
+   резолвит их сама: медиа-запросы внутри разметки больше не нужны. */
+.graph,
+.timeline {
+  --pip-node-fill: var(--bg-primary);
+  --pip-active-fill: var(--amber-10);
+  --pip-active-stroke: var(--amber-color);
+  --pip-done-fill: var(--success-badge-bg);
+  --pip-done-stroke: var(--viz-success);
+  --pip-failed-fill: var(--failure-badge-bg);
+  --pip-failed-stroke: var(--viz-failure);
+  --pip-skipped-fill: var(--bg-tertiary);
+  --pip-skipped-stroke: var(--text-quaternary);
+}
+
 .graph {
   width: 100%;
   overflow-x: auto;
+}
 
-  img {
-    max-width: 100%;
-    height: auto;
-  }
+/* Инлайновый SVG в собственном размере (width/height из viewBox): не
+   растягивается и не сжимается в контейнер, широкий граф прокручивается. */
+.svg {
+  display: block;
+  max-width: none;
+  color: var(--text-primary);
+  overflow: visible;
+}
+
+/* Раскраска графа: серверный <style> панель не берёт (он глобален в
+   документе), правила движка живут здесь и красят по его классам. */
+.svg :global(.node) rect {
+  fill: var(--pip-node-fill);
+  stroke: currentColor;
+}
+
+.svg :global(.node) text {
+  fill: currentColor;
+}
+
+.svg :global(.node-actor) rect {
+  stroke-width: 1.5;
+}
+
+.svg :global(.node-human) rect {
+  stroke-dasharray: 6 3;
+  stroke-width: 2;
+}
+
+.svg :global(.node-exit) rect {
+  stroke-width: 2.5;
+}
+
+.svg :global(.edge) {
+  fill: none;
+  stroke: currentColor;
+  stroke-opacity: 0.55;
+}
+
+.svg :global(.edge-arrow) {
+  fill: currentColor;
+  fill-opacity: 0.55;
+}
+
+.svg :global(.edge-label) {
+  fill: currentColor;
+  font-size: 12px;
+}
+
+.svg :global(.state-active) rect {
+  fill: var(--pip-active-fill);
+  stroke: var(--pip-active-stroke);
+}
+
+.svg :global(.state-done) rect {
+  fill: var(--pip-done-fill);
+  stroke: var(--pip-done-stroke);
+}
+
+.svg :global(.state-failed) rect {
+  fill: var(--pip-failed-fill);
+  stroke: var(--pip-failed-stroke);
+}
+
+.svg :global(.state-skipped) rect {
+  fill: var(--pip-skipped-fill);
+  stroke: var(--pip-skipped-stroke);
+}
+
+/* Узел-кнопка (есть onSelect): курсор и видимый фокус. */
+.svg g[role='button'] {
+  cursor: pointer;
+  outline: none;
+}
+
+.svg g[role='button']:focus-visible rect {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.svg g[role='button']:not([aria-pressed='true']):hover rect {
+  stroke-width: 2.5;
+}
+
+/* Выбранный узел отличается от активного: активного красит состояние
+   (заливка и контур), выбранного (aria-pressed) — жирный контур цвета текста. */
+.svg g[aria-pressed='true'] rect {
+  stroke: var(--text-primary);
+  stroke-width: 3.5;
 }
 
 .timeline {
@@ -25,7 +129,6 @@
   padding: 0;
   list-style: none;
 }
-
 
 .timeline-node {
   display: flex;
@@ -39,7 +142,8 @@
   height: 8px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: var(--border-primary);
+  background: var(--pip-node-fill);
+  border: 1px solid var(--pip-skipped-stroke);
   transform: translateY(-1px);
 }
 
@@ -47,24 +151,29 @@
   @extend %timelineDot;
 }
 
+/* Таймлайн берёт те же токены, что и граф состояний. */
 .timeline-done {
   @extend %timelineDot;
-  background: var(--viz-success);
+  background: var(--pip-done-fill);
+  border-color: var(--pip-done-stroke);
 }
 
 .timeline-active {
   @extend %timelineDot;
-  background: var(--viz-success);
+  background: var(--pip-active-fill);
+  border-color: var(--pip-active-stroke);
 }
 
 .timeline-failed {
   @extend %timelineDot;
-  background: var(--viz-failure);
+  background: var(--pip-failed-fill);
+  border-color: var(--pip-failed-stroke);
 }
 
 .timeline-skipped {
   @extend %timelineDot;
-  background: var(--text-quaternary);
+  background: var(--pip-skipped-fill);
+  border-color: var(--pip-skipped-stroke);
 }
 
 .timeline-label {

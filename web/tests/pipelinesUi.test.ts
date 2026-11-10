@@ -2,7 +2,7 @@
 // SPEC: Live runs sort first; the run row opens the run page; the SVG graph
 // lands in the page with the engine's state classes; ordinary users see the
 // section; every locale carries the new keys.
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
@@ -14,7 +14,12 @@ import { NodeTimeline, RunGraph } from '@/features/pipelines/RunDetailPage';
 import { openGate, runIsLive, runTone, sortRuns } from '@/features/pipelines/state';
 import { visibleAccessPath } from '@/features/access/permissions';
 import type { PipelineRun } from '@/services/brood/pipelines';
+import { installTestDOM } from './helpers/dom';
 import en from '@/i18n/locales/en.json';
+
+// DOM-глобалы на время файла: RunGraph парит серверный SVG.
+const restoreDOM = installTestDOM();
+afterAll(restoreDOM);
 
 const source = (path: string) =>
   readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8');
@@ -126,17 +131,17 @@ describe('run detail pieces', () => {
     expect(page).toContain('Promise.all([run.refresh(), graph.refresh()])');
   });
 
-  test('untrusted SVG is displayed as an image, never injected into the document', async () => {
+  test('untrusted SVG is filtered and inlined, never assigned as markup', async () => {
     const i18n = createInstance();
     await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" onload="alert(1)"><script>alert(1)</script></svg>';
     const html = renderToStaticMarkup(
       createElement(I18nextProvider, { i18n }, createElement(RunGraph, { svg }))
     );
-    expect(html).toContain('<img');
-    expect(html).toContain('data:image/svg+xml,');
-    expect(html).toContain('alt="Run graph"');
-    expect(html).not.toContain('<svg');
+    // #214: граф — часть документа; разметка проходит словарный фильтр.
+    expect(html).toContain('<svg');
+    expect(html).toContain('aria-label="Run graph"');
+    expect(html).not.toContain('data:image/svg+xml');
     expect(html).not.toContain('<script>');
     expect(html).not.toContain(' onload=');
   });
@@ -220,5 +225,15 @@ describe('locales', () => {
       );
       expect([locale, missing, mismatched]).toEqual([locale, [], []]);
     }
+  });
+
+  // BUG: узлы parallel и fan_in подписывались сырым ключом в таймлайне
+  // («pipelines.kind.parallel») и сырым видом в имени кнопки графа.
+  // Список — типы узлов парсера (go/brood/pipeline/pipeline.go) и start
+  // из piprender; каталог go/ в контейнер сборки панели не монтируется.
+  test('every engine node kind has a label', () => {
+    const kinds = ['start', 'actor', 'human', 'condition', 'land', 'exit', 'parallel', 'fan_in'];
+    const labels = (en as { pipelines: { kind: Record<string, string> } }).pipelines.kind;
+    expect(kinds.filter((kind) => !labels[kind])).toEqual([]);
   });
 });

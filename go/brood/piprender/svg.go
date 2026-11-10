@@ -27,6 +27,8 @@ const (
 // переменных --pip-* со светлыми дефолтами; запрос prefers-color-scheme
 // переключает фон узла для тёмной схемы. Страница задаёт цвет текста
 // селектором контейнера и может переопределить любую переменную.
+// Панель (#214) этот <style> не исполняет: она красит граф своим
+// CSS-модулем, а таблица остаётся для автономного SVG.
 const pipStyle = `<style>` + "\n" +
 	`.node rect{fill:var(--pip-node-fill,#fff);stroke:currentColor}` + "\n" +
 	`.node text{fill:currentColor}` + "\n" +
@@ -40,7 +42,8 @@ const pipStyle = `<style>` + "\n" +
 	`.state-done rect{fill:var(--pip-done-fill,#dcfce7);stroke:var(--pip-done-stroke,#15803d)}` + "\n" +
 	`.state-failed rect{fill:var(--pip-failed-fill,#fee2e2);stroke:var(--pip-failed-stroke,#b91c1c)}` + "\n" +
 	`.state-skipped rect{fill:var(--pip-skipped-fill,#e5e7eb);stroke:var(--pip-skipped-stroke,#6b7280)}` + "\n" +
-	`@media (prefers-color-scheme: dark){.node rect{fill:var(--pip-node-fill-dark,#1e293b)}.state-skipped rect{fill:var(--pip-skipped-fill-dark,#374151)}}` + "\n" +
+	`svg:root{color:var(--pip-text,#111827)}` + "\n" +
+	`@media (prefers-color-scheme: dark){svg:root{color:var(--pip-text-dark,#e5e7eb);background:var(--pip-bg-dark,#0f172a)}.node.state-pending rect{fill:var(--pip-node-fill-dark,#1e293b)}.state-skipped rect{fill:var(--pip-skipped-fill-dark,#374151)}.state-active text,.state-done text,.state-failed text{fill:var(--pip-state-text,#111827)}}` + "\n" +
 	`</style>`
 
 // escape renders text for XML character data and attribute values.
@@ -564,12 +567,15 @@ func SVG(v RunView) string {
 	}
 	separateLabels(routes)
 
-	// Границы содержимого: узлы, маршруты, наконечники и подписи.
+	// Границы содержимого: узлы, маршруты, наконечники и подписи. Узел
+	// держит svgMargin со всех сторон: иначе самый правый столбец широкой
+	// строки упирается в край, и контур фокуса встроенного графа (#214)
+	// обрезается краем прокрутки.
 	minX, minY, maxX, maxY := 0.0, 0.0, width, height
 	for id := range l.rects {
 		r := l.rects[id]
-		minX = min(minX, r.x)
-		maxX = max(maxX, r.x+r.w)
+		minX = min(minX, r.x-svgMargin)
+		maxX = max(maxX, r.x+r.w+svgMargin)
 	}
 	for _, r := range routes {
 		for _, p := range append(append([]point{}, r.pts...), r.tip) {
@@ -611,8 +617,8 @@ func SVG(v RunView) string {
 		if kind[id] == KindStart {
 			rx = "20"
 		}
-		fmt.Fprintf(&b, `<g class="node node-%s state-%s"><rect x="%s" y="%s" width="%s" height="%s" rx="%s"/><text x="%s" y="%s" text-anchor="middle">%s</text></g>`+"\n",
-			classToken(string(kind[id])), classToken(string(state[id])),
+		fmt.Fprintf(&b, `<g class="node node-%s state-%s" data-node-id="%s"><rect x="%s" y="%s" width="%s" height="%s" rx="%s"/><text x="%s" y="%s" text-anchor="middle">%s</text></g>`+"\n",
+			classToken(string(kind[id])), classToken(string(state[id])), escape(id),
 			num(p[0]-boxW/2), num(p[1]-svgBoxHeight/2), num(boxW), num(svgBoxHeight), rx,
 			num(p[0]), num(p[1]+5), escape(label[id]))
 	}

@@ -12,7 +12,8 @@
 .state-done rect{fill:var(--pip-done-fill,#dcfce7);stroke:var(--pip-done-stroke,#15803d)}
 .state-failed rect{fill:var(--pip-failed-fill,#fee2e2);stroke:var(--pip-failed-stroke,#b91c1c)}
 .state-skipped rect{fill:var(--pip-skipped-fill,#e5e7eb);stroke:var(--pip-skipped-stroke,#6b7280)}
-@media (prefers-color-scheme: dark){.node rect{fill:var(--pip-node-fill-dark,#1e293b)}.state-skipped rect{fill:var(--pip-skipped-fill-dark,#374151)}}
+svg:root{color:var(--pip-text,#111827)}
+@media (prefers-color-scheme: dark){svg:root{color:var(--pip-text-dark,#e5e7eb);background:var(--pip-bg-dark,#0f172a)}.node.state-pending rect{fill:var(--pip-node-fill-dark,#1e293b)}.state-skipped rect{fill:var(--pip-skipped-fill-dark,#374151)}.state-active text,.state-done text,.state-failed text{fill:var(--pip-state-text,#111827)}}
 </style><polyline class="edge edge-active" points="72,184 72,263"/>
 <polygon class="edge-arrow edge-active" points="72,264 67,254 77,254"/>
 <polyline class="edge edge-pending" points="72,304 72,383"/>
@@ -39,15 +40,15 @@
 <text class="edge-label" x="274" y="468" text-anchor="middle">tests pass</text>
 <polyline class="edge edge-pending" points="232,784 232,824 72,824 72,863"/>
 <polygon class="edge-arrow edge-pending" points="72,864 67,854 77,854"/>
-<g class="node node-start state-done"><rect x="24" y="24" width="96" height="40" rx="20"/><text x="72" y="49" text-anchor="middle">start</text></g>
-<g class="node node-actor state-done"><rect x="24" y="144" width="96" height="40" rx="0"/><text x="72" y="169" text-anchor="middle">build</text></g>
-<g class="node node-condition state-active"><rect x="24" y="264" width="96" height="40" rx="0"/><text x="72" y="289" text-anchor="middle">ci ok?</text></g>
-<g class="node node-land state-pending"><rect x="24" y="384" width="96" height="40" rx="0"/><text x="72" y="409" text-anchor="middle">land</text></g>
-<g class="node node-actor state-pending"><rect x="184" y="384" width="96" height="40" rx="0"/><text x="232" y="409" text-anchor="middle">test</text></g>
-<g class="node node-human state-pending"><rect x="24" y="504" width="96" height="40" rx="0"/><text x="72" y="529" text-anchor="middle">review</text></g>
-<g class="node node-parallel state-pending"><rect x="24" y="624" width="96" height="40" rx="0"/><text x="72" y="649" text-anchor="middle">fan out</text></g>
-<g class="node node-actor state-pending"><rect x="24" y="744" width="96" height="40" rx="0"/><text x="72" y="769" text-anchor="middle">lint</text></g>
-<g class="node node-actor state-pending"><rect x="184" y="744" width="96" height="40" rx="0"/><text x="232" y="769" text-anchor="middle">vet</text></g>
-<g class="node node-fan_in state-pending"><rect x="24" y="864" width="96" height="40" rx="0"/><text x="72" y="889" text-anchor="middle">fan in</text></g>
-<g class="node node-exit state-pending"><rect x="24" y="984" width="96" height="40" rx="0"/><text x="72" y="1009" text-anchor="middle">exit</text></g>
+<g class="node node-start state-done" data-node-id="start"><rect x="24" y="24" width="96" height="40" rx="20"/><text x="72" y="49" text-anchor="middle">start</text></g>
+<g class="node node-actor state-done" data-node-id="build"><rect x="24" y="144" width="96" height="40" rx="0"/><text x="72" y="169" text-anchor="middle">build</text></g>
+<g class="node node-condition state-active" data-node-id="check"><rect x="24" y="264" width="96" height="40" rx="0"/><text x="72" y="289" text-anchor="middle">ci ok?</text></g>
+<g class="node node-land state-pending" data-node-id="land"><rect x="24" y="384" width="96" height="40" rx="0"/><text x="72" y="409" text-anchor="middle">land</text></g>
+<g class="node node-actor state-pending" data-node-id="test"><rect x="184" y="384" width="96" height="40" rx="0"/><text x="232" y="409" text-anchor="middle">test</text></g>
+<g class="node node-human state-pending" data-node-id="review"><rect x="24" y="504" width="96" height="40" rx="0"/><text x="72" y="529" text-anchor="middle">review</text></g>
+<g class="node node-parallel state-pending" data-node-id="fanout"><rect x="24" y="624" width="96" height="40" rx="0"/><text x="72" y="649" text-anchor="middle">fan out</text></g>
+<g class="node node-actor state-pending" data-node-id="lint"><rect x="24" y="744" width="96" height="40" rx="0"/><text x="72" y="769" text-anchor="middle">lint</text></g>
+<g class="node node-actor state-pending" data-node-id="vet"><rect x="184" y="744" width="96" height="40" rx="0"/><text x="232" y="769" text-anchor="middle">vet</text></g>
+<g class="node node-fan_in state-pending" data-node-id="fanin"><rect x="24" y="864" width="96" height="40" rx="0"/><text x="72" y="889" text-anchor="middle">fan in</text></g>
+<g class="node node-exit state-pending" data-node-id="exit"><rect x="24" y="984" width="96" height="40" rx="0"/><text x="72" y="1009" text-anchor="middle">exit</text></g>
 </svg>

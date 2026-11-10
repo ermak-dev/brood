@@ -3109,7 +3109,9 @@
       "condition": "condition",
       "land": "land",
       "exit": "exit",
-      "start": "start"
+      "start": "start",
+      "parallel": "parallel",
+      "fan_in": "fan-in"
     },
     "timeline": "Nodes",
     "graph_label": "Run graph",
