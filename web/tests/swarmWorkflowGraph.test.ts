@@ -8,7 +8,7 @@
 // IMPLEMENTATION: Reuse the scoped runs and graph APIs in the swarm panel.
 // RESULT: IMPLEMENTED — selected runs render as safely isolated images.
 // STATUS: DONE
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -16,7 +16,12 @@ import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
 import { MemoryRouter } from 'react-router-dom';
 import { SwarmWorkflowView } from '@/features/pipelines/SwarmWorkflow';
+import { installTestDOM } from './helpers/dom';
 import en from '@/i18n/locales/en.json';
+
+// DOM-глобалы на время файла: RunGraph парит серверный SVG.
+const restoreDOM = installTestDOM();
+afterAll(restoreDOM);
 
 const i18n = createInstance();
 await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
@@ -44,18 +49,19 @@ test('reports loading, failure and empty runs without inventing workflows', () =
   expect(render({ runs: [], loading: false, error: '', retry })).toContain(en.pipelines.empty);
 });
 
-test('renders the named run and its graph as a safe image', () => {
+test('renders the named run and its graph as filtered inline SVG', () => {
   const html = render({
     runs: [run],
     loading: false,
     error: '',
     retry,
-    graph: { svg: '<svg onload="alert(1)"></svg>' },
+    graph: { svg: '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>' },
   });
   expect(html).toContain('release');
-  expect(html).toContain('data:image/svg+xml,');
-  expect(html).not.toContain('<svg');
+  // #214: вместо картинки — инлайновый отфильтрованный SVG.
+  expect(html).toContain('<svg');
   expect(html).not.toContain(' onload=');
+  expect(html).not.toContain('data:image/svg+xml');
 });
 
 test('falls back to an available run when the selected run disappeared', () => {

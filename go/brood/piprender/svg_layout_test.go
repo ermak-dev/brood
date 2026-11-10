@@ -112,7 +112,7 @@ func TestDOTRankDirTB(t *testing.T) {
 
 // Парсеры разметки двух рендеров: сравнение ведём по меткам узлов.
 var (
-	reSVGNode      = regexp.MustCompile(`<g class="node [^"]*"><rect x="([-0-9.]+)" y="([-0-9.]+)" width="([-0-9.]+)" height="([-0-9.]+)"[^>]*/><text x="([-0-9.]+)" y="([-0-9.]+)"[^>]*>([^<]*)</text></g>`)
+	reSVGNode      = regexp.MustCompile(`<g class="node [^"]*" data-node-id="[^"]*"><rect x="([-0-9.]+)" y="([-0-9.]+)" width="([-0-9.]+)" height="([-0-9.]+)"[^>]*/><text x="([-0-9.]+)" y="([-0-9.]+)"[^>]*>([^<]*)</text></g>`)
 	reSVGEdgeLabel = regexp.MustCompile(`<text class="edge-label" x="([-0-9.]+)" y="([-0-9.]+)"[^>]*>([^<]*)</text>`)
 	reSVGPolyline  = regexp.MustCompile(`<polyline class="edge[^"]*" points="([^"]+)"/>`)
 	reDOTNode      = regexp.MustCompile(`(?m)^\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*)) \[label="((?:[^"\\]|\\.)*)", shape=[A-Za-z]+\];$`)
@@ -449,6 +449,64 @@ func TestSVGChannelLabelNotHiddenByNode(t *testing.T) {
 			if lx+half > nx && lx-half < nx+nw && ly+7 > ny && ly-7 < ny+nh {
 				t.Fatalf("edge label %q at (%.0f,%.0f) overlaps node %s at (%.0f,%.0f)", text, lx, ly, nm[7], nx, ny)
 			}
+		}
+	}
+}
+
+// BUG: тёмный media-блок `.node rect{fill}` той же специфичности стоит
+// после state-* и перекрывает заливки done/active/failed; в автономном
+// SVG currentColor остаётся чёрным на тёмной заливке.
+// SOLUTION: тёмная заливка только у pending и skipped; svg:root (только
+// автономный документ, не встроенный) задаёт цвет и фон тёмной схемы.
+// RESULT: подтверждено в Chrome: все узлы rgb(30,41,59), текст чёрный.
+// STATUS: GREEN
+func TestSVGDarkMediaKeepsStateFills(t *testing.T) {
+	start := strings.Index(pipStyle, "@media (prefers-color-scheme: dark){")
+	if start < 0 {
+		t.Fatal("dark media block missing")
+	}
+	dark := pipStyle[start:]
+	for _, bad := range []string{".node rect{", ".state-done rect", ".state-active rect", ".state-failed rect"} {
+		if strings.Contains(dark, bad) {
+			t.Fatalf("dark block %q would override state fills:\n%s", bad, dark)
+		}
+	}
+	for _, want := range []string{".node.state-pending rect{", ".state-skipped rect{", "svg:root{color:", "background:", ".state-done text"} {
+		if !strings.Contains(dark, want) {
+			t.Fatalf("dark block lacks %q:\n%s", want, dark)
+		}
+	}
+	if !strings.Contains(pipStyle, "svg:root{color:") {
+		t.Fatal("light standalone color missing")
+	}
+}
+
+// BUG: правая граница viewBox бралась по краю самого правого узла без
+// отступа: широкая строка (параллельные ветки) упиралась в край, а слева
+// оставалось svgMargin. Встроенный граф (#214) на узком экране
+// прокручивается, и контур фокуса и выбора крайнего правого узла
+// обрезался краем прокрутки.
+// SOLUTION: узел расширяет границы вместе с svgMargin, как и слева.
+// RESULT: в Chrome при 430px правый край узла vet совпадал с краем SVG.
+// STATUS: GREEN
+func TestSVGNodeMarginOnEverySide(t *testing.T) {
+	g := Graph{Nodes: []Node{{ID: "fan", Kind: KindParallel, Label: "fan"}}}
+	for _, id := range []string{"a", "b", "c", "d"} {
+		g.Nodes = append(g.Nodes, Node{ID: id, Kind: KindActor, Label: id})
+		g.Edges = append(g.Edges, Edge{From: "fan", To: id})
+	}
+	svg := SVG(RunView{Graph: g})
+	box := viewBoxOf(t, svg)
+	m := svgModel(t, g, svg)
+	for label, n := range m.nodes {
+		if left := n.x - box[0]; left < svgMargin {
+			t.Fatalf("node %s left margin %v < %v\n%s", label, left, svgMargin, svg)
+		}
+		if right := box[0] + box[2] - (n.x + n.w); right < svgMargin {
+			t.Fatalf("node %s right margin %v < %v\n%s", label, right, svgMargin, svg)
+		}
+		if bottom := box[1] + box[3] - (n.y + n.h); bottom < svgMargin {
+			t.Fatalf("node %s bottom margin %v < %v\n%s", label, bottom, svgMargin, svg)
 		}
 	}
 }

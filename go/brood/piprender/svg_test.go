@@ -79,20 +79,26 @@ func TestSVGClassesAndEscape(t *testing.T) {
 		Nodes: []Node{{ID: "a", Kind: KindHuman, Label: `Tom & <Jerry>`}},
 	}
 	svg := SVG(Overlay(g, nil, "a", nil))
-	if !strings.Contains(svg, `<g class="node node-human state-active">`) {
+	if !strings.Contains(svg, `<g class="node node-human state-active" data-node-id="a">`) {
 		t.Fatalf("node class missing:\n%s", svg)
 	}
 	if !strings.Contains(svg, ">Tom &amp; &lt;Jerry&gt;</text>") {
 		t.Fatalf("label not XML-escaped:\n%s", svg)
 	}
 	svg = SVG(Overlay(g, nil, "", []string{"a"}))
-	if !strings.Contains(svg, `<g class="node node-human state-failed">`) {
+	if !strings.Contains(svg, `<g class="node node-human state-failed" data-node-id="a">`) {
 		t.Fatalf("failed state class missing:\n%s", svg)
 	}
 	// Нулевой view без состояний: pending по умолчанию.
 	svg = SVG(RunView{Graph: g})
-	if !strings.Contains(svg, `<g class="node node-human state-pending">`) {
+	if !strings.Contains(svg, `<g class="node node-human state-pending" data-node-id="a">`) {
 		t.Fatalf("pending default state missing:\n%s", svg)
+	}
+	// Идентичность узла проставлена всем узлам (#214): панель адресует
+	// кнопки графа по data-node-id, ID экранируется как текст.
+	svg = SVG(RunView{Graph: Graph{Nodes: []Node{{ID: `Tom & <id>`, Kind: KindActor, Label: "x"}}}})
+	if !strings.Contains(svg, `data-node-id="Tom &amp; &lt;id&gt;"`) {
+		t.Fatalf("node id not escaped:\n%s", svg)
 	}
 }
 

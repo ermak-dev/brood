@@ -3134,7 +3134,9 @@
       "condition": "條件",
       "land": "落地",
       "exit": "退出",
-      "start": "開始"
+      "start": "開始",
+      "parallel": "並行",
+      "fan_in": "匯合"
     },
     "timeline": "節點",
     "graph_label": "執行圖",

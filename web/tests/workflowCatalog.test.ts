@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterAll, afterEach, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { pipelinesApi } from '../src/services/brood/pipelines';
 import { createElement } from 'react';
@@ -8,7 +8,12 @@ import { I18nextProvider } from 'react-i18next';
 import { WorkflowCatalogView } from '../src/features/pipelines/WorkflowCatalog';
 import { selectedGraphKey } from '../src/features/pipelines/catalogState';
 import { RunGraph } from '../src/features/pipelines/RunDetailPage';
+import { installTestDOM } from './helpers/dom';
 import en from '../src/i18n/locales/en.json';
+
+// DOM-глобалы на время файла: RunGraph парит серверный SVG.
+const restoreDOM = installTestDOM();
+afterAll(restoreDOM);
 
 const render = async (props: Parameters<typeof WorkflowCatalogView>[0]) => {
   const i18n = createInstance();
@@ -18,19 +23,24 @@ const render = async (props: Parameters<typeof WorkflowCatalogView>[0]) => {
   );
 };
 
-test('definition graph uses a distinct accessible label and remains an image', async () => {
+test('definition graph uses a distinct accessible label and renders inline', async () => {
   const i18n = createInstance();
   await i18n.init({ lng: 'en', resources: { en: { translation: en } } });
   const html = renderToStaticMarkup(
     createElement(
       I18nextProvider,
       { i18n },
-      createElement(RunGraph, { svg: '<svg onload="alert(1)"></svg>', label: 'Definition graph' })
+      createElement(RunGraph, {
+        svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" onload="alert(1)"></svg>',
+        label: 'Definition graph',
+      })
     )
   );
-  expect(html).toContain('alt="Definition graph"');
-  expect(html).toContain('data:image/svg+xml,');
-  expect(html).not.toContain('<svg');
+  // #214: граф в документе с доступным именем, обработчики выброшены.
+  expect(html).toContain('aria-label="Definition graph"');
+  expect(html).toContain('<svg');
+  expect(html).not.toContain(' onload=');
+  expect(html).not.toContain('data:image/svg+xml');
 });
 
 test('catalog distinguishes loading, error, empty and published versions', async () => {
