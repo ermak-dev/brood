@@ -149,21 +149,42 @@ func Advance(d *Document, e Event) (Transition, error) {
 		return Transition{}, errors.New("pipeline has a non-designated exit")
 	}
 	next := d.Nodes[edge.To]
-	result := Transition{Next: edge.To, Execution: "running"}
-	switch next.Type {
-	case "human":
-		result.NextState = "waiting"
-		result.Execution = "waiting_human"
-	case "exit":
-		result.NextState = "completed"
-		result.Execution = "succeeded"
+	if next.Type == "exit" {
+		result := Transition{Next: edge.To, NextState: "completed", Execution: "succeeded"}
 		if e.Outcome == "fail" {
 			result.Execution = "failed"
 		}
+		return result, nil
+	}
+	return enter(edge.To, next)
+}
+
+// Begin computes the first visit of a new pass: the start node, entered by
+// the same rule Advance applies to a successor. The exit is never a first
+// visit; Validate already forbids it, Begin refuses it again.
+func Begin(d *Document) (Transition, error) {
+	if d == nil {
+		return Transition{}, errors.New("pipeline document is required")
+	}
+	if err := Supported(d); err != nil {
+		return Transition{}, err
+	}
+	node, ok := d.Nodes[d.Start]
+	if !ok {
+		return Transition{}, errors.New("pipeline start node not found")
+	}
+	return enter(d.Start, node)
+}
+
+// enter — вход в узел, ждущий работы: actor-узел ждёт доставки, human-узел —
+// оператора. Выход сюда не попадает: его состояние зависит от исхода.
+func enter(id string, n Node) (Transition, error) {
+	switch n.Type {
+	case "human":
+		return Transition{Next: id, NextState: "waiting", Execution: "waiting_human"}, nil
 	case "actor":
-		result.NextState = "pending"
+		return Transition{Next: id, NextState: "pending", Execution: "running"}, nil
 	default:
 		return Transition{}, errors.New("pipeline node type is unsupported")
 	}
-	return result, nil
 }
