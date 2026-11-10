@@ -258,7 +258,9 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 // workspace attestation is recorded (attested_commit, #212); otherwise
 // ErrPipelineSourceUnverified. The step must be the latest one of a running
 // graph and be delivering (the actor answered before the server recorded the
-// delivery) or inflight; an unconfirmed, refused, stopped or finished step is
+// delivery), inflight or unconfirmed with a recorded attestation (the receipt
+// was lost, but the request ID reaches the actor only in the instruction,
+// #245); another unconfirmed, a refused, stopped or finished step is
 // ErrPipelineVisitConflict.
 //
 // The optional report (#233) is the actor's account of the step: what was
@@ -300,7 +302,13 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 		if state == "completed" && prior.Valid && prior.String == outcome && recorded == report {
 			return nil
 		}
-		if (state != "inflight" && state != "delivering") || !activeExecution(w.Execution) {
+		// unconfirmed с подтверждённым checkout — шаг, чья квитанция доставки
+		// потерялась: request_id попытки есть только в тексте инструкции, так
+		// что вызов с ним доказывает её получение (#245). Без подтверждения
+		// инструкция не уходила; unconfirmed старого пути без источника
+		// по-прежнему ждёт решения оператора.
+		lostReceipt := state == "unconfirmed" && attested != ""
+		if (state != "inflight" && state != "delivering" && !lostReceipt) || !activeExecution(w.Execution) {
 			return ErrPipelineVisitConflict
 		}
 		d, err := pipeline.Parse(string(w.Graph), "pipeline")
