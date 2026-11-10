@@ -14,7 +14,12 @@ import {
   VERSION_HEADER_KEYS,
 } from '@/utils/constants';
 import { computeApiUrl } from '@/utils/connection';
+import { csrfToken } from '@/services/brood/http';
 import { parseApiErrorResponse } from './apiError';
+
+// Middleware сессий Go сверяет X-CSRFToken у всех прочих методов,
+// management-прокси тоже (go/brood/auth/service.go).
+const CSRF_SAFE_METHODS = new Set(['get', 'head']);
 
 class ApiClient {
   private instance: AxiosInstance;
@@ -129,6 +134,11 @@ class ApiClient {
         // Add authorization header
         if (this.managementKey) {
           config.headers.Authorization = `Bearer ${this.managementKey}`;
+        }
+
+        // Токен читаем на каждый запрос: вход меняет cookie.
+        if (!CSRF_SAFE_METHODS.has(config.method ?? 'get')) {
+          config.headers['X-CSRFToken'] = csrfToken();
         }
 
         return config;
