@@ -19,6 +19,21 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ErrNotSent marks an Exchange failure before any frame was written to the
+// session inbox: the session did not receive the message and a retry cannot
+// duplicate it. A failure without it may follow a partial write.
+var ErrNotSent = errors.New("message not sent")
+
+// notSentError — отказ Exchange до записи: текст и причина прежние, класс —
+// ErrNotSent.
+type notSentError struct{ err error }
+
+func (e notSentError) Error() string      { return e.err.Error() }
+func (e notSentError) Unwrap() error      { return e.err }
+func (notSentError) Is(target error) bool { return target == ErrNotSent }
+
+func notSent(text string) error { return notSentError{errors.New(text)} }
+
 // Delivery distinguishes a written user frame from a confirmed delivery.
 // Idle only confirms the separate idle subscription, never the user message.
 type Delivery struct {
@@ -34,41 +49,44 @@ type Delivery struct {
 // waitSec requests an authenticated idle notice; zero waits briefly for status.
 // A successful write without a matching receipt is unconfirmed. It does not
 // prove even queue acceptance, and must not be presented as delivered.
+// Every failure before the write, including a refused inbox dial, is
+// ErrNotSent; a failed or interrupted write is not.
 func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec int) (Delivery, error) {
+	// Всё до записи в inbox — ErrNotSent: сессия сообщения не получила.
 	if os.Getuid() == 0 || os.Geteuid() == 0 {
-		return Delivery{}, errors.New("session messaging must not run as root")
+		return Delivery{}, notSent("session messaging must not run as root")
 	}
 	if err := ctx.Err(); err != nil {
-		return Delivery{}, err
+		return Delivery{}, notSentError{err}
 	}
 	if waitSec < 0 || waitSec > 300 || len(body) >= MaxExchangeBytes || token == "" || len(token) > MaxPeerTokenBytes {
-		return Delivery{}, errors.New("invalid session message input")
+		return Delivery{}, notSent("invalid session message input")
 	}
 	if !filepath.IsAbs(socketPath) || strings.ContainsAny(socketPath, "\x00\r\n") {
-		return Delivery{}, errors.New("invalid session socket path")
+		return Delivery{}, notSent("invalid session socket path")
 	}
 	// Короткое имя соответствует валидации обратного адреса Claude Code.
 	var suffix [4]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
-		return Delivery{}, errors.New("cannot create callback identity")
+		return Delivery{}, notSent("cannot create callback identity")
 	}
 	callback := filepath.Join(filepath.Dir(socketPath), fmt.Sprintf("%d-%s.sock", os.Getpid(), hex.EncodeToString(suffix[:])))
 	address := "uds:" + callback
 	msgID, err := newUUID()
 	if err != nil {
-		return Delivery{}, errors.New("cannot create message identity")
+		return Delivery{}, notSent("cannot create message identity")
 	}
 	idleID, err := newUUID()
 	if err != nil {
-		return Delivery{}, errors.New("cannot create message identity")
+		return Delivery{}, notSent("cannot create message identity")
 	}
 	data, err := EncodeExchange(token, address, name, body, msgID, idleID, waitSec)
 	if err != nil {
-		return Delivery{}, err
+		return Delivery{}, notSentError{err}
 	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: callback, Net: "unix"})
 	if err != nil {
-		return Delivery{}, errors.New("session callback unavailable")
+		return Delivery{}, notSent("session callback unavailable")
 	}
 	defer listener.Close()
 	timeout := 250 * time.Millisecond
@@ -81,7 +99,7 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	defer stop()
 	c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(exchangeCtx, "unix", socketPath)
 	if err != nil {
-		return Delivery{}, errors.New("session inbox unavailable")
+		return Delivery{}, notSent("session inbox unavailable")
 	}
 	stopWrite := context.AfterFunc(exchangeCtx, func() { c.Close() })
 	deadline := time.Now().Add(5 * time.Second)

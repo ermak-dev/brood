@@ -14,7 +14,9 @@ package server
 // вызов гостя. Каждый исход пишется условной записью хранилища: неизвестный
 // — unconfirmed без повтора, заведомо неотправленный — refused с причиной;
 // выключение сервера до вызова гостя возвращает шаг в pending
-// (store.WithdrawActorStep).
+// (store.WithdrawActorStep). Ответ гостя «не отправлено» (notSent, #244:
+// перезапущенная сессия Claude ещё не слушает inbox) повторяет доставку той
+// же попытки с паузами не дольше stepSessionWait.
 // IMPLEMENTATION: один экземпляр сервера; диспетчер сериализует рой в
 // процессе и сливает повторные пробуждения, но корректность держат
 // условные UPDATE хранилища: параллельный проход той же попытки ничего не
@@ -27,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +53,12 @@ const (
 	// stepBookkeepingTimeout — запись исхода после эффекта у гостя идёт и
 	// при отмене сервера: иначе исход остался бы до восстановления на старте.
 	stepBookkeepingTimeout = 5 * time.Second
+	// stepSessionWait — сколько повторять инструкцию, которую гость заведомо
+	// не отправил (#244): workspace_attest только что перезапустил сессию
+	// Claude, и её inbox появляется не сразу.
+	stepSessionWait = 2 * time.Minute
+	// stepSessionPause — пауза между такими повторами.
+	stepSessionPause = 3 * time.Second
 )
 
 // guestTextBytes — сколько текста отказа гостя попадает в причину шага.
@@ -63,6 +72,10 @@ type stepDispatcher struct {
 	// процесса: рестарт отвергает все прежние ответы.
 	attestations *attest.Registry
 	connectWait  time.Duration
+	// now и pause — часы ожидания сессии актора; pause ждёт d или отмены
+	// ctx и возвращает false при отмене. Подменяются в тестах.
+	now   func() time.Time
+	pause func(ctx context.Context, d time.Duration) bool
 
 	mu      sync.Mutex
 	ctx     context.Context
@@ -73,7 +86,19 @@ type stepDispatcher struct {
 }
 
 func newStepDispatcher(s *Server) *stepDispatcher {
-	return &stepDispatcher{server: s, attestations: attest.NewRegistry(stepAttestationTTL, stepAttestationLimit), connectWait: stepConnectWait, running: map[string]bool{}, again: map[string]bool{}}
+	return &stepDispatcher{server: s, attestations: attest.NewRegistry(stepAttestationTTL, stepAttestationLimit), connectWait: stepConnectWait, now: time.Now, pause: sleepContext, running: map[string]bool{}, again: map[string]bool{}}
+}
+
+// sleepContext ждёт d; false — ctx отменён раньше.
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // start привязывает диспетчер ко времени жизни сервера и будит рои, чей шаг
@@ -282,9 +307,38 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt) b
 }
 
 // deliver отправляет инструкцию узла привязанному актору той же инкарнации.
-// Перед отправкой и сразу после неё шаг обязан быть delivering этой попытки
-// при идущем рое (store.CheckActorStepDelivery).
+// Перед каждой отправкой и сразу после неё шаг обязан быть delivering этой
+// попытки при идущем рое (store.CheckActorStepDelivery). Ответ гостя «не
+// отправлено» (#244) — сессия Claude после workspace_attest ещё не слушает
+// inbox — повторяет ту же попытку через stepSessionPause, пока не истечёт
+// stepSessionWait; затем refused. Любой другой исход не повторяется.
 func (d *stepDispatcher) deliver(ctx context.Context, a store.ActorStepAttempt, text string) {
+	deadline := d.now().Add(stepSessionWait)
+	for attempt := 1; ; attempt++ {
+		result, sent, err := d.send(ctx, a, text)
+		if !errors.Is(err, errMessageNotSent) {
+			d.record(ctx, a, result, sent, err)
+			return
+		}
+		if attempt == 1 {
+			slog.Info("actor session is not ready; instruction delivery will be retried", "swarm", a.SwarmID, "sequence", a.Sequence, "verdict", guestText(result.Text))
+		}
+		if !d.now().Add(stepSessionPause).Before(deadline) {
+			d.settle(ctx, a, false, "instruction not sent: the actor session did not become ready in "+strconv.Itoa(int(stepSessionWait/time.Second))+" seconds ("+guestText(result.Text)+")")
+			return
+		}
+		// Остановку роя и перевязку роли за паузу ловит проверка шага
+		// следующей попытки, до отправки.
+		if !d.pause(ctx, stepSessionPause) {
+			d.settle(ctx, a, false, "instruction not sent: the server stopped before the send")
+			return
+		}
+	}
+}
+
+// send — одна попытка доставки инструкции: канал send (deliverToActor) с
+// проверкой шага до отправки и после неё.
+func (d *stepDispatcher) send(ctx context.Context, a store.ActorStepAttempt, text string) (command.Result, bool, error) {
 	s := d.server
 	dctx, cancel := context.WithTimeout(ctx, requestDeliveryTimeout)
 	defer cancel()
@@ -296,7 +350,12 @@ func (d *stepDispatcher) deliver(ctx context.Context, a store.ActorStepAttempt, 
 		return current, nil
 	}
 	check := func(ctx context.Context) error { return s.store.CheckActorStepDelivery(ctx, a) }
-	result, sent, err := s.deliverToActor(dctx, a.SwarmID, bound, relay.MessageRequest{From: stepMessageSender(a.SwarmID), Body: text}, check)
+	return s.deliverToActor(dctx, a.SwarmID, bound, relay.MessageRequest{From: stepMessageSender(a.SwarmID), Body: text}, check)
+}
+
+// record пишет исход попытки доставки, которую не повторяют.
+func (d *stepDispatcher) record(ctx context.Context, a store.ActorStepAttempt, result command.Result, sent bool, err error) {
+	s := d.server
 	switch {
 	case !sent && ctx.Err() != nil:
 		// Выключение рвёт чтения канала до отправки: причина — оно, а не

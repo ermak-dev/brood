@@ -14,6 +14,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -190,5 +192,56 @@ func TestExchangeRejectsInvalidInputBeforeDial(t *testing.T) {
 	cancel()
 	if _, err := Exchange(ctx, "/does/not/exist.sock", "key", "lead", "hello", 0); err == nil {
 		t.Fatal("canceled exchange accepted")
+	}
+}
+
+// TestExchangeNotSentBeforeTheWrite — отказ до записи кадра в inbox
+// (неверный ввод, отмена, нет обратного сокета, inbox не принимает
+// соединение) — ErrNotSent: сессия сообщения не получила, повтор безопасен
+// (#244). После записи ошибка ErrNotSent не несёт: исход неизвестен.
+func TestExchangeNotSentBeforeTheWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("transport intentionally refuses root")
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	missing := filepath.Join(t.TempDir(), "42.sock")
+	for name, call := range map[string]func() error{
+		"invalid input": func() error {
+			_, err := Exchange(context.Background(), missing, "key", "lead", "hello", 301)
+			return err
+		},
+		"canceled": func() error { _, err := Exchange(canceled, missing, "key", "lead", "hello", 0); return err },
+		"no callback directory": func() error {
+			_, err := Exchange(context.Background(), "/does/not/exist.sock", "key", "lead", "hello", 0)
+			return err
+		},
+		"inbox not listening": func() error { _, err := Exchange(context.Background(), missing, "key", "lead", "hello", 0); return err },
+	} {
+		if err := call(); !errors.Is(err, ErrNotSent) {
+			t.Errorf("%s: %v is not ErrNotSent", name, err)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "42.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		// Кадры записаны и прочитаны, квитанции нет: отмена ожидания.
+		_, _ = io.Copy(io.Discard, c)
+		stop()
+	}()
+	if _, err := Exchange(ctx, path, "peer-key", "lead", "hello", 1); err == nil || errors.Is(err, ErrNotSent) {
+		t.Fatalf("written message classified as not sent: %v", err)
 	}
 }

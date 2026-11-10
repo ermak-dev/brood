@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"brood.dev/go/brood/proxmox/guest"
-	"brood.dev/go/brood/proxmox/relay"
 )
 
 func runMessageHelper(ctx context.Context) error {
@@ -16,9 +15,5 @@ func runMessageHelper(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	response, err := guest.ReceiveMessage(ctx, request)
-	if err != nil {
-		response = relay.MessageResponse{Verdict: err.Error()}
-	}
-	return json.NewEncoder(os.Stdout).Encode(response)
+	return json.NewEncoder(os.Stdout).Encode(guest.ReceiveMessage(ctx, request))
 }
