@@ -3189,5 +3189,47 @@
     "steps_empty": "Chưa có bước nào.",
     "management": "Quyền truy cập và vòng đời",
     "management_hint": "Ai có thể dùng bầy này, quyền sở hữu và việc xóa bầy."
+  },
+  "swarm_requests": {
+    "title": "Yêu cầu tới người vận hành",
+    "hint": "Câu hỏi từ các nút đồ thị và actor của bầy này. Yêu cầu đang mở ở trên; yêu cầu đã trả lời ở dưới làm lịch sử.",
+    "open_count": "{{count}} đang mở",
+    "none_open": "Không có yêu cầu đang mở.",
+    "history": "Lịch sử",
+    "states": {
+      "open": "Đang mở",
+      "answered": "Đã trả lời",
+      "cancelled": "Đã hủy"
+    },
+    "asker_node": "Nút",
+    "asker_actor": "Actor",
+    "actor_gone": "actor không còn tồn tại",
+    "asked": "Hỏi lúc",
+    "context": "Tài liệu",
+    "route_hint": "Lựa chọn quyết định đồ thị đi tiếp đến đâu.",
+    "actor_hint": "Câu trả lời đến actor dưới dạng tin nhắn của người vận hành; nó không định tuyến đồ thị.",
+    "comment": "Ghi chú (không bắt buộc)",
+    "response": "Câu trả lời",
+    "confirm": {
+      "yes": "Có",
+      "no": "Không"
+    },
+    "submit": "Gửi câu trả lời",
+    "sent": "Đã ghi nhận câu trả lời.",
+    "refused": "Không được chấp nhận: {{reason}}",
+    "answer": "Câu trả lời",
+    "comment_saved": "Ghi chú",
+    "answered_by": "Người trả lời",
+    "answered_at": "Trả lời lúc",
+    "delivery": "Gửi tới actor",
+    "delivery_states": {
+      "pending": "Đang chờ",
+      "delivered": "Đã gửi tới",
+      "failed": "Gửi thất bại"
+    },
+    "retry_delivery": "Gửi lại",
+    "read_only": "Chỉ chủ sở hữu và người chỉnh sửa của bầy đang hoạt động mới có thể trả lời.",
+    "cancelled_hint": "Đã đóng mà không có câu trả lời.",
+    "unknown_kind": "Phiên bản bảng điều khiển này không thể trả lời loại yêu cầu này."
   }
 }
