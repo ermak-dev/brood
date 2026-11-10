@@ -4,6 +4,7 @@ import hashlib
 import json
 import socket
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import Mock, call, patch
 
@@ -24,6 +25,127 @@ def render(image, **options):
 def answer(address):
     family = socket.AF_INET6 if ":" in address else socket.AF_INET
     return (family, socket.SOCK_STREAM, 6, "", (address, 443))
+
+
+REVISION = "deployment.kubernetes.io/revision"
+DEPLOYMENT_UID = "11111111-0000-0000-0000-000000000001"
+
+
+def rolled_out(revision, generation=7, observed=7):
+    return {"metadata": {"name": "brood-go", "namespace": "brood", "uid": DEPLOYMENT_UID,
+                         "generation": generation, "annotations": {REVISION: revision}},
+            "status": {"observedGeneration": observed}}
+
+
+def replicaset(revision, template_hash, owner=DEPLOYMENT_UID):
+    return {"metadata": {"name": "brood-go-" + template_hash, "uid": "rs-" + template_hash,
+                         "labels": {"app": "brood-go", "pod-template-hash": template_hash},
+                         "annotations": {REVISION: revision},
+                         "ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "brood-go",
+                                              "uid": owner, "controller": True}]}}
+
+
+def pod(name, rs, ready=True, phase="Running", deleting=False, owner=None):
+    meta = {"name": name, "uid": "pod-" + name,
+            "labels": {"app": "brood-go", "pod-template-hash": rs["metadata"]["labels"]["pod-template-hash"]},
+            "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": rs["metadata"]["name"],
+                                 "uid": owner or rs["metadata"]["uid"], "controller": True}]}
+    if deleting:
+        meta["deletionTimestamp"] = "2026-11-10T09:14:02Z"
+    return {"metadata": meta, "status": {"phase": phase, "conditions": [
+        {"type": "PodScheduled", "status": "True"}, {"type": "Ready", "status": "True" if ready else "False"}]}}
+
+
+def items(*objects):
+    return {"apiVersion": "v1", "kind": "List", "items": list(objects)}
+
+
+# BUG #246: kubectl exec deployment/brood-go сам выбрал под и попал в старый,
+# уже Killing после rollout; поток артефактов висел 48 минут.
+# SPEC: публикация — только в под ReplicaSet текущей ревизии Deployment
+# (цепочка по UID владельцев), Running, Ready, без deletionTimestamp; ровно один,
+# иначе отказ с причиной.
+class ArtifactPodTests(unittest.TestCase):
+    def choose(self, deployment, replicasets, pods):
+        return go_server.artifact_pod(deployment, replicasets, pods)
+
+    def refused(self, deployment, replicasets, pods, reason):
+        with self.assertRaises(RuntimeError) as raised:
+            self.choose(deployment, replicasets, pods)
+        message = str(raised.exception)
+        self.assertIn("guest bootstrap artifact publish", message)
+        self.assertRegex(message, reason)
+        return message
+
+    def test_terminating_old_pod_is_skipped_for_the_current_revision(self):
+        old, new = replicaset("2", "old0hash"), replicaset("3", "new0hash")
+        for old_pod in (pod("brood-go-old", old, deleting=True), pod("brood-go-old", old)):
+            with self.subTest(deleting="deletionTimestamp" in old_pod["metadata"]):
+                self.assertEqual(self.choose(rolled_out("3"), [old, new], [old_pod, pod("brood-go-new", new)]),
+                                 "brood-go-new")
+
+    def test_terminating_pod_of_the_current_revision_is_not_a_target(self):
+        new = replicaset("3", "new0hash")
+        self.assertEqual(self.choose(rolled_out("3"), [new], [
+            pod("brood-go-dying", new, deleting=True), pod("brood-go-new", new)]), "brood-go-new")
+        self.refused(rolled_out("3"), [new], [pod("brood-go-dying", new, deleting=True)],
+                     "exactly one running ready pod of deployment/brood-go revision 3, found 0")
+
+    def test_pod_that_is_not_ready_or_running_is_refused(self):
+        new = replicaset("3", "new0hash")
+        for candidate in (pod("brood-go-new", new, ready=False), pod("brood-go-new", new, phase="Pending"),
+                          pod("brood-go-new", new, phase="Succeeded"),
+                          {**pod("brood-go-new", new), "status": {"phase": "Running"}}):
+            with self.subTest(status=candidate["status"]):
+                self.refused(rolled_out("3"), [new], [candidate], "running ready pod .* found 0")
+
+    def test_two_candidates_are_refused_with_their_names(self):
+        new = replicaset("3", "new0hash")
+        message = self.refused(rolled_out("3"), [new], [pod("brood-go-a", new), pod("brood-go-b", new)],
+                               "exactly one running ready pod .* found 2")
+        self.assertIn("brood-go-a, brood-go-b", message)
+
+    def test_no_candidates_are_refused(self):
+        old, new = replicaset("2", "old0hash"), replicaset("3", "new0hash")
+        self.refused(rolled_out("3"), [old, new], [], "found 0")
+        # Только под старой ревизии, пусть и готовый: он не цель.
+        self.refused(rolled_out("3"), [old, new], [pod("brood-go-old", old)], "found 0")
+
+    def test_pod_must_be_controlled_by_the_current_replicaset_uid(self):
+        new = replicaset("3", "new0hash")
+        # Метка pod-template-hash совпала, но владелец — другой объект.
+        self.refused(rolled_out("3"), [new], [pod("brood-go-copy", new, owner="rs-foreign")], "found 0")
+        orphan = pod("brood-go-orphan", new)
+        orphan["metadata"]["ownerReferences"] = []
+        self.refused(rolled_out("3"), [new], [orphan], "found 0")
+        relabeled = pod("brood-go-new", new)
+        relabeled["metadata"]["labels"]["pod-template-hash"] = "other0hash"
+        self.refused(rolled_out("3"), [new], [relabeled], "found 0")
+
+    def test_current_revision_needs_exactly_one_owned_replicaset(self):
+        new = replicaset("3", "new0hash")
+        foreign = replicaset("3", "for0hash", owner="22222222-0000-0000-0000-000000000002")
+        self.refused(rolled_out("3"), [foreign], [pod("brood-go-new", foreign)],
+                     "exactly one ReplicaSet of deployment/brood-go revision 3, found 0")
+        self.refused(rolled_out("3"), [new, replicaset("3", "twin0hash")], [pod("brood-go-new", new)],
+                     "exactly one ReplicaSet .* found 2")
+        self.assertEqual(self.choose(rolled_out("3"), [foreign, new], [pod("brood-go-new", new)]), "brood-go-new")
+
+    def test_deployment_must_be_observed_at_its_generation(self):
+        new = replicaset("3", "new0hash")
+        self.refused(rolled_out("3", generation=8, observed=7), [new], [pod("brood-go-new", new)],
+                     "deployment/brood-go is not rolled out")
+        without = rolled_out("3")
+        without["metadata"]["annotations"] = {}
+        self.refused(without, [new], [pod("brood-go-new", new)], "deployment/brood-go is not rolled out")
+
+    def test_malformed_objects_are_refused_as_strings(self):
+        new = replicaset("3", "new0hash")
+        for deployment, replicasets, pods in (({}, [new], [pod("brood-go-new", new)]),
+                                              (rolled_out("3"), [{"metadata": None}], []),
+                                              (rolled_out("3"), [new], [{"status": {}}]), (None, None, None)):
+            with self.subTest(deployment=deployment, replicasets=replicasets, pods=pods):
+                self.refused(deployment, replicasets, pods, "cannot choose")
 
 
 # FEATURE: BROOD_GIT_REMOTES — remotes репозиториев проекта, секрет установки.
@@ -157,23 +279,19 @@ class GoManifestTests(unittest.TestCase):
                for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
         self.assertEqual(env.get("BROOD_ARTIFACTS_DIR"), "/data/artifacts")
 
-    def test_bootstrap_artifact_publish_streams_all_three_binaries(self):
-        """#156: после rollout выкладка отдаёт серверу bro/brood-guest/claude
-        одним бинарным потоком brood artifacts; отказ любого шага — отказ
-        выкладки, без частичной публикации."""
-        import tempfile
-        from pathlib import Path
-        from unittest.mock import Mock
-        project = Path(tempfile.mkdtemp()) / "project"
+    def publisher(self, cluster_objects, exec_bytes):
+        """Выкладка с подменённым shell: сборка и curl пишут файлы, kubectl get
+        отдаёт cluster_objects по виду ресурса, exec уходит в exec_bytes."""
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        project, root = Path(scratch.name) / "project", Path(scratch.name) / "release"
+        root.mkdir()
         (project / "brood/dev").mkdir(parents=True)
-        import hashlib
         (project / "brood/dev/pins.json").write_text(json.dumps(
             {"CLAUDE_VERSION": "2.1.310",
              "CLAUDE_SHA256": hashlib.sha256(b"\x7fELFclaude-pinned").hexdigest()}))
         deploy = go_server.Deploy(Mock(), get={"BROOD_SESSION_SECRET": "x" * 32}.get, project=str(project))
         calls = []
-        root = Path(tempfile.mkdtemp())
-        (root).mkdir(exist_ok=True)
 
         def output(*argv, cwd=None):
             calls.append(argv)
@@ -183,14 +301,37 @@ class GoManifestTests(unittest.TestCase):
                 package = argv[-1]
                 Path(argv[argv.index("-o") + 1]).write_bytes(
                     b"\x7fELFbro-release" if package == "./cmd/bro" else b"\x7fELFguest-built")
+            if argv[0] == "kubectl" and "get" in argv:
+                kind = argv[argv.index("get") + 1]
+                if kind not in cluster_objects:
+                    return 1, "", "Unable to connect to the server"
+                return 0, json.dumps(cluster_objects[kind]), ""
             return 0, "", ""
 
-        streams = []
         deploy.cluster.shell.output.side_effect = output
-        deploy.cluster.shell.output_bytes.side_effect = lambda argv, *, input: (streams.append((argv, input)), (0, b"", b""))[1]
+        deploy.cluster.shell.output_bytes.side_effect = exec_bytes
+        return deploy, calls, root
+
+    def test_bootstrap_artifact_publish_streams_all_three_binaries(self):
+        """#156: после rollout выкладка отдаёт серверу bro/brood-guest/claude
+        одним бинарным потоком brood artifacts; отказ любого шага — отказ
+        выкладки, без частичной публикации. #246: поток идёт в под текущей
+        ревизии по имени и с общим таймаутом, не в deployment/brood-go."""
+        old, new = replicaset("2", "old0hash"), replicaset("3", "new0hash")
+        streams = []
+
+        def exec_bytes(argv, *, input, timeout=None):
+            streams.append((argv, input, timeout))
+            return 0, "", ""
+
+        deploy, calls, root = self.publisher(
+            {"deployment": rolled_out("3"), "replicasets": items(old, new),
+             "pods": items(pod("brood-go-old", old, deleting=True), pod("brood-go-new", new))}, exec_bytes)
         deploy.publish_bootstrap_artifacts(root)
-        argv, stream = streams[0]
-        self.assertEqual(argv[-4:], ("/brood", "artifacts", "--dir", "/data/artifacts"))
+        argv, stream, timeout = streams[0]
+        self.assertEqual(argv, ("kubectl", "--context=kind-substrate", "-n", "brood", "exec", "-i",
+                                "pod/brood-go-new", "--", "/brood", "artifacts", "--dir", "/data/artifacts"))
+        self.assertEqual(timeout, 600)
         # Запись «имя NUL размер NUL байты»: ELF содержит нули, разделитель
         # после байтов его бы резал (прод 6757).
         self.assertEqual(stream,
@@ -204,6 +345,46 @@ class GoManifestTests(unittest.TestCase):
         self.assertEqual({a[-1] for a in builds}, {"./cmd/bro", "./cmd/brood-guest"})
         for build in builds:
             self.assertEqual(build[:5], ("env", "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "go"))
+        # Под выбран после сборки и скачивания, перед самым exec: минута сборки
+        # не отделяет выбор от записи.
+        reads = [a for a in calls if a[0] == "kubectl"]
+        self.assertEqual([a[a.index("get") + 1:a.index("-o")] for a in reads],
+                         [("deployment", "brood-go"), ("replicasets", "-l", "app=brood-go"),
+                          ("pods", "-l", "app=brood-go")])
+        self.assertGreater(calls.index(reads[0]), max(calls.index(a) for a in calls if a[0] != "kubectl"))
+
+    def test_hanging_artifact_publish_times_out_with_reason(self):
+        """#246: exec к умирающему поду висел 48 минут. Shell с таймаутом
+        убивает процесс и отказывает TimeoutError; выкладка отвечает строкой."""
+        new = replicaset("3", "new0hash")
+
+        def hanging(argv, *, input, timeout=None):
+            if timeout is None:
+                raise AssertionError("artifact publish without a timeout would hang forever")
+            raise TimeoutError(f"kubectl --context=kind-substrate -n timed out after {timeout} s")
+
+        deploy, _, root = self.publisher(
+            {"deployment": rolled_out("3"), "replicasets": items(new), "pods": items(pod("brood-go-new", new))},
+            hanging)
+        with self.assertRaises(RuntimeError) as raised:
+            deploy.publish_bootstrap_artifacts(root)
+        self.assertEqual(str(raised.exception).split(";")[0],
+                         "guest bootstrap artifact publish timed out after 600 s")
+        self.assertIn("docs/DEPLOY.md", str(raised.exception))
+        self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_artifact_publish_refuses_without_current_pod_before_exec(self):
+        new = replicaset("3", "new0hash")
+        for objects, reason in (
+                ({"deployment": rolled_out("3"), "replicasets": items(new),
+                  "pods": items(pod("brood-go-new", new, ready=False))}, "exactly one running ready pod"),
+                ({"deployment": rolled_out("3"), "replicasets": items(new)}, "cannot read pods"),
+                ({"deployment": rolled_out("3"), "replicasets": items(new), "pods": [pod("brood-go-new", new)]},
+                 "unexpected deployment/brood-go objects")):
+            with self.subTest(reason=reason):
+                deploy, _, root = self.publisher(objects, Mock(side_effect=AssertionError("exec without a pod")))
+                with self.assertRaisesRegex(RuntimeError, reason):
+                    deploy.publish_bootstrap_artifacts(root)
 
     def test_kubernetes_configuration_also_supplies_approved_worker_images(self):
         deployment = next(item for item in render("localhost:5002/brood-go@sha256:" + "a" * 64)

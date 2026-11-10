@@ -250,13 +250,19 @@ class Shell:
             raise RuntimeError(f"{argv[0]} is not installed") from None
         return r.returncode, r.stdout, r.stderr
 
-    def output_bytes(self, argv, *, input):
+    def output_bytes(self, argv, *, input, timeout=None):
         """Процесс с бинарным stdin -> (код, stdout, stderr): артефакты
-        бутстрапа (#156) идут в pod потоком байтов."""
+        бутстрапа (#156) идут в pod потоком байтов. timeout в секундах — на
+        весь обмен: по нему процесс убит и собран, отказ — TimeoutError
+        (#246: kubectl exec к умирающему поду висел 48 минут)."""
         try:
-            r = subprocess.run(argv, env=self.env, cwd=self.cwd, input=input, capture_output=True)
+            r = subprocess.run(argv, env=self.env, cwd=self.cwd, input=input, capture_output=True,
+                               timeout=timeout)
         except FileNotFoundError:
             raise RuntimeError(f"{argv[0]} is not installed") from None
+        except subprocess.TimeoutExpired:
+            # subprocess.run уже убил процесс (SIGKILL) и дождался его.
+            raise TimeoutError(f"{step(argv)} timed out after {timeout} s") from None
         return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
 
     def which(self, tool):

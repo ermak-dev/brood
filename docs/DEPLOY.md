@@ -290,7 +290,8 @@ Lease (чужая, старая, своего прошлого запуска, �
   пока Lease не снята вручную (процедура ниже); автоматическое восстановление
   оборванного scale-to-zero **не работает**, пока оператор не доказал смерть прежнего
   процесса;
-- ошибка после возврата `before_apply` (apply, rollout, inspect, edge, probe) оставляет
+- ошибка после возврата `before_apply` (apply, rollout, публикация артефактов
+  гостя, inspect, edge, probe) оставляет
   Lease: исход apply неоднозначен, повтор не делается. После неё `release()` только
   возвращает replicas по записи, если может доказать её;
 - `flock` не заменяет Lease: он не виден с других машин, а Lease не заменяет `flock`:
@@ -576,6 +577,39 @@ runtime policy. Server deploy никогда не вызывает перево�
 публикует все три артефакта с `manifest.json` в PVC сервера
 (`/data/artifacts`, настройка `BROOD_ARTIFACTS_DIR`). Образ сервера — scratch
 без shell, поэтому поток разбирает сам бинарь: `kubectl exec -i
-deployment/brood-go -- /brood artifacts --dir /data/artifacts`. Сервер
+pod/<имя> -- /brood artifacts --dir /data/artifacts`. Сервер
 перечитывает манифест на каждый запрос гостя: новый CT забирает новые бинари
 без рестарта сервера; работающие акторы продолжают старые до reset.
+
+Под публикации выбирается явно, после сборки и прямо перед exec (#246):
+`kubectl exec deployment/brood-go` выбирает под сам и после rollout попал в
+старый, уже завершающийся; поток висел 48 минут. Цель — ReplicaSet текущей
+ревизии Deployment (`deployment.kubernetes.io/revision` при `observedGeneration`
+не ниже `generation`) с controller-ссылкой на UID Deployment, и его под:
+controller-ссылка на UID этого ReplicaSet, его `pod-template-hash`, фаза
+`Running`, условие `Ready`, без `deletionTimestamp`. Одна метка
+`pod-template-hash` не доказательство, её может нести любой под; UID владельцев
+ставят контроллеры. Такой под ровно один, иначе отказ до exec с ревизией, числом
+и именами кандидатов. Exec ограничен общим таймаутом 600 с на весь поток около
+310 МБ (`ARTIFACT_PUBLISH_TIMEOUT`, `brood/dev/deploy/go_server.py`; в норме
+поток уходит за десятки секунд). По таймауту `kubectl` убит, отказ —
+`guest bootstrap artifact publish timed out after 600 s`. `brood artifacts`
+заменяет каталог rename только после полного потока: на томе прежний набор
+или новый целиком, частичного нет.
+
+Отказ публикации (таймаут, нет единственного готового пода, ошибка exec)
+приходит после apply: сервер уже выкачен, но новые акторы получат прежний
+гостевой runtime, пока публикация не пройдёт. Что делать:
+
+1. Убедитесь, что процесс deploy завершился и `kubectl exec` не висит
+   (`pgrep -af 'brood deploy server'`, `pgrep -af 'kubectl.*exec'` на машине
+   деплоя пусты; таймаут убивает exec сам).
+2. Отказ про под — сначала `kubectl -n brood get pods -l app=brood-go` и
+   `kubectl -n brood rollout status deployment/brood-go`: незавершённый rollout
+   или лишний под разбирают до повтора, а не повторяют вслепую.
+3. В режиме `existing` Lease `brood-go-deploy` после такого отказа остаётся
+   (исход после `before_apply`, раздел «Существующая Go-установка»): снимите её
+   по процедуре «Ручное снятие Lease» с preconditions uid/resourceVersion.
+   В `initial` Lease нет.
+4. Повторите выкладку тем же релизом (перезапуск job): она проходит заново
+   целиком, от snapshot и schema gate до публикации артефактов.
