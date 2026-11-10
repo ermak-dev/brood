@@ -3208,5 +3208,47 @@
     "steps_empty": "尚無步驟。",
     "management": "存取與生命週期",
     "management_hint": "誰可以使用此群組、其擁有權與刪除。"
+  },
+  "swarm_requests": {
+    "title": "操作員請求",
+    "hint": "此群組中圖節點和 Actor 提出的問題。待處理的請求排在前面；已回答的留在下方作為歷程。",
+    "open_count": "{{count}} 個待處理",
+    "none_open": "沒有待處理的請求。",
+    "history": "歷程",
+    "states": {
+      "open": "待處理",
+      "answered": "已回答",
+      "cancelled": "已取消"
+    },
+    "asker_node": "節點",
+    "asker_actor": "Actor",
+    "actor_gone": "Actor 已不存在",
+    "asked": "提出於",
+    "context": "背景資料",
+    "route_hint": "所選選項決定圖接下來走向哪裡。",
+    "actor_hint": "回答會以操作員訊息傳送給 Actor；它不會改變圖的路線。",
+    "comment": "備註（選填）",
+    "response": "回答",
+    "confirm": {
+      "yes": "是",
+      "no": "否"
+    },
+    "submit": "送出回答",
+    "sent": "回答已記錄。",
+    "refused": "未被接受：{{reason}}",
+    "answer": "回答",
+    "comment_saved": "備註",
+    "answered_by": "回答者",
+    "answered_at": "回答時間",
+    "delivery": "送達",
+    "delivery_states": {
+      "pending": "等待中",
+      "delivered": "已送達",
+      "failed": "送達失敗"
+    },
+    "retry_delivery": "重試送達",
+    "read_only": "只有作用中群組的擁有者和編輯者可以回答。",
+    "cancelled_hint": "未回答即已關閉。",
+    "unknown_kind": "此版本的面板無法回答這類請求。"
   }
 }

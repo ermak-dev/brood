@@ -14,15 +14,17 @@ import { LoadState, StatusBadge } from '@/features/access/shared';
 import { swarmTone } from '@/features/access/state';
 import { SwarmManagement } from '@/features/access/SwarmManagement';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
-import { HumanGatePanel } from '@/features/pipelines/HumanGatePanel';
 import { RunGraph } from '@/features/pipelines/RunDetailPage';
-import { gateVisitKey, openGate, runIsLive } from '@/features/pipelines/state';
+import { runIsLive } from '@/features/pipelines/state';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { Section } from '@/features/substrate/components/form';
 import { useResource } from '@/features/substrate/hooks';
 import { DASH } from '@/features/substrate/format';
 import { formatDateTimeValue } from '@/utils/format';
 import { SWARMS_PATH } from './routes';
+import { nodeRequest } from './requestState';
+import { RequestCard, RequestInbox } from './SwarmRequests';
+import { useSwarmRequests } from './useSwarmRequests';
 import {
   executionTone,
   hasStepTimes,
@@ -58,6 +60,14 @@ function SwarmScreen({ id }: { id: string }) {
   const loadGraph = useCallback(() => pipelinesApi.getRunGraph(id), [id]);
   const graph = useResource(run ? loadGraph : null);
   const [chosen, setChosen] = useState<string>();
+  // Запросы оператору (#216). Ответ узловому запросу продвигает граф;
+  // ответ, данный у узла, оставляет выбор на нём, рядом с подтверждением.
+  const inbox = useSwarmRequests(id, swarm.data, (answered, place) => {
+    if (answered.origin !== 'node') return;
+    if (place === 'node' && answered.nodeId) setChosen(answered.nodeId);
+    void execution.refresh();
+    void graph.refresh();
+  });
   useInterval(
     () => {
       void execution.refresh();
@@ -84,12 +94,8 @@ function SwarmScreen({ id }: { id: string }) {
       </div>
     );
   }
-  const gate = run ? openGate(run) : null;
-  const answer = async (value: string) => {
-    if (!run || !gate) return;
-    await pipelinesApi.answerGate(run.id, gate.nodeId, value, gate.visitSequence);
-    await Promise.all([execution.refresh(), graph.refresh()]);
-  };
+  const selected = selectedNodeId(run, graph.data, chosen);
+  const asked = nodeRequest(inbox.requests, selected);
   return (
     <SwarmView
       swarm={data}
@@ -103,10 +109,11 @@ function SwarmScreen({ id }: { id: string }) {
       graphLoading={graph.loading}
       graphError={graph.error ?? ''}
       retryGraph={graph.refresh}
-      selected={selectedNodeId(run, graph.data, chosen)}
+      selected={selected}
       onSelect={setChosen}
-      gateNode={gate?.nodeId}
-      gate={gate && <HumanGatePanel key={gateVisitKey(gate)} gate={gate} submit={answer} />}
+      gateNode={asked?.nodeId}
+      gate={asked && <RequestCard key={asked.id} model={inbox} request={asked} variant="node" />}
+      requests={<RequestInbox model={inbox} onSelectNode={setChosen} />}
       management={
         <SwarmManagement
           swarm={data}
@@ -139,18 +146,19 @@ export interface SwarmViewProps {
   retryGraph: () => Promise<void>;
   selected?: string;
   onSelect: (node: string) => void;
-  /** Узел открытого вопроса оператору и форма ответа на него. */
+  /** Узел запроса оператору и его карточка (#216): форма ответа или ответ. */
   gateNode?: string;
   gate?: ReactNode;
+  /** Инбокс запросов оператору: под состояниями, выше графа. */
+  requests?: ReactNode;
   /** Доступ и жизненный цикл: в конце страницы, после работы роя. */
   management?: ReactNode;
 }
 
-/** Рой целиком: сведения, два раздельных состояния, граф сверху вниз,
- * выбранный узел и история шагов, затем доступ и удаление. Запуск и
- * остановка (#211) встанут в действия заголовка, запросы оператору
- * (#216) — рядом с выбранным узлом; пока их нет, места под них пустуют
- * без неработающих кнопок. */
+/** Рой целиком: сведения, два раздельных состояния, запросы оператору
+ * (#216), граф сверху вниз, выбранный узел и история шагов, затем доступ
+ * и удаление. Запуск и остановка (#211) встанут в действия заголовка;
+ * пока их нет, место под них пустует без неработающих кнопок. */
 export function SwarmView({
   swarm,
   projectName,
@@ -167,6 +175,7 @@ export function SwarmView({
   onSelect,
   gateNode,
   gate,
+  requests,
   management,
 }: SwarmViewProps) {
   const { t } = useTranslation();
@@ -194,6 +203,7 @@ export function SwarmView({
           </LoadState>
         </StateCard>
       </div>
+      {requests}
       {run && (
         <>
           <Section

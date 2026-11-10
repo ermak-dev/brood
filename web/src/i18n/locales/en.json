@@ -3183,5 +3183,47 @@
     "steps_empty": "No steps yet.",
     "management": "Access and lifecycle",
     "management_hint": "Who can use this swarm, its ownership and its deletion."
+  },
+  "swarm_requests": {
+    "title": "Operator requests",
+    "hint": "Questions from graph nodes and actors of this swarm. Open requests come first; answered ones stay below as history.",
+    "open_count": "{{count}} open",
+    "none_open": "No open requests.",
+    "history": "History",
+    "states": {
+      "open": "Open",
+      "answered": "Answered",
+      "cancelled": "Cancelled"
+    },
+    "asker_node": "Node",
+    "asker_actor": "Actor",
+    "actor_gone": "actor no longer exists",
+    "asked": "Asked",
+    "context": "Context",
+    "route_hint": "The chosen option decides where the graph goes next.",
+    "actor_hint": "The answer reaches the actor as an operator message; it does not route the graph.",
+    "comment": "Comment (optional)",
+    "response": "Answer",
+    "confirm": {
+      "yes": "Yes",
+      "no": "No"
+    },
+    "submit": "Send answer",
+    "sent": "Answer recorded.",
+    "refused": "Not accepted: {{reason}}",
+    "answer": "Answer",
+    "comment_saved": "Comment",
+    "answered_by": "Answered by",
+    "answered_at": "Answered at",
+    "delivery": "Delivery",
+    "delivery_states": {
+      "pending": "Pending",
+      "delivered": "Delivered",
+      "failed": "Failed"
+    },
+    "retry_delivery": "Retry delivery",
+    "read_only": "Only owners and editors of an active swarm can answer.",
+    "cancelled_hint": "Closed without an answer.",
+    "unknown_kind": "This panel version cannot answer this kind of request."
   }
 }

@@ -3183,5 +3183,47 @@
     "steps_empty": "아직 단계가 없습니다.",
     "management": "접근 및 수명 주기",
     "management_hint": "이 스웜을 사용할 수 있는 사람, 소유권, 삭제."
+  },
+  "swarm_requests": {
+    "title": "운영자 요청",
+    "hint": "이 스웜의 그래프 노드와 액터가 보낸 질문입니다. 열린 요청이 먼저 표시되고, 답변한 요청은 아래에 기록으로 남습니다.",
+    "open_count": "열림 {{count}}개",
+    "none_open": "열린 요청이 없습니다.",
+    "history": "기록",
+    "states": {
+      "open": "열림",
+      "answered": "답변됨",
+      "cancelled": "취소됨"
+    },
+    "asker_node": "노드",
+    "asker_actor": "액터",
+    "actor_gone": "액터가 더 이상 없음",
+    "asked": "질문 시각",
+    "context": "자료",
+    "route_hint": "선택한 옵션이 그래프의 다음 경로를 정합니다.",
+    "actor_hint": "답변은 운영자 메시지로 액터에게 전달되며 그래프 경로를 바꾸지 않습니다.",
+    "comment": "메모(선택)",
+    "response": "답변",
+    "confirm": {
+      "yes": "예",
+      "no": "아니요"
+    },
+    "submit": "답변 보내기",
+    "sent": "답변이 기록되었습니다.",
+    "refused": "수락되지 않음: {{reason}}",
+    "answer": "답변",
+    "comment_saved": "메모",
+    "answered_by": "답변자",
+    "answered_at": "답변 시각",
+    "delivery": "전달",
+    "delivery_states": {
+      "pending": "대기 중",
+      "delivered": "전달됨",
+      "failed": "전달 실패"
+    },
+    "retry_delivery": "다시 전달",
+    "read_only": "활성 스웜의 소유자와 편집자만 답변할 수 있습니다.",
+    "cancelled_hint": "답변 없이 닫혔습니다.",
+    "unknown_kind": "이 패널 버전은 이런 종류의 요청에 답할 수 없습니다."
   }
 }

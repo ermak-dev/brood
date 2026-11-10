@@ -3180,5 +3180,47 @@
     "steps_empty": "暂无步骤。",
     "management": "访问与生命周期",
     "management_hint": "谁可以使用此群组、其所有权以及删除。"
+  },
+  "swarm_requests": {
+    "title": "操作员请求",
+    "hint": "此群组中图节点和 Actor 提出的问题。未处理的请求排在前面；已回答的留在下方作为历史。",
+    "open_count": "{{count}} 个待处理",
+    "none_open": "没有待处理的请求。",
+    "history": "历史",
+    "states": {
+      "open": "待处理",
+      "answered": "已回答",
+      "cancelled": "已取消"
+    },
+    "asker_node": "节点",
+    "asker_actor": "Actor",
+    "actor_gone": "Actor 已不存在",
+    "asked": "提出于",
+    "context": "背景材料",
+    "route_hint": "所选选项决定图接下来走向哪里。",
+    "actor_hint": "回答会以操作员消息发送给 Actor；它不会改变图的路线。",
+    "comment": "备注（可选）",
+    "response": "回答",
+    "confirm": {
+      "yes": "是",
+      "no": "否"
+    },
+    "submit": "发送回答",
+    "sent": "回答已记录。",
+    "refused": "未被接受：{{reason}}",
+    "answer": "回答",
+    "comment_saved": "备注",
+    "answered_by": "回答者",
+    "answered_at": "回答时间",
+    "delivery": "送达",
+    "delivery_states": {
+      "pending": "等待中",
+      "delivered": "已送达",
+      "failed": "送达失败"
+    },
+    "retry_delivery": "重试送达",
+    "read_only": "只有活动群组的所有者和编辑者可以回答。",
+    "cancelled_hint": "未回答即已关闭。",
+    "unknown_kind": "此版本的面板无法回答这类请求。"
   }
 }
