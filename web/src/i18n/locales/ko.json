@@ -207,6 +207,7 @@
     "copy": "복사",
     "expand": "펼치기",
     "collapse": "접기",
+    "show_full": "전체 보기",
     "status": "상태",
     "action": "작업",
     "custom_headers_label": "사용자 지정 헤더",

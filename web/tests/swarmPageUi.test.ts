@@ -308,7 +308,8 @@ describe('actor step states (#212, #238)', () => {
     const text = shown(
       render({ run: stuck({ status: 'unconfirmed', detail }), selected: 'architecture' })
     );
-    expect(count(text, detail)).toBe(2);
+    // The operation ID is a monospace element; the detail itself is unchanged.
+    expect(count(text.replace(/\s+/g, ' '), detail)).toBe(2);
     expect(count(text, guidance.unconfirmed)).toBe(1);
     expect(text).toContain(guidance.release);
     expect(text).toContain('bro dispatch architect --request-id');
@@ -398,13 +399,13 @@ describe('pass goal', () => {
     return start < 0 ? '' : html.slice(start, html.indexOf('</section>', start));
   };
 
-  test('the goal of the current pass is shown as text, line breaks and markup kept', () => {
+  test('the goal of the current pass is markdown without HTML, line breaks kept', () => {
     const html = render({ run: run({ goal, nodes: passes.nodes.slice(0, 2) }) });
     const card = goalCard(html);
     expect(card).toContain(en.swarm_page.pass_goal.label);
-    expect(card).toContain(
-      'data-goal-text="">Fix issue #12\n\t- keep the API\n&lt;b&gt;as is&lt;/b&gt;</'
-    );
+    expect(card).toContain('data-goal-text=""');
+    // Markdown (#252): the author's tag is text, the line breaks stay.
+    expect(card).toContain('<p>Fix issue #12\n- keep the API\n&lt;b&gt;as is&lt;/b&gt;</p>');
     expect(card).not.toContain('<b>');
     // The pass is named by its first step.
     expect(visibleText(card)).toContain(

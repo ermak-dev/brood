@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Markdown, PlainText } from '@/components/ui/Markdown';
 import { useProjectStore } from '@/stores';
 import { accessApi, type AccessSwarm } from '@/services/brood/access';
 import {
@@ -346,7 +347,7 @@ function StateCard({ label, children }: { label: string; children: ReactNode }) 
 }
 
 /** Задача текущего прохода (#242) — на всю ширину под состояниями: текст
- * оператора как набран, переводы строк сохранены, разметка — текстом. */
+ * оператора как набран, переводы строк сохранены, markdown без HTML (#252). */
 function PassGoal({ goal, pass, number }: { goal: string; pass?: number; number?: number }) {
   const { t } = useTranslation();
   const labelId = useId();
@@ -362,9 +363,7 @@ function PassGoal({ goal, pass, number }: { goal: string; pass?: number; number?
       {pass !== undefined && (
         <p className={local.stateText}>{t('swarm_page.pass_goal.pass', { number, step: pass })}</p>
       )}
-      <p className={local.goalText} data-goal-text="">
-        {goal}
-      </p>
+      <Markdown className={local.goalText} data-goal-text="" text={goal} collapsible />
     </section>
   );
 }
@@ -499,13 +498,13 @@ function NodeDetails({
   if (node.prompt) {
     rows.push({
       label: t('swarm_page.prompt'),
-      value: <p className={local.instruction}>{node.prompt}</p>,
+      value: <Markdown className={local.instruction} text={node.prompt} collapsible />,
     });
   }
   if (node.question) {
     rows.push({
       label: t('swarm_page.question'),
-      value: <p className={local.instruction}>{node.question}</p>,
+      value: <Markdown className={local.instruction} text={node.question} />,
     });
   }
   if (node.kind === 'actor') {
@@ -517,7 +516,7 @@ function NodeDetails({
   if (node.detail) {
     rows.push({
       label: t('swarm_page.reason'),
-      value: <p className={local.instruction}>{node.detail}</p>,
+      value: <PlainText className={local.instruction} text={node.detail} />,
     });
   }
   if (node.commit) {
@@ -526,7 +525,7 @@ function NodeDetails({
   if (node.report) {
     rows.push({
       label: t('swarm_page.report'),
-      value: <p className={local.instruction}>{node.report}</p>,
+      value: <Markdown className={local.instruction} text={node.report} collapsible />,
     });
   }
   if (node.startedAt) {
@@ -637,11 +636,7 @@ function PassSteps({
         <h4 id={titleId} className={local.passTitle}>
           {t('swarm_page.pass_goal.pass', { number, step: pass })}
         </h4>
-        {goal && (
-          <p className={local.goalText} data-goal-text="">
-            {goal}
-          </p>
-        )}
+        {goal && <Markdown className={local.goalText} data-goal-text="" text={goal} collapsible />}
       </div>
       {children}
     </section>
@@ -718,7 +713,7 @@ function StepItem({
         {step.report && (
           <details className={local.stepReport}>
             <summary>{t('swarm_page.report')}</summary>
-            <p className={local.instruction}>{step.report}</p>
+            <Markdown className={local.instruction} text={step.report} />
           </details>
         )}
       </div>

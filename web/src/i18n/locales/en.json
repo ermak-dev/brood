@@ -207,6 +207,7 @@
     "copy": "Copy",
     "expand": "Expand",
     "collapse": "Collapse",
+    "show_full": "Show in full",
     "status": "Status",
     "action": "Action",
     "custom_headers_label": "Custom Headers",
