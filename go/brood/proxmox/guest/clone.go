@@ -195,19 +195,22 @@ func runCloneGit(ctx context.Context, env []string, args ...string) error {
 	return nil
 }
 
-// tailBuffer keeps only the last bytes of Git's diagnostics.
+// tailBuffer keeps only the last bytes of Git's diagnostics. The buffer is a
+// field, not embedded: io.Copy would take a promoted ReadFrom over Write.
 type tailBuffer struct {
-	bytes.Buffer
+	buf   bytes.Buffer
 	limit int
 }
 
 func (b *tailBuffer) Write(p []byte) (int, error) {
-	b.Buffer.Write(p)
-	if extra := b.Len() - b.limit; extra > 0 {
-		b.Next(extra)
+	b.buf.Write(p)
+	if extra := b.buf.Len() - b.limit; extra > 0 {
+		b.buf.Next(extra)
 	}
 	return len(p), nil
 }
+
+func (b *tailBuffer) Bytes() []byte { return b.buf.Bytes() }
 
 // gitReason is the last diagnostic line as printable ASCII of at most 300 bytes.
 func gitReason(stderr []byte) string {
