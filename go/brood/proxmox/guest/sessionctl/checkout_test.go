@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"brood.dev/go/brood/gitidentity"
 )
 
 type checkoutFixture struct {
@@ -401,11 +403,69 @@ func TestCheckoutRefusesUnsafeRepositories(t *testing.T) {
 	})
 }
 
+var checkoutTestIdentity = gitidentity.Identity{Name: "brood worker2", Email: "worker2@brood.corp.example"}
+
+func (f *checkoutFixture) identity(t *testing.T) gitidentity.Identity {
+	t.Helper()
+	config := filepath.Join(f.root, ".git", "config")
+	get := func(key string) string {
+		c := exec.Command("/usr/bin/git", "config", "--file", config, "--get", key)
+		c.Env = fixtureEnv(f.root)
+		out, _ := c.Output()
+		return strings.TrimSpace(string(out))
+	}
+	return gitidentity.Identity{Name: get("user.name"), Email: get("user.email")}
+}
+
+// FEATURE: Actor Git identity recorded by the pinned checkout (#249).
+// SPEC: A request identity is written to the clone's own .git/config once the
+// clone passed its checks, never to HOME; a clone that already carries another
+// identity is refused before any effect, like local changes, with the reason;
+// a request without identity neither writes nor checks the keys, as before.
+func TestCheckoutRecordsAndEnforcesActorGitIdentity(t *testing.T) {
+	f := newCheckoutFixture(t)
+	f.engine.identity = checkoutTestIdentity
+	if got := f.identity(t); got != (gitidentity.Identity{}) {
+		t.Fatalf("fixture clone already identified: %+v", got)
+	}
+	facts, err := f.engine.run(context.Background(), f.second)
+	if err != nil || facts != (CheckoutFacts{Commit: f.second, Fetched: true}) || f.head(t) != f.second+"\n" {
+		t.Fatalf("checkout: %+v %v", facts, err)
+	}
+	if got := f.identity(t); got != checkoutTestIdentity {
+		t.Fatalf("identity not recorded: %+v", got)
+	}
+	if _, err := os.Lstat(filepath.Join(f.home, ".gitconfig")); !os.IsNotExist(err) {
+		t.Fatal("identity written to HOME")
+	}
+	if _, err := f.engine.run(context.Background(), f.first); err != nil {
+		t.Fatalf("repeated checkout with the recorded identity: %v", err)
+	}
+	// Чужая идентичность: отказ до эффекта, HEAD и ключи не тронуты.
+	fixtureGit(t, f.root, "config", "user.email", "operator@example.invalid")
+	_, err = f.engine.run(context.Background(), f.second)
+	if err == nil || !strings.Contains(err.Error(), "identity") || !strings.Contains(err.Error(), "nothing changed") {
+		t.Fatalf("foreign identity: %v", err)
+	}
+	if f.head(t) != f.first+"\n" || f.identity(t).Email != "operator@example.invalid" {
+		t.Fatal("refusal had an effect")
+	}
+	// Без идентичности в запросе ключи остаются данными, как до #249.
+	f.engine.identity = gitidentity.Identity{}
+	if _, err := f.engine.run(context.Background(), f.second); err != nil || f.identity(t).Email != "operator@example.invalid" {
+		t.Fatalf("identity-free checkout: %v %+v", err, f.identity(t))
+	}
+}
+
 func TestParseCheckoutRequest(t *testing.T) {
 	commit := strings.Repeat("ab", 20)
 	valid := `{"commit":"` + commit + `","origin":"https://git.example.com/group/project","mode":"gateway"}`
 	r, err := parseCheckoutRequest(json.RawMessage(valid))
-	if err != nil || r.Commit != commit || r.Mode != "gateway" {
+	if err != nil || r.Commit != commit || r.Mode != "gateway" || !r.GitIdentity.IsZero() {
+		t.Fatal(r, err)
+	}
+	identified := `{"commit":"` + commit + `","origin":"https://git.example.com/group/project","mode":"gateway","gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example"}}`
+	if r, err := parseCheckoutRequest(json.RawMessage(identified)); err != nil || r.GitIdentity != checkoutTestIdentity || newCheckoutEngine(r).identity != checkoutTestIdentity {
 		t.Fatal(r, err)
 	}
 	e := newCheckoutEngine(r)
@@ -425,6 +485,10 @@ func TestParseCheckoutRequest(t *testing.T) {
 		`{"commit":"` + commit + `","origin":"http://git.example.com/group/project","mode":"direct"}`,
 		`{"commit":"` + commit + `","origin":"","mode":"gateway"}`,
 		`{"commit":"` + commit + `","origin":null,"mode":"gateway"}`,
+		`{"commit":"` + commit + `","origin":"https://git.example.com/group/project","mode":"gateway","gitIdentity":null}`,
+		`{"commit":"` + commit + `","origin":"https://git.example.com/group/project","mode":"gateway","gitIdentity":{"name":"brood worker2"}}`,
+		`{"commit":"` + commit + `","origin":"https://git.example.com/group/project","mode":"gateway","gitIdentity":{"name":"brood <worker2>","email":"worker2@brood.corp.example"}}`,
+		`{"commit":"` + commit + `","origin":"https://git.example.com/group/project","mode":"gateway","gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example","extra":1}}`,
 	} {
 		if _, err := parseCheckoutRequest(json.RawMessage(raw)); err == nil {
 			t.Errorf("accepted %s", raw)

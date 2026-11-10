@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -35,10 +36,13 @@ const snapshotByteLimit = 4 << 30
 const commitObjectLimit = 1 << 20
 
 // CheckoutRequest is filled by the guest root from its own bootstrap origin.
+// GitIdentity (#249) is the installation identity of the actor; zero when the
+// installation has none, and then the clone's user keys are left alone.
 type CheckoutRequest struct {
-	Commit string `json:"commit"`
-	Origin string `json:"origin"`
-	Mode   string `json:"mode"`
+	Commit      string               `json:"commit"`
+	Origin      string               `json:"origin"`
+	Mode        string               `json:"mode"`
+	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
 }
 
 // CheckoutFacts reports a verified detached checkout of Commit.
@@ -73,7 +77,12 @@ func RunCheckout(ctx context.Context, req relay.SessionRequest) relay.SessionRes
 func parseCheckoutRequest(raw []byte) (CheckoutRequest, error) {
 	var r CheckoutRequest
 	if decodeArgs(raw, &r) != nil {
-		return r, errors.New("invalid checkout arguments; only commit, origin and mode are accepted")
+		return r, errors.New("invalid checkout arguments; only commit, origin, mode and gitIdentity are accepted")
+	}
+	if !r.GitIdentity.IsZero() {
+		if err := r.GitIdentity.Validate(); err != nil {
+			return r, err
+		}
 	}
 	commit, err := hex.DecodeString(r.Commit)
 	if err != nil || len(commit) != 20 || r.Commit != strings.ToLower(r.Commit) {
@@ -98,10 +107,12 @@ type checkoutEngine struct {
 	source   string
 	protocol string
 	proxied  bool
+	// identity, when set, is enforced on the clone's user keys and recorded.
+	identity gitidentity.Identity
 }
 
 func newCheckoutEngine(r CheckoutRequest) *checkoutEngine {
-	e := &checkoutEngine{root: fixedWorkspace, home: actorHome, source: GatewayURL, protocol: "http"}
+	e := &checkoutEngine{root: fixedWorkspace, home: actorHome, source: GatewayURL, protocol: "http", identity: r.GitIdentity}
 	if r.Mode == "direct" {
 		e.source, e.protocol, e.proxied = r.Origin, "https", true
 	}
@@ -122,6 +133,11 @@ func (e *checkoutEngine) run(ctx context.Context, commit string) (CheckoutFacts,
 	}
 	if changes != "" {
 		return CheckoutFacts{}, fmt.Errorf("workspace has local changes (%s; compared byte for byte, without .gitattributes conversions); commit or remove them, nothing changed", changes)
+	}
+	// Идентичность — первый эффект: клон уже прошёл проверки, а HEAD и файлы
+	// ещё не тронуты, что и говорят последующие отказы.
+	if err := e.recordIdentity(ctx); err != nil {
+		return CheckoutFacts{}, fmt.Errorf("%s; HEAD and files unchanged", err)
 	}
 	facts := CheckoutFacts{Commit: commit}
 	if !e.has(ctx, commit) {
@@ -155,16 +171,33 @@ func (e *checkoutEngine) run(ctx context.Context, commit string) (CheckoutFacts,
 }
 
 // repository adds to the shared layout checks what a checkout needs: no
-// repository attributes (they rewrite content before hashing) and no gitlink
-// anywhere in the index, streamed because real indexes exceed output limits.
+// repository attributes (they rewrite content before hashing), no gitlink
+// anywhere in the index, streamed because real indexes exceed output limits,
+// and no user identity other than the installation's (#249).
 func (e *checkoutEngine) repository(ctx context.Context) error {
 	quick := func(ctx context.Context, args ...string) (string, error) {
 		return e.git(ctx, checkoutStepTimeout, nil, args...)
 	}
-	if err := repositoryLayout(ctx, e.root, quick, false, []string{"info/attributes"}); err != nil {
+	if err := repositoryLayout(ctx, e.root, quick, false, []string{"info/attributes"}, e.identity); err != nil {
 		return err
 	}
 	return e.stream(ctx, checkoutStepTimeout, nil, nil, indexArgs, refuseGitlinks)
+}
+
+// recordIdentity writes the installation identity into the clone's own
+// .git/config, never HOME: helper and actor Git read no configuration there.
+// The layout check has already refused a different recorded identity, so the
+// write only fills absent keys or repeats the same values.
+func (e *checkoutEngine) recordIdentity(ctx context.Context) error {
+	if e.identity.IsZero() {
+		return nil
+	}
+	for key, value := range map[string]string{"user.name": e.identity.Name, "user.email": e.identity.Email} {
+		if _, err := e.git(ctx, checkoutStepTimeout, nil, "config", "--file", filepath.Join(e.root, ".git/config"), key, value); err != nil {
+			return errors.New("cannot record the actor Git identity")
+		}
+	}
+	return nil
 }
 
 // changes compares the workspace with rev by content: a temporary index built

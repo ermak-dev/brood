@@ -60,6 +60,7 @@ Substrate закреплён в `go.mod` на публичной версии
 - `store`: SQLite, текущая схема, транзакции, readonly inspection и согласованные snapshots.
 - `projectsecret`: ограниченные данные проектных секретов и общие проверки; доставка — `docs/SECRETS.md`.
 - `gitorigin`: каноническая форма и режим HTTPS Git origin актора, без сети и credentials; шлюз — `docs/PROXMOX.md`.
+- `gitidentity`: Git-идентичность актора для коммитов из имени актора и домена установки, без Git и сети; доставка гостю — `docs/PROXMOX.md`.
 - `gitcredential`: серверные Git credentials проекта — имя, привязка к точному repository, Basic username/token и их проверки; хранение и API — `docs/SECRETS.md`.
 - `auth`: пароли, сессии, CSRF, ограничение входа, управление пользователями.
 - `app`: права на проекты и рои, восстановление операций после сбоя.

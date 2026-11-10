@@ -295,6 +295,14 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   или инкарнации — `refused`. Остановленный за время ожидания relay рой
   `workspace_attest` не получает. Выключение сервера до вызова гостя
   возвращает шаг в `pending`, следующий старт доставляет его заново.
+- Git-идентичность актора (#249): `GET /api/proxmox/workspace/{uid}/{generation}`
+  при настроенном `BROOD_ACTOR_GIT_DOMAIN` и непустом origin несёт
+  `gitIdentity` `{name: "brood <актор>", email: "<актор>@<домен>"}`; первый
+  клон и checkout подтверждения пишут её в `user.name` и `user.email`
+  `.git/config` клона, checkout отказывает (`refused` с `detail`) клону с
+  другой записанной идентичностью. Без настройки поля нет и поведение
+  прежнее (docs/PROXMOX.md, «Origin и первый клон», «Подтверждение
+  workspace»).
 - Инструкция — одно сообщение канала роя: `from` — `swarm:<id роя>`, `to` —
   имя привязанного актора, `waitSec` 0. Тело: `[brood swarm <имя>] Step <n>,
   node <узел>.`, блок `Goal of this pass (started at step <первый шаг

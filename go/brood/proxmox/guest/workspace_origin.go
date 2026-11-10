@@ -12,6 +12,7 @@ import (
 	"os"
 	"time"
 
+	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -52,10 +53,11 @@ func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts 
 		return fail()
 	}
 	fields := map[string]string{}
+	var identity gitidentity.Identity
 	for decoder.More() {
 		token, err := decoder.Token()
 		key, ok := token.(string)
-		if err != nil || !ok || (key != "origin" && key != "mode") {
+		if err != nil || !ok || (key != "origin" && key != "mode" && key != "gitIdentity") {
 			return fail()
 		}
 		if _, exists := fields[key]; exists {
@@ -65,6 +67,14 @@ func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts 
 		if decoder.Decode(&raw) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return fail()
 		}
+		if key == "gitIdentity" {
+			// Ровно {name, email} строками: как и origin, без лишних полей и null.
+			if identity, ok = decodeGitIdentity(raw); !ok {
+				return fail()
+			}
+			fields[key] = ""
+			continue
+		}
 		var value string
 		if json.Unmarshal(raw, &value) != nil {
 			return fail()
@@ -72,14 +82,36 @@ func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts 
 		fields[key] = value
 	}
 	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || len(fields) != 2 {
+	_, hasOrigin := fields["origin"]
+	_, hasMode := fields["mode"]
+	if err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || !hasOrigin || !hasMode {
 		return fail()
 	}
-	origin := WorkspaceOrigin{Origin: fields["origin"], Mode: fields["mode"]}
-	if ValidateWorkspaceOrigin(origin.Origin, origin.Mode, hosts) != nil {
+	origin := WorkspaceOrigin{Origin: fields["origin"], Mode: fields["mode"], GitIdentity: identity}
+	if ValidateWorkspaceOrigin(origin.Origin, origin.Mode, hosts) != nil || checkWorkspaceOrigin(origin) != nil {
 		return fail()
 	}
 	return origin, nil
+}
+
+// decodeGitIdentity accepts one object of exactly the two identity strings.
+func decodeGitIdentity(raw json.RawMessage) (gitidentity.Identity, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 2 {
+		return gitidentity.Identity{}, false
+	}
+	for _, value := range fields {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return gitidentity.Identity{}, false
+		}
+	}
+	var identity gitidentity.Identity
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&identity) != nil || d.Decode(new(any)) != io.EOF || identity.Validate() != nil {
+		return gitidentity.Identity{}, false
+	}
+	return identity, true
 }
 
 // RefreshWorkspaceOrigin stages the verified response for the UID 1000 wrapper.
@@ -91,7 +123,7 @@ func RefreshWorkspaceOrigin(ctx context.Context, cfg relay.ClientConfig, hosts [
 	if err != nil {
 		return WorkspaceOrigin{}, err
 	}
-	if err := PublishWorkspaceOrigin(origin.Origin, origin.Mode); err != nil {
+	if err := PublishWorkspaceOrigin(origin); err != nil {
 		return WorkspaceOrigin{}, err
 	}
 	return origin, nil

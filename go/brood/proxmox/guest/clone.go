@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"brood.dev/go/brood/gitidentity"
 )
 
 // workspaceGatewayURL is the actor-visible clone URL in gateway mode; the
@@ -33,9 +35,12 @@ type cloneGit func(ctx context.Context, env []string, args ...string) error
 type cloneSpec struct {
 	Project, Home string
 	Origin, Mode  string
-	Gateway       string
-	Timeout       time.Duration
-	Git           cloneGit // nil: /usr/bin/git
+	// Identity is the installation-assigned commit identity (#249); zero
+	// leaves the clone without user.name and user.email, as before.
+	Identity gitidentity.Identity
+	Gateway  string
+	Timeout  time.Duration
+	Git      cloneGit // nil: /usr/bin/git
 }
 
 func cloneFailure(reason string) error { return errors.New("workspace clone failed: " + reason) }
@@ -46,7 +51,7 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 	if s.Origin == "" && s.Mode == "" {
 		return nil
 	}
-	if err := checkWorkspaceOrigin(WorkspaceOrigin{Origin: s.Origin, Mode: s.Mode}); err != nil {
+	if err := checkWorkspaceOrigin(WorkspaceOrigin{Origin: s.Origin, Mode: s.Mode, GitIdentity: s.Identity}); err != nil {
 		return cloneFailure(err.Error())
 	}
 	git := s.Git
@@ -95,6 +100,8 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 		cloneErr = cloneFailure(cloneErr.Error())
 	} else if git(ctx, env, append(fixed, "-C", staging, "config", "brood.origin", s.Origin)...) != nil {
 		cloneErr = cloneFailure("cannot record brood.origin")
+	} else if err := recordIdentity(ctx, git, env, fixed, staging, s.Identity); err != nil {
+		cloneErr = err
 	} else if err := publishClone(state, filepath.Base(staging), s.Project); err != nil {
 		// Частичная публикация не даёт права повторять клон поверх работы.
 		return cloneFailure("cannot publish clone; workspace preserved, explicit reset required")
@@ -104,6 +111,21 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 		return cloneFailure("cannot clear the pending clone record")
 	}
 	return cloneErr
+}
+
+// recordIdentity writes the actor identity into the staged clone's own
+// .git/config (#249): the actor's HOME carries no Git configuration, and the
+// helper Git of workspace operations reads none from it.
+func recordIdentity(ctx context.Context, git cloneGit, env, fixed []string, staging string, identity gitidentity.Identity) error {
+	if identity.IsZero() {
+		return nil
+	}
+	for key, value := range map[string]string{"user.name": identity.Name, "user.email": identity.Email} {
+		if git(ctx, env, append(fixed, "-C", staging, "config", key, value)...) != nil {
+			return cloneFailure("cannot record the actor Git identity")
+		}
+	}
+	return nil
 }
 
 // publishClone never replaces a live entry. A concurrent writer may interrupt

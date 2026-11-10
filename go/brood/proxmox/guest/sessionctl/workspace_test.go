@@ -259,3 +259,21 @@ func TestWorkspaceAcceptsRecordedOrigin(t *testing.T) {
 		t.Fatal("only the recorded origin is accepted in the brood section")
 	}
 }
+
+// SPEC (#249): workspace, wipe and recycle do not know the installation
+// identity, so user.name and user.email stay allowlisted as data with any
+// value, exactly as since #125; only the checkout enforces the value.
+func TestWorkspaceKeepsAnyRecordedUserIdentity(t *testing.T) {
+	e := workspaceFixture(t)
+	fixtureGit(t, e.root, "config", "user.name", "Someone Else")
+	fixtureGit(t, e.root, "config", "user.email", "someone@example.invalid")
+	if r := e.handle(context.Background(), workspaceRequest("workspace", `{}`)); !r.OK || !strings.Contains(r.Text, `"git":"clean"`) {
+		t.Fatalf("user identity refused: %+v", r)
+	}
+	if r := e.handle(context.Background(), workspaceRequest("wipe", `{"confirm":true}`)); !r.OK {
+		t.Fatalf("wipe with user identity: %+v", r)
+	}
+	if got := fixtureGit(t, e.root, "config", "--file", filepath.Join(e.root, ".git/config"), "user.email"); got != "someone@example.invalid" {
+		t.Fatalf("wipe rewrote the identity: %q", got)
+	}
+}

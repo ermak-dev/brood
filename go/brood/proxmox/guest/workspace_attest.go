@@ -84,7 +84,7 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 	var facts sessionctl.CheckoutFacts
 	var checkoutErr error
 	quiesceErr := a.Quiesce(work, func(ctx context.Context) error {
-		facts, checkoutErr = a.Checkout(ctx, sessionctl.CheckoutRequest{Commit: claim.Commit, Origin: a.Origin.Origin, Mode: a.Origin.Mode})
+		facts, checkoutErr = a.Checkout(ctx, sessionctl.CheckoutRequest{Commit: claim.Commit, Origin: a.Origin.Origin, Mode: a.Origin.Mode, GitIdentity: a.Origin.GitIdentity})
 		return checkoutErr
 	})
 	if quiesceErr != nil && quiesceErr != checkoutErr {
