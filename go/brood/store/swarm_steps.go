@@ -66,7 +66,7 @@ func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit
 // swarmStepSelect resolves managed names by UID within the step's own swarm,
 // including deleted actors whose names may since have been reused (#206:
 // join к запуску исчез — шаг принадлежит рою напрямую).
-const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,s.answer,s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.native_actor_name,m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
+const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.native_actor_name,m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
 
 func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 	var v PipelineVisit
@@ -197,62 +197,10 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, ErrPipelineVisitConflict
 	}
+	if err == nil && v.State == "waiting" {
+		err = s.openNodeRequest(ctx, swarmID, v.Sequence, n)
+	}
 	return v, err
-}
-
-// AnswerPipelineVisit accepts one answer only for the latest waiting human visit.
-// The legacy run ID argument names the run's own swarm and must match.
-func (s *Store) AnswerPipelineVisit(ctx context.Context, swarmID, legacyRunID string, sequence int64, answer string) error {
-	if legacyRunID != swarmID {
-		return ErrPipelineVisitConflict
-	}
-	return s.WithTx(ctx, func(ctx context.Context) error {
-		return s.answerPipelineVisit(ctx, swarmID, sequence, answer)
-	})
-}
-
-func (s *Store) answerPipelineVisit(ctx context.Context, swarmID string, sequence int64, answer string) error {
-	if !validPipelineField(answer) || sequence < 1 {
-		return errors.New("invalid pipeline answer")
-	}
-	w, err := s.GetSwarm(ctx, swarmID)
-	if err != nil {
-		return err
-	}
-	var node, state string
-	var previous sql.NullString
-	err = s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,answer FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&node, &state, &previous)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if state == "answered" && previous.Valid && previous.String == answer {
-		return nil
-	}
-	if state != "waiting" || !activeExecution(w.Execution) {
-		return ErrPipelineVisitConflict
-	}
-	d, err := pipeline.Parse(string(w.Graph), "pipeline")
-	if err != nil {
-		return err
-	}
-	n, ok := d.Nodes[node]
-	if !ok || n.Type != "human" {
-		return errors.New("visit is not a human node")
-	}
-	allowed := false
-	for _, option := range n.Options {
-		if option.Outcome == answer {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return errors.New("answer is not a human option")
-	}
-	return s.progressPipeline(ctx, w, d, sequence, node, "answered", answer)
-
 }
 
 // CompletePipelineActorVisit records an actor outcome or accepts an exact retry.
@@ -328,9 +276,9 @@ func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Docum
 	}
 	// Исход актёра и ответ оператора — разные поля: без подстановки имени
 	// колонки строкой каждая ветка пишет своё поле явно. Ответ живёт
-	// в колонке шага временно, до сущности запроса (#209).
+	// в запросе роя (#209), а не в шаге.
 	if state == "answered" {
-		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,answer=?,finished_at=? WHERE swarm_id=? AND sequence=?`, state, value, nowRFC3339(), w.ID, sequence); err != nil {
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,finished_at=? WHERE swarm_id=? AND sequence=?`, state, nowRFC3339(), w.ID, sequence); err != nil {
 			return err
 		}
 	} else if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,outcome=?,finished_at=? WHERE swarm_id=? AND sequence=?`, state, value, nowRFC3339(), w.ID, sequence); err != nil {
@@ -342,6 +290,11 @@ func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Docum
 	}
 	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES (?,?,?,?)`, w.ID, sequence+1, transition.Next, transition.NextState); err != nil {
 		return err
+	}
+	if next := d.Nodes[transition.Next]; next.Type == "human" && transition.NextState == "waiting" {
+		if err := s.openNodeRequest(ctx, w.ID, sequence+1, next); err != nil {
+			return err
+		}
 	}
 	_, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=? WHERE id=?`, executionOfTransition(transition.Execution), w.ID)
 	return err

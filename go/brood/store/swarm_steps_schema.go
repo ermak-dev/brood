@@ -21,9 +21,6 @@ const swarmStepsSchema = `CREATE TABLE swarm_steps (
     native_template_name TEXT,
     native_template_uid TEXT,
     native_template_digest TEXT,
-    -- Мост на время #206: ответ оператора живёт в колонке шага, сущность
-    -- запроса (#209) заберёт его в отдельную таблицу. Колонка уходит в #209.
-    answer TEXT,
     PRIMARY KEY (swarm_id, sequence),
     UNIQUE (swarm_id, request_id)
 )`

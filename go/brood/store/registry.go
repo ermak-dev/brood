@@ -33,6 +33,7 @@ var schemaModules = []schemaModule{
 	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},
 	{id: "pipeline-source", create: pipelineSourceFullSchema, verify: verifyPipelineSourcesSchema},
 	{id: "pipeline-preparation", create: pipelinePreparationFullSchema, verify: verifyPipelinePreparationsSchema},
+	{id: "swarm-requests", create: swarmRequestsFullSchema, verify: verifySwarmRequestsSchema},
 }
 
 // aclSchema — ACL роёв: члены с ролями и уникальность имён неудалённых
@@ -231,6 +232,29 @@ func checkObject(ctx context.Context, tx *sql.Tx, kind, name, expected string) e
 	}
 	if normalizeSchemaSQL(actual) != normalizeSchemaSQL(expected) {
 		return fmt.Errorf("%w: %s %s differs from current schema; recreate the database", errIncompatibleSchema, kind, name)
+	}
+	return nil
+}
+
+// verifySwarmRequestsSchema сверяет таблицу запросов, её индексы и
+// ограждение неизменности (#209).
+func verifySwarmRequestsSchema(ctx context.Context, tx *sql.Tx) error {
+	if err := checkSchema(ctx, tx, swarmRequestsSchema); err != nil {
+		return err
+	}
+	for _, object := range []struct{ kind, name, sql string }{
+		{"index", "swarm_requests_open_node", swarmRequestOpenNode},
+		{"index", "swarm_requests_step", swarmRequestStep},
+		{"trigger", "swarm_requests_fence", swarmRequestFence},
+		{"trigger", "swarm_requests_no_delete", swarmRequestNoDelete},
+		{"trigger", "swarm_requests_no_replace", swarmRequestNoReplace},
+		{"trigger", "swarm_requests_cancel_guard", swarmRequestCancelGuard},
+		{"trigger", "swarms_gate_stop", swarmGateStop},
+		{"trigger", "swarms_gate_resume", swarmGateResume},
+	} {
+		if err := checkObject(ctx, tx, object.kind, object.name, object.sql); err != nil {
+			return err
+		}
 	}
 	return nil
 }
