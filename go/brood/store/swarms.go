@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"brood.dev/go/brood/pipeline"
 )
 
 // Swarm — строка таблицы swarms. State — состояние инфраструктуры
@@ -225,14 +223,7 @@ func (s *Store) AttachSwarmGraph(ctx context.Context, swarmID string, graph []by
 	if !validPipelineField(defName) || defVer < 1 || len(defRev) > maxPipelineFieldBytes {
 		return errors.New("invalid workflow definition identity")
 	}
-	d, err := pipeline.Parse(string(graph), "pipeline")
-	if err != nil {
-		return err
-	}
-	if err = d.Validate(); err != nil {
-		return err
-	}
-	if err = supportedPipeline(d); err != nil {
+	if _, err := executableGraph(graph); err != nil {
 		return err
 	}
 	canonical, err := canonicalPipelineSource(source)
@@ -270,7 +261,7 @@ func (s *Store) AttachSwarmGraph(ctx context.Context, swarmID string, graph []by
 			return err
 		}
 		if n == 0 {
-			// Рой уже несёт снимок: замена запрещена, второго запуска нет.
+			// Рой уже несёт снимок: замена запрещена, повторный запуск идёт на нём же.
 			return errors.New("swarm graph is already attached")
 		}
 		_, err = s.conn(ctx).ExecContext(ctx, `RELEASE swarm_graph_attach`)

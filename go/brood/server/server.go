@@ -270,6 +270,7 @@ func (s *Server) mount() {
 	s.mountWorkerPools()
 	s.mountAccessAPI()
 	s.mountPipelineAPI()
+	s.mountSwarmExecutionAPI()
 	// Actor/template/policy роя, воркеры и глобальная политика — тонкий
 	// прокси к ateapi с проверкой владения роем (#32); он же подключает
 	// маршруты proxy под /api/swarms/{id}/proxy/.

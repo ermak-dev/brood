@@ -1,0 +1,183 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+
+	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/store"
+)
+
+// maxSwarmStartBody bounds the start request: a name and a commit.
+const maxSwarmStartBody = 16384
+
+type swarmDefinitionJSON struct {
+	Name     string `json:"name"`
+	Version  int64  `json:"version"`
+	Revision string `json:"revision"`
+}
+
+type swarmSourceJSON struct {
+	Origin string `json:"origin"`
+	Commit string `json:"commit"`
+}
+
+type swarmStepJSON struct {
+	Sequence int64  `json:"sequence"`
+	NodeID   string `json:"nodeId"`
+	State    string `json:"state"`
+}
+
+// swarmExecutionJSON — исполнение роя после запуска или остановки: состояние,
+// личность снимка, источник и последний шаг.
+type swarmExecutionJSON struct {
+	SwarmID    string               `json:"swarmId"`
+	Execution  string               `json:"execution"`
+	Definition *swarmDefinitionJSON `json:"definition"`
+	Source     *swarmSourceJSON     `json:"source"`
+	Step       *swarmStepJSON       `json:"step"`
+}
+
+// mountSwarmExecutionAPI — запуск и остановка роя (#211). Запросы роя и
+// доставка ответа — отдельные маршруты (#210), доставка инструкции — #212.
+func (s *Server) mountSwarmExecutionAPI() {
+	s.mux.HandleFunc("POST /api/swarms/{id}/start", s.handleSwarmStart)
+	s.mux.HandleFunc("POST /api/swarms/{id}/stop", s.handleSwarmStop)
+}
+
+// visibleSwarmUser пропускает дальше только видящего рой: постороннему рой
+// скрыт как 404. Право управлять проверяет хранилище в транзакции записи.
+func (s *Server) visibleSwarmUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
+	user, ok := currentUser(w, r)
+	if !ok {
+		return store.User{}, false
+	}
+	visible, err := s.app.Can(user.ID, app.ActionViewSwarm, app.SwarmRes(r.PathValue("id")))
+	if err != nil {
+		apiError(w, r, err)
+		return store.User{}, false
+	}
+	if !visible {
+		writeDetail(w, http.StatusNotFound, "swarm not found")
+		return store.User{}, false
+	}
+	return user, true
+}
+
+// handleSwarmStart: POST /api/swarms/{id}/start {definition, commit}.
+func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.visibleSwarmUser(w, r)
+	if !ok {
+		return
+	}
+	in, ok := readSwarmStart(w, r)
+	if !ok {
+		return
+	}
+	in.SwarmID, in.UserID = r.PathValue("id"), user.ID
+	sw, err := s.store.StartSwarm(r.Context(), in, func(ctx context.Context) bool {
+		return secretRequestSession(ctx, s, r, user.ID)
+	})
+	if err != nil {
+		swarmExecutionError(w, r, err)
+		return
+	}
+	s.writeSwarmExecution(w, r, sw)
+}
+
+// handleSwarmStop: POST /api/swarms/{id}/stop.
+func (s *Server) handleSwarmStop(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.visibleSwarmUser(w, r)
+	if !ok {
+		return
+	}
+	sw, err := s.store.StopSwarm(r.Context(), r.PathValue("id"), user.ID, func(ctx context.Context) bool {
+		return secretRequestSession(ctx, s, r, user.ID)
+	})
+	if err != nil {
+		swarmExecutionError(w, r, err)
+		return
+	}
+	s.writeSwarmExecution(w, r, sw)
+}
+
+// readSwarmStart разбирает тело строго: объект с уникальными ключами,
+// обязательная строка definition и необязательная строка commit.
+func readSwarmStart(w http.ResponseWriter, r *http.Request) (store.SwarmStart, bool) {
+	const invalid = "invalid swarm start: expected {definition, commit} with a definition name"
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSwarmStartBody))
+	if err != nil {
+		writeDetail(w, http.StatusBadRequest, invalid)
+		return store.SwarmStart{}, false
+	}
+	fields, err := proxmoxObject(string(data))
+	if err != nil {
+		writeDetail(w, http.StatusBadRequest, invalid)
+		return store.SwarmStart{}, false
+	}
+	var in store.SwarmStart
+	for key, raw := range fields {
+		var target *string
+		switch key {
+		case "definition":
+			target = &in.Definition
+		case "commit":
+			target = &in.Commit
+		default:
+			writeDetail(w, http.StatusBadRequest, invalid)
+			return store.SwarmStart{}, false
+		}
+		if !syncString(raw, target) {
+			writeDetail(w, http.StatusBadRequest, invalid)
+			return store.SwarmStart{}, false
+		}
+	}
+	if in.Definition == "" {
+		writeDetail(w, http.StatusBadRequest, invalid)
+		return store.SwarmStart{}, false
+	}
+	return in, true
+}
+
+// swarmExecutionError переводит отказ запуска или остановки в статус;
+// причина отказа уходит вызывающему строкой.
+func swarmExecutionError(w http.ResponseWriter, r *http.Request, err error) {
+	var fit *store.RoleFitError
+	switch {
+	case errors.Is(err, store.ErrSwarmRequestDenied):
+		writeDetail(w, http.StatusForbidden, "swarm management denied")
+	case errors.Is(err, store.ErrWorkflowDefinitionMissing):
+		writeDetail(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, store.ErrNotFound):
+		writeDetail(w, http.StatusNotFound, "swarm not found")
+	case errors.Is(err, store.ErrSwarmExecutionState), errors.Is(err, store.ErrSwarmGraphPinned), errors.As(err, &fit):
+		writeDetail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, store.ErrWorkflowGraphInvalid), errors.Is(err, store.ErrSwarmSourceInvalid):
+		writeDetail(w, http.StatusUnprocessableEntity, err.Error())
+	default:
+		apiError(w, r, err)
+	}
+}
+
+// writeSwarmExecution отвечает исполнением роя с его последним шагом.
+func (s *Server) writeSwarmExecution(w http.ResponseWriter, r *http.Request, sw store.Swarm) {
+	steps, err := s.store.SwarmSteps(r.Context(), sw.ID)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	out := swarmExecutionJSON{SwarmID: sw.ID, Execution: sw.Execution}
+	if sw.Graph != nil {
+		out.Definition = &swarmDefinitionJSON{Name: sw.DefinitionName, Version: sw.DefinitionVersion, Revision: sw.DefinitionRevision}
+	}
+	if sw.Source != nil {
+		out.Source = &swarmSourceJSON{Origin: sw.Source.Origin, Commit: sw.Source.Commit}
+	}
+	if len(steps) > 0 {
+		last := steps[len(steps)-1]
+		out.Step = &swarmStepJSON{Sequence: last.Sequence, NodeID: last.NodeID, State: last.State}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
