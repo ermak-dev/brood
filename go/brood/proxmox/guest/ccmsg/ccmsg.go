@@ -126,6 +126,38 @@ func AuthFrame(token string) Frame {
 	return Frame{"type": "auth", "token": token}
 }
 
+// MaxExchangeBytes bounds the NDJSON one message writes to the session inbox.
+const MaxExchangeBytes = 128 * 1024
+
+// MaxPeerTokenBytes bounds the session peer token a message is sent with.
+const MaxPeerTokenBytes = 4096
+
+// EncodeExchange builds the NDJSON Exchange writes for one message: the auth
+// frame, the user frame with the body enveloped from address under name and,
+// when waitSec > 0, the idle subscription. Encodings larger than
+// MaxExchangeBytes are refused. The server sizes instructions with it before
+// sending (#212), so a body the guest would refuse is refused before it goes.
+func EncodeExchange(token, address, name, body, msgID, idleID string, waitSec int) (string, error) {
+	envelope, err := (EnvelopeBuilder{From: address, FromName: name, FromMode: "bypass"}).Build(body)
+	if err != nil {
+		return "", err
+	}
+	user, err := UserFrame(envelope, "next", address, msgID)
+	if err != nil {
+		return "", err
+	}
+	frames := []Frame{AuthFrame(token), user}
+	if waitSec > 0 {
+		idle, _ := ControlFrame("notify_when_idle", address, "bypass", idleID)
+		frames = append(frames, idle)
+	}
+	data, err := EncodeNDJSON(frames)
+	if err != nil || len(data) > MaxExchangeBytes {
+		return "", errors.New("session message exceeds size limit")
+	}
+	return data, nil
+}
+
 // EncodeNDJSON собирает кадры в строки протокола, по объекту на строку.
 func EncodeNDJSON(frames []Frame) (string, error) {
 	var b strings.Builder

@@ -128,11 +128,13 @@ func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(co
 // StopSwarm freezes the running or waiting pass of the swarm graph. The open
 // node request is cancelled by the same statement (swarms_gate_stop, #209),
 // so an answer given later cannot advance the graph. The step the pass waits
-// on, for delivery or for the operator, is closed as stopped; an inflight or
-// unconfirmed step keeps its state, because the actor's outcome is unknown,
-// and can no longer complete. Actors, their workspaces and role bindings are
-// not touched. Stopping idle, succeeded, failed or stopped execution is
-// refused with the state named.
+// on, for delivery, for its workspace attestation or for the operator, is
+// closed as stopped: no instruction was sent and none will be. A step whose
+// instruction is being delivered becomes unconfirmed, because it may have
+// reached the actor; an inflight or unconfirmed step keeps its state, because
+// the actor's outcome is unknown, and can no longer complete. Actors, their
+// workspaces and role bindings are not touched. Stopping idle, succeeded,
+// failed or stopped execution is refused with the state named.
 func (s *Store) StopSwarm(ctx context.Context, swarmID, userID string, authorize func(context.Context) bool) (Swarm, error) {
 	var stopped Swarm
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -150,7 +152,13 @@ func (s *Store) StopSwarm(ctx context.Context, swarmID, userID string, authorize
 		// Ждущий шаг закрывается здесь, а не при следующем запуске: запуск
 		// шагов прошлых проходов не меняет, а ждущий шаг с отменённым
 		// запросом не дал бы начать новый проход (swarms_gate_resume).
-		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='stopped',finished_at=? WHERE swarm_id=? AND state IN ('pending','waiting')`, now, w.ID); err != nil {
+		// Шаг на подтверждении workspace инструкцию ещё не отправил и уже
+		// не отправит: запись подтверждения условна на attesting (#212).
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='stopped',finished_at=? WHERE swarm_id=? AND state IN ('pending','waiting','attesting')`, now, w.ID); err != nil {
+			return err
+		}
+		// Шаг на доставке мог уже уйти актору: исход неизвестен.
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='unconfirmed',detail=? WHERE swarm_id=? AND state='delivering'`, detailStoppedDelivery, w.ID); err != nil {
 			return err
 		}
 		stopped, err = s.GetSwarm(ctx, w.ID)

@@ -54,32 +54,55 @@ func (s *Server) deliverOperatorMessage(ctx context.Context, userID, swarmID str
 	if err != nil || user.Disabled {
 		return command.Result{}, app.ErrNotAllowed
 	}
+	manager := func(context.Context) error {
+		allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+		if err != nil || !allowed {
+			return app.ErrNotAllowed
+		}
+		return nil
+	}
+	result, _, err := s.deliverToActor(ctx, swarmID, resolve, relay.MessageRequest{From: "operator:" + user.Username, Body: operatorMessageBody(message), WaitSec: wait}, manager)
+	return result, err
+}
+
+// deliverToActor — общий канал сервера к актору роя: send и ответ на запрос
+// оператора (#210), инструкция шага (#212). Адресат — актор этого роя в его
+// нынешнем atespace, на связи relay; authorize — право отправителя, оно
+// проверяется прямо перед отправкой и сразу после неё, вместе с
+// неизменной инкарнацией адресата. sent сообщает, ушло ли сообщение в канал:
+// при sent=false эффекта у актора нет, при sent=true с ошибкой исход
+// неизвестен. To заполняется именем адресата.
+func (s *Server) deliverToActor(ctx context.Context, swarmID string, resolve func(context.Context) (store.ManagedActor, error), msg relay.MessageRequest, authorize func(context.Context) error) (command.Result, bool, error) {
 	sw, err := s.store.GetSwarm(ctx, swarmID)
 	if err != nil {
-		return command.Result{}, app.ErrNotFound
+		return command.Result{}, false, app.ErrNotFound
 	}
 	if err := s.checkSwarmNamespace(ctx, toAppSwarm(sw)); err != nil {
-		return command.Result{}, err
+		return command.Result{}, false, err
 	}
 	target, err := resolve(ctx)
 	if err != nil || target.SwarmID != sw.ID || sw.AtespaceUID == nil || target.AtespaceUID != *sw.AtespaceUID {
-		return command.Result{}, app.ErrNotFound
+		return command.Result{}, false, app.ErrNotFound
 	}
 	if s.managed.hub == nil || !s.managed.hub.Connected(target.UID, target.Incarnation) || s.managed.deliverMessage == nil {
-		return command.Result{}, errRecipientOffline
+		return command.Result{}, false, errRecipientOffline
 	}
-	response, err := s.managed.deliverMessage(ctx, target.UID, target.Incarnation, relay.MessageRequest{To: target.Name, From: "operator:" + user.Username, Body: operatorMessageBody(message), WaitSec: wait})
-	allowed, authErr := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+	if err := authorize(ctx); err != nil {
+		return command.Result{}, false, err
+	}
+	msg.To = target.Name
+	response, err := s.managed.deliverMessage(ctx, target.UID, target.Incarnation, msg)
+	authErr := authorize(ctx)
 	current, targetErr := s.store.GetManagedActor(ctx, target.UID)
-	if authErr != nil || !allowed || targetErr != nil || current.Incarnation != target.Incarnation {
-		return command.Result{}, app.ErrNotAllowed
+	if authErr != nil || targetErr != nil || current.Incarnation != target.Incarnation {
+		return command.Result{}, true, app.ErrNotAllowed
 	}
 	if err != nil {
-		return command.Result{Outcome: "unconfirmed"}, errDeliveryUnconfirmed
+		return command.Result{Outcome: "unconfirmed"}, true, errDeliveryUnconfirmed
 	}
 	outcome := "completed"
 	if !response.OK {
 		outcome = "unconfirmed"
 	}
-	return command.Result{Text: response.Verdict, Outcome: outcome}, nil
+	return command.Result{Text: response.Verdict, Outcome: outcome}, true, nil
 }

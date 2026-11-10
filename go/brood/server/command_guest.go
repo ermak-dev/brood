@@ -53,6 +53,8 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 				return relay.SwarmResponse{Text: "pipeline completion unavailable", Outcome: "failed"}
 			}
 		}
+		// Исход мог ввести граф в следующий actor-узел (#212).
+		m.server.steps.kick(from.SwarmID)
 		return relay.SwarmResponse{OK: true, Text: "pipeline visit completed", Outcome: "completed"}
 	case "ask_operator":
 		return m.askOperator(ctx, from, inv)

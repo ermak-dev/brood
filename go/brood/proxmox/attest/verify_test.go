@@ -214,6 +214,31 @@ func TestRegistryBoundsPendingChallenges(t *testing.T) {
 	}
 }
 
+// A challenge the guest refused, answered with garbage or never answered is
+// revoked by the server: it can no longer be consumed and no longer counts
+// against the pending limit.
+func TestRegistryRevokeBurnsChallenge(t *testing.T) {
+	var calls []int64
+	r := newTestRegistry(&clock{time.Unix(1000, 0)}, 1)
+	claim, err := r.Issue(testRequest("request-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Revoke(claim.Challenge)
+	if _, err := r.Consume(guestSign(t, claim), keyFor(&calls)); !errors.Is(err, ErrReplay) {
+		t.Fatalf("revoked challenge consumed: %v", err)
+	}
+	if _, err := r.Issue(testRequest("request-2")); err != nil {
+		t.Fatalf("revoked challenge still counted: %v", err)
+	}
+	// Отзыв неизвестного или уже сожжённого challenge ничего не трогает.
+	r.Revoke(claim.Challenge)
+	r.Revoke("unknown")
+	if len(r.pending) != 1 || len(r.attempts) != 1 {
+		t.Fatalf("revoke touched other challenges: %d pending, %d attempts", len(r.pending), len(r.attempts))
+	}
+}
+
 func TestRegistryRefusesInvalidRequestsAndRandomness(t *testing.T) {
 	r := newTestRegistry(&clock{time.Unix(1000, 0)}, 8)
 	bad := testRequest("request-1")

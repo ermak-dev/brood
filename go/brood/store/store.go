@@ -32,7 +32,10 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // swarm_steps (#223): модель «актор под узел» закрыта в #208.
 // 20: состояние доставки ответа актору swarm_requests.delivery (#210).
 // 21: project_git_credentials и project_git_credential_refs (#173).
-const schemaVersion = 21
+// 22: шаг актора с подтверждением workspace и причиной (#212): словарь
+// состояний swarm_steps, attested_commit, detail и триггеры
+// swarm_steps_attested.
+const schemaVersion = 22
 
 //go:embed schema.sql
 var currentSchema string

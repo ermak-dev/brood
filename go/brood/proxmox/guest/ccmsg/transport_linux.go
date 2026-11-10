@@ -19,8 +19,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const maxExchangeBytes = 128 * 1024
-
 // Delivery distinguishes a written user frame from a confirmed delivery.
 // Idle only confirms the separate idle subscription, never the user message.
 type Delivery struct {
@@ -43,7 +41,7 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	if err := ctx.Err(); err != nil {
 		return Delivery{}, err
 	}
-	if waitSec < 0 || waitSec > 300 || len(body) >= maxExchangeBytes || token == "" || len(token) > 4096 {
+	if waitSec < 0 || waitSec > 300 || len(body) >= MaxExchangeBytes || token == "" || len(token) > MaxPeerTokenBytes {
 		return Delivery{}, errors.New("invalid session message input")
 	}
 	if !filepath.IsAbs(socketPath) || strings.ContainsAny(socketPath, "\x00\r\n") {
@@ -56,10 +54,6 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	}
 	callback := filepath.Join(filepath.Dir(socketPath), fmt.Sprintf("%d-%s.sock", os.Getpid(), hex.EncodeToString(suffix[:])))
 	address := "uds:" + callback
-	envelope, err := (EnvelopeBuilder{From: address, FromName: name, FromMode: "bypass"}).Build(body)
-	if err != nil {
-		return Delivery{}, err
-	}
 	msgID, err := newUUID()
 	if err != nil {
 		return Delivery{}, errors.New("cannot create message identity")
@@ -68,18 +62,9 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	if err != nil {
 		return Delivery{}, errors.New("cannot create message identity")
 	}
-	user, err := UserFrame(envelope, "next", address, msgID)
+	data, err := EncodeExchange(token, address, name, body, msgID, idleID, waitSec)
 	if err != nil {
 		return Delivery{}, err
-	}
-	frames := []Frame{AuthFrame(token), user}
-	if waitSec > 0 {
-		idle, _ := ControlFrame("notify_when_idle", address, "bypass", idleID)
-		frames = append(frames, idle)
-	}
-	data, err := EncodeNDJSON(frames)
-	if err != nil || len(data) > maxExchangeBytes {
-		return Delivery{}, errors.New("session message exceeds size limit")
 	}
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: callback, Net: "unix"})
 	if err != nil {
@@ -188,12 +173,12 @@ func readReceiptFrames(c *net.UnixConn) []Frame {
 		return nil
 	}
 	scanner := bufio.NewScanner(c)
-	scanner.Buffer(make([]byte, 1024), maxExchangeBytes)
+	scanner.Buffer(make([]byte, 1024), MaxExchangeBytes)
 	var frames []Frame
 	total := 0
 	for scanner.Scan() {
 		total += len(scanner.Bytes()) + 1
-		if total > maxExchangeBytes {
+		if total > MaxExchangeBytes {
 			break
 		}
 		var f Frame

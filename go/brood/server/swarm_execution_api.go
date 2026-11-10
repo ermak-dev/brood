@@ -28,6 +28,8 @@ type swarmStepJSON struct {
 	Sequence int64  `json:"sequence"`
 	NodeID   string `json:"nodeId"`
 	State    string `json:"state"`
+	// Detail — причина refused или unconfirmed шага актора (#212).
+	Detail string `json:"detail,omitempty"`
 }
 
 // swarmExecutionJSON — исполнение роя после запуска или остановки: состояние,
@@ -41,7 +43,8 @@ type swarmExecutionJSON struct {
 }
 
 // mountSwarmExecutionAPI — запуск и остановка роя (#211). Запросы роя и
-// доставка ответа — отдельные маршруты (#210), доставка инструкции — #212.
+// доставка ответа — отдельные маршруты (#210); инструкцию шага доставляет
+// диспетчер после коммита запуска (#212), отдельного маршрута у неё нет.
 func (s *Server) mountSwarmExecutionAPI() {
 	s.mux.HandleFunc("POST /api/swarms/{id}/start", s.handleSwarmStart)
 	s.mux.HandleFunc("POST /api/swarms/{id}/stop", s.handleSwarmStop)
@@ -95,6 +98,9 @@ func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeSwarmExecution(w, r, sw)
+	// Первый шаг actor-узла ждёт доставки: диспетчер (#212) берёт его после
+	// коммита запуска, ответ запуска его не ждёт и показывает шаг pending.
+	s.steps.kick(sw.ID)
 }
 
 // handleSwarmStop: POST /api/swarms/{id}/stop.
@@ -190,7 +196,7 @@ func (s *Server) writeSwarmExecution(w http.ResponseWriter, r *http.Request, sw 
 	}
 	if len(steps) > 0 {
 		last := steps[len(steps)-1]
-		out.Step = &swarmStepJSON{Sequence: last.Sequence, NodeID: last.NodeID, State: last.State}
+		out.Step = &swarmStepJSON{Sequence: last.Sequence, NodeID: last.NodeID, State: last.State, Detail: last.Detail}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

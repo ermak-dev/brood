@@ -219,6 +219,11 @@ func (s *Server) answerSwarmRequest(r *http.Request, user store.User, answer sto
 	if err != nil {
 		return store.SwarmRequest{}, "", err
 	}
+	if req.Origin == "node" {
+		// Ответ мог ввести граф в actor-узел: его инструкцию доставляет
+		// диспетчер шагов (#212) после коммита ответа.
+		s.steps.kick(req.SwarmID)
+	}
 	if req.Delivery != "pending" {
 		return req, "", nil
 	}

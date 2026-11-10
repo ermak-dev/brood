@@ -46,9 +46,11 @@ func (s *Store) CurrentActorOperation(ctx context.Context, uid string) (ActorOpe
 }
 
 // AcquireActorOperation atomically excludes dispatch, landing, and other workspace operations.
+// workspace_attest is the swarm's workspace attestation (#212): it stops and
+// restarts the whole actor like restart, so it takes the same reservation.
 func (s *Store) AcquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string) (ActorOperation, error) {
 	var op ActorOperation
-	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "wipe" && operation != "recycle") {
+	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "wipe" && operation != "recycle" && operation != "workspace_attest") {
 		return op, newCoordinationConflict("invalid workspace operation identity")
 	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
