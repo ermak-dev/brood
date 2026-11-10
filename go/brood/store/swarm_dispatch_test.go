@@ -430,9 +430,6 @@ func TestActorStepDeliveryOutcomes(t *testing.T) {
 		if v.State != "unconfirmed" || v.ActorUID != "a" || v.ActorIncarnation != 1 || v.RequestID != "req" || v.AttestedCommit != startCommit || !strings.Contains(v.Detail, "unknown") {
 			t.Fatalf("unconfirmed step: %+v", v)
 		}
-		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
-			t.Fatalf("completion of an unconfirmed step: %v", err)
-		}
 		for name, replay := range map[string]func() error{
 			"finish":  func() error { return s.FinishActorStepDelivery(ctx, a) },
 			"refuse":  func() error { return s.RefuseActorStep(ctx, a, "late refusal") },
@@ -610,4 +607,66 @@ func TestSwarmStepSchemaHoldsAttestation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FEATURE: Исход шага с потерянной квитанцией доставки (#245).
+// SPEC: request_id попытки есть только в тексте инструкции, поэтому исход
+// той же попытки от привязанного актора той же инкарнации доказывает
+// получение: шаг unconfirmed после доставки (записан attested_commit)
+// принимает его и продвигает граф. Шаг unconfirmed без подтверждения commit,
+// шаг остановленного прохода и чужой request_id по-прежнему отвергаются.
+func TestUnconfirmedDeliveryTakesTheAttemptOutcome(t *testing.T) {
+	ctx := context.Background()
+	t.Run("same attempt completes", func(t *testing.T) {
+		s := dispatchStore(t)
+		a := attestOne(t, s, "req")
+		mustNil(t, s.UnconfirmActorStep(ctx, a, "instruction delivery outcome is unknown"))
+		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", "triage done"))
+		if v := stepOf(t, s, 1); v.State != "completed" || v.Report != "triage done" {
+			t.Fatalf("completed unconfirmed step: %+v", v)
+		}
+		if w, err := s.GetSwarm(ctx, "one"); err != nil || w.Execution != "succeeded" || stepCount(t, s) != 2 {
+			t.Fatalf("completion did not advance: %+v %v", w, err)
+		}
+		// Точный повтор подтверждает записанный исход и ничего не пишет.
+		before := dumpTables(t, s, executionTables...)
+		mustNil(t, s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", "triage done"))
+		if after := dumpTables(t, s, executionTables...); after != before {
+			t.Fatalf("exact retry wrote:\n%s\nwant\n%s", after, before)
+		}
+	})
+	t.Run("other request", func(t *testing.T) {
+		s := dispatchStore(t)
+		a := attestOne(t, s, "req")
+		mustNil(t, s.UnconfirmActorStep(ctx, a, "instruction delivery outcome is unknown"))
+		before := dumpTables(t, s, executionTables...)
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "forged", "a", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
+			t.Fatalf("completion with another request: %v", err)
+		}
+		if after := dumpTables(t, s, executionTables...); after != before {
+			t.Fatalf("refused completion wrote:\n%s\nwant\n%s", after, before)
+		}
+	})
+	t.Run("attestation unknown", func(t *testing.T) {
+		s := dispatchStore(t)
+		a := reserveOne(t, s, "req")
+		mustNil(t, s.UnconfirmActorStep(ctx, a, "workspace attestation outcome is unknown"))
+		before := dumpTables(t, s, executionTables...)
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineSourceUnverified) {
+			t.Fatalf("completion without an attested checkout: %v", err)
+		}
+		if after := dumpTables(t, s, executionTables...); after != before {
+			t.Fatalf("refused completion wrote:\n%s\nwant\n%s", after, before)
+		}
+	})
+	t.Run("stopped pass", func(t *testing.T) {
+		s := dispatchStore(t)
+		a := attestOne(t, s, "req")
+		mustNil(t, s.UnconfirmActorStep(ctx, a, "instruction delivery outcome is unknown"))
+		_, err := s.StopSwarm(ctx, "one", "u", allow)
+		mustNil(t, err)
+		if err := s.CompletePipelineActorVisit(ctx, "one", "one", 1, "req", "a", 1, "success", ""); !errors.Is(err, ErrPipelineVisitConflict) {
+			t.Fatalf("completion after stop: %v", err)
+		}
+	})
 }

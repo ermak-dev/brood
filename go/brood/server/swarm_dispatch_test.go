@@ -584,8 +584,10 @@ func TestStepAttestationUnknownOutcome(t *testing.T) {
 }
 
 // TestStepDeliveryUnknownOutcome — исход доставки неизвестен: шаг
-// unconfirmed, граф не продвигается, резерв не освобождается, исход актора
-// не принимается, инструкция повторно не уходит.
+// unconfirmed, граф сам не продвигается, инструкция повторно не уходит ни
+// диспетчером, ни стартом сервера. Исход той же попытки от актора принимается:
+// request_id есть только в тексте инструкции, вызов с ним доказывает её
+// получение (#245).
 func TestStepDeliveryUnknownOutcome(t *testing.T) {
 	d := newDispatchServer(t)
 	ctx := context.Background()
@@ -597,15 +599,35 @@ func TestStepDeliveryUnknownOutcome(t *testing.T) {
 	if step.State != "unconfirmed" || step.ActorUID != d.worker.UID || step.RequestID == "" || step.AttestedCommit != dispatchCommit || !strings.Contains(step.Detail, "unknown") {
 		t.Fatalf("unknown delivery: %+v", step)
 	}
-	if got := d.complete(d.worker, step, "success"); got.OK {
-		t.Fatalf("completion of an unconfirmed step: %+v", got)
-	}
 	d.srv.steps.dispatch(ctx, d.swarm)
 	d.restart()
 	attests, messages := d.calls()
 	steps := d.steps()
 	if len(attests) != 1 || len(messages) != 1 || len(steps) != 1 || steps[0].State != "unconfirmed" || steps[0].RequestID != step.RequestID || d.execution() != "running" {
 		t.Fatalf("unknown delivery moved: %d attestations, %d messages, steps %+v, execution %s", len(attests), len(messages), steps, d.execution())
+	}
+	forged := step
+	forged.RequestID = "forged"
+	if got := d.complete(d.worker, forged, "success"); got.OK {
+		t.Fatalf("completion with another request: %+v", got)
+	}
+	if got := d.complete(d.worker, step, "success"); !got.OK {
+		t.Fatalf("completion of the attempt with a lost receipt: %+v", got)
+	}
+	if done := d.steps(); done[0].State != "completed" || len(done) < 2 {
+		t.Fatalf("completion did not advance the graph: %+v", done)
+	}
+	// Следующий шаг графа диспетчер вправе отправить; инструкция этой
+	// попытки уходит ровно один раз.
+	_, messages = d.calls()
+	sent := 0
+	for _, m := range messages {
+		if strings.Contains(m.Request.Body, step.RequestID) {
+			sent++
+		}
+	}
+	if sent != 1 {
+		t.Fatalf("instruction of the attempt sent %d times", sent)
 	}
 }
 

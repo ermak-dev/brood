@@ -320,8 +320,9 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   повтор — `/deliver`) такой отказ не повторяют и отвечают, как раньше.
 - `pipeline_visit_complete` принимается от актора шага той же инкарнации с
   тем же `request_id`, пока он привязан к роли узла и рой идёт; шаг роя с
-  источником — только с записанным подтверждением. Иначе гость получает
-  `pipeline completion conflict` или `pipeline completion unavailable`.
+  источником — только с записанным подтверждением, в том числе из
+  `unconfirmed`, если потерялась только квитанция доставки (#245). Иначе гость
+  получает `pipeline completion conflict` или `pipeline completion unavailable`.
 - Необязательный `report` — до 16384 байт UTF-8 без управляющих символов,
   кроме перевода строки и табуляции; иначе `refused` с текстом
   `invalid pipeline report: ...`, исход не записан. Отчёт хранится один раз
