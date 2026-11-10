@@ -120,8 +120,9 @@ func recordIdentity(ctx context.Context, git cloneGit, env, fixed []string, stag
 	if identity.IsZero() {
 		return nil
 	}
-	for key, value := range map[string]string{"user.name": identity.Name, "user.email": identity.Email} {
-		if git(ctx, env, append(fixed, "-C", staging, "config", key, value)...) != nil {
+	// Срез, а не map: порядок записи фиксирован, тесты и журнал его видят.
+	for _, kv := range [][2]string{{"user.name", identity.Name}, {"user.email", identity.Email}} {
+		if git(ctx, env, append(fixed, "-C", staging, "config", kv[0], kv[1])...) != nil {
 			return cloneFailure("cannot record the actor Git identity")
 		}
 	}
