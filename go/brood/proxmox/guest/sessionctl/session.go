@@ -213,18 +213,33 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 	return failure("unsupported operation")
 }
 
+// cappedOutput keeps at most 48 KiB of process output and cancels the process
+// past it. The buffer is a field, not embedded: os/exec copies the pipe with
+// io.Copy, which would take a promoted bytes.Buffer.ReadFrom over Write.
 type cappedOutput struct {
-	mu sync.Mutex
-	bytes.Buffer
+	mu     sync.Mutex
+	buf    bytes.Buffer
 	cancel context.CancelFunc
 }
 
 func (b *cappedOutput) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.Len()+len(p) > 48*1024 {
+	if b.buf.Len()+len(p) > 48*1024 {
 		b.cancel()
 		return 0, errors.New("process output exceeds limit")
 	}
-	return b.Buffer.Write(p)
+	return b.buf.Write(p)
+}
+
+func (b *cappedOutput) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
+func (b *cappedOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

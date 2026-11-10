@@ -11,11 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"brood.dev/go/brood/gitorigin"
@@ -166,20 +164,7 @@ func (e *checkoutEngine) repository(ctx context.Context) error {
 	if err := repositoryLayout(ctx, e.root, quick, false, []string{"info/attributes"}); err != nil {
 		return err
 	}
-	return e.stream(ctx, checkoutStepTimeout, nil, nil, []string{"ls-files", "--stage", "-z"}, func(r *bufio.Reader) error {
-		for {
-			entry, err := r.ReadString(0)
-			if strings.HasPrefix(entry, "160000 ") {
-				return errors.New("submodule workspaces are not supported")
-			}
-			if err == io.EOF {
-				return nil
-			}
-			if err != nil {
-				return errors.New("Git index unavailable")
-			}
-		}
-	})
+	return e.stream(ctx, checkoutStepTimeout, nil, nil, indexArgs, refuseGitlinks)
 }
 
 // changes compares the workspace with rev by content: a temporary index built
@@ -343,63 +328,12 @@ func hashObject(r *bufio.Reader, want snapshotObject, tree string, total *int64)
 	return nil
 }
 
-func (e *checkoutEngine) command(ctx context.Context, env []string, args []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "/usr/bin/git", append(gitFlags(true), args...)...)
-	cmd.Dir = e.root
-	// Повтор ключа в Env: os/exec берёт последнее значение.
-	cmd.Env = append(gitEnv(e.home, e.root), env...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
-	cmd.Stderr = io.Discard
-	cmd.WaitDelay = time.Second
-	return cmd
-}
-
-// git runs one bounded command with capped output.
+// git runs one bounded command with capped output, byte for byte.
 func (e *checkoutEngine) git(parent context.Context, timeout time.Duration, env []string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	cmd := e.command(ctx, env, args)
-	output := &cappedOutput{cancel: cancel}
-	cmd.Stdout = output
-	err := cmd.Run()
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
-	return output.String(), err
+	return helperGit{home: e.home, root: e.root, byteExact: true}.run(parent, timeout, env, args...)
 }
 
 // stream hands stdout to consume; an early consumer error stops Git.
 func (e *checkoutEngine) stream(parent context.Context, timeout time.Duration, env []string, stdin io.Reader, args []string, consume func(*bufio.Reader) error) error {
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	cmd := e.command(ctx, env, args)
-	cmd.Stdin = stdin
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return errors.New("Git output unavailable")
-	}
-	if err := cmd.Start(); err != nil {
-		return errors.New("Git unavailable")
-	}
-	consumed := consume(bufio.NewReaderSize(stdout, 64<<10))
-	if consumed != nil {
-		cancel()
-	}
-	waited := cmd.Wait()
-	if consumed != nil {
-		return consumed
-	}
-	if ctx.Err() != nil {
-		return errors.New("Git timed out")
-	}
-	if waited != nil {
-		return errors.New("Git failed")
-	}
-	return nil
+	return helperGit{home: e.home, root: e.root, byteExact: true}.stream(parent, timeout, env, stdin, args, consume)
 }

@@ -11,6 +11,7 @@ package sessionctl
 // STATUS: DONE
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -61,6 +62,8 @@ func workspaceFixtureWith(t *testing.T, home string, files map[string]string) *w
 	git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture")
 	return &workspaceEngine{root: root, git: func(ctx context.Context, args ...string) (string, error) {
 		return runWorkspaceGit(ctx, home, root, args...)
+	}, stream: func(ctx context.Context, args []string, consume func(*bufio.Reader) error) error {
+		return streamWorkspaceGit(ctx, home, root, args, consume)
 	}, call: func(context.Context, ptysession.Request) (ptysession.Reply, error) { return liveReply(), nil }, prove: func(context.Context) (identity, error) {
 		return identity{PID: 123, SessionID: "old", Process: "start", HolderProof: "holder"}, nil
 	}, quiet: func(context.Context) (bool, error) { return true, nil }}
@@ -128,6 +131,13 @@ func TestWorkspaceRejectsUnsafeRepositories(t *testing.T) {
 		os.Symlink("actual", filepath.Join(e.root, ".git"))
 		if r := e.handle(context.Background(), workspaceRequest("wipe", `{"confirm":true}`)); r.OK {
 			t.Fatal("symlink accepted")
+		}
+	})
+	t.Run("gitlink", func(t *testing.T) {
+		e := workspaceFixture(t)
+		fixtureGit(t, e.root, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+",sub")
+		if r := e.handle(context.Background(), workspaceRequest("wipe", `{"confirm":true}`)); r.OK || !strings.Contains(r.Text, "submodule") {
+			t.Fatalf("gitlink accepted: %+v", r)
 		}
 	})
 	t.Run("non-git", func(t *testing.T) {

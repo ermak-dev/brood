@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,6 +176,17 @@ func TestProcessOutputCapCancelsAtWriteBoundary(t *testing.T) {
 	out := &cappedOutput{cancel: func() { canceled = true }}
 	if _, err := out.Write([]byte(strings.Repeat("x", 48*1024+1))); err == nil || !canceled || out.Len() != 0 {
 		t.Fatal("output was buffered past cap")
+	}
+}
+
+// os/exec copies the pipe into Stdout with io.Copy, which prefers a ReadFrom
+// of the writer over its Write (#225).
+func TestProcessOutputCapHoldsUnderCopy(t *testing.T) {
+	canceled := false
+	out := &cappedOutput{cancel: func() { canceled = true }}
+	pipe := struct{ io.Reader }{strings.NewReader(strings.Repeat("x", 48*1024+1))}
+	if _, err := io.Copy(out, pipe); err == nil || !canceled || out.Len() > 48*1024 {
+		t.Fatalf("output was copied past cap: canceled=%v len=%d", canceled, out.Len())
 	}
 }
 func TestHistoryRefusesChangedIdentityDuringRead(t *testing.T) {

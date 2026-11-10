@@ -3,6 +3,7 @@
 package sessionctl
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"os"
@@ -89,12 +90,12 @@ func TestWorkspaceCancellationAfterLaunchIsUnconfirmed(t *testing.T) {
 
 func TestWorkspaceStatusFailureIsUnknown(t *testing.T) {
 	e := workspaceFixture(t)
-	git := e.git
-	e.git = func(ctx context.Context, args ...string) (string, error) {
+	stream := e.stream
+	e.stream = func(ctx context.Context, args []string, consume func(*bufio.Reader) error) error {
 		if args[0] == "status" {
-			return "", errors.New("limit")
+			return errors.New("Git timed out")
 		}
-		return git(ctx, args...)
+		return stream(ctx, args, consume)
 	}
 	r := e.handle(context.Background(), workspaceRequest("workspace", `{}`))
 	if !r.OK || !strings.Contains(r.Text, `"git":"unknown"`) {
