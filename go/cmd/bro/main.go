@@ -39,7 +39,7 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 	var err error
 	if options.guest {
 		switch args[0] {
-		case "login", "logout", "whoami", "projects", "push", "secret":
+		case "login", "logout", "whoami", "projects", "push", "secret", "swarm":
 			fmt.Fprintln(diagnostic, "operator command is unavailable in guest mode")
 			return 1
 		}
@@ -59,6 +59,8 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 		err = c.push(ctx, args[1:])
 	case "secret":
 		err = c.secret(ctx, args[1:])
+	case "swarm":
+		err = c.swarm(ctx, args[1:])
 	case "pipeline":
 		if options.guest {
 			err = c.catalogCommand(ctx, options)
@@ -95,6 +97,7 @@ commands:
   build [target] [options]       build current files into local OCI artifacts
   push [target] [options]        upload built images and template to the current server
   secret [options]                manage project secrets on the current server
+  swarm roles|bind|unbind SWARM   list and change swarm role bindings to actors
   pipeline <sub> FILE             validate, plan or render a pipeline document
   mcp                           serve catalog tools over stdio
   <catalog command>             execute a scoped orchestration command

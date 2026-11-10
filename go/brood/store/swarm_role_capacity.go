@@ -78,11 +78,8 @@ func RolesFit(doc *pipeline.Document, snap SwarmRoleSnapshot) error {
 		if !ok {
 			return &RoleFitError{Role: role, Err: ErrSwarmRoleUnbound}
 		}
-		actor, ok := snap.Actors[b.ActorUID]
-		if !ok {
-			return &RoleFitError{Role: role, Err: fmt.Errorf("%w: bound actor %q does not exist", ErrSwarmRoleUnbound, b.ActorUID)}
-		}
-		if err := runningRoleActor(snap.Swarm, actor, b); err != nil {
+		actor, err := boundRoleActor(snap, b)
+		if err != nil {
 			return &RoleFitError{Role: role, Err: err}
 		}
 		pool, ok := snap.Pools[actor.PoolUID]
@@ -101,6 +98,17 @@ func RolesFit(doc *pipeline.Document, snap SwarmRoleSnapshot) error {
 		}
 	}
 	return nil
+}
+
+// boundRoleActor — актор привязки из снимка и вердикт запуска по нему, без
+// пула: общий для RolesFit и представления ролей (ListSwarmRoles, #235).
+// Отсутствующий актор — ErrSwarmRoleUnbound и пустой ManagedActor.
+func boundRoleActor(snap SwarmRoleSnapshot, b SwarmRoleBinding) (ManagedActor, error) {
+	actor, ok := snap.Actors[b.ActorUID]
+	if !ok {
+		return ManagedActor{}, fmt.Errorf("%w: bound actor %q does not exist", ErrSwarmRoleUnbound, b.ActorUID)
+	}
+	return actor, runningRoleActor(snap.Swarm, actor, b)
 }
 
 // runningRoleActor — пригодность актора под роль при запуске: правило

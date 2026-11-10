@@ -310,6 +310,10 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 			if detail := publicProjectSyncError(resp.Body); detail != "" {
 				statusErr = fmt.Errorf("%w: %s", statusErr, detail)
 			}
+		} else if isSwarmRolesPath(path) {
+			if detail := publicSwarmRoleError(resp.Body); detail != "" {
+				statusErr = fmt.Errorf("%w: %s", statusErr, detail)
+			}
 		}
 	}
 	if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
