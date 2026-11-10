@@ -225,7 +225,11 @@ func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store
 		}
 		result.FinishedAt = lastFinishedAt(steps)
 		n := d.Nodes[v.NodeID]
-		if manage && v.State == "waiting" && n.Type == "human" && activeExecutionView(sw.Execution) {
+		open, err := s.gateRequestOpen(ctx, sw.ID, v)
+		if err != nil {
+			return pipelineRunJSON{}, err
+		}
+		if manage && open && n.Type == "human" && activeExecutionView(sw.Execution) {
 			gate := &pipelineGateJSON{RunID: sw.ID, NodeID: v.NodeID, Sequence: v.Sequence, Question: n.Question, Kind: "multiple_choice", Options: []pipelineOptionJSON{}}
 			for _, o := range n.Options {
 				gate.Options = append(gate.Options, pipelineOptionJSON{ID: o.Outcome, Label: o.Label})
@@ -234,6 +238,24 @@ func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store
 		}
 	}
 	return result, nil
+}
+
+// gateRequestOpen: шлюз предлагается к ответу только при открытом узловом
+// запросе; отменённый запрос не выдаётся за активный.
+func (s *Server) gateRequestOpen(ctx context.Context, swarmID string, v store.PipelineVisit) (bool, error) {
+	if v.State != "waiting" {
+		return false, nil
+	}
+	requests, err := s.store.SwarmRequests(ctx, swarmID)
+	if err != nil {
+		return false, err
+	}
+	for _, req := range requests {
+		if req.Origin == "node" && req.Sequence != nil && *req.Sequence == v.Sequence {
+			return req.State == "open", nil
+		}
+	}
+	return false, nil
 }
 
 // activeExecutionView — прикладной взгляд сервера на активность графа.
@@ -300,6 +322,12 @@ func pipelineAnswerError(w http.ResponseWriter, r *http.Request, err error) {
 		writeDetail(w, 404, "pipeline run not found")
 	} else if errors.Is(err, store.ErrPipelineVisitConflict) {
 		writeDetail(w, 409, "pipeline visit is no longer awaiting an answer")
+	} else if errors.Is(err, store.ErrSwarmRequestDenied) {
+		writeDetail(w, 403, "answer authorization changed or access denied")
+	} else if errors.Is(err, store.ErrSwarmRequestStale) {
+		writeDetail(w, 409, "request actor is stale")
+	} else if errors.Is(err, store.ErrSwarmRequestInvalid) {
+		writeDetail(w, 400, err.Error())
 	} else {
 		apiError(w, r, err)
 	}
@@ -312,6 +340,7 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		Answer   string `json:"answer"`
+		Response string `json:"response"`
 		Sequence int64  `json:"visitSequence"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
@@ -325,39 +354,27 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, 400, "invalid pipeline answer")
 		return
 	}
-	steps, err := s.store.SwarmSteps(r.Context(), sw.ID)
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		writeDetail(w, 401, "authentication required")
+		return
+	}
+	req, found, err := s.nodeRequestAt(r.Context(), sw.ID, input.Sequence, r.PathValue("node"))
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	eligible := false
-	for i, visit := range steps {
-		if visit.Sequence == input.Sequence && visit.NodeID == r.PathValue("node") {
-			eligible = (i == len(steps)-1 && visit.State == "waiting") ||
-				(visit.State == "answered" && visit.Answer != nil && *visit.Answer == input.Answer)
-			break
-		}
-	}
-	if !eligible {
+	if !found {
 		writeDetail(w, 409, "pipeline visit is no longer awaiting an answer")
 		return
 	}
-	d, err := pipeline.Parse(string(sw.Graph), "pipeline")
+	// Повтор потерянного ответа решает хранилище в той же транзакции: он
+	// принимается только от автора с действующей сессией и правами, с тем же
+	// исходом и текстом; иначе 409.
+	_, err = s.store.AnswerSwarmRequest(r.Context(), store.SwarmAnswer{SwarmID: sw.ID, RequestID: req.ID, UserID: user.ID, Outcome: input.Answer, Response: input.Response}, func(ctx context.Context) bool {
+		return secretRequestSession(ctx, s, r, user.ID)
+	})
 	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	valid := false
-	for _, o := range d.Nodes[r.PathValue("node")].Options {
-		if o.Outcome == input.Answer {
-			valid = true
-		}
-	}
-	if !valid {
-		writeDetail(w, 400, "answer is not a human option")
-		return
-	}
-	if err = s.store.AnswerPipelineVisit(r.Context(), sw.ID, sw.ID, input.Sequence, input.Answer); err != nil {
 		pipelineAnswerError(w, r, err)
 		return
 	}
@@ -372,4 +389,28 @@ func (s *Server) pipelineAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, view)
+}
+
+// nodeRequestAt находит узловой запрос посещения: узел из пути должен
+// совпасть с узлом шага, иначе запроса для этого адреса нет.
+func (s *Server) nodeRequestAt(ctx context.Context, swarmID string, sequence int64, node string) (store.SwarmRequest, bool, error) {
+	steps, err := s.store.SwarmSteps(ctx, swarmID)
+	if err != nil {
+		return store.SwarmRequest{}, false, err
+	}
+	requests, err := s.store.SwarmRequests(ctx, swarmID)
+	if err != nil {
+		return store.SwarmRequest{}, false, err
+	}
+	for _, v := range steps {
+		if v.Sequence != sequence || v.NodeID != node {
+			continue
+		}
+		for _, req := range requests {
+			if req.Origin == "node" && req.Sequence != nil && *req.Sequence == sequence {
+				return req, true, nil
+			}
+		}
+	}
+	return store.SwarmRequest{}, false, nil
 }

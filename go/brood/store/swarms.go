@@ -287,13 +287,26 @@ func (s *Store) SetSwarmExecution(ctx context.Context, id, execution string) err
 	default:
 		return errors.New("invalid swarm execution")
 	}
-	res, err := s.conn(ctx).ExecContext(ctx,
-		`UPDATE swarms SET execution = ?, updated_at = ? WHERE id = ?`, execution, nowRFC3339(), id)
-	if err != nil {
-		return err
-	}
-	if count, _ := res.RowsAffected(); count == 0 {
-		return fmt.Errorf("%w: swarm %q", ErrNotFound, id)
-	}
-	return nil
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		// Возобновить граф, ждущий отменённого шлюза, нельзя: триггер
+		// swarms_gate_resume держит это и при прямой записи.
+		if activeExecution(execution) {
+			var blocked bool
+			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarms w WHERE w.id=? AND w.execution NOT IN ('running','waiting') AND EXISTS (SELECT 1 FROM swarm_steps s WHERE s.swarm_id=w.id AND s.state='waiting' AND NOT EXISTS (SELECT 1 FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='open')))`, id).Scan(&blocked); err != nil {
+				return err
+			}
+			if blocked {
+				return fmt.Errorf("%w: the graph waits on a cancelled gate", ErrPipelineVisitConflict)
+			}
+		}
+		res, err := s.conn(ctx).ExecContext(ctx,
+			`UPDATE swarms SET execution = ?, updated_at = ? WHERE id = ?`, execution, nowRFC3339(), id)
+		if err != nil {
+			return err
+		}
+		if count, _ := res.RowsAffected(); count == 0 {
+			return fmt.Errorf("%w: swarm %q", ErrNotFound, id)
+		}
+		return nil
+	})
 }

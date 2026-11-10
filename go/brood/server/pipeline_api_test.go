@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -67,9 +68,8 @@ func TestPipelineWireContract(t *testing.T) {
 		t.Fatalf("first human visit: %+v %v", visits, err)
 	}
 	sequence := visits[1].Sequence
-	if err := ts.srv.store.AnswerPipelineVisit(ctx, swarm, swarm, sequence, "success"); err != nil {
-		t.Fatal(err)
-	}
+	r0, b0, _ := ts.do(alice, "POST", "/api/pipeline-runs/"+swarm+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": sequence})
+	expectStatus(t, "first answer", r0, b0, 200)
 	visits, err = ts.srv.store.SwarmSteps(ctx, swarm)
 	if err != nil || len(visits) != 3 {
 		t.Fatalf("visits: %+v %v", visits, err)
@@ -192,9 +192,8 @@ func TestPipelineCompletedExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.srv.store.AnswerPipelineVisit(ctx, swarm, swarm, v.Sequence, "success"); err != nil {
-		t.Fatal(err)
-	}
+	r0, b0, _ := ts.do(alice, "POST", "/api/pipeline-runs/"+swarm+"/nodes/ask/answer", ts.csrf(alice), map[string]any{"answer": "success", "visitSequence": v.Sequence})
+	expectStatus(t, "answer", r0, b0, 200)
 	r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+swarm, "", nil)
 	expectStatus(t, "detail", r, b, 200)
 	nodes := b["nodes"].([]any)
@@ -270,5 +269,132 @@ func TestPipelineHTTP(t *testing.T) {
 	visits, err := ts.srv.store.SwarmSteps(context.Background(), swarm)
 	if err != nil || len(visits) != 2 {
 		t.Fatalf("retry must not create another visit: %+v %v", visits, err)
+	}
+}
+
+// FEATURE: Human answer carries free text beside the route outcome (#209).
+// SPEC: the response text is stored with the request and never picks the edge;
+// only the answering user may replay the same answer; another manager gets 409.
+// IMPLEMENTATION: pipelineAnswer calls AnswerSwarmRequest with the session check.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestPipelineAnswerStoresResponseAndRejectsForeignReplay(t *testing.T) {
+	ts := newSubstrateServer(t, newFakeAteapi())
+	_, alice, bob, swarm := actorsSetup(t, ts.testServer)
+	ctx := context.Background()
+	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(pipelineAPIGraph), "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, swarm, store.PipelineVisit{NodeID: "ask", State: "waiting"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/pipeline-runs/" + swarm
+	r, b, _ := ts.do(alice, "POST", "/api/swarms/"+swarm+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "editor"})
+	expectStatus(t, "add editor", r, b, 204)
+	answer := path + "/nodes/ask/answer"
+	payload := map[string]any{"answer": "success", "response": "fail, reject, done", "visitSequence": v.Sequence}
+	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload)
+	expectStatus(t, "answer", r, b, 200)
+	requests, err := ts.srv.store.SwarmRequests(ctx, swarm)
+	if err != nil || len(requests) != 1 || requests[0].Outcome == nil || *requests[0].Outcome != "success" || requests[0].Response == nil || *requests[0].Response != "fail, reject, done" || requests[0].AnsweredBy == "" {
+		t.Fatalf("stored request: %+v %v", requests, err)
+	}
+	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload)
+	expectStatus(t, "own replay", r, b, 200)
+	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload)
+	expectStatus(t, "foreign replay", r, b, 409)
+}
+
+// FEATURE: Replay of a lost answer is accepted only from its author (#209).
+// SPEC: same user, same outcome and same response, with a live session and
+// current rights, returns 200 without writing; changed text, another user or
+// lost rights return 409/4xx; a cancelled gate is not offered as active.
+// This deviates from the issue text, which allowed any manager to replay.
+// IMPLEMENTATION: AnswerSwarmRequest decides the replay inside its transaction.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestPipelineAnswerReplayAuthorAndCancelledGate(t *testing.T) {
+	ts := newSubstrateServer(t, newFakeAteapi())
+	admin, alice, bob, swarm := actorsSetup(t, ts.testServer)
+	ctx := context.Background()
+	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(pipelineAPIGraph), "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, swarm, store.PipelineVisit{NodeID: "ask", State: "waiting"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, b, _ := ts.do(alice, "POST", "/api/swarms/"+swarm+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "editor"})
+	expectStatus(t, "add editor", r, b, 204)
+	answer := "/api/pipeline-runs/" + swarm + "/nodes/ask/answer"
+	payload := func(text string) map[string]any {
+		return map[string]any{"answer": "success", "response": text, "visitSequence": v.Sequence}
+	}
+	stored := func() store.SwarmRequest {
+		all, err := ts.srv.store.SwarmRequests(ctx, swarm)
+		if err != nil || len(all) == 0 {
+			t.Fatalf("requests: %v %v", all, err)
+		}
+		return all[0]
+	}
+	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload("approved"))
+	expectStatus(t, "answer", r, b, 200)
+	first := stored()
+	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload("approved"))
+	expectStatus(t, "author replay", r, b, 200)
+	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload("changed"))
+	expectStatus(t, "changed text", r, b, 409)
+	r, b, _ = ts.do(alice, "POST", answer, ts.csrf(alice), payload("approved"))
+	expectStatus(t, "other manager", r, b, 409)
+	if after := stored(); !reflect.DeepEqual(first, after) {
+		t.Fatalf("replays rewrote the answer: %+v", after)
+	}
+	// Автор лишён роли: повтор не проходит.
+	r, b, _ = ts.do(alice, "DELETE", "/api/swarms/"+swarm+"/members/bob", ts.csrf(alice), nil)
+	if r.StatusCode >= 300 {
+		t.Fatalf("remove member: %d %v", r.StatusCode, b)
+	}
+	r, b, _ = ts.do(bob, "POST", answer, ts.csrf(bob), payload("approved"))
+	if r.StatusCode == 200 {
+		t.Fatalf("revoked author replay accepted: %v", b)
+	}
+	// Выход без сессии тоже не повторяет.
+	r, b, _ = ts.do(newClient(t), "POST", answer, "", payload("approved"))
+	if r.StatusCode == 200 {
+		t.Fatalf("anonymous replay accepted: %v", b)
+	}
+	_ = admin
+}
+
+func TestPipelineCancelledGateIsNotOffered(t *testing.T) {
+	ts := newSubstrateServer(t, newFakeAteapi())
+	_, alice, _, swarm := actorsSetup(t, ts.testServer)
+	ctx := context.Background()
+	if err := insertSwarmGraph(ctx, ts.testServer, swarm, []byte(pipelineAPIGraph), "waiting"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.srv.store.AppendPipelineVisit(ctx, swarm, swarm, store.PipelineVisit{NodeID: "ask", State: "waiting"}); err != nil {
+		t.Fatal(err)
+	}
+	r, b, _ := ts.do(alice, "GET", "/api/pipeline-runs/"+swarm, "", nil)
+	expectStatus(t, "detail", r, b, 200)
+	if _, ok := b["gate"]; !ok {
+		t.Fatalf("waiting gate is missing: %v", b)
+	}
+	if err := ts.srv.store.SetSwarmExecution(ctx, swarm, "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	r, b, _ = ts.do(alice, "GET", "/api/pipeline-runs/"+swarm, "", nil)
+	expectStatus(t, "detail after stop", r, b, 200)
+	if _, ok := b["gate"]; ok {
+		t.Fatalf("cancelled gate offered: %v", b)
+	}
+	if err := ts.srv.store.SetSwarmExecution(ctx, swarm, "running"); err == nil {
+		t.Fatal("stopped graph resumed on a cancelled gate")
+	}
+	r, b, _ = ts.do(alice, "GET", "/api/pipeline-runs/"+swarm, "", nil)
+	if _, ok := b["gate"]; ok {
+		t.Fatalf("cancelled gate offered after refused resume: %v", b)
 	}
 }

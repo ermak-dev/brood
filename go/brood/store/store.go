@@ -24,7 +24,11 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 
 // schemaVersion — единственная версия схемы базы. Миграций нет: база
 // создаётся заново, любая другая версия отвергается (#205).
-const schemaVersion = 17
+// 17: swarm_role_bindings (#208).
+// 18: swarm_requests и их триггеры (#209), у swarm_steps нет колонки answer.
+// DDL несовместим с 17: база версии 17 открывается кодом 18 только после
+// пересоздания, поэтому версия растёт, а не остаётся.
+const schemaVersion = 18
 
 //go:embed schema.sql
 var currentSchema string
