@@ -45,24 +45,33 @@ type workspaceFacts struct {
 // The caller must hold the server's actor operation lease and authorization;
 // restart means a session restart in the same CT, never a PVE reset or reboot.
 func RunWorkspace(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
-	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
-		return failure("workspace helper requires UID and GID 1000")
-	}
-	groups, err := os.Getgroups()
-	if err != nil {
-		return failure("workspace helper group check failed")
-	}
-	for _, g := range groups {
-		if g != 1000 {
-			return failure("workspace helper has unexpected supplementary groups")
-		}
+	if err := requireActorIdentity("workspace helper"); err != nil {
+		return failure(err.Error())
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	e := workspaceEngine{root: fixedWorkspace, git: func(ctx context.Context, args ...string) (string, error) {
-		return runWorkspaceGit(ctx, fixedWorkspace, args...)
+		return runWorkspaceGit(ctx, actorHome, fixedWorkspace, args...)
 	}, call: callPTY, prove: proveLive, quiet: workspaceQuiet}
 	return e.handle(ctx, req)
+}
+
+// requireActorIdentity confirms that a workspace helper runs exactly as the
+// actor, with no supplementary group that could reach root-owned state.
+func requireActorIdentity(helper string) error {
+	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
+		return errors.New(helper + " requires UID and GID 1000")
+	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		return errors.New(helper + " group check failed")
+	}
+	for _, g := range groups {
+		if g != 1000 {
+			return errors.New(helper + " has unexpected supplementary groups")
+		}
+	}
+	return nil
 }
 
 func workspaceUnknown(text string) relay.SessionResponse {
@@ -235,29 +244,54 @@ func (e *workspaceEngine) clean(ctx context.Context) error {
 // repository rejects indirection and executable Git configuration before status
 // or checkout. No origin, credential helper, network, or bootstrap is invoked.
 func (e *workspaceEngine) repository(ctx context.Context) error {
-	root, err := openSafe(e.root, true)
+	if err := repositoryLayout(ctx, e.root, e.git, true, nil); err != nil {
+		return err
+	}
+	index, err := e.git(ctx, "ls-files", "--stage", "-z")
+	if err != nil {
+		return errors.New("Git index unavailable or exceeds output limit")
+	}
+	for _, entry := range strings.Split(index, "\x00") {
+		if strings.HasPrefix(entry, "160000 ") {
+			return errors.New("submodule workspaces are not supported")
+		}
+	}
+	return nil
+}
+
+// repositoryLayout holds the checks shared by workspace operations and the
+// pinned checkout. wholeTree walks the clone for the file budget; otherwise
+// only .git is walked, which is what metadata safety needs. indirect extends
+// the refused metadata names.
+func repositoryLayout(ctx context.Context, workspace string, git func(context.Context, ...string) (string, error), wholeTree bool, indirect []string) error {
+	root, err := openSafe(workspace, true)
 	if err != nil {
 		return errors.New("fixed workspace is unavailable or unsafe")
 	}
 	root.Close()
-	gitdir, err := openSafe(filepath.Join(e.root, ".git"), true)
+	gitdir, err := openSafe(filepath.Join(workspace, ".git"), true)
 	if err != nil {
 		return errors.New("workspace must be a Git clone with an in-place .git directory")
 	}
 	gitdir.Close()
 	files := 0
-	if err = workspaceWalk(ctx, e.root, false, 0, &files); err != nil {
+	if wholeTree {
+		err = workspaceWalk(ctx, workspace, false, 0, &files)
+	} else {
+		err = workspaceWalk(ctx, filepath.Join(workspace, ".git"), true, 1, &files)
+	}
+	if err != nil {
 		return errors.New("workspace traversal unsafe, canceled, or exceeds file limit")
 	}
-	for _, name := range []string{"commondir", "config.worktree", "info/grafts", "objects/info/alternates", "objects/info/http-alternates", "refs/replace"} {
-		if _, err := os.Lstat(filepath.Join(e.root, ".git", name)); !os.IsNotExist(err) {
+	for _, name := range append([]string{"commondir", "config.worktree", "info/grafts", "objects/info/alternates", "objects/info/http-alternates", "refs/replace"}, indirect...) {
+		if _, err := os.Lstat(filepath.Join(workspace, ".git", name)); !os.IsNotExist(err) {
 			return errors.New("indirect Git metadata is not supported")
 		}
 	}
-	if _, err = readSafe(filepath.Join(e.root, ".git/config"), 64*1024); err != nil {
+	if _, err = readSafe(filepath.Join(workspace, ".git/config"), 64*1024); err != nil {
 		return errors.New("Git configuration unavailable or exceeds size limit")
 	}
-	config, err := e.git(ctx, "config", "--file", filepath.Join(e.root, ".git/config"), "--no-includes", "--null", "--list")
+	config, err := git(ctx, "config", "--file", filepath.Join(workspace, ".git/config"), "--no-includes", "--null", "--list")
 	if err != nil {
 		return errors.New("Git configuration cannot be inspected")
 	}
@@ -270,25 +304,16 @@ func (e *workspaceEngine) repository(ctx context.Context) error {
 			return errors.New("unsafe or unsupported repository Git configuration")
 		}
 	}
-	top, err := e.git(ctx, "rev-parse", "--show-toplevel")
-	if err != nil || strings.TrimSpace(top) != e.root {
+	top, err := git(ctx, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(top) != workspace {
 		return errors.New("Git top-level is not the fixed workspace")
 	}
-	actual, err := e.git(ctx, "rev-parse", "--absolute-git-dir")
-	if err != nil || strings.TrimSpace(actual) != filepath.Join(e.root, ".git") {
+	actual, err := git(ctx, "rev-parse", "--absolute-git-dir")
+	if err != nil || strings.TrimSpace(actual) != filepath.Join(workspace, ".git") {
 		return errors.New("Git directory escapes the fixed workspace")
 	}
-	if _, err = e.git(ctx, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+	if _, err = git(ctx, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
 		return errors.New("workspace HEAD is not a local commit")
-	}
-	index, err := e.git(ctx, "ls-files", "--stage", "-z")
-	if err != nil {
-		return errors.New("Git index unavailable or exceeds output limit")
-	}
-	for _, entry := range strings.Split(index, "\x00") {
-		if strings.HasPrefix(entry, "160000 ") {
-			return errors.New("submodule workspaces are not supported")
-		}
 	}
 	return nil
 }
@@ -343,12 +368,52 @@ func workspaceConfigKey(key string) bool {
 	return strings.HasPrefix(key, "branch.") && (strings.HasSuffix(key, ".remote") || strings.HasSuffix(key, ".merge"))
 }
 
-func workspaceGitEnv() []string {
-	return []string{"HOME=/workspace/home", "PWD=/workspace/project", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false", "GIT_ALLOW_PROTOCOL=", "GIT_NO_REPLACE_OBJECTS=1", "GIT_OPTIONAL_LOCKS=0"}
+// actorHome is HOME of every helper Git; Git reads no configuration from it.
+const actorHome = "/workspace/home"
+
+// emptyTree has no .gitattributes. Git serves it built in, before any object
+// of that name planted in the clone.
+const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+// gitEnv is the one environment of helper Git in the actor-owned clone: no
+// system or global configuration or attributes, prompts, protocols, replace
+// objects or optional locks. home is a parameter only so that tests can plant
+// a hostile global configuration where Git would otherwise read it.
+func gitEnv(home, root string) []string {
+	return []string{"HOME=" + home, "PWD=" + root, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false", "GIT_ALLOW_PROTOCOL=", "GIT_NO_REPLACE_OBJECTS=1", "GIT_OPTIONAL_LOCKS=0"}
 }
-func runWorkspaceGit(ctx context.Context, root string, args ...string) (string, error) {
-	fixed := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null", "-c", "credential.helper=", "-c", "core.askPass=/bin/false", "-c", "protocol.allow=never", "-c", "submodule.recurse=false", "-c", "core.untrackedCache=false"}
-	return workspaceExec(ctx, root, workspaceGitEnv(), "/usr/bin/git", append(fixed, args...)...)
+
+// gitFlags is the one set of overrides of helper Git: every setting that
+// could run code, hide changes or start background work. Excludes and
+// attributes files default to paths under HOME, which GIT_CONFIG_GLOBAL does
+// not disable. Repository configuration is allowlisted by workspaceConfigKey.
+//
+// byteExact reads attributes from the empty tree instead of the worktree and
+// index, so the tree's own .gitattributes convert nothing; otherwise ident
+// collapses "$Id: ... $" and text turns CRLF into LF on checkin, and status
+// calls such an edit unchanged. core.attributesFile cannot override them: it
+// has the lowest precedence (gitattributes(5)). Attestation claims the bytes
+// of the commit and needs it; workspace facts and wipe keep the project's own
+// form. Unlike GIT_ATTR_SOURCE, the option fails on Git before 2.42 instead
+// of being ignored. $GIT_DIR/info/attributes still applies; checkout refuses it.
+func gitFlags(byteExact bool) []string {
+	flags := []string{
+		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null",
+		"-c", "core.excludesFile=/dev/null", "-c", "credential.helper=", "-c", "core.askPass=/bin/false",
+		"-c", "submodule.recurse=false", "-c", "core.untrackedCache=false", "-c", "core.sparseCheckout=false",
+		"-c", "core.fileMode=true", "-c", "core.symlinks=true", "-c", "core.ignoreCase=false",
+		"-c", "core.precomposeUnicode=false", "-c", "core.autocrlf=false", "-c", "core.checkStat=default",
+		"-c", "core.trustctime=true", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+		"-c", "fetch.writeCommitGraph=false", "-c", "advice.detachedHead=false", "-c", "protocol.allow=never",
+	}
+	if byteExact {
+		flags = append(flags, "--attr-source="+emptyTree)
+	}
+	return flags
+}
+
+func runWorkspaceGit(ctx context.Context, home, root string, args ...string) (string, error) {
+	return workspaceExec(ctx, root, gitEnv(home, root), "/usr/bin/git", append(gitFlags(false), args...)...)
 }
 func workspaceExec(parent context.Context, root string, env []string, exe string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, 4*time.Second)

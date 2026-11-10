@@ -38,6 +38,8 @@ func ReceiveSession(ctx context.Context, req relay.SessionRequest) relay.Session
 	switch req.Operation {
 	case "workspace", "wipe", "recycle", "restart":
 		return sessionctl.RunWorkspace(ctx, req)
+	case sessionctl.CheckoutOperation:
+		return sessionctl.RunCheckout(ctx, req)
 	default:
 		return sessionctl.Run(ctx, req)
 	}
@@ -66,10 +68,21 @@ func NewSessionHandler(connection context.Context) func(context.Context, relay.S
 // connection-owned mutation gate as restart/recycle, before stopping the session.
 // A refresh failure is a known no-session-effect failure, not an unknown delivery.
 func NewSessionHandlerWithSecrets(connection context.Context, refresh func(context.Context) error) func(context.Context, relay.SessionRequest) relay.SessionResponse {
-	return newSessionHandlerWithSecrets(connection, refresh, HandleSession)
+	return newSessionHandler(connection, refresh, nil, HandleSession)
+}
+
+// NewSupervisorSessionHandler adds workspace attestation (#183) to the
+// connection handler. The attestor holds the root bootstrap identity; without
+// it the operation is unsupported, which keeps the server fail-closed.
+func NewSupervisorSessionHandler(connection context.Context, refresh func(context.Context) error, attestor *WorkspaceAttestor) func(context.Context, relay.SessionRequest) relay.SessionResponse {
+	return newSessionHandler(connection, refresh, attestor, HandleSession)
 }
 
 func newSessionHandlerWithSecrets(connection context.Context, refresh func(context.Context) error, run func(context.Context, relay.SessionRequest) relay.SessionResponse) func(context.Context, relay.SessionRequest) relay.SessionResponse {
+	return newSessionHandler(connection, refresh, nil, run)
+}
+
+func newSessionHandler(connection context.Context, refresh func(context.Context) error, attestor *WorkspaceAttestor, run func(context.Context, relay.SessionRequest) relay.SessionResponse) func(context.Context, relay.SessionRequest) relay.SessionResponse {
 	controller := NewTerminalController(func(ctx context.Context, step sessionctl.TerminalStep) relay.SessionResponse {
 		data, err := json.Marshal(step)
 		if err != nil {
@@ -87,6 +100,14 @@ func newSessionHandlerWithSecrets(connection context.Context, refresh func(conte
 			return controller.Handle(ctx, req)
 		}
 		switch req.Operation {
+		case sessionctl.CheckoutOperation:
+			return terminalFailure("workspace checkout is internal to the guest supervisor")
+		case relay.WorkspaceAttestOperation:
+			if attestor == nil {
+				return relay.SessionResponse{Text: "workspace attestation is not supported by this guest", Outcome: "unsupported"}
+			}
+			// Тот же gate, что у restart: активный rw-терминал — отказ до остановки.
+			return controller.Control(ctx, func() relay.SessionResponse { return attestor.Attest(ctx, req) })
 		case "slash", "wipe", "recycle", "restart":
 			return controller.Control(ctx, func() relay.SessionResponse {
 				if (req.Operation == "restart" || req.Operation == "recycle") && refresh != nil {
@@ -118,11 +139,20 @@ func HandleSession(parent context.Context, req relay.SessionRequest) relay.Sessi
 // runSessionHelper fixes the executable, argv, environment and credentials;
 // only bounded JSON crosses the UID fence.
 func runSessionHelper(parent context.Context, req relay.SessionRequest) relay.SessionResponse {
+	if req.Operation == sessionctl.CheckoutOperation {
+		return relay.SessionResponse{Text: "workspace checkout is internal to the guest supervisor", Outcome: "failed"}
+	}
+	return runHelper(parent, req, 18*time.Second)
+}
+
+// runHelper is shared by relay operations and the root-internal checkout,
+// which alone gets a longer budget.
+func runHelper(parent context.Context, req relay.SessionRequest, timeout time.Duration) relay.SessionResponse {
 	fail := func(text string) relay.SessionResponse { return relay.SessionResponse{Text: text, Outcome: "failed"} }
 	if os.Geteuid() != 0 {
 		return fail("session operations require guest supervisor")
 	}
-	ctx, cancel := context.WithTimeout(parent, 18*time.Second)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	data, err := json.Marshal(req)
 	if err != nil || len(data) > relay.MaxSessionBytes || ctx.Err() != nil {
