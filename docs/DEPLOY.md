@@ -121,7 +121,7 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `BROOD_PUBLIC_HOST` | DNS-имя публичного входа, присутствующее в TLS certificate |
 | `BROOD_HTTPS_PORT`, `BROOD_HTTP_PORT` | опубликованные host ports, задаются при создании kind |
 | `BROOD_DEPLOY_MODE` | `initial` по умолчанию; явный `existing` сохраняет текущую Go-БД без CI login |
-| `BROOD_ADMIN_USERNAME`, `BROOD_ADMIN_PASSWORD` | только initial admin и initial проверка доступа; пароль минимум 12 символов |
+| `BROOD_ADMIN_USERNAME`, `BROOD_ADMIN_PASSWORD` | только initial admin и initial проверка доступа; пароль непустой, одной строкой, длину выбирает оператор |
 | `WORKER_POOL_IMAGES` | JSON approved digest images: обязательный gvisor, необязательные microvm и подготовленный lxc |
 | `CLIPROXY_URL`, `CLIPROXY_MANAGEMENT_KEY` | опциональный существующий backend `http://cliproxy:8317` и его server-only management key |
 | `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |

@@ -24,8 +24,13 @@ class PublicSettingsTests(unittest.TestCase):
         self.assertNotIn("DJANGO_SECRET_KEY", values)
         self.assertNotIn("POSTGRES_PASSWORD", values)
 
+    def test_short_admin_password_is_accepted(self):
+        # Длину пароля администратора выбирает оператор (#222).
+        values = self.module().settings(dict(VALUES, BROOD_ADMIN_PASSWORD="nine-char").get)
+        self.assertEqual(values["BROOD_ADMIN_PASSWORD"], "nine-char")
+
     def test_missing_or_multiline_admin_secret_is_explained_without_its_value(self):
-        for value in (None, "", "too-short", "secret-value\nsecond-line"):
+        for value in (None, "", "secret-value\nsecond-line", "secret-value\0"):
             values = dict(VALUES, BROOD_ADMIN_PASSWORD=value)
             with self.subTest(value=value), self.assertRaises(RuntimeError) as error:
                 self.module().settings(values.get)
