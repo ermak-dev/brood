@@ -324,6 +324,15 @@ describe('actor request form', () => {
     }
   });
 
+  // #256: подсказка под формой описывала поле только зрительно.
+  test('the answer field is described by the hint of its request kind', () => {
+    const html = markup(createElement(RequestCard, { model: model(), request: actorAsk() }));
+    const field = html.match(/<textarea[^>]*>/)?.[0] ?? '';
+    const describedBy = field.match(/aria-describedby="([^"]+)"/)?.[1];
+    expect(describedBy).toBeTruthy();
+    expect(html).toMatch(new RegExp(`id="${describedBy}"[^>]*>${t.actor_hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<`));
+  });
+
   test('the actor hint says the answer does not route the graph', () => {
     const text = visibleText(
       markup(createElement(RequestCard, { model: model(), request: actorAsk() }))

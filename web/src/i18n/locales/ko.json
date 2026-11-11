@@ -67,6 +67,7 @@
     "administration": "시스템 관리",
     "choose_project": "선택",
     "select_project": "프로젝트 선택",
+    "current_project": "프로젝트: {{name}}",
     "select_project_hint": "상단 메뉴 또는 프로젝트 목록에서 프로젝트를 선택하세요.",
     "no_active_swarms": "이 프로젝트에는 접근 가능한 활성 스웜이 없습니다.",
     "swarm": "스웜",
@@ -242,10 +243,6 @@
   "title": {
     "login": "Brood 관리 센터",
     "abbr": "Brood"
-  },
-  "splash": {
-    "title": "Brood",
-    "subtitle": "관리 센터"
   },
   "login": {
     "username_label": "사용자 이름:",
@@ -3114,6 +3111,7 @@
       "fan_in": "합류"
     },
     "graph_label": "실행 그래프",
+    "graph_description": "각 노드는 단계, 종류, 상태로 이름 붙은 버튼입니다. 실행이 머무는 노드는 현재로 표시됩니다. 노드를 선택하면 그래프 아래에 상세 정보가 표시됩니다.",
     "graph_empty": "그래프가 없습니다"
   },
   "swarm_page": {

@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Select } from '@/components/ui/Select';
 import { IconEye, IconEyeOff } from '@/components/ui/icons';
 import { useAuthStore, useLanguageStore, useNotificationStore } from '@/stores';
@@ -101,7 +102,6 @@ export function LoginPage() {
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [autoLoading, setAutoLoading] = useState(true);
-  const [autoLoginSuccess, setAutoLoginSuccess] = useState(false);
   const [error, setError] = useState('');
 
   const languageOptions = useMemo(
@@ -122,20 +122,15 @@ export function LoginPage() {
     [setLanguage]
   );
 
+  // brood (#256): восстановление сессии — не событие. Раньше его сопровождал
+  // полноэкранный сплэш «BROOD» с задержкой 1,5 с на каждой перезагрузке;
+  // теперь восстановленная сессия сразу уводит на запрошенный адрес (Navigate
+  // ниже), а до ответа сервера виден нейтральный спиннер.
   useEffect(() => {
     const init = async () => {
       try {
-        const autoLoggedIn = await restoreSession();
-        if (autoLoggedIn) {
-          setAutoLoginSuccess(true);
-          // 延迟跳转，让用户看到成功动画
-          setTimeout(() => {
-            const redirect = (location.state as RedirectState | null)?.from?.pathname || '/';
-            navigate(redirect, { replace: true });
-          }, 1500);
-        }
+        await restoreSession();
       } finally {
-        // 自动登录成功时 showSplash 仍由 autoLoginSuccess 维持，可无条件结束 loading
         setAutoLoading(false);
       }
     };
@@ -175,13 +170,18 @@ export function LoginPage() {
     [loading, handleSubmit]
   );
 
-  if (isAuthenticated && !autoLoading && !autoLoginSuccess) {
+  if (isAuthenticated && !autoLoading) {
     const redirect = (location.state as RedirectState | null)?.from?.pathname || '/';
     return <Navigate to={redirect} replace />;
   }
 
-  // 显示启动动画（自动登录中或自动登录成功）
-  const showSplash = autoLoading || autoLoginSuccess;
+  if (autoLoading) {
+    return (
+      <div className={styles.restoring}>
+        <LoadingSpinner size={28} />
+      </div>
+    );
+  }
 
   return (
     <div className={styles.container}>
@@ -194,79 +194,67 @@ export function LoginPage() {
 
       {/* 右侧功能交互区 */}
       <div className={styles.formPanel}>
-        {showSplash ? (
-          /* 启动动画 */
-          <div className={styles.splashContent}>
-            <img src={INLINE_LOGO} alt="Brood" className={styles.splashLogo} />
-            <h1 className={styles.splashTitle}>{t('splash.title')}</h1>
-            <p className={styles.splashSubtitle}>{t('splash.subtitle')}</p>
-            <div className={styles.splashLoader}>
-              <div className={styles.splashLoaderBar} />
-            </div>
-          </div>
-        ) : (
-          /* 登录表单 */
-          <div className={styles.formContent}>
-            {/* Logo */}
-            <img src={INLINE_LOGO} alt="Logo" className={styles.logo} />
+        {/* 登录表单 */}
+        <div className={styles.formContent}>
+          {/* Logo */}
+          <img src={INLINE_LOGO} alt="Logo" className={styles.logo} />
 
-            {/* 登录表单卡片 */}
-            <div className={styles.loginCard}>
-              <div className={styles.loginHeader}>
-                <div className={styles.titleRow}>
-                  <div className={styles.title}>{t('title.login')}</div>
-                  <Select
-                    className={styles.languageSelect}
-                    value={language}
-                    options={languageOptions}
-                    onChange={handleLanguageChange}
-                    fullWidth={false}
-                    ariaLabel={t('language.switch')}
-                  />
-                </div>
+          {/* 登录表单卡片 */}
+          <div className={styles.loginCard}>
+            <div className={styles.loginHeader}>
+              <div className={styles.titleRow}>
+                <div className={styles.title}>{t('title.login')}</div>
+                <Select
+                  className={styles.languageSelect}
+                  value={language}
+                  options={languageOptions}
+                  onChange={handleLanguageChange}
+                  fullWidth={false}
+                  ariaLabel={t('language.switch')}
+                />
               </div>
-
-              <Input
-                autoFocus
-                label={t('login.username_label')}
-                placeholder={t('login.username_placeholder')}
-                name="username"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyDown={handleSubmitKeyDown}
-              />
-
-              <Input
-                label={t('login.password_label')}
-                placeholder={t('login.password_placeholder')}
-                type={showKey ? 'text' : 'password'}
-                name="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={handleSubmitKeyDown}
-                rightElement={
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setShowKey((prev) => !prev)}
-                    aria-label={showKey ? t('login.hide_password') : t('login.show_password')}
-                    title={showKey ? t('login.hide_password') : t('login.show_password')}
-                  >
-                    {showKey ? <IconEyeOff size={16} /> : <IconEye size={16} />}
-                  </button>
-                }
-              />
-
-              <Button fullWidth onClick={handleSubmit} loading={loading}>
-                {loading ? t('login.submitting') : t('login.submit_button')}
-              </Button>
-
-              {error && <div className={styles.errorBox}>{error}</div>}
             </div>
+
+            <Input
+              autoFocus
+              label={t('login.username_label')}
+              placeholder={t('login.username_placeholder')}
+              name="username"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onKeyDown={handleSubmitKeyDown}
+            />
+
+            <Input
+              label={t('login.password_label')}
+              placeholder={t('login.password_placeholder')}
+              type={showKey ? 'text' : 'password'}
+              name="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={handleSubmitKeyDown}
+              rightElement={
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setShowKey((prev) => !prev)}
+                  aria-label={showKey ? t('login.hide_password') : t('login.show_password')}
+                  title={showKey ? t('login.hide_password') : t('login.show_password')}
+                >
+                  {showKey ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+                </button>
+              }
+            />
+
+            <Button fullWidth onClick={handleSubmit} loading={loading}>
+              {loading ? t('login.submitting') : t('login.submit_button')}
+            </Button>
+
+            {error && <div className={styles.errorBox}>{error}</div>}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

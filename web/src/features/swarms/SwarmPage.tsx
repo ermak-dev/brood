@@ -633,9 +633,9 @@ function PassSteps({
   return (
     <section className={local.pass} aria-labelledby={titleId} data-pass={pass}>
       <div className={local.passHead}>
-        <h4 id={titleId} className={local.passTitle}>
+        <h3 id={titleId} className={local.passTitle}>
           {t('swarm_page.pass_goal.pass', { number, step: pass })}
-        </h4>
+        </h3>
         {goal && <Markdown className={local.goalText} data-goal-text="" text={goal} collapsible />}
       </div>
       {children}

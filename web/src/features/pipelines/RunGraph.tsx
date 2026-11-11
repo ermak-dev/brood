@@ -1,13 +1,15 @@
-import { createElement, useMemo, type ReactNode, type KeyboardEvent } from 'react';
+import { createElement, useId, useMemo, type ReactNode, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   parseServerSVG,
   svgNodeID,
   svgNodeKind,
   svgNodeLabel,
+  svgNodeState,
   svgViewBoxSize,
 } from './svgFilter';
 import graphStyles from './pipelines.module.scss';
+import styles from '@/features/substrate/substrate.module.scss';
 
 /** Инлайновый граф (#214): серверный SVG — часть документа. Разметка
  * проходит разрешающий фильтр (svgFilter), не innerHTML. Узлы — кнопки
@@ -30,6 +32,7 @@ export function RunGraph({
   onSelect?: (id: string) => void;
 }) {
   const { t } = useTranslation();
+  const descriptionId = useId();
   // Разбор и фильтрация дороги: один раз на строку SVG.
   const root = useMemo(() => parseServerSVG(svg)[0], [svg]);
   const known = useMemo(() => collectNodeIDs(root), [root]);
@@ -52,10 +55,16 @@ export function RunGraph({
         height={size?.height}
         role="group"
         aria-label={label ?? t('pipelines.graph_label')}
+        aria-describedby={descriptionId}
         className={graphStyles.svg}
       >
         {childrenOf(root).map((child, index) => decorate(child, `n${index}`, ctx))}
       </svg>
+      {/* Что такое узлы и как читать граф без цвета (#256): скринридеру,
+       * зрячему состояние говорят заливка и имя узла. */}
+      <p id={descriptionId} className={styles.srOnly}>
+        {t('pipelines.graph_description')}
+      </p>
     </div>
   );
 }
@@ -115,6 +124,12 @@ function decorate(node: ReactNode, key: string, ctx: Decorate): ReactNode {
   const kind = svgNodeKind(node);
   // Неизвестный вид (сервер новее панели) подписывается как есть.
   const kindName = kind === '' ? '' : ctx.t(`pipelines.kind.${kind}`, { defaultValue: kind });
+  // Состояние — часть имени («review, actor, Done»): иначе его несёт только
+  // цвет. Словарь тот же, что у истории шагов; неизвестное состояние, как и
+  // вид, подписывается как есть.
+  const state = svgNodeState(node);
+  const stateName =
+    state === '' ? '' : ctx.t(`swarm_page.node_states.${state}`, { defaultValue: state });
   const nodeLabel = svgNodeLabel(node);
   return createElement(
     'g',
@@ -124,7 +139,7 @@ function decorate(node: ReactNode, key: string, ctx: Decorate): ReactNode {
       tabIndex: 0,
       role: 'button',
       'aria-pressed': selected,
-      'aria-label': kindName === '' ? nodeLabel : `${nodeLabel}, ${kindName}`,
+      'aria-label': [nodeLabel, kindName, stateName].filter((part) => part !== '').join(', '),
       onClick: () => onSelect(id),
       onKeyDown: (event: KeyboardEvent) => nodeKeyDown(event, () => onSelect(id)),
     },

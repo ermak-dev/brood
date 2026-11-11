@@ -45,21 +45,24 @@ export function ProjectSwitcher() {
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [open, project]);
+  const current = projects?.find((item) => item.id === project)?.name;
   return (
     <div className={`language-menu project-switcher ${open ? 'open' : ''}`} ref={menuRef}>
+      {/* Имя кнопки содержит видимый текст («Project: brood»): имя без него
+       * скринридер и голосовое управление считают несовпадением (#256). */}
       <Button
         variant="ghost"
         size="sm"
         onClick={() => setOpen((previous) => !previous)}
         title={t('access.select_project')}
-        aria-label={t('access.select_project')}
+        aria-label={
+          current ? t('access.current_project', { name: current }) : t('access.select_project')
+        }
         aria-haspopup="menu"
         aria-expanded={open}
       >
         <IconSidebarProjects size={16} />
-        <span className="project-switcher-label">
-          {projects?.find((item) => item.id === project)?.name || t('access.select_project')}
-        </span>
+        <span className="project-switcher-label">{current || t('access.select_project')}</span>
       </Button>
       {open && (
         <div className="notification entering language-menu-popover" role="menu">

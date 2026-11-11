@@ -67,6 +67,7 @@
     "administration": "系统管理",
     "choose_project": "选择",
     "select_project": "选择项目",
+    "current_project": "项目：{{name}}",
     "select_project_hint": "请在顶部菜单或项目列表中选择项目。",
     "no_active_swarms": "该项目没有可访问的活跃群组。",
     "swarm": "群组",
@@ -242,10 +243,6 @@
   "title": {
     "login": "Brood 管理中心",
     "abbr": "Brood"
-  },
-  "splash": {
-    "title": "Brood",
-    "subtitle": "管理中心"
   },
   "login": {
     "username_label": "用户名：",
@@ -3111,6 +3108,7 @@
       "fan_in": "汇合"
     },
     "graph_label": "运行图",
+    "graph_description": "每个节点都是按钮，名称由步骤、类型和状态组成；运行所在的节点标记为当前。选择节点后，其详情显示在图下方。",
     "graph_empty": "暂无图表"
   },
   "swarm_page": {

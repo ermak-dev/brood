@@ -36,6 +36,30 @@ test('panel puts irreversible actions after object details and omits empty group
   expect(html).not.toContain('Empty group');
 });
 
+// #256: карточка-кнопка называлась всем своим текстом («Swarm access Shows
+// who can…»): имя — заголовок, описание — через aria-describedby.
+test('a card button is named by its label and described by its text', async () => {
+  const html = await render(
+    createElement(PanelActions, {
+      groups: [
+        {
+          id: 'main',
+          label: 'Actions',
+          actions: [{ id: 'access', label: 'Swarm access', description: 'Shows who can use it.' }],
+        },
+      ],
+    })
+  );
+  const button = html.match(/<button[^>]*>/)?.[0] ?? '';
+  const labelledBy = button.match(/aria-labelledby="([^"]+)"/)?.[1];
+  const describedBy = button.match(/aria-describedby="([^"]+)"/)?.[1];
+  expect(labelledBy).toBeTruthy();
+  expect(describedBy).toBeTruthy();
+  expect(labelledBy).not.toBe(describedBy);
+  expect(html).toMatch(new RegExp(`id="${labelledBy}"[^>]*>(<span[^>]*>[^<]*</span>)?Swarm access<`));
+  expect(html).toMatch(new RegExp(`id="${describedBy}"[^>]*>Shows who can use it\\.<`));
+});
+
 test('blocked links become focusable unavailable buttons with visible reasons', async () => {
   const html = await render(createElement(PanelActions, { groups }));
   expect(html).toContain('href="/terminal"');

@@ -348,7 +348,8 @@ async function click(element: Element | null | undefined) {
 }
 
 const rolesBlock = (container: HTMLElement) => {
-  const title = Array.from(container.querySelectorAll('h3')).find(
+  // #256: секция страницы — h2, вложенная — h3; блок ищется по заголовку любого уровня.
+  const title = Array.from(container.querySelectorAll('h2, h3')).find(
     (heading) => heading.textContent === t.title
   );
   const section = title?.closest('section');
