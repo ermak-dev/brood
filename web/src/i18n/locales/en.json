@@ -176,6 +176,7 @@
       "stopped": "Stopped"
     },
     "open_requests": "Open questions",
+    "undelivered_answers_hint": "Answers the actor did not get, or whose delivery is not confirmed. Retry the delivery on the swarm page.",
     "swarm_count": "Swarms",
     "failed_swarms": "Swarms: {{names}}"
   },

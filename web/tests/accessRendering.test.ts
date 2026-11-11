@@ -155,6 +155,25 @@ test('swarmActivityOf reads the row summary and refuses a malformed one', () => 
   ).toBeUndefined();
 });
 
+// #266: строка несёт и число ответов актору, ждущих повтора доставки. Старый
+// сервер поля не шлёт: сводка остаётся прежней, без нуля вместо «неизвестно»;
+// брак в нём не прячет исполнение и открытые вопросы.
+test('swarmActivityOf reads undelivered actor answers and tolerates their absence', () => {
+  expect(
+    swarmActivityOf(swarm('retry', { ...summary('running', 1), undeliveredAnswers: 2 }))
+  ).toEqual({ execution: 'running', openRequests: 1, undeliveredAnswers: 2 });
+  expect(
+    swarmActivityOf(swarm('clean', { ...summary('idle'), undeliveredAnswers: 0 }))
+      ?.undeliveredAnswers
+  ).toBe(0);
+  const old = swarmActivityOf(swarm('old', summary('waiting', 1)));
+  expect(old).toEqual({ execution: 'waiting', openRequests: 1 });
+  expect(old?.undeliveredAnswers).toBeUndefined();
+  const odd = swarmActivityOf(swarm('odd', { ...summary('waiting', 1), undeliveredAnswers: 1.5 }));
+  expect(odd).toEqual({ execution: 'waiting', openRequests: 1 });
+  expect(odd?.undeliveredAnswers).toBeUndefined();
+});
+
 test('waitingCount counts the rows waiting for an answer', () => {
   const rows = [
     swarm('a', summary('waiting', 2)),
@@ -206,6 +225,40 @@ test('the swarm list shows execution and open questions, waiting swarms first', 
   expect(markup).toContain('data-tone="attention">Waiting for answer<');
   expect(markup).toContain('data-tone="attention">3<');
   expect(markup).toContain('data-tone="progress">Running<');
+});
+
+// #266: рядом с открытыми вопросами -- признак недоставленных ответов актору,
+// тоном внимания и теми же словами, что в шапке инбокса роя (#264). Число --
+// из строки списка; ноль и строка старого сервера без поля -- как прежде.
+test('the swarm list marks undelivered actor answers next to the open questions', () => {
+  const rows = [
+    swarm('retry', { ...summary('running', 1), undeliveredAnswers: 2 }),
+    swarm('lost', { ...summary('succeeded'), undeliveredAnswers: 1 }),
+    swarm('delivered', { ...summary('idle'), undeliveredAnswers: 0 }),
+    swarm('old', summary('waiting', 3)),
+  ];
+  const markup = render(createElement(SwarmsTable, { swarms: rows }));
+  const cells = (label: string) =>
+    [...markup.matchAll(new RegExp(`data-label="${label}"[^>]*>(.*?)</td>`, 'g'))].map((m) => m[1]);
+  const text = (html: string) => html.replace(/<[^>]+>/g, '');
+  const words = (count: number) =>
+    en.swarm_requests.undelivered_count.replace('{{count}}', String(count));
+  const marker = (count: number) => `data-tone="attention">${words(count)}<`;
+  // Порядок списка признак не меняет (#255).
+  expect(cells('Name').map(text)).toEqual(['old', 'retry', 'delivered', 'lost']);
+  const [old, retry, delivered, lost] = cells('Open questions');
+  expect(retry).toContain('data-tone="attention">1<');
+  expect(retry).toContain(marker(2));
+  expect(text(retry)).toBe(`1${words(2)}`);
+  expect(text(lost)).toBe(`0${words(1)}`);
+  expect(lost).toContain(marker(1));
+  // Признак объясняет себя при наведении: ответы, которые актор не получил.
+  expect(retry).toContain(`title="${en.access.undelivered_answers_hint}"`);
+  // Ноль и старый сервер -- прежняя ячейка: число, без признака.
+  expect(delivered).toBe('0');
+  expect(text(old)).toBe('3');
+  expect(old).toContain('data-tone="attention">3<');
+  expect(markup.match(/data-tone="attention">\d+ undelivered</g)?.length).toBe(2);
 });
 
 test('the project list counts swarms and marks the selected project', () => {

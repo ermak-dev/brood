@@ -1,7 +1,8 @@
 /**
  * Исполнение и открытые вопросы роёв в списке (#255). Строка списка роёв
- * несёт их сама (`execution`, `openRequests`, #234): сервер читает сводку
- * одной выборкой на весь список, и панель роёв не опрашивает.
+ * несёт их сама (`execution`, `openRequests`, #234; `undeliveredAnswers`,
+ * #266): сервер читает сводку одной выборкой на весь список, и панель роёв
+ * не опрашивает.
  */
 import type { AccessSwarm } from '@/services/brood/access';
 import type { BadgeTone } from './state';
@@ -11,15 +12,26 @@ export interface SwarmActivity {
    * failed, stopped; незнакомое значение остаётся как есть. */
   execution: string;
   openRequests: number;
+  /** Ответы актору, ждущие повтора доставки (#266); без поля (старый сервер)
+   * или с браком -- undefined, «неизвестно», а не ноль. */
+  undeliveredAnswers?: number;
 }
 
 /** Сводка из строки списка (#234); без неё или с браком -- undefined,
- * «неизвестно», а не ноль вопросов и не «не запущен». */
+ * «неизвестно», а не ноль вопросов и не «не запущен». Брак в
+ * `undeliveredAnswers` сводку не прячет: теряется только это число. */
 export function swarmActivityOf(swarm: AccessSwarm): SwarmActivity | undefined {
   if (typeof swarm.execution !== 'string' || !Number.isSafeInteger(swarm.openRequests)) {
     return undefined;
   }
-  return { execution: swarm.execution, openRequests: swarm.openRequests as number };
+  const activity: SwarmActivity = {
+    execution: swarm.execution,
+    openRequests: swarm.openRequests as number,
+  };
+  if (Number.isSafeInteger(swarm.undeliveredAnswers)) {
+    activity.undeliveredAnswers = swarm.undeliveredAnswers;
+  }
+  return activity;
 }
 
 /** Тон исполнения в словаре бейджей #254: внимание оператора, работа, проблема, ничего. */

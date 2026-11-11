@@ -176,6 +176,7 @@
       "stopped": "Đã dừng"
     },
     "open_requests": "Câu hỏi đang mở",
+    "undelivered_answers_hint": "Các câu trả lời mà actor chưa nhận được, hoặc việc gửi chưa được xác nhận. Gửi lại trên trang bầy.",
     "swarm_count": "Số bầy",
     "failed_swarms": "Bầy: {{names}}"
   },

@@ -196,9 +196,13 @@ test('the swarm list keeps its hints for the empty state and names every state',
         'string',
       ]);
     }
-    for (const key of ['execution', 'open_requests', 'swarm_count']) {
+    for (const key of ['execution', 'open_requests', 'swarm_count', 'undelivered_answers_hint']) {
       expect([locale, key, typeof access[key]]).toEqual([locale, key, 'string']);
     }
+    // Признак недоставленных (#266) читается как счётчик шапки инбокса (#264).
+    const inbox = JSON.parse(source(`i18n/locales/${locale}.json`)).swarm_requests;
+    expect([locale, typeof inbox.undelivered_count]).toEqual([locale, 'string']);
+    expect(inbox.undelivered_count).toContain('{{count}}');
     // Сводку несёт строка списка (#234): подписи о пределе опроса нет.
     expect([locale, access.activity_limited]).toEqual([locale, undefined]);
   }
