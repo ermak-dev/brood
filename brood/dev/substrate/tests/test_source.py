@@ -124,5 +124,5 @@ class StepTests(unittest.TestCase):
 
 class PinTests(unittest.TestCase):
     def test_verified_lxc_fork_at_full_commit(self):
-        self.assertEqual(local.REPOSITORY, "git@git.ermak.dev:ermak/substrate.git")
+        self.assertEqual(local.REPOSITORY, "https://github.com/ermak-dev/substrate.git")
         self.assertEqual(local.COMMIT, "0d435f2e2ff86b73fc9982d9aac3fa77d7b2ed9f")

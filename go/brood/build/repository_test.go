@@ -87,7 +87,7 @@ func TestRepositoryWorkbenchContract(t *testing.T) {
 	substrate := plans[0]["sources"].(map[string]any)["substrate"].(map[string]any)
 	if pins["SUBSTRATE_COMMIT"] != "0d435f2e2ff86b73fc9982d9aac3fa77d7b2ed9f" ||
 		substrate["revision"] != pins["SUBSTRATE_COMMIT"] ||
-		substrate["repository"] != "git@git.ermak.dev:ermak/substrate.git" {
+		substrate["repository"] != "https://github.com/ermak-dev/substrate.git" {
 		t.Fatal("workbench source must use the verified LXC fork pin, not the public SDK pin")
 	}
 	if !strings.Contains(pins["PYTHON_IMAGE"], "@sha256:") {

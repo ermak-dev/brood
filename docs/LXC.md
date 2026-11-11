@@ -6,7 +6,7 @@
 
 ## Исходники и pins
 
-Runtime живёт в форке https://git.ermak.dev/ermak/substrate; upstream —
+Runtime живёт в форке https://github.com/ermak-dev/substrate; upstream —
 https://github.com/agent-substrate/substrate. Installer и корневой Broodfile
 закрепляют проверенный commit `0d435f2e2ff86b73fc9982d9aac3fa77d7b2ed9f` ключом
 `SUBSTRATE_COMMIT` в `brood/dev/pins.json`.

@@ -1,7 +1,7 @@
 """brood substrate install: build Substrate from the checkout and deploy it to kind
 
 Without SUBSTRATE_SOURCE, first clones the verified fork
-(git@git.ermak.dev:ermak/substrate.git) into $XDG_DATA_HOME/brood/substrate,
+(https://github.com/ermak-dev/substrate.git) into $XDG_DATA_HOME/brood/substrate,
 or moves that clone to the commit pinned
 in brood; a clone with local changes or another origin is refused. Creates
 the registry substrate-registry and the kind cluster substrate when
