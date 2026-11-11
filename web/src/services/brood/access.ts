@@ -56,6 +56,9 @@ export interface AccessSwarm {
    * `GET /api/projects/{id}/swarms`, у одного роя и созданного полей нет. */
   execution?: string;
   openRequests?: number;
+  /** Ответы актору с доставкой `failed` или `unconfirmed` (#266): ждут повтора
+   * доставки. Старый сервер поля не шлёт. */
+  undeliveredAnswers?: number;
 }
 
 export interface AccessUser {

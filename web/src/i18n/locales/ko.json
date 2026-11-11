@@ -176,6 +176,7 @@
       "stopped": "중지됨"
     },
     "open_requests": "미답변 질문",
+    "undelivered_answers_hint": "액터가 받지 못했거나 전달이 확인되지 않은 답변입니다. 스웜 페이지에서 다시 전달하세요.",
     "swarm_count": "스웜 수",
     "failed_swarms": "스웜: {{names}}"
   },

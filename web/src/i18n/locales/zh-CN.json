@@ -176,6 +176,7 @@
       "stopped": "已停止"
     },
     "open_requests": "待答问题",
+    "undelivered_answers_hint": "Actor 未收到或送达未确认的回答。可在蜂群页面重试送达。",
     "swarm_count": "蜂群数",
     "failed_swarms": "蜂群：{{names}}"
   },

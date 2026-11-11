@@ -65,10 +65,24 @@ export function SwarmsTable({ swarms }: { swarms: AccessSwarm[] }) {
       render: (swarm) => {
         const activity = swarmActivityOf(swarm);
         if (!activity) return DASH;
-        return activity.openRequests > 0 ? (
-          <StatusBadge tone="attention">{activity.openRequests}</StatusBadge>
-        ) : (
-          String(activity.openRequests)
+        const open =
+          activity.openRequests > 0 ? (
+            <StatusBadge tone="attention">{activity.openRequests}</StatusBadge>
+          ) : (
+            String(activity.openRequests)
+          );
+        const undelivered = activity.undeliveredAnswers ?? 0;
+        if (undelivered <= 0) return open;
+        // Недоставленные ответы актору (#266) -- рядом, словами шапки инбокса (#264).
+        return (
+          <span className={styles.stateCell}>
+            {open}
+            <span title={t('access.undelivered_answers_hint')}>
+              <StatusBadge tone="attention">
+                {t('swarm_requests.undelivered_count', { count: undelivered })}
+              </StatusBadge>
+            </span>
+          </span>
         );
       },
     },
