@@ -20,12 +20,17 @@ import (
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/store"
 )
 
-// requestDeliveryTimeout ограничивает доставку ответа: она переживает
-// разрыв соединения клиента, но не держит обработчик бесконечно.
-const requestDeliveryTimeout = 30 * time.Second
+// requestDeliveryTimeout ограничивает доставку ответа и инструкции шага: она
+// переживает разрыв соединения клиента, но не держит обработчик бесконечно.
+// Гость ждёт квитанцию доставки до command.ReceiptWait, и его relay держит
+// канал command.CallTimeout(0); сверх того — открытие канала relay (до 10
+// секунд) и проверки до и после отправки. Короче — ожидание квитанции
+// обрывалось бы таймаутом канала, а не приходило вердиктом (#260).
+var requestDeliveryTimeout = command.CallTimeout(0) + 10*time.Second
 
 // maxRequestAnswerBytes вмещает ответ предельного размера после
 // экранирования JSON.
@@ -62,9 +67,12 @@ type swarmRequestJSON struct {
 	Outcome     *string                  `json:"outcome,omitempty"`
 	OptionLabel string                   `json:"optionLabel,omitempty"`
 	Response    *string                  `json:"response,omitempty"`
-	// Delivery — доставка ответа актору: pending, delivered или failed.
+	// Delivery — доставка ответа актору: pending, delivered, failed (ответ
+	// заведомо не ушёл, повтор безопасен) или unconfirmed (ушёл без
+	// квитанции, повтор может дать дубль, #260).
 	Delivery string `json:"delivery,omitempty"`
-	// DeliveryError — публичная причина неудачной доставки этого вызова.
+	// DeliveryError — публичная причина failed или unconfirmed этого
+	// вызова; у unconfirmed она предупреждает о возможном дубле.
 	DeliveryError string `json:"deliveryError,omitempty"`
 }
 
@@ -234,9 +242,10 @@ func (s *Server) answerSwarmRequest(r *http.Request, user store.User, answer sto
 // deliverSwarmAnswer доставляет записанный ответ спросившему актору.
 // Доставка одного ответа сериализуется в процессе: параллельный повтор
 // ждёт и видит итог первого, а не шлёт актору второе сообщение. Первая
-// доставка идёт только из pending, retry — ещё и из failed. Сбой не
-// откатывает ответ: он записывается как failed и возвращается публичной
-// причиной. Граф доставка не трогает.
+// доставка идёт только из pending, retry — ещё и из failed и unconfirmed
+// (#260: ответ мог дойти, повтор может дать дубль). Сбой не откатывает
+// ответ: исход попытки (requestDeliveryOutcome) записывается и
+// возвращается публичной причиной. Граф доставка не трогает.
 func (s *Server) deliverSwarmAnswer(parent context.Context, user store.User, req store.SwarmRequest, retry bool) (store.SwarmRequest, string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), requestDeliveryTimeout)
 	defer cancel()
@@ -247,7 +256,7 @@ func (s *Server) deliverSwarmAnswer(parent context.Context, user store.User, req
 		requestLogger(ctx).Error("swarm answer delivery failed", "request", req.ID, "err", err.Error())
 		return req, "delivery unavailable"
 	}
-	if current.Delivery != "pending" && (!retry || current.Delivery != "failed") {
+	if current.Delivery != "pending" && (!retry || (current.Delivery != "failed" && current.Delivery != "unconfirmed")) {
 		return current, ""
 	}
 	author := "operator"
@@ -255,19 +264,19 @@ func (s *Server) deliverSwarmAnswer(parent context.Context, user store.User, req
 		author = u.Username
 	}
 	asker := func(ctx context.Context) (store.ManagedActor, error) { return s.requestAsker(ctx, current) }
-	result, err := s.deliverOperatorMessage(ctx, user.ID, current.SwarmID, asker, requestAnswerMessage(current, author), 0)
-	delivered := err == nil && result.Outcome == "completed"
-	reason := ""
-	if !delivered {
-		reason = publicDeliveryError(err)
-		if reason == "delivery unavailable" {
-			requestLogger(ctx).Error("swarm answer delivery failed", "request", current.ID, "err", err.Error())
-		}
+	result, sent, err := s.deliverOperatorMessage(ctx, user.ID, current.SwarmID, asker, requestAnswerMessage(current, author), 0)
+	outcome, reason := requestDeliveryOutcome(result, sent, err)
+	if reason == "delivery unavailable" && err != nil {
+		requestLogger(ctx).Error("swarm answer delivery failed", "request", current.ID, "err", err.Error())
 	}
-	recorded, err := s.store.RecordSwarmRequestDelivery(ctx, current.SwarmID, current.ID, delivered)
+	recorded, err := s.store.RecordSwarmRequestDelivery(ctx, current.SwarmID, current.ID, outcome)
 	if err != nil {
-		requestLogger(ctx).Error("swarm answer delivery was not recorded", "request", current.ID, "delivered", delivered, "err", err.Error())
+		requestLogger(ctx).Error("swarm answer delivery was not recorded", "request", current.ID, "outcome", outcome, "err", err.Error())
 		return current, "delivery unavailable"
+	}
+	if outcome == "failed" && recorded.Delivery == "unconfirmed" {
+		// Повтор не ушёл, но прежняя попытка могла дойти.
+		reason += "; an earlier delivery is unconfirmed: " + answerMayHaveArrived
 	}
 	return recorded, reason
 }
@@ -285,20 +294,32 @@ func (s *Server) requestAsker(ctx context.Context, req store.SwarmRequest) (stor
 	return a, nil
 }
 
-// publicDeliveryError переводит исход канала оператора в фиксированную
-// причину; err == nil — адресат не подтвердил приём.
-func publicDeliveryError(err error) string {
+// answerMayHaveArrived — предупреждение неизвестного исхода доставки ответа.
+const answerMayHaveArrived = "the answer may have reached the actor, and a retry may deliver it twice"
+
+// requestDeliveryOutcome переводит исход канала оператора в исход попытки
+// доставки ответа и фиксированную причину (#260). delivered — только
+// подтверждённый гостем приём. Сообщение, заведомо не ушедшее (sent=false:
+// отказ гостя до записи в сессию, адресат не на связи, устарел, права
+// сменились до отправки), — failed с причиной. Всё, что ушло в канал без
+// подтверждения (квитанции нет, канал оборвался, права сменились после
+// отправки), — unconfirmed: ответ мог дойти.
+func requestDeliveryOutcome(result command.Result, sent bool, err error) (string, string) {
 	switch {
-	case err == nil, errors.Is(err, errDeliveryUnconfirmed):
-		return "delivery is unconfirmed; check before retrying"
+	case err == nil && result.Outcome == "completed":
+		return "delivered", ""
+	case sent:
+		return "unconfirmed", "delivery is unconfirmed: " + answerMayHaveArrived
+	case errors.Is(err, errMessageNotSent):
+		return "failed", "the answer was not sent: the actor session did not receive it"
 	case errors.Is(err, errRecipientOffline):
-		return "recipient is not connected"
+		return "failed", "recipient is not connected"
 	case errors.Is(err, app.ErrNotFound):
-		return "request actor is stale"
+		return "failed", "request actor is stale"
 	case errors.Is(err, app.ErrNotAllowed):
-		return "delivery authorization changed"
+		return "failed", "delivery authorization changed"
 	default:
-		return "delivery unavailable"
+		return "failed", "delivery unavailable"
 	}
 }
 

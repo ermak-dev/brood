@@ -157,7 +157,7 @@ func callTimeout(args json.RawMessage) time.Duration {
 		timing.WaitSeconds = timing.Wait
 	}
 	if timing.WaitSeconds < 0 || timing.WaitSeconds > 300 {
-		return 15 * time.Second
+		timing.WaitSeconds = 0
 	}
-	return time.Duration(timing.WaitSeconds)*time.Second + 15*time.Second
+	return command.CallTimeout(timing.WaitSeconds)
 }

@@ -13,6 +13,8 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"brood.dev/go/brood/command"
 )
 
 func TestGuestMessageHandler(t *testing.T) {
@@ -72,6 +74,42 @@ func TestGuestMessageNotSentCrossesRelay(t *testing.T) {
 	resp, err := ReadMessageResponse(c)
 	if err != nil || resp.OK || !resp.NotSent || resp.Verdict != "no unique live Claude session for this project" {
 		t.Fatalf("response: %#v %v", resp, err)
+	}
+}
+
+// TestGuestMessageHandlerBudget — обработчик гостя получает предел канала
+// command.CallTimeout (#260): без ожидания простоя гость ждёт квитанцию
+// доставки, и канал не закрывается раньше, чем helper ответит.
+func TestGuestMessageHandlerBudget(t *testing.T) {
+	f := setup(t)
+	budgets := make(chan time.Duration, 2)
+	cfg := f.cfg
+	cfg.HandleMessage = func(ctx context.Context, req MessageRequest) MessageResponse {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Error("guest message handler has no deadline")
+		}
+		budgets <- time.Until(deadline)
+		return MessageResponse{OK: true, Verdict: "delivered"}
+	}
+	start(t, f, cfg)
+	for _, wait := range []int{0, 60} {
+		frame, _ := json.Marshal(MessageRequest{To: "worker", From: "lead", Body: "hello", WaitSec: wait})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		c, err := f.h.DialMessage(ctx, "actor-uid", 3, frame)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		if _, err := ReadMessageResponse(c); err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		cancel()
+		want := command.CallTimeout(wait)
+		if got := <-budgets; got > want || got < want-2*time.Second {
+			t.Errorf("wait %d: handler budget %v, want %v", wait, got, want)
+		}
 	}
 }
 

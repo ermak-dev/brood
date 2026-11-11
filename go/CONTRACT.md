@@ -148,19 +148,30 @@ SA и уже встреченных principals, не превращение ло
   (`name`, `incarnation`) запроса актора, `kind`, `question`, `context`,
   `options` (`label`, `outcome`), `state`, `createdAt`, после ответа
   `answeredAt`, `answeredBy` (username), `outcome`, `optionLabel`, `response`
-  и у запроса актора `delivery` (`pending`/`delivered`/`failed`).
+  и у запроса актора `delivery`: `pending`, `delivered`, `failed` (ответ
+  заведомо не ушёл, повтор безопасен) или `unconfirmed` (ушёл без
+  подтверждения, ответ мог дойти, повтор может доставить его дважды, #260).
   `context` узлового запроса — отчёт шага, который ввёл граф в узел в этом
   проходе (#233): строка `Report of step <n> (node <узел>, outcome <исход>):`,
   пустая строка и отчёт как есть; без отчёта поля нет.
 - `POST /api/swarms/{id}/requests/{request}/answer` — ровно
   `{outcome?, response?}`, owner/editor/administrator; 200 — запрос после
-  ответа. Сбой доставки ответа актору — не отказ: `delivery: "failed"` и
-  `deliveryError` из фиксированного набора. Отказы: 404 рой или запрос не
-  найден (в том числе запрос чужого роя), 403 права или сессия изменились,
-  409 запрос закрыт или актор устарел, 400 ответ не подходит запросу.
+  ответа. Сбой доставки ответа актору — не отказ: `delivery: "failed"` или
+  `"unconfirmed"` и `deliveryError` из фиксированного набора; у
+  `unconfirmed` — `delivery is unconfirmed: the answer may have reached the
+  actor, and a retry may deliver it twice`, у отказа гостя до записи в сессию
+  — `the answer was not sent: the actor session did not receive it`. Сервер
+  ждёт доставку до 40 секунд: гость ждёт квитанцию до 15. Отказы: 404 рой
+  или запрос не найден (в том числе запрос чужого роя), 403 права или сессия
+  изменились, 409 запрос закрыт или актор устарел, 400 ответ не подходит
+  запросу.
 - `POST /api/swarms/{id}/requests/{request}/deliver` — повтор доставки
-  записанного ответа актору, те же права; доставленный ответ не отправляется
-  снова, запрос без доставки — 409.
+  записанного ответа актору из `pending`, `failed` или `unconfirmed`, те же
+  права; доставленный ответ не отправляется снова, запрос без доставки —
+  409. Повтор из `unconfirmed` может доставить ответ дважды; не ушедший
+  повтор оставляет `unconfirmed`, и `deliveryError` добавляет `; an earlier
+  delivery is unconfirmed: the answer may have reached the actor, and a
+  retry may deliver it twice`.
 
 Тексты отказов — фиксированный публичный набор; текст ошибок хранилища и
 адаптеров клиенту не возвращается. Ответ оператора идёт только этим API:
@@ -341,6 +352,12 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   усекаются: если места нет даже им, шаг `refused` с `detail` `the node
   instruction cannot be delivered: the node instruction leaves no room for
   the previous step`. Ни ответ оператора, ни отчёт не граница безопасности.
+- С `waitSec` 0 гость ждёт квитанцию доставки Claude Code до 15 секунд
+  (#260) и отвечает сразу по ней (`ok: true`, `verdict: "delivered"`) или по
+  отказу сессии; без квитанции — `ok: false`, `verdict: "submitted; delivery
+  unconfirmed"`. С ожиданием простоя квитанция ждётся в окне `waitSec`, как
+  прежде. Каждое звено канала держит его `waitSec` + 15 секунд, а при
+  `waitSec` 0 — 30 секунд (docs/PROXMOX.md, «Приём сообщений в госте»).
 - Ответ гостя на сообщение канала роя (`brood-swarm-msg`) — `{ok, verdict}`
   и необязательное `notSent` (#244): `true` — отказ до записи в сессию
   Claude, сообщение заведомо не ушло. Инструкцию с таким ответом сервер
@@ -349,7 +366,7 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   session did not become ready in 120 seconds (...)`. Ответ без поля —
   неизвестный исход, как раньше. `send` оператора (вердикт гостя, исход
   `unconfirmed`) и доставка ответа на запрос роя (`delivery: "failed"`,
-  повтор — `/deliver`) такой отказ не повторяют и отвечают, как раньше.
+  повтор — `/deliver`) такой отказ не повторяют.
 - `pipeline_visit_complete` принимается от актора шага той же инкарнации с
   тем же `request_id`, пока он привязан к роли узла и рой идёт; шаг роя с
   источником — только с записанным подтверждением, в том числе из

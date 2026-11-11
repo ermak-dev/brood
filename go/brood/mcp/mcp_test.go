@@ -158,6 +158,12 @@ func TestTerminalWaitDeadline(t *testing.T) {
 	if got := callTimeout(json.RawMessage(`{"wait":120}`)); got != 135*time.Second {
 		t.Fatalf("terminal deadline=%v", got)
 	}
+	// Без ожидания send ждёт квитанцию доставки адресата (#260).
+	for _, args := range []string{`{}`, `{"to":"peer","message":"hi"}`, `{"wait_seconds":301}`} {
+		if got := callTimeout(json.RawMessage(args)); got != 30*time.Second {
+			t.Errorf("%s: deadline=%v", args, got)
+		}
+	}
 }
 
 func TestServeFrameLimit(t *testing.T) {

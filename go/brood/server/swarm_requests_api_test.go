@@ -28,6 +28,7 @@ import (
 	"unicode/utf8"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/relay"
 	"brood.dev/go/brood/store"
 	"brood.dev/go/brood/substrate"
@@ -35,7 +36,9 @@ import (
 
 // requestServer: alice — администратор и владелец роя с master и worker;
 // bob — участник проекта без роли в рое. deliveries считает сообщения
-// актору, fail переключает доставку в отказ транспорта.
+// актору, fail переключает доставку в отказ гостя до записи в сессию
+// (notSent), reply, если задан, отвечает вместо гостя. budgets — сколько
+// времени сервер оставил гостю на каждое сообщение.
 type requestServer struct {
 	*substrateServer
 	alice, bob *http.Client
@@ -45,6 +48,8 @@ type requestServer struct {
 	fail       atomic.Bool
 	mu         sync.Mutex
 	messages   []relay.MessageRequest
+	budgets    []time.Duration
+	reply      func() (relay.MessageResponse, error)
 }
 
 func newRequestServer(t *testing.T) *requestServer {
@@ -53,16 +58,25 @@ func newRequestServer(t *testing.T) *requestServer {
 	rs := &requestServer{substrateServer: ts, master: master, worker: worker, alice: newClient(t), bob: newClient(t)}
 	ts.login(rs.alice, "alice", "alice-password-1")
 	ts.login(rs.bob, "bob", "bob-password-1")
-	ts.srv.managed.deliverMessage = func(_ context.Context, uid string, generation int64, req relay.MessageRequest) (relay.MessageResponse, error) {
+	ts.srv.managed.deliverMessage = func(ctx context.Context, uid string, generation int64, req relay.MessageRequest) (relay.MessageResponse, error) {
 		rs.deliveries.Add(1)
 		if uid != worker.UID || generation != worker.Incarnation {
 			t.Errorf("answer delivered to %s/%d, want %s/%d", uid, generation, worker.UID, worker.Incarnation)
 		}
+		var budget time.Duration
+		if deadline, ok := ctx.Deadline(); ok {
+			budget = time.Until(deadline)
+		}
 		rs.mu.Lock()
 		rs.messages = append(rs.messages, req)
+		rs.budgets = append(rs.budgets, budget)
+		reply := rs.reply
 		rs.mu.Unlock()
-		if rs.fail.Load() {
-			return relay.MessageResponse{}, errors.New("private-transport-sentinel")
+		switch {
+		case reply != nil:
+			return reply()
+		case rs.fail.Load():
+			return sessionNotReady, nil
 		}
 		return relay.MessageResponse{OK: true, Verdict: "delivered"}, nil
 	}
@@ -242,7 +256,7 @@ func TestSwarmAnswerDeliveryFailureKeepsTheAnswerAndRetryKeepsTheGraph(t *testin
 	id := rs.mustAsk(t, map[string]any{"question": "Which database?"})
 	r, b, raw := rs.do(rs.alice, "POST", rs.answerPath(swarm, id), rs.csrf(rs.alice), map[string]any{"response": "use sqlite"})
 	expectStatus(t, "answer with failed delivery", r, b, 200)
-	if b["state"] != "answered" || b["delivery"] != "failed" || b["deliveryError"] != "delivery is unconfirmed; check before retrying" || strings.Contains(raw, "private-transport-sentinel") {
+	if b["state"] != "answered" || b["delivery"] != "failed" || b["deliveryError"] != "the answer was not sent: the actor session did not receive it" || strings.Contains(raw, sessionNotReady.Verdict) {
 		t.Fatalf("failed delivery: %s", raw)
 	}
 	if req := rs.request(t, id); req.State != "answered" || req.Response == nil || *req.Response != "use sqlite" || req.Delivery != "failed" {
@@ -279,6 +293,134 @@ func TestSwarmAnswerDeliveryFailureKeepsTheAnswerAndRetryKeepsTheGraph(t *testin
 	expectStatus(t, "add viewer", r, b, 204)
 	r, b, _ = rs.do(rs.bob, "POST", deliver, rs.csrf(rs.bob), nil)
 	expectStatus(t, "viewer retry", r, b, 404)
+}
+
+// unconfirmedReason — причина неизвестного исхода доставки ответа (#260).
+const unconfirmedReason = "delivery is unconfirmed: the answer may have reached the actor, and a retry may deliver it twice"
+
+// TestSwarmAnswerDeliveryOutcomes — исход доставки ответа по ответу гостя
+// (#260): совпавшая квитанция — delivered; запись без квитанции и обрыв
+// канала после отправки — unconfirmed, ответ мог дойти, повтор может дать
+// дубль; отказ гостя до записи в сессию (notSent) — failed, ответ заведомо
+// не ушёл. Причина — фиксированный текст, вердикт гостя и транспорт клиенту
+// не уходят; список показывает то же состояние.
+func TestSwarmAnswerDeliveryOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		reply            relay.MessageResponse
+		err              error
+		delivery, reason string
+	}{
+		{"delivered", relay.MessageResponse{OK: true, Verdict: "delivered"}, nil, "delivered", ""},
+		{"receipt unconfirmed", relay.MessageResponse{Verdict: "submitted; delivery unconfirmed"}, nil, "unconfirmed", unconfirmedReason},
+		{"channel failed after the send", relay.MessageResponse{}, errors.New("private-transport-sentinel"), "unconfirmed", unconfirmedReason},
+		{"not sent", sessionNotReady, nil, "failed", "the answer was not sent: the actor session did not receive it"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := newRequestServer(t)
+			rs.reply = func() (relay.MessageResponse, error) { return tc.reply, tc.err }
+			id := rs.mustAsk(t, map[string]any{"question": "Which identity?"})
+			r, b, raw := rs.do(rs.alice, "POST", rs.answerPath(rs.master.SwarmID, id), rs.csrf(rs.alice), map[string]any{"response": "ermak"})
+			expectStatus(t, "answer", r, b, 200)
+			reason, _ := b["deliveryError"].(string)
+			if b["state"] != "answered" || b["delivery"] != tc.delivery || reason != tc.reason {
+				t.Fatalf("answer: %s", raw)
+			}
+			for _, private := range []string{"private-transport-sentinel", sessionNotReady.Verdict, "submitted;"} {
+				if strings.Contains(raw, private) {
+					t.Fatalf("guest or transport text reached the client: %s", raw)
+				}
+			}
+			if req := rs.request(t, id); req.Delivery != tc.delivery || rs.deliveries.Load() != 1 {
+				t.Fatalf("recorded %+v after %d deliveries", req, rs.deliveries.Load())
+			}
+			if all := rs.list(t, rs.alice, "?all=1"); len(all) != 1 || all[0]["delivery"] != tc.delivery {
+				t.Fatalf("listed: %v", all)
+			}
+		})
+	}
+}
+
+// TestUnconfirmedAnswerDeliveryRetry — повтор из unconfirmed разрешён
+// (#260): ответ уходит снова, и до подтверждения доставка остаётся
+// неизвестной — повтор, заведомо не отправленный, не делает её failed, а
+// причина напоминает о возможном дубле. Подтверждённый повтор — delivered,
+// дальше ответ не отправляется.
+func TestUnconfirmedAnswerDeliveryRetry(t *testing.T) {
+	rs := newRequestServer(t)
+	swarm := rs.master.SwarmID
+	rs.reply = func() (relay.MessageResponse, error) {
+		return relay.MessageResponse{Verdict: "submitted; delivery unconfirmed"}, nil
+	}
+	id := rs.mustAsk(t, map[string]any{"question": "Which identity?"})
+	r, b, _ := rs.do(rs.alice, "POST", rs.answerPath(swarm, id), rs.csrf(rs.alice), map[string]any{"response": "ermak"})
+	expectStatus(t, "answer", r, b, 200)
+	if b["delivery"] != "unconfirmed" || b["deliveryError"] != unconfirmedReason {
+		t.Fatalf("unconfirmed answer: %v", b)
+	}
+	deliver := "/api/swarms/" + swarm + "/requests/" + id + "/deliver"
+	rs.reply = func() (relay.MessageResponse, error) { return sessionNotReady, nil }
+	r, b, _ = rs.do(rs.alice, "POST", deliver, rs.csrf(rs.alice), nil)
+	expectStatus(t, "retry not sent", r, b, 200)
+	if b["delivery"] != "unconfirmed" || b["deliveryError"] != "the answer was not sent: the actor session did not receive it; an earlier delivery is unconfirmed: the answer may have reached the actor, and a retry may deliver it twice" || rs.deliveries.Load() != 2 {
+		t.Fatalf("retry not sent: %v deliveries=%d", b, rs.deliveries.Load())
+	}
+	rs.reply = nil
+	r, b, _ = rs.do(rs.alice, "POST", deliver, rs.csrf(rs.alice), nil)
+	expectStatus(t, "retry", r, b, 200)
+	if b["delivery"] != "delivered" || b["deliveryError"] != nil || rs.deliveries.Load() != 3 {
+		t.Fatalf("retry: %v deliveries=%d", b, rs.deliveries.Load())
+	}
+	r, b, _ = rs.do(rs.alice, "POST", deliver, rs.csrf(rs.alice), nil)
+	expectStatus(t, "delivered retry", r, b, 200)
+	if b["delivery"] != "delivered" || rs.deliveries.Load() != 3 {
+		t.Fatalf("delivered answer was sent again: %v deliveries=%d", b, rs.deliveries.Load())
+	}
+}
+
+// TestAnswerDeliveryLeavesTheGuestItsReceiptWait — сервер ждёт гостя не
+// меньше предела канала (#260): гость ждёт квитанцию до
+// command.ReceiptWait, и доставка ответа не кончается раньше его вердикта.
+func TestAnswerDeliveryLeavesTheGuestItsReceiptWait(t *testing.T) {
+	rs := newRequestServer(t)
+	id := rs.mustAsk(t, map[string]any{"question": "Which identity?"})
+	r, b, _ := rs.do(rs.alice, "POST", rs.answerPath(rs.master.SwarmID, id), rs.csrf(rs.alice), map[string]any{"response": "ermak"})
+	expectStatus(t, "answer", r, b, 200)
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if len(rs.budgets) != 1 || rs.budgets[0] < command.CallTimeout(0) {
+		t.Fatalf("guest budget %v, want at least %v", rs.budgets, command.CallTimeout(0))
+	}
+}
+
+// TestRequestDeliveryOutcome — исход попытки по каналу оператора: только
+// подтверждённое сообщение — delivered, заведомо не ушедшее — failed с
+// причиной, всё после отправки без подтверждения — unconfirmed.
+func TestRequestDeliveryOutcome(t *testing.T) {
+	completed := command.Result{Outcome: "completed", Text: "delivered"}
+	unknown := command.Result{Outcome: "unconfirmed", Text: "submitted; delivery unconfirmed"}
+	for _, tc := range []struct {
+		name            string
+		result          command.Result
+		sent            bool
+		err             error
+		outcome, reason string
+	}{
+		{"delivered", completed, true, nil, "delivered", ""},
+		{"no receipt", unknown, true, nil, "unconfirmed", unconfirmedReason},
+		{"channel failed", command.Result{Outcome: "unconfirmed"}, true, errDeliveryUnconfirmed, "unconfirmed", unconfirmedReason},
+		{"authorization changed after the send", command.Result{}, true, app.ErrNotAllowed, "unconfirmed", unconfirmedReason},
+		{"not sent", unknown, false, errMessageNotSent, "failed", "the answer was not sent: the actor session did not receive it"},
+		{"offline", command.Result{}, false, errRecipientOffline, "failed", "recipient is not connected"},
+		{"stale actor", command.Result{}, false, app.ErrNotFound, "failed", "request actor is stale"},
+		{"authorization changed before the send", command.Result{}, false, app.ErrNotAllowed, "failed", "delivery authorization changed"},
+		{"server failure", command.Result{}, false, errors.New("private"), "failed", "delivery unavailable"},
+	} {
+		outcome, reason := requestDeliveryOutcome(tc.result, tc.sent, tc.err)
+		if outcome != tc.outcome || reason != tc.reason {
+			t.Errorf("%s: %s %q, want %s %q", tc.name, outcome, reason, tc.outcome, tc.reason)
+		}
+	}
 }
 
 func TestConcurrentDeliveryRetriesSendOnce(t *testing.T) {

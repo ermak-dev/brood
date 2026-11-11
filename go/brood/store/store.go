@@ -42,7 +42,9 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // 25: commit источника на проход (#229): swarm_steps.source_commit первого
 // шага прохода, ограда swarm_steps_pass_fence вместо swarm_steps_goal_fence,
 // pipeline_sources без commit_sha, swarm_steps_attested сверяют commit прохода.
-const schemaVersion = 25
+// 26: неизвестный исход доставки ответа swarm_requests.delivery =
+// 'unconfirmed' в CHECK и swarm_requests_fence (#260).
+const schemaVersion = 26
 
 //go:embed schema.sql
 var currentSchema string

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/guest/ccmsg"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -49,7 +50,8 @@ const actorSessions = "/workspace/home/.claude/sessions"
 
 // ReceiveMessage runs only inside the fixed, unprivileged delivery helper.
 // Paths from actor-owned session files are never opened by the root supervisor.
-// Refusals before the session inbox write are NotSent (#244).
+// Refusals before the session inbox write are NotSent (#244). Without an idle
+// wait the helper waits up to command.ReceiptWait for the delivery receipt.
 func ReceiveMessage(ctx context.Context, req relay.MessageRequest) relay.MessageResponse {
 	return messageReceiver{identity: messageHelperIdentity, session: liveProjectSession, token: func(socket string) (string, error) {
 		return ccmsg.PeerToken(socket, actorSessions)
@@ -63,7 +65,7 @@ type messageReceiver struct {
 	identity func() error
 	session  func(context.Context) (ccmsg.Session, error)
 	token    func(socket string) (string, error)
-	exchange func(ctx context.Context, socket, token, from, body string, waitSec int) (ccmsg.Delivery, error)
+	exchange func(ctx context.Context, socket, token, from, body string, waitSec int, receiptWait time.Duration) (ccmsg.Delivery, error)
 }
 
 func (m messageReceiver) receive(ctx context.Context, req relay.MessageRequest) relay.MessageResponse {
@@ -80,7 +82,7 @@ func (m messageReceiver) receive(ctx context.Context, req relay.MessageRequest) 
 	if err != nil {
 		return messageNotSent("Claude session peer key unavailable")
 	}
-	result, err := m.exchange(ctx, session.SocketPath, token, req.From, req.Body, req.WaitSec)
+	result, err := m.exchange(ctx, session.SocketPath, token, req.From, req.Body, req.WaitSec, command.ReceiptWait)
 	switch {
 	case errors.Is(err, ccmsg.ErrNotSent):
 		return messageNotSent("Claude session message was not sent")
@@ -148,6 +150,15 @@ func (b *boundedMessageOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
+// helperTimeout — сколько supervisor ждёт helper доставки: ожидание
+// квитанции или простоя (command.ReplyWait), запись Exchange
+// (ccmsg.WriteTimeout) и запас на запуск helper-а и поиск сессии. Предел
+// короче command.CallTimeout, которым relay гостя держит канал: вердикт
+// успевает уйти серверу (#260).
+func helperTimeout(waitSec int) time.Duration {
+	return command.ReplyWait(waitSec) + 10*time.Second
+}
+
 // DeliverMessage is the root relay handler. Only bounded JSON crosses the UID
 // boundary; no actor-provided command or socket path is ever interpreted here.
 // Refusals before the helper starts are NotSent; once it runs, only its own
@@ -156,7 +167,7 @@ func DeliverMessage(ctx context.Context, req relay.MessageRequest) relay.Message
 	if os.Geteuid() != 0 {
 		return messageNotSent("message delivery requires guest supervisor")
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(req.WaitSec)*time.Second+10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, helperTimeout(req.WaitSec))
 	defer cancel()
 	data, err := json.Marshal(req)
 	if err != nil || len(data) > relay.MaxMessageBytes || ctx.Err() != nil {

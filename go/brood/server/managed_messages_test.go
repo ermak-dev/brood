@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/relay"
 	"brood.dev/go/brood/store"
 )
@@ -19,6 +20,8 @@ import (
 // сообщений в гостя-получателя и вернуть его вердикт.
 type dialRecorder struct {
 	got chan relay.MessageRequest
+	// budgets — сколько времени роутер оставил гостю-адресату.
+	budgets chan time.Duration
 }
 
 func TestSwarmMessageRouterSameSwarmOnly(t *testing.T) {
@@ -26,11 +29,14 @@ func TestSwarmMessageRouterSameSwarmOnly(t *testing.T) {
 	pve.startUPID = "UPID:node:00000001:00000002:00000003:vzstart:105:user@pve!brood:"
 	pve.nextIDs = []int{105, 106}
 	hub.connected = true
-	deliveries := &dialRecorder{got: make(chan relay.MessageRequest, 4)}
+	deliveries := &dialRecorder{got: make(chan relay.MessageRequest, 4), budgets: make(chan time.Duration, 4)}
 	ts.srv.managed.deliverMessage = func(ctx context.Context, toUID string, toGeneration int64, req relay.MessageRequest) (relay.MessageResponse, error) {
 		select {
 		case deliveries.got <- req:
 		default:
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			deliveries.budgets <- time.Until(deadline)
 		}
 		if req.To == "ghost" {
 			return relay.MessageResponse{}, errors.New("recipient is not connected")
@@ -61,6 +67,11 @@ func TestSwarmMessageRouterSameSwarmOnly(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("delivery was not attempted")
+	}
+	// Без ожидания простоя адресат ждёт квитанцию доставки (#260): роутер
+	// держит доставку пределом канала, а не прежними 15 секундами.
+	if budget := <-deliveries.budgets; budget > command.CallTimeout(0) || budget < command.CallTimeout(0)-2*time.Second {
+		t.Fatalf("delivery budget %v, want %v", budget, command.CallTimeout(0))
 	}
 	// Офлайн-адресат — текстовый вердикт.
 	resp = router(senderUID, relay.MessageRequest{To: "ghost", Body: "hi", From: "sender"})

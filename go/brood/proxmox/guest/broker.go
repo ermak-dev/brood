@@ -143,7 +143,7 @@ func (b *SwarmBroker) serveConn(c *net.UnixConn) {
 		session := b.session
 		b.mu.Unlock()
 		if session != nil && session.ctx.Err() == nil {
-			ctx, cancel := context.WithTimeout(b.ctx, time.Duration(relay.SwarmWaitSeconds(req))*time.Second+15*time.Second)
+			ctx, cancel := context.WithTimeout(b.ctx, relay.SwarmCallTimeout(req))
 			response = session.call(ctx, req)
 			cancel()
 		}
@@ -176,7 +176,7 @@ func callSwarmBroker(ctx context.Context, path string, req relay.SwarmRequest) r
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { c.Close() })
 	defer stop()
-	deadline := time.Now().Add(time.Duration(relay.SwarmWaitSeconds(req))*time.Second + 15*time.Second)
+	deadline := time.Now().Add(relay.SwarmCallTimeout(req))
 	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
 		deadline = end
 	}

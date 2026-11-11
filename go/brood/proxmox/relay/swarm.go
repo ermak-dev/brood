@@ -136,6 +136,13 @@ func uniqueSwarmFields(data []byte) bool {
 	return err == nil && d.Decode(new(any)) == io.EOF
 }
 
+// SwarmCallTimeout bounds one swarm request at the guest broker and at the
+// server relay: command.CallTimeout of its wait, so a send without an idle
+// wait leaves room for the recipient's delivery receipt (#260).
+func SwarmCallTimeout(input SwarmRequest) time.Duration {
+	return command.CallTimeout(SwarmWaitSeconds(input))
+}
+
 // SwarmWaitSeconds extracts the bounded wait from an already validated request.
 func SwarmWaitSeconds(input SwarmRequest) int {
 	if len(input.Arguments) == 0 {
@@ -180,7 +187,7 @@ func (h *Hub) serveSwarmRequests(p *peer, requests <-chan *ssh.Request) {
 			_ = req.Reply(false, nil)
 			continue
 		}
-		ctx, cancel := context.WithTimeout(p.ctx, time.Duration(SwarmWaitSeconds(input))*time.Second+15*time.Second)
+		ctx, cancel := context.WithTimeout(p.ctx, SwarmCallTimeout(input))
 		response := handler(ctx, p.id.uid, p.id.generation, input)
 		cancel()
 		if !h.currentPeer(p) {

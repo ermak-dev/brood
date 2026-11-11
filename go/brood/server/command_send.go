@@ -19,7 +19,7 @@ var (
 
 // errMessageNotSent — гость ответил notSent (#244): сообщение до сессии
 // Claude заведомо не дошло, повтор безопасен. Клиенту send не уходит:
-// deliverOperatorMessage показывает вердикт гостя, как прежде.
+// send показывает вердикт гостя, как прежде, ответ на запрос роя — failed.
 var errMessageNotSent = errors.New("the actor refused before sending")
 
 func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string, inv command.Invocation) (command.Result, error) {
@@ -41,7 +41,12 @@ func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string
 	byName := func(ctx context.Context) (store.ManagedActor, error) {
 		return s.store.LookupManagedActor(ctx, swarmID, args.To)
 	}
-	return s.deliverOperatorMessage(ctx, userID, swarmID, byName, args.Message, args.WaitSeconds)
+	result, _, err := s.deliverOperatorMessage(ctx, userID, swarmID, byName, args.Message, args.WaitSeconds)
+	if errors.Is(err, errMessageNotSent) {
+		// send сам не повторяет: оператор видит вердикт гостя.
+		return result, nil
+	}
+	return result, err
 }
 
 // operatorMessageBody помечает сообщение оператора: адрес отправителя — не
@@ -53,11 +58,12 @@ func operatorMessageBody(message string) string {
 // deliverOperatorMessage — канал оператора к актору роя: им идут send и
 // ответ на запрос роя (#210). resolve выбирает адресата: send — по имени,
 // ответ — спросившего актора той же инкарнации. Права проверяются до
-// доставки и после неё; ошибка resolve — app.ErrNotFound.
-func (s *Server) deliverOperatorMessage(ctx context.Context, userID, swarmID string, resolve func(context.Context) (store.ManagedActor, error), message string, wait int) (command.Result, error) {
+// доставки и после неё; ошибка resolve — app.ErrNotFound. sent и ошибки —
+// как у deliverToActor: отказ гостя до записи — errMessageNotSent.
+func (s *Server) deliverOperatorMessage(ctx context.Context, userID, swarmID string, resolve func(context.Context) (store.ManagedActor, error), message string, wait int) (command.Result, bool, error) {
 	user, err := s.store.GetUser(ctx, userID)
 	if err != nil || user.Disabled {
-		return command.Result{}, app.ErrNotAllowed
+		return command.Result{}, false, app.ErrNotAllowed
 	}
 	manager := func(context.Context) error {
 		allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
@@ -66,13 +72,7 @@ func (s *Server) deliverOperatorMessage(ctx context.Context, userID, swarmID str
 		}
 		return nil
 	}
-	result, _, err := s.deliverToActor(ctx, swarmID, resolve, relay.MessageRequest{From: "operator:" + user.Username, Body: operatorMessageBody(message), WaitSec: wait}, manager)
-	if errors.Is(err, errMessageNotSent) {
-		// send и ответ на запрос сами не повторяют: оператор видит вердикт
-		// гостя, ответ на запрос можно доставить повторно (#210).
-		return result, nil
-	}
-	return result, err
+	return s.deliverToActor(ctx, swarmID, resolve, relay.MessageRequest{From: "operator:" + user.Username, Body: operatorMessageBody(message), WaitSec: wait}, manager)
 }
 
 // deliverToActor — общий канал сервера к актору роя: send и ответ на запрос

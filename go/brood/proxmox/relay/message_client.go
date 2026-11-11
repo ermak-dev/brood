@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"time"
 
+	"brood.dev/go/brood/command"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -15,7 +15,9 @@ func serveGuestMessage(parent context.Context, handler func(context.Context, Mes
 		ch.Reject(ssh.Prohibited, "invalid swarm message frame")
 		return
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(req.WaitSec)*time.Second+15*time.Second)
+	// Предел канала — command.CallTimeout: без ожидания простоя гость ждёт
+	// квитанцию доставки (#260), и канал не закрывается раньше helper-а.
+	ctx, cancel := context.WithTimeout(parent, command.CallTimeout(req.WaitSec))
 	defer cancel()
 	stream, requests, err := ch.Accept()
 	if err != nil {

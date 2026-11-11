@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -59,8 +60,9 @@ func (m *managedProvider) swarmMessageRouter() relay.MessageRouter {
 		}
 		// Контекст доставки выводится от Background: WaitSec до 300 с —
 		// обещание контракта, ребёнок 30-секундного роутерного контекста
-		// урезал бы его молча. Общий потолок остаётся конечным.
-		dctx, dcancel := context.WithTimeout(context.Background(), time.Duration(req.WaitSec)*time.Second+15*time.Second)
+		// урезал бы его молча. Общий потолок остаётся конечным: предел
+		// канала, без ожидания простоя — с квитанцией адресата (#260).
+		dctx, dcancel := context.WithTimeout(context.Background(), command.CallTimeout(req.WaitSec))
 		defer dcancel()
 		resp, err := deliver(dctx, to.UID, to.Incarnation, req)
 		if err != nil || !resp.OK {

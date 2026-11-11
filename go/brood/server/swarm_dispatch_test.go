@@ -31,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/pipeline"
 	"brood.dev/go/brood/proxmox/attest"
 	"brood.dev/go/brood/proxmox/guest/ccmsg"
@@ -104,6 +105,8 @@ type deliveredMessage struct {
 	Generation int64
 	Request    relay.MessageRequest
 	Step       committedStep
+	// Budget — сколько времени сервер оставил гостю на ответ.
+	Budget time.Duration
 }
 
 // dispatchServer — рой alice с master и worker; роль build привязана к
@@ -193,8 +196,11 @@ func (d *dispatchServer) callSession(_ context.Context, uid string, generation i
 	return reply(call)
 }
 
-func (d *dispatchServer) deliverMessage(_ context.Context, uid string, generation int64, req relay.MessageRequest) (relay.MessageResponse, error) {
+func (d *dispatchServer) deliverMessage(ctx context.Context, uid string, generation int64, req relay.MessageRequest) (relay.MessageResponse, error) {
 	m := deliveredMessage{UID: uid, Generation: generation, Request: req, Step: d.committed()}
+	if deadline, ok := ctx.Deadline(); ok {
+		m.Budget = time.Until(deadline)
+	}
 	d.mu.Lock()
 	d.messages = append(d.messages, m)
 	deliver := d.deliver
@@ -628,6 +634,43 @@ func TestStepDeliveryUnknownOutcome(t *testing.T) {
 	}
 	if sent != 1 {
 		t.Fatalf("instruction of the attempt sent %d times", sent)
+	}
+}
+
+// TestStepDeliveryLeavesTheGuestItsReceiptWait — инструкция шага идёт с
+// waitSec 0, и гость ждёт квитанцию доставки до command.ReceiptWait (#260):
+// сервер оставляет ему весь предел канала, и квитанция, пришедшая в этом
+// окне, переводит шаг в inflight, а не в unconfirmed.
+func TestStepDeliveryLeavesTheGuestItsReceiptWait(t *testing.T) {
+	d := newDispatchServer(t)
+	d.start("deliver")
+	_, messages := d.calls()
+	if len(messages) != 1 || messages[0].Request.WaitSec != 0 || messages[0].Budget < command.CallTimeout(0) {
+		t.Fatalf("instruction: %d messages, %+v", len(messages), messages)
+	}
+	if step := d.last(); step.State != "inflight" || step.Detail != "" {
+		t.Fatalf("confirmed receipt: %+v", step)
+	}
+}
+
+// TestStepWithUnconfirmedReceiptAcceptsTheOutcome — квитанции так и не
+// было (сессия занята дольше предела): шаг unconfirmed, но исход той же
+// попытки по-прежнему принимается (#245) и двигает граф.
+func TestStepWithUnconfirmedReceiptAcceptsTheOutcome(t *testing.T) {
+	d := newDispatchServer(t)
+	d.deliver = func(deliveredMessage) (relay.MessageResponse, error) {
+		return relay.MessageResponse{Verdict: "submitted; delivery unconfirmed"}, nil
+	}
+	d.start("deliver")
+	step := d.last()
+	if step.State != "unconfirmed" || !strings.Contains(step.Detail, "submitted; delivery unconfirmed") {
+		t.Fatalf("unconfirmed receipt: %+v", step)
+	}
+	if got := d.complete(d.worker, step, "success"); !got.OK {
+		t.Fatalf("completion of the attempt without a receipt: %+v", got)
+	}
+	if done := d.steps(); done[0].State != "completed" || len(done) < 2 {
+		t.Fatalf("completion did not advance the graph: %+v", done)
 	}
 }
 

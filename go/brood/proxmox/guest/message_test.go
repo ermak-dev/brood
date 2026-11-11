@@ -18,7 +18,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/guest/ccmsg"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -138,10 +140,10 @@ func TestReceiveMessageClassifiesRefusals(t *testing.T) {
 					}
 					return "peer-key", tc.step.token
 				},
-				exchange: func(_ context.Context, socket, token, from, body string, waitSec int) (ccmsg.Delivery, error) {
+				exchange: func(_ context.Context, socket, token, from, body string, waitSec int, receiptWait time.Duration) (ccmsg.Delivery, error) {
 					calls += "e"
-					if socket != session.SocketPath || token != "peer-key" || from != "swarm:s1" || body != "Step 1" || waitSec != 0 {
-						t.Errorf("exchange: %q %q %q %q %d", socket, token, from, body, waitSec)
+					if socket != session.SocketPath || token != "peer-key" || from != "swarm:s1" || body != "Step 1" || waitSec != 0 || receiptWait != command.ReceiptWait {
+						t.Errorf("exchange: %q %q %q %q %d %v", socket, token, from, body, waitSec, receiptWait)
 					}
 					return tc.step.exchange, tc.step.exchangeErr
 				},
@@ -151,5 +153,25 @@ func TestReceiveMessageClassifiesRefusals(t *testing.T) {
 				t.Fatalf("calls %q, response %#v", calls, got)
 			}
 		})
+	}
+}
+
+// TestDeliveryBudgetsNest — пределы доставки вложены (#260): Exchange
+// (запись и ожидание квитанции или простоя) кончается раньше, чем
+// supervisor убьёт helper, а helper — раньше, чем relay гостя закроет
+// канал. Иначе ожидание квитанции превратилось бы в обрыв канала, и
+// вердикт unconfirmed не дошёл бы до сервера. Без ожидания простоя гость
+// ждёт квитанцию ReceiptWait, с ним — прежние waitSec.
+func TestDeliveryBudgetsNest(t *testing.T) {
+	if command.ReplyWait(0) != command.ReceiptWait || command.ReplyWait(60) != time.Minute {
+		t.Fatalf("reply wait: %v, %v", command.ReplyWait(0), command.ReplyWait(60))
+	}
+	for _, wait := range []int{0, 1, 60, 300} {
+		exchange := command.ReplyWait(wait) + ccmsg.WriteTimeout
+		helper := helperTimeout(wait)
+		channel := command.CallTimeout(wait)
+		if exchange >= helper || helper >= channel {
+			t.Errorf("wait %d: exchange %v, helper %v, channel %v", wait, exchange, helper, channel)
+		}
 	}
 }
