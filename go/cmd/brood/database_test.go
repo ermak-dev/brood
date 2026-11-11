@@ -106,6 +106,48 @@ INSERT INTO users VALUES ('private-synthetic-user', 'private-synthetic-hash', 1,
 			}
 		}
 	})
+	t.Run("prune", func(t *testing.T) {
+		// Snapshot retention (#247): the current snapshot is kept, older ones go.
+		dir := t.TempDir()
+		name := func(c string) string { return filepath.Join(dir, ".brood-snapshot-"+strings.Repeat(c, 32)+".db") }
+		current, old := name("a"), name("b")
+		for _, file := range []string{current, old} {
+			if err := os.WriteFile(file, []byte("synthetic"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out, stderr, err := invoke("prune", "--current", current, "--keep", "1", "--timeout", "5s")
+		if err != nil || stderr != "" {
+			t.Fatalf("prune: %v, %s", err, stderr)
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 3 || got["current"] != filepath.Base(current) || got["kept"] != float64(1) || got["removed"] != float64(1) {
+			t.Fatalf("JSON = %s", out)
+		}
+		if _, err := os.Stat(current); err != nil {
+			t.Fatal("current snapshot removed")
+		}
+		if _, err := os.Stat(old); !os.IsNotExist(err) {
+			t.Fatal("old snapshot kept")
+		}
+		for _, args := range [][]string{
+			{"prune"}, {"prune", "--current", current}, {"prune", "--current", current, "--keep", "0"},
+			{"prune", "--keep", "1"}, {"prune", "--current", current, "--keep", "private-invalid-count"},
+			{"prune", "--current", current, "--keep", "1", "--path", path},
+			{"prune", "--current", filepath.Join(dir, "private-foreign.db"), "--keep", "1"},
+		} {
+			out, stderr, err := invoke(args...)
+			if err == nil || out != "" || stderr == "" {
+				t.Fatalf("prune refusal %v: %v, %s, %s", args, err, out, stderr)
+			}
+		}
+		if _, err := os.Stat(current); err != nil {
+			t.Fatal("refused prune removed the current snapshot")
+		}
+	})
 	t.Run("refusals", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "missing.sqlite")
 		for _, args := range [][]string{

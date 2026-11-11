@@ -89,8 +89,11 @@ class PublicSettingsTests(unittest.TestCase):
         command = importlib.import_module("brood.dev.deploy.cli.server")
         with patch.object(command, "Deployment", create=True) as deploy, \
                 patch.object(command, "cluster", create=True), \
-                patch.object(command, "settings", return_value=VALUES):
+                patch.object(command, "settings", return_value=VALUES), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            deploy.return_value.space.return_value = {"checked": False}
             command.main(["--check"])
+            deploy.return_value.space.assert_called_once()
             deploy.return_value.check.assert_called_once()
             deploy.return_value.run.assert_not_called()
 
@@ -185,3 +188,171 @@ class PublicSettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "identity changed"):
             deploy.cleanup({("deployment", "django"): "old"})
         self.assertEqual(cluster.shell.output.call_count, 1)
+
+
+# FEATURE: Disk guard of the deploy machine (#247).
+# SPEC: free space of the Docker partition is checked before the Lease, the
+# build and any write; after a successful deploy old own image tags are removed
+# and the build cache is pruned; unset settings keep the previous behaviour and
+# the command says so; a failed deploy cleans nothing.
+class DiskGuardTests(unittest.TestCase):
+    SERVER_TAG = "localhost:5002/brood-go:build-" + "a" * 32
+    DIGEST = "sha256:" + "e" * 64
+
+    def module(self):
+        return importlib.import_module("brood.dev.deploy.public")
+
+    def shell(self, available_kib=40 << 20, events=None):
+        from brood.dev.deploy.tests.test_disk import FakeShell, df, image
+        events = [] if events is None else events
+        built = {}
+
+        def buildx(argv):
+            events.append("build-edge")
+            built["edge"] = argv[argv.index("-t") + 1]
+            Path(argv[argv.index("--metadata-file") + 1]).write_text(json.dumps({"containerimage.digest": self.DIGEST}))
+            return 0, "", ""
+
+        def listing(argv):
+            events.append("image-ls")
+            return 0, "\n".join([
+                image("localhost:5002/brood-go", self.SERVER_TAG.rpartition(":")[2], "id-new", "2026-11-11 10:00:00 +0000 UTC"),
+                image("localhost:5002/brood-go", "build-" + "b" * 32, "id-prev", "2026-11-10 10:00:00 +0000 UTC"),
+                image("localhost:5002/brood-go", "build-" + "c" * 32, "id-old", "2026-11-09 10:00:00 +0000 UTC"),
+                image("localhost:5002/brood-go-edge", built["edge"].rpartition(":")[2], "id-edge",
+                      "2026-11-01 10:00:00 +0000 UTC")]), ""
+
+        def record(name, answer):
+            def call(argv):
+                events.append(name)
+                return answer
+            return call
+
+        return FakeShell({("docker", "info"): record("space", (0, "/var/lib/docker\n", "")),
+                          ("df",): (0, df(available_kib), ""),
+                          ("docker", "system", "df"): (0, "", ""),
+                          ("docker", "buildx", "build"): buildx,
+                          ("docker", "image", "ls"): listing,
+                          ("docker", "image", "rm"): record("image-rm", (0, "", "")),
+                          ("docker", "builder", "prune"): record("prune", (0, "Total:\t55.2GB\n", ""))})
+
+    def deployment(self, values, shell, events):
+        module = self.module()
+        deploy = module.Deployment(Mock(shell=shell), get=values.get, project="/release")
+        deploy.check = Mock(side_effect=lambda *a: events.append("check") or (values, {}))
+        deploy.bootstrap = Mock(return_value=False)
+        deploy.apply_edge = Mock(side_effect=lambda *a: events.append("edge"))
+        deploy.probe = Mock()
+        deploy.cleanup = Mock(side_effect=lambda before: events.append("legacy-cleanup"))
+        return module, deploy
+
+    def run_initial(self, values, available_kib=40 << 20, fail=None):
+        events = []
+        shell = self.shell(available_kib, events)
+        module, deploy = self.deployment(values, shell, events)
+        if fail:
+            deploy.probe.side_effect = RuntimeError(fail)
+        with patch.object(module, "GoDeploy") as go:
+            go.return_value.tag = self.SERVER_TAG
+            go.return_value.run.side_effect = lambda **k: events.append("server") or "localhost:5002/brood-go@" + self.DIGEST
+            try:
+                return deploy.run(), events, shell
+            except RuntimeError as error:
+                return error, events, shell
+
+    def test_low_free_space_refuses_before_any_build_or_write(self):
+        result, events, _ = self.run_initial({**VALUES, "BROOD_DEPLOY_MIN_FREE_GB": "10",
+                                              "BROOD_DEPLOY_BUILD_CACHE_GB": "5"}, available_kib=3 << 20)
+        self.assertIsInstance(result, RuntimeError)
+        self.assertRegex(str(result), "3.0 GiB.*BROOD_DEPLOY_MIN_FREE_GB=10")
+        self.assertEqual(events, ["space"])
+
+    def test_existing_mode_checks_space_before_the_lease(self):
+        module = self.module()
+        events = []
+        values = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_DEPLOY_MIN_FREE_GB": "10"}
+        _, deploy = self.deployment(values, self.shell(1 << 20, events), events)
+        with patch.object(module, "ExistingInstall") as existing, patch.object(module, "GoDeploy") as go:
+            with self.assertRaisesRegex(RuntimeError, "MIN_FREE_GB"):
+                deploy.run()
+            existing.return_value.claim.assert_not_called()
+            go.assert_not_called()
+        self.assertEqual(events, ["space"])
+
+    def test_successful_deploy_removes_old_own_tags_then_prunes_the_cache(self):
+        result, events, shell = self.run_initial({**VALUES, "BROOD_DEPLOY_MIN_FREE_GB": "10",
+                                                  "BROOD_DEPLOY_BUILD_CACHE_GB": "5"})
+        self.assertEqual(events, ["space", "check", "build-edge", "server", "edge", "legacy-cleanup",
+                                  "image-ls", "image-rm", "prune"])
+        self.assertEqual(result["space"]["free"], 40 << 30)
+        self.assertEqual(result["docker"]["removed"], ["localhost:5002/brood-go:build-" + "c" * 32])
+        # Тег edge этой выкладки — тот, что собрал build_edge, а не первый попавшийся.
+        built = next(c[c.index("-t") + 1] for c in shell.calls if "buildx" in c)
+        self.assertTrue(built.startswith("localhost:5002/brood-go-edge:build-"))
+        self.assertEqual(result["docker"]["kept"], [self.SERVER_TAG, "localhost:5002/brood-go:build-" + "b" * 32,
+                                                    built])
+        self.assertEqual(result["docker"]["reclaimed"], "55.2GB")
+        self.assertNotIn("tags", result)
+
+    def test_failed_deploy_cleans_nothing(self):
+        result, events, _ = self.run_initial({**VALUES, "BROOD_DEPLOY_BUILD_CACHE_GB": "5"}, fail="probe failed")
+        self.assertRegex(str(result), "probe failed")
+        self.assertNotIn("image-rm", events)
+        self.assertNotIn("prune", events)
+
+    def test_unset_settings_keep_the_previous_deploy(self):
+        result, events, shell = self.run_initial(VALUES)
+        self.assertEqual(events, ["check", "build-edge", "server", "edge", "legacy-cleanup"])
+        self.assertEqual(result["space"], {"checked": False})
+        self.assertEqual(result["docker"], {"enabled": False})
+
+    def test_malformed_disk_settings_are_refused_before_cluster_access(self):
+        command = importlib.import_module("brood.dev.deploy.cli.server")
+        for name in ("BROOD_DEPLOY_MIN_FREE_GB", "BROOD_DEPLOY_BUILD_CACHE_GB", "BROOD_DEPLOY_KEEP_SNAPSHOTS"):
+            values = {**VALUES, name: "10GB"}
+            with self.subTest(name=name), \
+                    patch.object(command.config, "get", side_effect=lambda key: values.get(key, "")), \
+                    patch.object(command, "Deployment") as deploy, patch.object(command, "cluster") as cluster, \
+                    self.assertRaisesRegex(RuntimeError, name):
+                command.main(["--check"])
+            deploy.assert_not_called()
+            cluster.assert_not_called()
+
+    def printed(self, argv, **mocked):
+        command = importlib.import_module("brood.dev.deploy.cli.server")
+        with patch.object(command, "settings"), patch.object(command, "cluster"), \
+                patch.object(command, "Deployment") as deploy, patch("sys.stdout", new_callable=io.StringIO) as out:
+            for name, value in mocked.items():
+                getattr(deploy.return_value, name).return_value = value
+            command.main(argv)
+        return out.getvalue()
+
+    def test_check_reports_measured_space_or_warns_that_it_is_skipped(self):
+        out = self.printed(["--check"], space={"checked": True, "mount": "/", "root": "/var/lib/docker",
+                                               "free": 42 << 30, "limit": 10 << 30})
+        self.assertIn("Free space: 42.0 GiB on / (Docker root /var/lib/docker), required 10.0 GiB", out)
+        out = self.printed(["--check"], space={"checked": False})
+        self.assertIn("warning: free space check skipped: BROOD_DEPLOY_MIN_FREE_GB is not set", out)
+        self.assertIn("Public Go deployment preflight passed", out)
+
+    def test_run_reports_cleanup_results_and_failures_as_warnings(self):
+        base = {"image": "img", "host": "h.example", "admin": "admin", "space": {"checked": False}}
+        out = self.printed([], run={**base, "docker": {"enabled": False}})
+        self.assertIn("warning: Docker cleanup skipped: BROOD_DEPLOY_BUILD_CACHE_GB is not set", out)
+        docker = {"enabled": True, "cache": 5, "removed": ["r1", "r2"], "kept": ["k1", "k2"],
+                  "reclaimed": "55.2GB", "errors": []}
+        out = self.printed([], run={**base, "docker": docker})
+        self.assertIn("Docker cleanup: removed 2 old release image tags, kept k1, k2; "
+                      "build cache pruned to 5 GiB, reclaimed 55.2GB", out)
+        out = self.printed([], run={**base, "docker": {**docker, "errors": ["build cache: boom"]}})
+        self.assertIn("warning: Docker cleanup failed: build cache: boom", out)
+
+    def test_check_refuses_on_space_before_the_install_preflight(self):
+        command = importlib.import_module("brood.dev.deploy.cli.server")
+        with patch.object(command, "settings"), patch.object(command, "cluster"), \
+                patch.object(command, "Deployment") as deploy, patch("sys.stdout", new_callable=io.StringIO) as out:
+            deploy.return_value.space.side_effect = RuntimeError("free space on / (Docker root) is 1.0 GiB")
+            with self.assertRaisesRegex(RuntimeError, "free space"):
+                command.main(["--check"])
+        deploy.return_value.check.assert_not_called()
+        self.assertEqual(out.getvalue(), "")

@@ -559,6 +559,7 @@ class FakeKubernetes:
         self.ignore_preconditions = False
         self.lease_rv = 500
         self.lease_events = []
+        self.prune_reply = None      # ответ helper хранения снимков (#247); None - честный
 
     def bump(self):
         self.resource_version += 1
@@ -729,6 +730,10 @@ class FakeKubernetes:
                 return 0, self.refuse[op], ""
             if op == "verify":
                 return 0, json.dumps({"schema_version": 16, "verified": True}), ""
+            if op == "prune":
+                args = self.created["pod"]["spec"]["containers"][0]["args"]
+                reply = self.prune_reply or {"current": Path(args[1]).name, "kept": int(args[3]), "removed": 2}
+                return 0, json.dumps(reply), ""
             data = {"schema_version": 16, "enabled_admins": 1, "users": 2}
             if op == "snapshot":
                 data.update(sha256="a" * 64, bytes=4096)
@@ -2794,3 +2799,226 @@ class GenerationFenceAndLeaseTests(IsolatedTestCase):
                 with self.assertRaisesRegex(RuntimeError, "lease/brood-go-deploy exists"):
                     deploy.run()
         self.assertEqual(kube.lease_events.count("create"), creates)
+
+
+# FEATURE: Database snapshots on the owned PVC are retained, not accumulated (#247).
+# SPEC: with BROOD_DEPLOY_KEEP_SNAPSHOTS=N a helper of the new image, created the
+# way snapshot helpers are (deny-all, no token, pinned digest, owned PVC), runs
+# `brood database prune --current <this deploy's snapshot> --keep N` after the
+# public probe and before the Lease is dropped; the reply must name this
+# snapshot as kept. A failure is reported, never undoes the deploy, and still
+# drops the Lease. Unset - no helper, previous behaviour.
+# IMPLEMENTATION: ExistingInstall.retain over execute/manifests, public.run_existing.
+class SnapshotRetentionTests(IsolatedTestCase):
+    SNAPSHOT = "/data/.brood-snapshot-" + "d" * 32 + ".db"
+
+    def helper(self):
+        return ExistingInstallTests.helper(self)
+
+    def test_prune_helper_is_writable_networkless_and_bound_to_this_snapshot(self):
+        helper, _ = self.helper()
+        state = helper.check()
+        pod, policy = helper.manifests(IMAGE, state, "prune", "brood-db-test", self.SNAPSHOT, keep=3)
+        container = pod["spec"]["containers"][0]
+        self.assertEqual(container["command"], ["/brood", "database", "prune"])
+        self.assertEqual(container["args"], ["--current", self.SNAPSHOT, "--keep", "3"])
+        self.assertEqual(container["volumeMounts"], [{"name": "data", "mountPath": "/data", "readOnly": False}])
+        self.assertEqual(container["image"], IMAGE)
+        self.assertFalse(pod["spec"]["automountServiceAccountToken"])
+        self.assertEqual((policy["spec"]["ingress"], policy["spec"]["egress"]), ([], []))
+        for keep in (0, None, True, "3"):
+            with self.subTest(keep=keep), self.assertRaisesRegex(RuntimeError, "at least one"):
+                helper.manifests(IMAGE, state, "prune", "brood-db-test", self.SNAPSHOT, keep=keep)
+        for destination in (None, "/data/brood.db", "/data/../etc/.brood-snapshot-x.db"):
+            with self.subTest(destination=destination), self.assertRaisesRegex(RuntimeError, "destination"):
+                helper.manifests(IMAGE, state, "prune", "brood-db-test", destination, keep=3)
+
+    def test_reply_must_keep_this_snapshot_within_the_limit(self):
+        helper, _ = self.helper()
+        helper.snapshot_path = self.SNAPSHOT
+        good = {"current": Path(self.SNAPSHOT).name, "kept": 3, "removed": 2}
+        self.assertEqual(helper.retention(json.dumps(good), 3), good)
+        for bad in ({**good, "current": ".brood-snapshot-" + "e" * 32 + ".db"}, {**good, "kept": 0},
+                    {**good, "kept": 4}, {**good, "removed": -1}, {**good, "kept": True}, {**good, "extra": 1},
+                    {k: v for k, v in good.items() if k != "removed"}, [good]):
+            with self.subTest(bad=bad), self.assertRaisesRegex(RuntimeError, "this deploy's snapshot"):
+                helper.retention(json.dumps(bad), 3)
+        with self.assertRaisesRegex(RuntimeError, "this deploy's snapshot"):
+            helper.retention("not json", 3)
+
+    def test_retain_without_setting_or_snapshot_runs_no_helper(self):
+        helper, _ = self.helper()
+        helper.execute = Mock(side_effect=AssertionError("no helper"))
+        self.assertEqual(helper.retain(IMAGE, None), {"enabled": False})
+        result = helper.retain(IMAGE, 3)
+        self.assertEqual(result["keep"], 3)
+        self.assertIn("no verified snapshot", result["error"])
+
+    def flow(self, keep="3"):
+        deploy, rollout, kube = CrashLoopRecoveryTests.real_flow(self, healthy=True)
+        values = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_ADMIN_PASSWORD": ""}
+        if keep is not None:
+            values["BROOD_DEPLOY_KEEP_SNAPSHOTS"] = keep
+        deploy.get = values.get
+        deploy.probe.side_effect = lambda *a, **k: kube.events.append(("public-probe",))
+        leases = []
+        kube.on_create = lambda k: leases.append((k.created["pod"]["spec"]["containers"][0]["command"][2],
+                                                  ("lease", "brood-go-deploy") in k.objects))
+        with patch.object(public, "GoDeploy") as go:
+            go.return_value.run.side_effect = rollout
+            result = deploy.run()
+        return result, kube, leases
+
+    def test_prune_runs_after_the_public_probe_under_the_lease_for_this_snapshot(self):
+        result, kube, leases = self.flow()
+        kinds = [e for e in kube.events if e[0] in {"logs", "apply", "public-probe"}]
+        self.assertEqual(kinds, [("logs", "snapshot"), ("logs", "verify"), ("apply",), ("logs", "inspect"),
+                                 ("public-probe",), ("logs", "prune")])
+        self.assertEqual(kube.created["pod"]["spec"]["containers"][0]["args"],
+                         ["--current", result["snapshot"], "--keep", "3"])
+        self.assertEqual(leases[-1], ("prune", True))
+        self.assertIsNone(kube.objects.get(("lease", "brood-go-deploy")))
+        self.assertEqual(len(kube.deleted), 8)  # policy и pod каждого из четырёх helper - по UID
+        self.assertEqual(result["snapshots"], {"enabled": True, "keep": 3, "current": Path(result["snapshot"]).name,
+                                               "kept": 3, "removed": 2})
+
+    def test_unset_setting_keeps_the_previous_flow(self):
+        result, kube, _ = self.flow(keep=None)
+        self.assertNotIn(("logs", "prune"), kube.events)
+        self.assertEqual(len(kube.deleted), 6)
+        self.assertEqual(result["snapshots"], {"enabled": False})
+
+    def test_failed_or_dishonest_prune_is_reported_without_failing_the_deploy(self):
+        for case in ("failed", "dishonest"):
+            with self.subTest(case=case):
+                deploy, rollout, kube = CrashLoopRecoveryTests.real_flow(self, healthy=True)
+                deploy.get = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_ADMIN_PASSWORD": "",
+                              "BROOD_DEPLOY_KEEP_SNAPSHOTS": "2"}.get
+                if case == "failed":
+                    kube.refuse["prune"] = "brood database: cannot remove an old snapshot\n"
+                else:
+                    kube.prune_reply = {"current": ".brood-snapshot-" + "f" * 32 + ".db", "kept": 1, "removed": 9}
+                with patch.object(public, "GoDeploy") as go:
+                    go.return_value.run.side_effect = rollout
+                    result = deploy.run()
+                self.assertEqual(result["acceptance"], "operator-authenticated acceptance pending")
+                expected = "cannot remove an old snapshot" if case == "failed" else "this deploy's snapshot"
+                self.assertIn(expected, result["snapshots"]["error"])
+                self.assertIsNone(kube.objects.get(("lease", "brood-go-deploy")))
+                self.assertEqual(len(kube.deleted), 8)
+
+    def test_helper_integrity_failure_is_a_post_apply_failure_and_keeps_the_lease(self):
+        # Не отказ самого prune: helper с записываемым томом мог остаться. Как у inspect -
+        # отказ выкладки, Lease остаётся оператору (docs/DEPLOY.md, ручное снятие Lease).
+        deploy, rollout, kube = CrashLoopRecoveryTests.real_flow(self, healthy=True)
+        deploy.get = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_ADMIN_PASSWORD": "",
+                      "BROOD_DEPLOY_KEEP_SNAPSHOTS": "2"}.get
+        raw = kube.output
+
+        def output(*args):
+            if ("delete" in args and "/pods/" in args[args.index("--raw") + 1]
+                    and kube.created["pod"]["spec"]["containers"][0]["command"][2] == "prune"):
+                return 1, "", "etcdserver: request timed out"
+            return raw(*args)
+
+        deploy.cluster.shell.output.side_effect = output
+        with patch.object(public, "GoDeploy") as go:
+            go.return_value.run.side_effect = rollout
+            with self.assertRaisesRegex(RuntimeError, "owned database helper failed"):
+                deploy.run()
+        self.assertIn(("apply",), kube.events)
+        self.assertIsNotNone(kube.objects.get(("lease", "brood-go-deploy")))
+
+    def test_cli_reports_retention_or_warns(self):
+        command = __import__("brood.dev.deploy.cli.server", fromlist=["main"])
+        base = {"image": IMAGE, "host": "h.example", "acceptance": "pending", "snapshot": self.SNAPSHOT}
+        cases = {"enabled": ({"enabled": True, "keep": 3, "current": Path(self.SNAPSHOT).name, "kept": 3,
+                              "removed": 2},
+                             "Snapshot retention: kept 3 of BROOD_DEPLOY_KEEP_SNAPSHOTS=3 including this deploy's "
+                             "snapshot, removed 2"),
+                 "unset": ({"enabled": False}, "warning: snapshot retention skipped: BROOD_DEPLOY_KEEP_SNAPSHOTS is "
+                                               "not set"),
+                 "error": ({"enabled": True, "keep": 3, "error": "boom"},
+                           "warning: snapshot retention failed: boom; older snapshots may remain on the owned PVC")}
+        for name, (snapshots, line) in cases.items():
+            with self.subTest(name), patch.object(command, "settings"), patch.object(command, "cluster"), \
+                    patch.object(command, "Deployment") as deploy, patch("sys.stdout", new_callable=io.StringIO) as out:
+                deploy.return_value.run.return_value = {**base, "snapshots": snapshots}
+                command.main([])
+            self.assertIn(line, out.getvalue())
+
+
+# FEATURE: The forced command reaches the disk guard without a new SSH action (#247).
+# SPEC: the commands of deploy/brood-deploy.sh, run in order with all three
+# settings: --check measures space read-only; the run measures it before the
+# Lease, prunes snapshots under the Lease after the probe, cleans Docker after
+# the Lease is dropped, and prints each result.
+class ForcedChainDiskGuardTests(IsolatedTestCase):
+    SERVER_TAG = "localhost:5002/brood-go:build-" + "1" * 32
+    EDGE_TAG = "localhost:5002/brood-go-edge:build-" + "2" * 32
+
+    def setUp(self):
+        from brood.dev.deploy import disk
+        from brood.dev.deploy.tests.test_disk import FakeShell, df, image
+        self.deploy, self.rollout, self.kube = CrashLoopRecoveryTests.real_flow(self, healthy=True)
+        del self.deploy.check  # настоящий preflight
+        self.deploy.get = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_ADMIN_PASSWORD": "",
+                           disk.MIN_FREE: "10", disk.BUILD_CACHE: "5", disk.KEEP_SNAPSHOTS: "3"}.get
+        self.deploy.build_edge = Mock(side_effect=lambda: setattr(self.deploy, "edge_tag", self.EDGE_TAG)
+                                      or "localhost:5002/brood-go-edge@sha256:" + "e" * 64)
+        listing = "\n".join([
+            image("localhost:5002/brood-go", self.SERVER_TAG.rpartition(":")[2], "id-1", "2026-11-11 10:00:00 +0000 UTC"),
+            image("localhost:5002/brood-go", "build-" + "3" * 32, "id-3", "2026-11-10 10:00:00 +0000 UTC"),
+            image("localhost:5002/brood-go", "build-" + "4" * 32, "id-4", "2026-11-09 10:00:00 +0000 UTC"),
+            image("localhost:5002/brood-go-edge", self.EDGE_TAG.rpartition(":")[2], "id-e", "2026-11-01 10:00:00 +0000 UTC"),
+            image("localhost:5002/ateworker", "build-" + "5" * 32, "id-w", "2026-01-01 10:00:00 +0000 UTC")])
+        machine = FakeShell({("docker", "info"): (0, "/var/lib/docker\n", ""), ("df",): (0, df(40 << 20), ""),
+                             ("docker", "image", "ls"): (0, listing, ""), ("docker", "image", "rm"): (0, "", ""),
+                             ("docker", "builder", "prune"): (0, "Total:\t55.2GB\n", "")})
+        raw = self.kube.output
+
+        def output(*args):
+            if args[0] in {"docker", "df"}:
+                self.kube.events.append(("machine", " ".join(args[:3]), ("lease", "brood-go-deploy") in self.kube.objects))
+                return machine.output(*args)
+            return raw(*args)
+
+        self.deploy.cluster.shell.output.side_effect = output
+        self.helpers = []
+        self.kube.on_create = lambda k: self.helpers.append(
+            (k.created["pod"]["spec"]["containers"][0]["command"][2], ("lease", "brood-go-deploy") in k.objects))
+
+    def chain(self):
+        command = __import__("brood.dev.deploy.cli.server", fromlist=["main"])
+        text = (Path(__file__).resolve().parents[4] / "deploy" / "brood-deploy.sh").read_text()
+        found = [line.split()[3:] for line in text.splitlines() if line.startswith("bin/brood deploy server")]
+        self.assertEqual(found, [["--check"], []])
+        outputs = []
+        with patch.object(public, "Infrastructure"), patch.object(public, "GoDeploy") as go, \
+                patch.object(command, "settings"), patch.object(command, "cluster"), \
+                patch.object(command, "Deployment", return_value=self.deploy):
+            go.return_value.tag = self.SERVER_TAG
+            go.return_value.run.side_effect = self.rollout
+            for argv in found:
+                with patch("sys.stdout", new_callable=io.StringIO) as out:
+                    command.main(argv)
+                outputs.append(out.getvalue())
+        return outputs
+
+    def test_script_chain_guards_space_retains_snapshots_and_cleans_docker(self):
+        check, run = self.chain()
+        self.assertIn("Free space: 40.0 GiB on / (Docker root /var/lib/docker), required 10.0 GiB", check)
+        steps = [e for e in self.kube.events if e[0] in {"machine", "logs", "apply"}]
+        self.assertEqual(steps, [
+            ("machine", "docker info --format", False), ("machine", "df -P -k", False),  # --check
+            ("machine", "docker info --format", False), ("machine", "df -P -k", False),  # run: до Lease
+            ("logs", "snapshot"), ("logs", "verify"), ("apply",), ("logs", "inspect"), ("logs", "prune"),
+            ("machine", "docker image ls", False), ("machine", "docker image rm", False),
+            ("machine", "docker builder prune", False)])
+        self.assertEqual(self.helpers[-1], ("prune", True))
+        self.assertIn("Snapshot retention: kept 3 of BROOD_DEPLOY_KEEP_SNAPSHOTS=3 including this deploy's "
+                      "snapshot, removed 2", run)
+        self.assertIn(f"Docker cleanup: removed 1 old release image tags, kept {self.SERVER_TAG}, "
+                      f"localhost:5002/brood-go:build-{'3' * 32}, {self.EDGE_TAG}; build cache pruned to 5 GiB, "
+                      "reclaimed 55.2GB", run)
+        self.assertNotIn("warning", check + run)

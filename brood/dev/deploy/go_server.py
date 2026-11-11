@@ -403,6 +403,8 @@ class Deploy:
     def __init__(self, cluster, get=config.get, project=config.PROJECT, resolver=None):
         self.cluster, self.get, self.project = cluster, get, Path(project)
         self.resolver = resolver or socket.getaddrinfo
+        # Тег образа этой выкладки: уборка Docker (#247) его не удаляет.
+        self.tag = None
 
     def _registry_access(self):
         code, out, _ = self.cluster.shell.output("docker", "inspect", "--format",
@@ -511,7 +513,7 @@ class Deploy:
         with tempfile.TemporaryDirectory(prefix="brood-go-deploy-") as directory:
             root = Path(directory)
             metadata = root / "metadata.json"
-            tag = "localhost:5002/brood-go:build-" + uuid.uuid4().hex
+            tag = self.tag = "localhost:5002/brood-go:build-" + uuid.uuid4().hex
             release = self.get("BROOD_RELEASE_SHA")
             if release and not re.fullmatch(r"[0-9a-f]{40}", release):
                 raise RuntimeError("BROOD_RELEASE_SHA must be a full commit sha")

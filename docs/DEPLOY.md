@@ -25,13 +25,16 @@ bin/brood deploy server --check
 bin/brood deploy server
 ```
 
-Preflight проверяет настройки, TLS, владение установкой/namespace, approved
-worker images, точные Kubernetes API endpoints и identities существующих
-server/edge ресурсов до сборки и записи. Namespace должен уже принадлежать
-установке; новый Substrate подготавливается отдельной операцией.
+Preflight проверяет настройки, свободное место раздела Docker (если задан
+`BROOD_DEPLOY_MIN_FREE_GB`, раздел «Место на машине деплоя»), TLS, владение
+установкой/namespace, approved worker images, точные Kubernetes API endpoints
+и identities существующих server/edge ресурсов до сборки и записи. Namespace
+должен уже принадлежать установке; новый Substrate подготавливается отдельной
+операцией.
 
 Полная выкладка:
 
+0. Проверяет свободное место раздела Docker до Lease, сборки и любой записи.
 1. Собирает pinned TLS edge и Go-образ, получает digest именно своего build.
 2. Применяет приватный Go Deployment/Service/PVC/Secrets/NetworkPolicy и
    ждёт готовности; SQLite инициализируется самим сервером.
@@ -45,6 +48,9 @@ server/edge ресурсов до сборки и записи. Namespace дол
 6. Только после успешной проверки удаляет конкретные старые Django/Postgres
    deployments/services/policies и `data-postgres-0`, сверяя UID с preflight.
    Ни namespace целиком, ни worker/actor ресурсы не входят в cleanup allowlist.
+7. После успеха убирает за собой, если заданы настройки: старые снимки базы
+   (`existing`) и старые теги своих образов с кэшем сборки Docker (раздел
+   «Место на машине деплоя»).
 
 `bin/brood deploy go` остаётся подготовкой только приватного Go endpoint,
 без public edge, bootstrap пользователя или очистки старых данных.
@@ -124,7 +130,9 @@ separate operator decision (docs/DEPLOY.md)
 базы или установки. Пересоздание теряет данные (как решение #219) и остаётся
 отдельным решением оператора: deploy его не выполняет, не предлагает флагом и
 не делает в ответ на отказ gate. Snapshot отказавшего запуска остаётся на PVC,
-как и после любого другого отказа; его удаление - отдельная операция.
+как и после любого другого отказа; сам отказ ничего не удаляет. С
+`BROOD_DEPLOY_KEEP_SNAPSHOTS` его уберёт хранение снимков следующей успешной
+выкладки (раздел «Место на машине деплоя»).
 
 Границы gate. Verify читает snapshot целиком в память, не больше 32 MiB при
 лимите helper 256Mi: база крупнее - отказ `snapshot is too large to verify in
@@ -274,9 +282,9 @@ UID, моложе 240 с, foreign, существующая Lease) и при г�
    нет. Дочерние `kubectl` flock не наследуют (`O_CLOEXEC`): убитый процесс
    мог оставить в пути `kubectl`-запрос, flock его не покрывает.
 2. **Lease `brood-go-deploy`** (namespace `brood`, метки deploy). Её создаёт тот же
-   `claim()`, и она остаётся до конца **всех** эффектов: apply, inspect, apply edge
-   и probe. Снимает её только `finish()` после успеха или `release()` при отказе
-   до `before_apply`. Продление (каждые 20 с и на каждом guard) нужно лишь чтобы
+   `claim()`, и она остаётся до конца **всех** эффектов: apply, inspect, apply edge,
+   probe и хранение снимков (#247). Снимает её только `finish()` после успеха или
+   `release()` при отказе до `before_apply`. Продление (каждые 20 с и на каждом guard) нужно лишь чтобы
    увидеть ручную подмену, но не как доказательство жизни.
 
 **Автоматического перехвата нет, ни по возрасту, ни по «не менялась N секунд».**
@@ -291,11 +299,14 @@ Lease (чужая, старая, своего прошлого запуска, �
   оборванного scale-to-zero **не работает**, пока оператор не доказал смерть прежнего
   процесса;
 - ошибка после возврата `before_apply` (apply, rollout, публикация артефактов
-  гостя, inspect, edge, probe) оставляет
+  гостя, inspect, edge, probe, сбой helper хранения снимков) оставляет
   Lease: исход apply неоднозначен, повтор не делается. После неё `release()` только
   возвращает replicas по записи, если может доказать её;
 - `flock` не заменяет Lease: он не виден с других машин, а Lease не заменяет `flock`:
-  она создаётся уже после него.
+  она создаётся уже после него;
+- исключение одно: отказ самого `database prune` (helper завершился Failed или
+  ответил не про снимок этой выкладки) - только предупреждение, выкладка успешна,
+  `finish()` снимает Lease (раздел «Место на машине деплоя»).
 
 Провал самого удаления Lease (`finish()`/`release()`) - ошибка deploy, не успех: Lease
 остаётся, действуйте по процедуре ниже.
@@ -395,11 +406,13 @@ verify. Ручной `rollout undo`, сброс БД и автоматическ
 автоматически: новые внешние операции уже могли произойти. Возврат старого
 образа после миграции небезопасен. Старый rollback требует остановки записи и
 внешних операций, явного восстановления согласованного snapshot и отдельного
-решения оператора. Snapshot retention/удаление — также отдельная операция.
+решения оператора. Хранение снимков (`BROOD_DEPLOY_KEEP_SNAPSHOTS`) только
+удаляет старые снимки после успешной выкладки и ничего не восстанавливает.
 
 Путь forced SSH не меняется: установленный `brood-deploy` вызывает
 `bin/brood deploy server --check` и `bin/brood deploy server` из нового дерева.
-Ни новый SSH action/key, ни runner, ни обход `deploy go` не нужны. Единственная
+Ни новый SSH action/key, ни runner, ни обход `deploy go` не нужны. Так же
+устроены preflight места и уборка после выкладки (#247). Единственная
 интеграция в Go deployment — callback `before_apply(image)`, после build и всех
 preflight, перед apply. Поддержка `/brood database` должна находиться в новом
 образе; если её нет, existing mode откажет без server apply.
@@ -420,6 +433,9 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `CLIPROXY_API_KEY` | необязательный клиентский ключ CLIProxyAPI для managed-акторов; только `.env`/защищённая CI-конфигурация и Secret сервера, не guest env |
 | `BROOD_GIT_REMOTES` | необязательные remotes репозиториев проектов для Git gateway: egress сервера и legacy-токены; только Secret сервера, см. «Git remotes» |
 | `BROOD_ACTOR_GIT_DOMAIN` | необязательный домен Git-идентичности акторов (#249): коммиты актора подписаны `brood <актор> <актор@домен>`; DNS-имя в нижнем регистре, без дефолта; без него актор идентичности не получает. Смена домена требует reset акторов, см. «Подтверждение workspace» в `docs/PROXMOX.md` |
+| `BROOD_DEPLOY_MIN_FREE_GB` | необязательный предел свободного места раздела Docker, GiB, целое от 1; меньше - отказ до сборки (#247) |
+| `BROOD_DEPLOY_BUILD_CACHE_GB` | необязательный предел кэша сборки Docker, GiB, целое от 0; после успешной выкладки - уборка старых образов и `docker builder prune` (#247) |
+| `BROOD_DEPLOY_KEEP_SNAPSHOTS` | необязательное число снимков базы на PVC в `existing`, целое от 1, включая снимок этой выкладки (#247) |
 | `BROOD_ACTOR_MODEL`, `BROOD_ACTOR_SMALL_MODEL` | необязательные модели Claude Code акторов (#263): основная и быстрых задач, например `glm-5.3` и `glm-5.3-flash`; каждая сама по себе, без дефолта, до 256 печатаемых ASCII без пробелов. Пустая — модель этой группы выбирает Claude Code. Гость передаёт их Claude Code (`ANTHROPIC_MODEL` и псевдонимы `opus`/`sonnet`, `haiku`), см. «Модели Claude Code актора» в `docs/PROXMOX.md`; смена доходит до актора со следующим стартом CT |
 
 Переход акторов с псевдонимов Claude в CLIProxy на модели установки (#263):
@@ -471,6 +487,140 @@ IP внутреннего registry в kind network. Go получает `BROOD_R
 найденный IP:5000. Registry не перепубликуется наружу: внешний клиент передаёт
 chunks до 32 MiB через обычный HTTPS session/CSRF API. Ограничение edge 64 MiB
 сохраняется. Подробности — `docs/BUILD.md`.
+
+## Место на машине деплоя (#247)
+
+Выкладка собирает образы сервера и edge через `docker buildx` на самой машине
+деплоя, и каждая сборка добавляет в кэш слои панели и Go. 2026-11-10 кэш вырос
+до 60 ГБ (2069 записей, 0 активных), неиспользуемые образы - до ~10 ГБ, и
+корневой раздел с `/var/lib/docker`, узлом kind и томом базы заполнился на 100%:
+выкладка упала на snapshot, а запись SQLite работающего сервера оказалась под
+угрозой. Три настройки `.env` релиза ограничивают рост. Пределы - свойства
+машины (размер диска, тома, образов), поэтому дефолтов в коде нет: без
+настройки шаг не выполняется, как до #247, а `bin/brood deploy server`
+печатает `warning: ... is not set`.
+
+| Настройка | Шаг | Без неё |
+|---|---|---|
+| `BROOD_DEPLOY_MIN_FREE_GB` | preflight: отказ до сборки, если на разделе каталога данных Docker свободно меньше N GiB | проверка пропущена, предупреждение |
+| `BROOD_DEPLOY_BUILD_CACHE_GB` | после успешной выкладки: старые теги своих образов, затем `docker builder prune -f --keep-storage NGB` | уборки нет, предупреждение |
+| `BROOD_DEPLOY_KEEP_SNAPSHOTS` | после успешной выкладки `existing`: на PVC остаются N снимков, включая снимок этой выкладки | снимки копятся, предупреждение |
+
+Значения - целые числа ASCII: `MIN_FREE` от 1, `BUILD_CACHE` от 0 (весь
+неиспользуемый кэш), `KEEP_SNAPSHOTS` от 1. GB здесь - 2^30 байт, как у
+`df -h` и `--keep-storage`. Иная форма (`10GB`, `1.5`, пробел) - отказ уже
+`deploy server --check`, до доступа к машине и кластеру, с именем настройки.
+
+Значения для production (`BROOD_DEPLOY_ENV`, диск 99 ГБ):
+
+```
+BROOD_DEPLOY_MIN_FREE_GB=10
+BROOD_DEPLOY_BUILD_CACHE_GB=5
+BROOD_DEPLOY_KEEP_SNAPSHOTS=5
+```
+
+10 GiB оставляют место для одной сборки и роста базы; 5 GiB кэша - значение,
+которым 2026-11-10 освободили 56 ГБ: `--keep-storage` удаляет давно не
+использованные записи первыми, так что базовые образы и слои `go mod
+download`/`bun install`, которые сборка берёт каждый раз, уходят последними.
+Снимок прошедшей выкладки не больше 32 MiB (предел verify), пять таких - не
+больше 160 MiB. Снимки отказавших запусков (schema gate, `snapshot is too large
+to verify in memory`, любой отказ до apply) этим пределом не ограничены и
+копятся по одному на попытку до следующей успешной выкладки.
+
+Порядок и что удаляется:
+
+1. **Preflight.** `deploy server --check`, а затем `deploy server` первым шагом,
+   до Lease, сборки и любой записи (на полном диске не пишется и Lease),
+   читают `docker info --format {{.DockerRootDir}}` и `df -P -k` этого
+   каталога. Свободно меньше предела - отказ с точкой монтирования, свободным
+   местом и пределом; ради причины дочитывается `docker system df` (кэш сборки
+   и образы с reclaimable; при успехе он не вызывается: обходит тома и
+   медленный). Каталог не найден или `df` не прочитан при заданной настройке -
+   тоже отказ. Preflight ничего не удаляет:
+
+   ```
+   free space on / (Docker root) is 3.0 GiB, below BROOD_DEPLOY_MIN_FREE_GB=10 GiB;
+   build cache 60.2GB (reclaimable 60.2GB); images 16.7GB (reclaimable 10.1GB (60%));
+   nothing was built or changed; free space first, for example docker builder
+   prune -f --keep-storage 5GB as the deploy user, and set
+   BROOD_DEPLOY_BUILD_CACHE_GB so that every deploy prunes the build cache
+   (docs/DEPLOY.md)
+   ```
+
+2. **Снимки базы** (только `existing`, после public probe, ещё под Lease
+   `brood-go-deploy`). Helper создаётся тем же путём `existing_install.py`, что
+   snapshot, verify и inspect: точный digest нового образа, deny-all
+   NetworkPolicy, без service-account token, non-root, read-only rootfs, node
+   текущего pod, только owned PVC (на запись, как у snapshot), удаление pod и
+   policy по UID. Он выполняет `/brood database prune --current
+   /data/.brood-snapshot-<hex>.db --keep N`: остаются снимок этой выкладки и
+   N-1 самых новых прочих по mtime, удаляются (`unlink`) остальные обычные
+   файлы `/data/.brood-snapshot-<32 hex>.db`. Не трогаются `brood.db` и его
+   `-wal`/`-shm`, `artifacts/`, служебные файлы SQLite, симлинки (по ним не
+   ходят), каталоги и файлы других имён. Снимок этой выкладки обязан быть
+   обычным файлом до удалений - иначе отказ до первого из них - и после них -
+   иначе отказ helper; ответ helper (`current`, `kept`, `removed`, без имён
+   прочих файлов) обязан назвать именно его, `kept` не больше N. Снимки отказавших запусков - те же
+   `.brood-snapshot-*.db` и уходят в общем порядке. В `initial` снимка нет, шаг
+   не выполняется.
+3. **Docker** (оба режима, после снятия Lease, только после успеха): `docker
+   image ls` и `docker image rm repo:tag` без `--force` для тегов
+   `localhost:5002/brood-go:build-<32 hex>` и
+   `localhost:5002/brood-go-edge:build-<32 hex>`, кроме тега этой выкладки и
+   одного тега самого нового иного образа того же репозитория (предыдущего).
+   Тег того же образа, что текущий (edge без изменений собирается из кэша),
+   только снимается. Затем `docker builder prune -f --keep-storage NGB`: его
+   принимают классический `docker builder` (Debian 13) и buildx; в buildx 0.17+
+   это устаревшее имя `--reserved-space` (печатает предупреждение), которое без
+   других пределов тоже сокращает кэш до N. Удалят флаг - prune откажет с
+   причиной в предупреждении. Не трогаются образы
+   kind, `registry`, `ateworker-*`, теги не вида `build-<hex>`, чужие
+   репозитории, контейнеры и тома (узел kind и PVC), содержимое реестра
+   `localhost:5002`; `docker image prune` и `docker system prune` не
+   вызываются. Тег этой выкладки неизвестен или его нет в списке, список не
+   читается - ни одного удаления образов, но кэш сборки всё равно чистится.
+
+Отказ самого prune (helper Failed, например `cannot remove an old snapshot`, или
+ответ не про снимок этой выкладки) и любой сбой шага 3 (код docker, бинарь не
+запустился) не отменяют выкладку: rollout и probe уже прошли. Они печатаются
+как `warning: snapshot retention failed: ...` или `warning: Docker cleanup
+failed: ...` с причиной, Lease снимается как обычно, команда завершается успехом
+и `releases/current` переключается; следующую выкладку при нехватке места
+остановит preflight. Сбой жизненного цикла helper шага 2 (identity Deployment
+или helper изменилась, pod или policy не удалены по UID, ошибка API или ОС) -
+другое: helper с записываемым томом мог остаться, поэтому это отказ после
+`before_apply`, как у inspect: Lease остаётся, действуйте по «Ручному снятию
+Lease». Успех выглядит так:
+
+```
+Free space: 52.3 GiB on / (Docker root /var/lib/docker), required 10.0 GiB
+Snapshot retention: kept 5 of BROOD_DEPLOY_KEEP_SNAPSHOTS=5 including this deploy's snapshot, removed 12
+Docker cleanup: removed 37 old release image tags, kept ...; build cache pruned to 5 GiB, reclaimed 2.1GB
+```
+
+Почему в `bin/brood deploy server`, а не новой строкой `deploy/brood-deploy.sh`.
+Ключ выкладки по-прежнему умеет одно: forced command `brood-deploy`, который
+вызывает `bin/brood deploy server --check` и `bin/brood deploy server` из
+нового релиза. Уборка - часть этого действия, а не новое SSH-действие, ключ
+или шелл, как snapshot и schema gate #220. Копию `/usr/local/bin/brood-deploy`
+обновляет только provision от root, а код релиза действует со следующей
+выкладкой без входа на машину. Настройки читает общий парсер `.env` (кавычки
+mop), а не его повтор на shell.
+
+Если диск уже полон: от пользователя brood на машине деплоя
+`docker builder prune -f --keep-storage 5GB` (так освободили 56 ГБ
+2026-11-10), затем обычная выкладка с настройками выше.
+
+Чего это не покрывает: содержимое реестра `localhost:5002` (каждая выкладка
+пушит новый образ; сборка мусора реестра - отдельная операция), Go build cache
+пользователя brood после сборки артефактов бутстрапа (Go сам удаляет записи,
+не использованные 5 дней), `releases/` на разделе, отличном от раздела Docker,
+образы воркеров и guest images, тома. Preflight меряет раздел `DockerRootDir`:
+при хранилище образов containerd (`/var/lib/containerd`) на отдельном разделе
+тот раздел не проверяется. Команды docker уборки идут без своего таймаута:
+зависание после снятия Lease закончится таймаутом CI без переключения
+`releases/current`.
 
 ## Git remotes
 
