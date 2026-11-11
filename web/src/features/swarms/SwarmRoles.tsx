@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import type { AccessSwarm } from '@/services/brood/access';
 import type { PipelineRun } from '@/services/brood/pipelines';
 import { rolesApi, type GraphRole, type RoleActor, type RoleGraph } from '@/services/brood/roles';
 import { LoadState, StatusBadge, useAdministrator } from '@/features/access/shared';
+import { ObjectLink } from '@/features/objects/ObjectLink';
+import type { SwarmScope } from '@/features/objects/relations';
 import { useResource } from '@/features/substrate/hooks';
 import { DASH } from '@/features/substrate/format';
 import { Fold } from './Fold';
@@ -35,7 +36,12 @@ export function SwarmRoles({
   definition: string;
 }) {
   const administrator = useAdministrator();
-  return <RolesSection model={useSwarmRoles(swarm, administrator, run, definition)} />;
+  return (
+    <RolesSection
+      model={useSwarmRoles(swarm, administrator, run, definition)}
+      scope={{ project: swarm.project_id, swarm: swarm.id }}
+    />
+  );
 }
 
 /** Итог блока ролей в его summary: сколько ролей графа не готово, иначе
@@ -48,11 +54,12 @@ function rolesSummary(t: Translate, view: SwarmRolesModel['view']): string | und
   return ready > 0 ? t('swarm_roles.fold_ready', { count: ready }) : undefined;
 }
 
-/** Роли графа и привязки роя: состояние словами, актор по имени. Блок
- * свёрнут (#253), пока рой работает с готовыми ролями; раскрыт, когда
- * роль ждёт человека или рой стоит. Пока исполнение идёт или ждёт ответа,
- * а также для зрителя управления нет — вместо него текст, почему. */
-export function RolesSection({ model }: { model: SwarmRolesModel }) {
+/** Роли графа и привязки роя: состояние словами, актор по имени -- ссылкой
+ * на его панель (#195). Блок свёрнут (#253), пока рой работает с готовыми
+ * ролями; раскрыт, когда роль ждёт человека или рой стоит. Пока исполнение
+ * идёт или ждёт ответа, а также для зрителя управления нет — вместо него
+ * текст, почему. scope -- проект и рой: ссылки ведут к акторам этого роя. */
+export function RolesSection({ model, scope }: { model: SwarmRolesModel; scope: SwarmScope }) {
   const { t } = useTranslation();
   const { view } = model;
   return (
@@ -76,7 +83,7 @@ export function RolesSection({ model }: { model: SwarmRolesModel }) {
               </p>
             )}
             <GraphLine graph={view.graph} />
-            <ControlNote model={model} />
+            <ControlNote model={model} scope={scope} />
             {view.roles.length === 0 ? (
               <p className={page.hint}>
                 {t(view.graph ? 'swarm_roles.empty' : 'swarm_roles.empty_no_graph')}
@@ -84,7 +91,13 @@ export function RolesSection({ model }: { model: SwarmRolesModel }) {
             ) : (
               <ul className={local.list}>
                 {view.roles.map((role) => (
-                  <RoleRow key={role.role} role={role} graph={view.graph} model={model} />
+                  <RoleRow
+                    key={role.role}
+                    role={role}
+                    graph={view.graph}
+                    model={model}
+                    scope={scope}
+                  />
                 ))}
               </ul>
             )}
@@ -112,7 +125,7 @@ function GraphLine({ graph }: { graph: RoleGraph | null }) {
 
 /** Почему управления нет, или чего не хватает для него: одной строкой на
  * блок, а не неактивными кнопками в каждой роли. */
-function ControlNote({ model }: { model: SwarmRolesModel }) {
+function ControlNote({ model, scope }: { model: SwarmRolesModel; scope: SwarmScope }) {
   const { t } = useTranslation();
   if (model.control === 'busy') {
     return <p className={`${styles.notice} ${local.warning}`}>{t('swarm_roles.busy')}</p>;
@@ -131,7 +144,8 @@ function ControlNote({ model }: { model: SwarmRolesModel }) {
   if (model.actors?.length === 0) {
     return (
       <p className={page.hint}>
-        {t('swarm_roles.actors_none')} <Link to="/actors">{t('swarm_roles.actors_link')}</Link>
+        {t('swarm_roles.actors_none')}{' '}
+        <ObjectLink object={{ kind: 'actor', ...scope }}>{t('swarm_roles.actors_link')}</ObjectLink>
       </p>
     );
   }
@@ -182,9 +196,18 @@ function RoleOutcome({ role, model }: { role: string; model: SwarmRolesModel }) 
   );
 }
 
-/** Актор роли по имени. Имя актора чужого роя сервер не раскрывает. */
+/** Актор роли по имени, ссылкой на его панель: роль держит managed-актор
+ * этого роя, его панель открыта и зрителю. Имя актора чужого роя сервер не
+ * раскрывает. */
+function RoleActorName({ role, scope }: { role: GraphRole; scope: SwarmScope }) {
+  const { t } = useTranslation();
+  if (role.actorName) {
+    return <ObjectLink object={{ kind: 'actor', ...scope, name: role.actorName }} />;
+  }
+  return <>{actorLabel(t, role)}</>;
+}
+
 function actorLabel(t: Translate, role: GraphRole): string {
-  if (role.actorName) return role.actorName;
   if (!role.actorUid) return t('swarm_roles.actor_none');
   if (role.state === 'foreign') return t('swarm_roles.actor_hidden');
   if (role.state === 'missing') return t('swarm_roles.actor_gone');
@@ -195,10 +218,12 @@ function RoleRow({
   role,
   graph,
   model,
+  scope,
 }: {
   role: GraphRole;
   graph: RoleGraph | null;
   model: SwarmRolesModel;
+  scope: SwarmScope;
 }) {
   const { t } = useTranslation();
   return (
@@ -213,7 +238,9 @@ function RoleRow({
       <dl className={local.facts}>
         <div>
           <dt>{t('swarm_roles.actor')}</dt>
-          <dd>{actorLabel(t, role)}</dd>
+          <dd>
+            <RoleActorName role={role} scope={scope} />
+          </dd>
         </div>
       </dl>
       <p className={page.hint}>

@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { templatesApi, type ActorTemplate } from '@/services/brood/substrate';
+import { errorMessage } from '@/services/brood/http';
+import { actorsApi, templatesApi, type ActorTemplate } from '@/services/brood/substrate';
 import { swarmCapabilities } from '@/features/access/shardState';
 import { useAdministrator } from '@/features/access/shared';
 import { selectedIn } from '@/features/objects/address';
@@ -13,6 +14,7 @@ import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
 import { ProjectScope } from './components/ProjectScope';
 import { ObjectUnavailable } from './components/SelectionNotice';
+import { TemplateRelations, type SwarmActors } from './components/TemplateRelations';
 import { GroupBar, SwarmSections, useSwarmSectionFailure } from './components/SwarmSections';
 import { DASH, formatCpu, formatDate, formatMemory, selectorText } from './format';
 import { useActions, useResource } from './hooks';
@@ -52,6 +54,20 @@ const imagesOf = (tpl: ActorTemplate) => (tpl.containers ?? []).map((c) => c.ima
 
 const keyOf = (tpl: ActorTemplate) => tpl.metadata.uid ?? tpl.metadata.name;
 
+/** Шаблоны и акторы роя одним чтением: панель шаблона называет акторов,
+ * созданных из него (#195). Отказ списка акторов шаблонов не прячет: связь
+ * тогда неизвестна, и панель называет причину. */
+async function loadTemplates(swarm: string) {
+  const [templates, actors] = await Promise.all([
+    templatesApi.list(swarm),
+    actorsApi.list(swarm).then(
+      (list): SwarmActors => ({ list }),
+      (error: unknown): SwarmActors => ({ error: errorMessage(error) })
+    ),
+  ]);
+  return { templates, actors };
+}
+
 function Templates({
   project,
   projectId,
@@ -64,8 +80,9 @@ function Templates({
   canManage: boolean;
 }) {
   const { t, i18n } = useTranslation();
-  const load = useCallback(() => templatesApi.list(project), [project]);
-  const { data, error, loading, refresh } = useResource(load);
+  const load = useCallback(() => loadTemplates(project), [project]);
+  const { data: loaded, error, loading, refresh } = useResource(load);
+  const data = loaded?.templates ?? null;
   // Отказ загрузки уходит в общую плашку над группами (#255).
   useSwarmSectionFailure(project, name, error);
   const { run, confirm } = useActions(refresh);
@@ -177,7 +194,7 @@ function Templates({
       <EntityPanel
         open={panel.open && viewing !== null}
         onClose={closePanel}
-        eyebrow={project}
+        eyebrow={name}
         title={viewing?.metadata.name ?? ''}
         description={t('templates.immutable_hint')}
         actions={
@@ -220,6 +237,15 @@ function Templates({
                 <dd>{formatDate(viewing.metadata.createTime, i18n.language)}</dd>
               </dl>
             </Section>
+            {loaded && (
+              <TemplateRelations
+                template={viewing}
+                scope={{ project: projectId, swarm: project }}
+                swarmName={name}
+                actors={loaded.actors}
+                canManage={canManage}
+              />
+            )}
             <Section title="JSON" hint={t('templates.json_view_hint')}>
               <pre className={styles.code}>{JSON.stringify(viewing, null, 2)}</pre>
             </Section>
@@ -231,6 +257,7 @@ function Templates({
         <TemplateEditor
           key={editor.session}
           project={project}
+          swarmName={name}
           source={editor.source}
           open={editor.open}
           onClose={closeEditor}

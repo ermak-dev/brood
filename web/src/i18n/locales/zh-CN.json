@@ -2661,7 +2661,7 @@
     "conflict": "编辑期间策略已被他人修改。草稿已保留；「保存」将覆盖对方的修改，「撤销修改」将显示它。",
     "delete": "删除项目策略",
     "delete_title": "删除策略",
-    "delete_message": "删除项目 {{project}} 的策略？该项目将只适用全局角色。",
+    "delete_message": "删除群组 {{project}} 的策略？该群组将只适用全局角色。",
     "deleted": "策略已删除"
   },
   "substrate": {
@@ -3261,7 +3261,13 @@
     "steps_empty": "暂无步骤。",
     "pass_steps": "步骤：{{count}}",
     "management": "访问与生命周期",
-    "management_hint": "谁可以使用此群组、其所有权以及删除。"
+    "management_hint": "谁可以使用此群组、其所有权以及删除。",
+    "objects": {
+      "label": "群组对象",
+      "actors": "执行者",
+      "templates": "模板",
+      "access": "访问权限"
+    }
   },
   "swarm_requests": {
     "title": "操作员请求",
@@ -3372,5 +3378,17 @@
       "where": "请在蜂群页面的“角色”部分绑定角色；它显示此处所选定义的角色。",
       "failed": "无法检查角色：{{reason}}"
     }
+  },
+  "relations": {
+    "title": "关联",
+    "swarm": "群组",
+    "actors": "执行者",
+    "no_actors": "尚无由此模板创建的执行者",
+    "actors_failed": "无法读取群组的执行者：{{reason}}",
+    "actor_pools": "其执行者所在的池",
+    "worker_pool": "工作节点池",
+    "workers": "工作节点",
+    "no_workers": "此池暂无工作节点",
+    "workers_failed": "无法读取工作节点：{{reason}}"
   }
 }

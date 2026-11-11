@@ -128,8 +128,9 @@ const model = (over: Partial<SwarmRolesModel> = {}): SwarmRolesModel => ({
 
 const wrap = (node: ReactNode) =>
   createElement(I18nextProvider, { i18n }, createElement(MemoryRouter, null, node));
+const scope = { project: 'project-1', swarm: 'swarm-1' };
 const markup = (over: Partial<SwarmRolesModel> = {}) =>
-  renderToStaticMarkup(wrap(createElement(RolesSection, { model: model(over) })));
+  renderToStaticMarkup(wrap(createElement(RolesSection, { model: model(over), scope })));
 const visibleText = (html: string) =>
   html
     .replace(/<[^>]*>/g, ' ')
@@ -259,10 +260,30 @@ describe('who gets controls', () => {
     expect(visibleText(row(html, 'builder'))).toContain(t.states.ready);
   });
 
+  test('a bound actor of the swarm opens its panel from the role (#195)', () => {
+    const builder = row(markup({ control: 'read' }), 'builder');
+    expect(builder).toContain(
+      'href="/actors?project=project-1&amp;swarm=swarm-1&amp;actor=builder-1"'
+    );
+    // An actor of another swarm has no name to link to.
+    const hidden = row(
+      markup({
+        control: 'read',
+        view: rolesView({
+          roles: [ready({ actorName: undefined, state: 'foreign', actorUid: 'uid-x' })],
+        }),
+      }),
+      'builder'
+    );
+    expect(hidden).not.toContain('href=');
+    expect(visibleText(hidden)).toContain(t.actor_hidden);
+  });
+
   test('no running actor to offer: the block says where actors are made, unbind stays', () => {
     const html = markup({ actors: [] });
     expect(visibleText(html)).toContain(t.actors_none);
-    expect(html).toContain('href="/actors"');
+    // The actors of this swarm (#195), not the actors page of every swarm.
+    expect(html).toContain('href="/actors?project=project-1&amp;swarm=swarm-1"');
     expect(row(html, 'builder')).toContain(fill(t.unbind_role, { role: 'builder' }));
     expect(html).not.toContain('aria-haspopup="listbox"');
   });
@@ -414,6 +435,10 @@ const pageRoutes = ({
   'GET /api/swarms/swarm-1/roles': () => ({ body: roles() }),
   'GET /api/swarms/swarm-1/actors': { body: actorList },
 });
+
+/** Чтения списка акторов роя за всю жизнь страницы. */
+const actorListReads = (calls: Array<{ url: string }>) =>
+  calls.filter((c) => c.url === '/api/swarms/swarm-1/actors').length;
 
 describe('binding on the page', () => {
   test('binds an unbound role to the chosen running actor with its incarnation', async () => {
@@ -587,7 +612,9 @@ describe('binding on the page', () => {
     expect(block.textContent).toContain(t.busy);
     expect(block.querySelector('button')).toBeNull();
     expect(block.textContent).toContain('builder-1');
-    expect(calls.some((c) => c.url === '/api/swarms/swarm-1/actors')).toBe(false);
+    // The roles block lists no actors to bind: the one read of the actor list
+    // is the count of the swarm's objects under its details (#195).
+    expect(actorListReads(calls)).toBe(1);
   });
 
   test('a viewer reads the roles and never lists actors to bind', async () => {
@@ -596,7 +623,7 @@ describe('binding on the page', () => {
     const block = rolesBlock(container);
     expect(block.textContent).toContain(t.read_only);
     expect(block.querySelector('button')).toBeNull();
-    expect(calls.some((c) => c.url === '/api/swarms/swarm-1/actors')).toBe(false);
+    expect(actorListReads(calls)).toBe(1);
   });
 });
 

@@ -16,6 +16,8 @@ import { swarmTone } from '@/features/access/state';
 import { swarmCapabilities } from '@/features/access/shardState';
 import { SwarmManagement } from '@/features/access/SwarmManagement';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
+import { ObjectLink } from '@/features/objects/ObjectLink';
+import type { SwarmScope } from '@/features/objects/relations';
 import { RunGraph } from '@/features/pipelines/RunGraph';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { Section } from '@/features/substrate/components/form';
@@ -28,6 +30,7 @@ import { RequestCard, RequestInbox } from './SwarmRequests';
 import { useSwarmRequests } from './useSwarmRequests';
 import { useGraphRefetch, useSwarmPolling } from './useSwarmPolling';
 import { SnapshotFacts, SwarmExecutionControl } from './SwarmControls';
+import { SwarmObjects } from './SwarmObjects';
 import { SwarmRoles } from './SwarmRoles';
 import { executionAction, snapshotIdentity } from './swarmControl';
 import {
@@ -131,6 +134,7 @@ function SwarmScreen({ id }: { id: string }) {
     <SwarmView
       swarm={data}
       projectName={projectName}
+      objects={<SwarmObjects swarm={data} changed={swarm.refresh} />}
       actions={
         swarmCapabilities(data, administrator).manage && (
           <SwarmExecutionControl
@@ -185,6 +189,9 @@ function SwarmsLink() {
 export interface SwarmViewProps {
   swarm: AccessSwarm;
   projectName: string;
+  /** Объекты роя (#195): акторы, шаблоны и доступ ссылками с числом, под
+   * сведениями. */
+  objects?: ReactNode;
   /** Действие исполнения роя (#218): запуск или остановка, рядом со
    * строкой состояния — там, где совет говорит остановить и запустить. */
   actions?: ReactNode;
@@ -224,6 +231,7 @@ export interface SwarmViewProps {
 export function SwarmView({
   swarm,
   projectName,
+  objects,
   actions,
   refreshError,
   run,
@@ -245,10 +253,12 @@ export function SwarmView({
   const { t } = useTranslation();
   const identity = snapshotIdentity(run);
   const current = passGoal(run);
+  const scope: SwarmScope = { project: swarm.project_id, swarm: swarm.id };
   return (
     <div className={styles.page}>
       <PageHeader title={swarm.name} meta={[<SwarmsLink key="list" />]} />
       <SwarmMeta swarm={swarm} projectName={projectName} />
+      {objects}
       {refreshError && (
         <p className={`${styles.notice} ${styles.operationFailure}`} role="alert">
           {refreshError}
@@ -299,6 +309,7 @@ export function SwarmView({
                   <NodeDetails
                     node={nodeView(run, graph, selected)}
                     gate={selected === gateNode ? gate : null}
+                    scope={scope}
                   />
                 ) : (
                   <p className={local.hint}>{t('swarm_page.node_hint')}</p>
@@ -314,6 +325,7 @@ export function SwarmView({
               onSelect={onSelect}
               times={hasStepTimes(run)}
               shownPass={current?.pass}
+              scope={scope}
             />
           </Section>
         </>
@@ -582,6 +594,12 @@ function StepAdvice({
   );
 }
 
+/** Актор шага -- ссылкой на его панель в рое (#195); без имени -- прочерк. */
+function StepActor({ name, scope }: { name?: string; scope: SwarmScope }) {
+  if (!name) return <>{DASH}</>;
+  return <ObjectLink object={{ kind: 'actor', ...scope, name }} />;
+}
+
 /** Момент шага с датой и временем; не записанный — прочерк. */
 function moment(value: string | undefined, language: string): string {
   return (value && formatDateTimeValue(value, language)) || DASH;
@@ -630,7 +648,15 @@ function StepSpan({ step }: { step: RunNode }) {
  * блоке страницы, здесь не повторяется. Запрос оператору этого узла —
  * карточкой без формы (#259): форма одна, в инбоксе, сюда — кнопка к ней,
  * а после ответа — подпись выбранного варианта. */
-function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
+function NodeDetails({
+  node,
+  gate,
+  scope,
+}: {
+  node: NodeView;
+  gate?: ReactNode;
+  scope: SwarmScope;
+}) {
   const { t, i18n } = useTranslation();
   const rows: Array<{ label: string; value: ReactNode }> = [];
   if (node.prompt) {
@@ -646,7 +672,10 @@ function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
     });
   }
   if (node.kind === 'actor') {
-    rows.push({ label: t('swarm_page.actor'), value: node.actorName ?? DASH });
+    rows.push({
+      label: t('swarm_page.actor'),
+      value: <StepActor name={node.actorName} scope={scope} />,
+    });
   }
   if (node.visits > 0) {
     rows.push({ label: t('swarm_page.outcome'), value: node.outcome ?? DASH });
@@ -711,12 +740,14 @@ function StepHistory({
   onSelect,
   times,
   shownPass,
+  scope,
 }: {
   steps: RunNode[];
   selected?: string;
   onSelect: (node: string) => void;
   times: boolean;
   shownPass?: number;
+  scope: SwarmScope;
 }) {
   const { t } = useTranslation();
   if (steps.length === 0) return <p className={local.hint}>{t('swarm_page.steps_empty')}</p>;
@@ -735,6 +766,7 @@ function StepHistory({
             selected={selected}
             onSelect={onSelect}
             times={times}
+            scope={scope}
           />
         );
       })}
@@ -821,18 +853,23 @@ function StepItem({
   selected,
   onSelect,
   times,
+  scope,
 }: {
   step: RunNode;
   number: number;
   selected?: string;
   onSelect: (node: string) => void;
   times: boolean;
+  scope: SwarmScope;
 }) {
   const { t } = useTranslation();
   const chosen = step.id === selected;
   const facts: Array<{ label: string; value: ReactNode }> = [];
   if (step.kind === 'actor') {
-    facts.push({ label: t('swarm_page.actor'), value: step.actorName || DASH });
+    facts.push({
+      label: t('swarm_page.actor'),
+      value: <StepActor name={step.actorName} scope={scope} />,
+    });
   }
   if (step.outcome) facts.push({ label: t('swarm_page.outcome'), value: step.outcome });
   if (step.detail) facts.push({ label: t('swarm_page.reason'), value: step.detail });

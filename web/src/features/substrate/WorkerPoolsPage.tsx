@@ -7,9 +7,18 @@ import { Input } from '@/components/ui/Input';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { Select } from '@/components/ui/Select';
 import { BroodApiError, errorMessage } from '@/services/brood/http';
-import { proxmoxPoolsApi, workerPoolsApi, type ProxmoxPool, type WorkerPool } from '@/services/brood/substrate';
+import {
+  proxmoxPoolsApi,
+  workerPoolsApi,
+  workersApi,
+  type ProxmoxPool,
+  type Worker,
+  type WorkerPool,
+} from '@/services/brood/substrate';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAdministrator } from '@/features/access/shared';
+import { RelatedList } from '@/features/objects/ObjectLink';
+import { poolWorkers } from '@/features/objects/relations';
 import { useObjectSelection, usePanel } from '@/features/objects/useObjectSelection';
 import { ConnectionForm } from './ConnectionForm';
 import { EditorSheet } from './components/EditorSheet';
@@ -105,6 +114,37 @@ export function WorkerPoolDetails({ pool }: { pool: WorkerPool }) {
   );
 }
 
+/** Воркеры пула ссылками на их панели (#195). Список читается, только пока
+ * открыта панель пула: страница пулов без неё воркеров не грузит. */
+function PoolWorkers({
+  pool,
+  workers,
+}: {
+  pool: string;
+  workers: { data: Worker[] | null; error: string | null };
+}) {
+  const { t } = useTranslation();
+  const own = workers.data ? poolWorkers(pool, workers.data) : [];
+  return (
+    <Section title={t('relations.workers')}>
+      {workers.error ? (
+        <p className={styles.muted}>{t('relations.workers_failed', { reason: workers.error })}</p>
+      ) : !workers.data ? (
+        <LoadingSpinner />
+      ) : own.length ? (
+        <RelatedList
+          items={own.map((worker) => ({
+            name: worker.metadata.name,
+            ref: { kind: 'worker', name: worker.metadata.name },
+          }))}
+        />
+      ) : (
+        <p className={styles.muted}>{t('relations.no_workers')}</p>
+      )}
+    </Section>
+  );
+}
+
 /** brood: WorkerPools of the install and its Proxmox pools. A row opens the
  * pool's side panel; editing, deleting and the Proxmox allocation switches
  * live there (#157). */
@@ -125,6 +165,7 @@ export function WorkerPoolsPage() {
   const unavailable = Boolean(
     selection.pool && data && !data.some((pool) => pool.metadata.name === selection.pool)
   );
+  const workers = useResource(selection.pool ? workersApi.list : null);
   const edit = (name: string) => {
     closePanel();
     setEditing({ name });
@@ -173,6 +214,7 @@ export function WorkerPoolsPage() {
         }) : []}
       >
         {viewing && <WorkerPoolDetails pool={viewing} />}
+        {viewing && <PoolWorkers pool={viewing.metadata.name} workers={workers} />}
       </EntityPanel>
       <ProxmoxConnections
         items={connections.data}

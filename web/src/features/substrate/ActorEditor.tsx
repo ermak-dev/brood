@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { accessApi } from '@/services/brood/access';
+import { useAdministrator } from '@/features/access/shared';
+import { RelatedLink } from '@/features/objects/ObjectLink';
+import { actorPool, actorWorker } from '@/features/objects/relations';
 import { errorMessage } from '@/services/brood/http';
 import type { Actor, ActorTemplate } from '@/services/brood/substrate';
 import { actorCreateDraft, actorState } from './actorLifecycle';
@@ -17,7 +20,10 @@ import { clone, DASH, formatDate, fromPairs, isShortName, toPairs, type Pair } f
 import styles from './substrate.module.scss';
 
 interface ActorEditorProps {
+  /** ID роя: в него уходят запросы. */
   project: string;
+  /** Имя роя в заголовке листа (#195): ID -- служебный. */
+  swarmName?: string;
   /** Проект роя: из его repository подставляется origin нового managed-актора. */
   projectId?: string;
   /** null -- create a new actor; otherwise edit this one. */
@@ -33,6 +39,8 @@ interface ActorEditorProps {
   actions?: PanelActionGroup[];
   /** Отказ последнего действия над этим актором: страница под панелью скрыта. */
   notice?: ReactNode;
+  /** Связи существующего актора (#195): рой и шаблон ссылками. */
+  relations?: ReactNode;
 }
 
 /** brood: create or edit an actor. ateapi lets an update change the template
@@ -43,6 +51,7 @@ interface ActorEditorProps {
  * EntityPanel, then the form, the irreversible block last. */
 export function ActorEditor({
   project,
+  swarmName,
   projectId,
   actor,
   templates,
@@ -51,8 +60,10 @@ export function ActorEditor({
   onSubmit,
   actions = [],
   notice,
+  relations,
 }: ActorEditorProps) {
   const { t, i18n } = useTranslation();
+  const administrator = useAdministrator();
   const editing = actor !== null;
   const managed = actor?.provider === 'proxmox';
   const state = actor ? actorState(actor) : '';
@@ -149,7 +160,7 @@ export function ActorEditor({
       open={open}
       onClose={onClose}
       size="lg"
-      eyebrow={project}
+      eyebrow={swarmName ?? project}
       title={
         editing
           ? t(managed ? 'actors.details_title' : 'actors.edit_title', { name: actor.metadata.name })
@@ -179,9 +190,15 @@ export function ActorEditor({
                   <dd>
                     {actor.status?.assignedNode || actor.status?.workerAssignment?.nodeName || DASH}
                   </dd>
+                  {/* Воркер и пул -- из status.workerAssignment: у suspended
+                      и crashed назначения нет. Ссылка -- администратору. */}
                   <dt>{t('actors.worker')}</dt>
                   <dd className={styles.mono}>
-                    {actor.status?.workerAssignment?.worker?.name || DASH}
+                    <RelatedLink related={actorWorker(actor, administrator)} />
+                  </dd>
+                  <dt>{t('relations.worker_pool')}</dt>
+                  <dd className={styles.mono}>
+                    <RelatedLink related={actorPool(actor, administrator)} />
                   </dd>
                   <dt>{t('actors.snapshots')}</dt>
                   <dd>{actor.status?.snapshots?.length ?? 0}</dd>
@@ -202,6 +219,7 @@ export function ActorEditor({
             )}
           </Section>
         )}
+        {editing && relations}
 
         {!managed && (
           <>

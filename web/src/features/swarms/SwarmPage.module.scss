@@ -57,6 +57,32 @@
   }
 }
 
+/* Объекты роя (#195): ссылки с числом отдельной строкой под сведениями, в
+   их разметке; на телефоне не свёрнуты -- это переходы, а не сведения. */
+.objects {
+  min-width: 0;
+}
+
+.objectCount {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.objectButton {
+  @include button-reset;
+  color: var(--primary-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
 /* На телефоне сведения сложены под «Сведения»: первый экран — состоянию. */
 .metaFold {
   min-width: 0;
