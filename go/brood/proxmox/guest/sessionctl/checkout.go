@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -200,10 +201,50 @@ func (e *checkoutEngine) recordIdentity(ctx context.Context) error {
 	return nil
 }
 
+// claudeConfigDirectories и claudeConfigFiles — пути workspace, которые
+// Claude Code читает как настройку и инструкции на любой глубине, ignored
+// они или нет: собственный список конфигурационных путей закреплённой
+// 2.1.310 без Git-метаданных и CLAUDE.local.md. Запуск бинарника без сети с
+// флагами сессии шага показал чтение .claude/settings.json, CLAUDE.md,
+// .claude/CLAUDE.md, .claude/rules, agents, skills и commands; вложенные
+// Claude читает, когда модель заходит глубже.
+var (
+	claudeConfigDirectories = []string{".claude", ".claude-plugin", ".mcpb-cache"}
+	claudeConfigFiles       = []string{"CLAUDE.md", "AGENTS.md", ".mcp.json", ".claude.json", ".lsp.json", ".worktreeinclude"}
+)
+
+// claudeConfigPathspecs выбирают пути Claude Code для Git. Локальные
+// .claude/settings.local.json и CLAUDE.local.md сессия шага не читает
+// (--setting-sources project, проверено тем же запуском), и проекты обычно
+// их игнорируют: они остаются вне утверждения, как прочие ignored-файлы.
+func claudeConfigPathspecs() []string {
+	var specs []string
+	for _, dir := range claudeConfigDirectories {
+		specs = append(specs, ":(top,glob)**/"+dir, ":(top,glob)**/"+dir+"/**")
+	}
+	for _, file := range claudeConfigFiles {
+		specs = append(specs, ":(top,glob)**/"+file)
+	}
+	return append(specs, ":(top,glob,exclude)**/.claude/settings.local.json")
+}
+
+// claudeConfigPath — тот же набор для пути дерева commit: компонент из
+// claudeConfigDirectories или имя из claudeConfigFiles.
+func claudeConfigPath(path string) bool {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if slices.Contains(claudeConfigDirectories, part) || (i == len(parts)-1 && slices.Contains(claudeConfigFiles, part)) {
+			return true
+		}
+	}
+	return false
+}
+
 // changes compares the workspace with rev by content: a temporary index built
 // from rev has no stat cache, assume-unchanged or skip-worktree bits, so Git
 // must hash every tracked file, as is (gitFlags byteExact). The real index is
-// compared separately.
+// compared separately. Ignored files on Claude Code configuration paths count
+// as changes: the step session loads them although the commit lacks them.
 func (e *checkoutEngine) changes(ctx context.Context, rev string) (string, error) {
 	staged, err := e.git(ctx, checkoutStepTimeout, nil, "diff-index", "--cached", "--name-only", "-z", rev, "--")
 	if err != nil {
@@ -222,7 +263,16 @@ func (e *checkoutEngine) changes(ctx context.Context, rev string) (string, error
 	if err != nil {
 		return "", errors.New("Git status unavailable or exceeds output limit")
 	}
+	// Правило ignore не важно: .gitignore дерева, .git/info/exclude актора или
+	// блок, который Claude сам дописывает туда для своего состояния.
+	ignored, err := e.git(ctx, checkoutStepTimeout, index, append([]string{"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--"}, claudeConfigPathspecs()...)...)
+	if err != nil {
+		return "", errors.New("ignored Claude Code configuration cannot be listed or exceeds output limit")
+	}
 	var found []string
+	if n := countEntries(ignored, ""); n > 0 {
+		found = append(found, strconv.Itoa(n)+" ignored at Claude Code configuration paths")
+	}
 	if n := countEntries(staged, ""); n > 0 {
 		found = append(found, strconv.Itoa(n)+" staged")
 	}
@@ -293,13 +343,18 @@ func (e *checkoutEngine) verifySnapshot(ctx context.Context, commit string) erro
 			if err != nil {
 				return errors.New("snapshot listing is truncated")
 			}
-			meta, _, ok := strings.Cut(entry, "\t")
+			meta, path, ok := strings.Cut(entry, "\t")
 			fields := strings.Fields(meta)
 			if !ok || len(fields) != 3 {
 				return errors.New("snapshot listing is malformed")
 			}
 			if fields[1] == "commit" {
 				return errors.New("submodule snapshots are not supported")
+			}
+			// Ссылка дерева на пути настройки увела бы чтение Claude за commit,
+			// например в home актора.
+			if fields[0] == "120000" && claudeConfigPath(strings.TrimSuffix(path, "\x00")) {
+				return errors.New("commit has a symbolic link at a Claude Code configuration path, which the step session would read from outside the commit")
 			}
 			if fields[1] != "tree" && fields[1] != "blob" {
 				return errors.New("snapshot listing has an unexpected object type")

@@ -11,6 +11,7 @@ import (
 	"io"
 	"time"
 
+	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/proxmox/attest"
 	"brood.dev/go/brood/proxmox/guest/sessionctl"
 	"brood.dev/go/brood/proxmox/relay"
@@ -32,6 +33,11 @@ type WorkspaceAttestor struct {
 	Quiesce  func(context.Context, func(context.Context) error) error                            `json:"-"`
 	Checkout func(context.Context, sessionctl.CheckoutRequest) (sessionctl.CheckoutFacts, error) `json:"-"`
 	Ensure   func(context.Context) error                                                         `json:"-"`
+	// Step puts the next Claude session into the step mode (#224) while no
+	// actor process exists; Free returns it to the free mode. Both are root
+	// effects of stepPolicy; restart and recycle call Free too.
+	Step func(gitidentity.Identity) error `json:"-"`
+	Free func() error                     `json:"-"`
 }
 
 func (*WorkspaceAttestor) String() string     { return "guest.WorkspaceAttestor{redacted}" }
@@ -44,7 +50,13 @@ func (a *WorkspaceAttestor) Format(s fmt.State, _ rune) { _, _ = io.WriteString(
 // NewWorkspaceAttestor binds production effects to the root bootstrap identity
 // and origin; quiesce is the runtime's Quiesce.
 func NewWorkspaceAttestor(cfg relay.ClientConfig, origin WorkspaceOrigin, quiesce func(context.Context, func(context.Context) error) error) *WorkspaceAttestor {
-	return &WorkspaceAttestor{ActorUID: cfg.ActorUID, Generation: cfg.Generation, Token: cfg.Token, Origin: origin, Quiesce: quiesce, Checkout: runCheckoutHelper, Ensure: ensureSessionAfterQuiesce}
+	return newWorkspaceAttestor(cfg, origin, quiesce, systemStepPolicy())
+}
+
+// newWorkspaceAttestor is NewWorkspaceAttestor with the step policy paths that
+// tests substitute.
+func newWorkspaceAttestor(cfg relay.ClientConfig, origin WorkspaceOrigin, quiesce func(context.Context, func(context.Context) error) error, policy stepPolicy) *WorkspaceAttestor {
+	return &WorkspaceAttestor{ActorUID: cfg.ActorUID, Generation: cfg.Generation, Token: cfg.Token, Origin: origin, Quiesce: quiesce, Checkout: runCheckoutHelper, Ensure: ensureSessionAfterQuiesce, Step: policy.enter, Free: policy.leave}
 }
 
 type attestArguments struct {
@@ -60,10 +72,10 @@ func attestFailure(text string) relay.SessionResponse {
 }
 
 // Attest stops the whole actor, verifies the checkout of the requested commit
-// while no actor process exists, restores the session and only then signs.
-// The claim is about that quiet window, not about later model actions: code
-// the actor keeps in its home runs with the new session and may still change
-// the workspace after signing, which is open issue #224.
+// while no actor process exists, puts the next session into the step mode,
+// restores the session and only then signs. The claim is about that quiet
+// window, not about later model actions; the step mode (#224) keeps the code
+// the actor stored in its home from starting with the new session.
 func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
 	args, err := decodeAttestArguments(req.Arguments)
 	if err != nil {
@@ -87,9 +99,16 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 	// собственные бюджеты helper и runtime, а не запрос.
 	work := context.WithoutCancel(ctx)
 	var facts sessionctl.CheckoutFacts
-	var checkoutErr error
+	var checkoutErr, policyErr error
 	quiesceErr := a.Quiesce(work, func(ctx context.Context) error {
 		facts, checkoutErr = a.Checkout(ctx, sessionctl.CheckoutRequest{Commit: claim.Commit, Origin: a.Origin.Origin, Mode: a.Origin.Mode, GitIdentity: a.Origin.GitIdentity})
+		// Ещё в окне тишины: rc-файлы актора не читает ни один процесс, а
+		// сессия стартует уже в своём режиме. Отказ проверки — не шаг.
+		if checkoutErr == nil && facts.Commit == claim.Commit {
+			policyErr = a.Step(a.Origin.GitIdentity)
+		} else {
+			policyErr = a.Free()
+		}
 		return checkoutErr
 	})
 	if quiesceErr != nil && quiesceErr != checkoutErr {
@@ -98,15 +117,22 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 	}
 	// Актор уже перезапущен: сессия нужна и после отказа проверки.
 	sessionErr := a.Ensure(work)
+	refused := ""
+	if (checkoutErr != nil || facts.Commit != claim.Commit) && policyErr != nil {
+		// Свободной сессии не вышло: осталась политика прошлого шага.
+		refused = "; the step session policy of the previous step was not cleared"
+	}
 	switch {
 	case checkoutErr != nil && sessionErr != nil:
-		return attestFailure(checkoutErr.Error() + "; the Claude session did not start after the check")
+		return attestFailure(checkoutErr.Error() + refused + "; the Claude session did not start after the check")
 	case checkoutErr != nil:
-		return attestFailure(checkoutErr.Error())
+		return attestFailure(checkoutErr.Error() + refused)
+	case facts.Commit != claim.Commit:
+		return attestFailure("checkout reported another commit; no attestation" + refused)
+	case policyErr != nil:
+		return attestFailure("workspace is at the commit but the step session policy was not applied: " + policyErr.Error() + "; no attestation")
 	case sessionErr != nil:
 		return attestFailure("workspace is at the commit but the Claude session did not start; no attestation")
-	case facts.Commit != claim.Commit:
-		return attestFailure("checkout reported another commit; no attestation")
 	}
 	signature, err := attest.Sign(attest.Key(a.Token), claim)
 	if err != nil {

@@ -5,6 +5,7 @@ package guest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -33,13 +34,29 @@ type Dependencies struct {
 // The trusted root relay may reach its configured private-LAN public origin;
 // that origin must not be added to the actor policy as a private-address bypass.
 func SystemDependencies() *Dependencies {
+	return systemDependencies("/workspace", 1000, 1000, systemStepPolicy())
+}
+
+// systemDependencies is SystemDependencies with the workspace, its owner and
+// the step policy paths that tests substitute.
+func systemDependencies(workspace string, uid, gid int, step stepPolicy) *Dependencies {
 	return &Dependencies{
 		EUID: os.Geteuid,
 		Lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 			return net.DefaultResolver.LookupIP(ctx, "ip", host)
 		},
-		Workspace: func() error { return prepareWorkspace("/workspace", 1000, 1000) },
-		Rules:     systemRules, Services: startServices, Launch: launchActor,
+		Workspace: func() error {
+			if err := prepareWorkspace(workspace, uid, gid); err != nil {
+				return err
+			}
+			// Новый runtime начинает со свободной сессии (#224): /etc и, без
+			// tmpfs, /run переживают перезапуск CT вместе с режимом прошлого шага.
+			if err := step.leave(); err != nil {
+				return fmt.Errorf("step session policy of the previous start cannot be cleared: %w", err)
+			}
+			return nil
+		},
+		Rules: systemRules, Services: startServices, Launch: launchActor,
 	}
 }
 

@@ -223,14 +223,14 @@ func RunProjectApp(warn io.Writer) error {
 	}
 	unix.Umask(0077)
 	layout := appLayout{Project: "/workspace/project", Home: "/workspace/home", Run: projectSecretDirectory, RunUID: 0, RunGID: 1000, Gateway: workspaceGatewayURL, CloneTimeout: 30 * time.Minute}
-	env, err := prepareProjectApp(layout, warn)
+	args, env, err := prepareClaudeLaunch(layout, warn)
 	if err != nil {
 		return err
 	}
 	if os.Chdir(layout.Project) != nil {
 		return secretFailure()
 	}
-	return syscall.Exec("/opt/brood/bin/claude", projectAppArgs(), env)
+	return syscall.Exec("/opt/brood/bin/claude", args, env)
 }
 
 // appLayout fixes every path of the app wrapper; tests substitute temporary ones.
@@ -279,6 +279,11 @@ func missingCheckout(project string) bool {
 	return os.IsNotExist(err)
 }
 
+// broodMCPConfig — единственный MCP-сервер, который добавляет brood.
+const broodMCPConfig = `{"mcpServers":{"brood":{"command":"/opt/brood/bin/bro","args":["--guest","mcp"]}}}`
+
+// projectAppArgs — запуск свободной сессии: brood добавляется к MCP-серверам и
+// настройкам актора, не заменяя их. Сессия шага — stepAppArgs (#224).
 func projectAppArgs() []string {
-	return []string{"claude", "--dangerously-skip-permissions", "--mcp-config", `{"mcpServers":{"brood":{"command":"/opt/brood/bin/bro","args":["--guest","mcp"]}}}`}
+	return []string{"claude", "--dangerously-skip-permissions", "--mcp-config", broodMCPConfig}
 }

@@ -124,6 +124,11 @@ func newSessionHandler(connection context.Context, refresh func(context.Context)
 						return terminalFailure("project secrets refresh failed; session unchanged")
 					}
 				}
+				// Перезапуск вне шага — свободная сессия (#224): режим снимается
+				// до остановки старой, иначе новая унаследовала бы его.
+				if (req.Operation == "restart" || req.Operation == "recycle") && attestor != nil && attestor.Free() != nil {
+					return terminalFailure("step session policy could not be cleared; session unchanged")
+				}
 				return run(ctx, req)
 			})
 		default:
