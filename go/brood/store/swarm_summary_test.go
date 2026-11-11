@@ -79,6 +79,63 @@ func TestSwarmSummariesCountOpenRequestsOfEveryOrigin(t *testing.T) {
 	}
 }
 
+// FEATURE: Строка списка роёв несёт число недоставленных ответов актору (#266).
+// SPEC: недоставленный ответ — отвеченный запрос актора с доставкой failed
+// или unconfirmed; доставленный и ещё идущий (pending) ответ, ответ на
+// узловой запрос, открытый и отменённый запрос не считаются; счёт — по
+// своему рою, той же выборкой, что исполнение и открытые запросы.
+// IMPLEMENTATION: SwarmSummary.UndeliveredAnswers, swarmSummaries.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+
+// undeliveredStore: у роя s по ответу актору в каждом состоянии доставки
+// (unconfirmed дважды), отвеченный узловой запрос, открытый и отменённый
+// вопросы актора; у calm ответы только доставленные и идущие; у busy один
+// failed; quiet запросов не имеет.
+func undeliveredStore(t *testing.T) *Store {
+	t.Helper()
+	s := swarmTestStore(t, "calm", "busy", "quiet")
+	if _, err := s.db.Exec(`UPDATE swarms SET execution='running' WHERE id IN ('s','busy');
+		INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES ('s',1,'ask','answered');
+		INSERT INTO swarm_requests(id,swarm_id,sequence,origin,kind,question,options,state,created_at,answered_at,answered_by,outcome) VALUES ('n1','s',1,'node','choice','Ship?',x'5b5d','answered','now','now','u','success');
+		INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,state,created_at) VALUES ('open','s','actor','w',1,'text','q','open','now');
+		INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,state,created_at) VALUES ('gone','s','actor','w',1,'text','q','cancelled','now');
+		INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,state,created_at,answered_at,answered_by,response,delivery) VALUES
+			('s-delivered','s','actor','w',1,'text','q','answered','now','now','u','r','delivered'),
+			('s-pending','s','actor','w',1,'text','q','answered','now','now','u','r','pending'),
+			('s-failed','s','actor','w',1,'text','q','answered','now','now','u','r','failed'),
+			('s-unconfirmed-1','s','actor','w',1,'text','q','answered','now','now','u','r','unconfirmed'),
+			('s-unconfirmed-2','s','actor','w',2,'confirm','q','answered','now','now','u','r','unconfirmed'),
+			('c-delivered','calm','actor','w',1,'text','q','answered','now','now','u','r','delivered'),
+			('c-pending','calm','actor','w',1,'text','q','answered','now','now','u','r','pending'),
+			('b-failed','busy','actor','w',1,'text','q','answered','now','now','u','r','failed')`); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestSwarmSummariesCountUndeliveredActorAnswers(t *testing.T) {
+	s := undeliveredStore(t)
+	got, err := s.SwarmSummaries(context.Background(), []string{"s", "calm", "busy", "quiet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]SwarmSummary{
+		"s":     {Execution: "running", OpenRequests: 1, UndeliveredAnswers: 3},
+		"calm":  {Execution: "idle", OpenRequests: 0, UndeliveredAnswers: 0},
+		"busy":  {Execution: "running", OpenRequests: 0, UndeliveredAnswers: 1},
+		"quiet": {Execution: "idle", OpenRequests: 0, UndeliveredAnswers: 0},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("summaries:\n got %+v\nwant %+v", got, want)
+	}
+	// Ответы чужого роя в счёт не входят, и рой вне набора не читается.
+	got, err = s.SwarmSummaries(context.Background(), []string{"calm"})
+	if err != nil || !reflect.DeepEqual(got, map[string]SwarmSummary{"calm": {Execution: "idle"}}) {
+		t.Fatalf("one swarm: %+v %v", got, err)
+	}
+}
+
 func TestSwarmSummariesAreOneQuery(t *testing.T) {
 	s := summaryStore(t)
 	ctx := context.Background()

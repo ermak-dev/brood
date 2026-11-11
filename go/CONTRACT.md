@@ -145,8 +145,13 @@ SA и уже встреченных principals, не превращение ло
 
 - `GET /api/projects/{id}/swarms` — у строки `execution` (исполнение графа:
   `idle`, `running`, `waiting`, `succeeded`, `failed`, `stopped`; не путать с
-  `state` инфраструктуры) и `openRequests` — число открытых запросов роя,
-  узловых и актора, то же, что `GET /api/swarms/{id}/requests` без `?all`.
+  `state` инфраструктуры), `openRequests` — число открытых запросов роя,
+  узловых и актора, то же, что `GET /api/swarms/{id}/requests` без `?all`,
+  и `undeliveredAnswers` — число ответов актору, ждущих повтора доставки
+  (#266): элементов `GET /api/swarms/{id}/requests?all=1` с `origin: "actor"`,
+  `state: "answered"` и `delivery` `failed` или `unconfirmed`. Доставка
+  `pending` и `delivered` в него не входит; открытые запросы считает только
+  `openRequests`.
 - `GET /api/projects` — у строки `swarmCount`: длина списка роёв проекта у
   того же вызывающего (администратору — все неудалённые рои, участнику — рои
   с его ролью).
