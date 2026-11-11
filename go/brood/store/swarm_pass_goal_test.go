@@ -10,7 +10,7 @@ package store
 // шагах. Недопустимая задача — отказ до записи, на первом и на повторном
 // запуске. Резерв шага актора несёт задачу его прохода, а не прошлого.
 // IMPLEMENTATION: StartSwarm, beginPass, SwarmSteps, ReserveActorStep;
-// колонка swarm_steps.goal и триггер swarm_steps_goal_fence.
+// колонка swarm_steps.goal и триггер swarm_steps_pass_fence (#229).
 // RESULT: IMPLEMENTED
 // STATUS: DONE
 
@@ -158,7 +158,7 @@ func TestStartSwarmAcceptsGoalAtLimit(t *testing.T) {
 // шагу после вставки.
 func TestSwarmStepSchemaHoldsGoal(t *testing.T) {
 	insert := func(goal string) string {
-		return `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal) VALUES ('one',9,'ask','stopped','` + goal + `')`
+		return `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal,source_commit) VALUES ('one',9,'ask','stopped','` + goal + `','` + startCommit + `')`
 	}
 	for _, tc := range []struct {
 		name, statement string

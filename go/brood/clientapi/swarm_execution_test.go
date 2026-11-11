@@ -99,6 +99,7 @@ func TestSwarmExecutionRefusalReasons(t *testing.T) {
 		{"invalid swarm goal: the goal is empty", true},
 		{"swarm state conflict: execution is running; start requires idle, succeeded, failed or stopped", true},
 		{`swarm graph is pinned: the swarm runs workflow "release" version 1 revision r; start "other" in another swarm`, true},
+		{"swarm graph is pinned: the swarm actors work in repository https://git.example.org/a.git, the project repository is now https://git.example.org/b.git; start the workflow in another swarm", true},
 		{`workflow definition is not in the project catalog: "absent"`, true},
 		{`workflow graph is not executable: workflow "retrying": retries are not supported`, true},
 		{"swarm source is invalid: the project has no repository to pin the source to", true},

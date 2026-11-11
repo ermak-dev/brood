@@ -42,9 +42,10 @@ that every step instruction of the pass carries, up to 4096 bytes of UTF-8
 text without control characters other than newline and tab. --goal-file reads
 it from FILE or, with -, from stdin and drops one trailing newline. The goal
 is text for the actors, not a permission boundary. The first start pins the
-catalog workflow named by --definition and the commit: --commit SHA, or the
-commit the project branch points to now. A restart names the same workflow
-and runs on the pinned commit. stop freezes the running or waiting pass;
+catalog workflow named by --definition and the project repository. Every
+start pins the commit of its pass: --commit SHA, or the commit the project
+branch points to now. A restart names the same workflow and may run on a new
+commit; earlier passes keep theirs. stop freezes the running or waiting pass;
 actors, their workspaces and role bindings stay. Both print the execution,
 its graph, source and last step. Owners, editors and administrators start and
 stop a swarm.

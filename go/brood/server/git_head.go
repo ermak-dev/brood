@@ -70,17 +70,18 @@ var (
 	errGitHeadNotSHA1   = &gitHeadError{http.StatusUnprocessableEntity, "the repository HEAD is not a SHA-1 commit"}
 )
 
-// startCommit — commit первого запуска, которому тело commit не назвало:
-// HEAD repository проекта, разрешённый до транзакции записи. Пустой ответ
-// без отказа — разрешать незачем: повторный запуск идёт на закреплённом
-// источнике, а неактивный рой, отказ в праве управлять и проект без
-// repository StartSwarm отвергнет со своей причиной. Право проверяется до
+// startCommit — commit запуска, которому тело commit не назвало: HEAD
+// repository проекта, разрешённый до транзакции записи. Разрешается на каждом
+// запуске, повторный не исключение (#229): проход роя, развивающего проект,
+// начинается со свежего commit. Пустой ответ без отказа — разрешать незачем:
+// неактивный рой, отказ в праве управлять и проект без repository StartSwarm
+// отвергнет со своей причиной. Право проверяется до
 // сети, чтобы зритель роя не гонял upstream с credential проекта.
 // Возвращает и repository, из которого commit разрешён: транзакция сверит
 // его с repository проекта (store.SwarmStart.Origin).
 func (s *Server) startCommit(ctx context.Context, swarmID, userID string) (origin, commit string, err error) {
 	sw, err := s.store.GetSwarm(ctx, swarmID)
-	if err != nil || sw.Graph != nil || sw.State != "active" {
+	if err != nil || sw.State != "active" {
 		return "", "", err
 	}
 	manage, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))

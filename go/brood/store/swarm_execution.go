@@ -10,30 +10,36 @@ package store
 // управлять им в транзакции записи (requireSwarmManager, #209); первый шаг —
 // pipeline.Begin, то же правило входа в узел, что у Advance.
 // Снимок графа один на рой и неизменяем после первого запуска (#206,
-// swarm_graph_immutable; источник — pipeline_sources, тоже один на рой).
-// Повторный запуск — новый проход на том же снимке: шаги прошлых проходов
-// остаются историей, нумерация продолжается, а узлы старых шагов читаются по
-// тому же графу. Снимок на проход потребовал бы второй таблицы снимков и
-// источников и снял бы инвариант #206 ради возможности, которой задача не
-// требует; другое определение или commit — новый рой. Каталог после первого
-// запуска не читается: расхождение снимка и каталога — нормальное состояние
-// (#218), подменять одно другим нельзя. Источник обязателен с #198,
-// repository берётся из проекта. Commit первого запуска называет вызывающий,
-// а без него сервер разрешает HEAD repository до транзакции (#228): сеть в
-// транзакции записи держала бы блокировку SQLite на время upstream. Поэтому
-// транзакция сверяет repository, из которого commit разрешён (SwarmStart.Origin),
-// с текущим repository проекта.
+// swarm_graph_immutable; origin источника — pipeline_sources, тоже один на
+// рой). Повторный запуск — новый проход на том же снимке: шаги прошлых
+// проходов остаются историей, нумерация продолжается, а узлы старых шагов
+// читаются по тому же графу; другое определение — новый рой. Каталог после
+// первого запуска не читается: расхождение снимка и каталога — нормальное
+// состояние (#218), подменять одно другим нельзя. Источник обязателен с #198,
+// repository берётся из проекта. Commit источника закрепляется на проход, а
+// не на рой (#229): рой, развивающий проект, начинает каждый проход со
+// свежего commit, а акторы и их workspace остаются. Origin остаётся на рой:
+// акторы привязаны к нему bootstrap'ом, поэтому repository проекта, отличный
+// от origin роя, — отказ, а не проход в чужом repository. Commit каждого
+// запуска называет вызывающий, а без него сервер разрешает HEAD repository до
+// транзакции (#228): сеть в транзакции записи держала бы блокировку SQLite на
+// время upstream. Поэтому транзакция сверяет repository, из которого commit
+// разрешён (SwarmStart.Origin), с текущим repository проекта.
 // Задача прохода (#242) — текст оператора, с которым идёт проход: она
 // пишется в колонку goal первого шага прохода тем же INSERT, что открывает
-// проход, и ограждена от правок схемой (swarm_steps_goal_fence). Отдельная
+// проход, и ограждена от правок схемой (swarm_steps_pass_fence). Отдельная
 // таблица проходов дала бы второй ключ, внешний ключ к шагу и ещё одну запись
 // в транзакции запуска ради одного поля: проход и так — его первый шаг и
 // следующие до следующего запуска, номер первого шага его и называет. Колонка
 // на каждом шаге копировала бы до 4 КиБ на шаг и потребовала бы переносить её
 // в progressPipeline. Шаг находит задачу своего прохода по последнему шагу с
 // задачей не дальше себя; шаги идут подряд, потому что новый проход
-// начинается только после остановки или завершения прошлого.
-// RESULT: IMPLEMENTED — схема 24: swarm_steps.goal и swarm_steps_goal_fence.
+// начинается только после остановки или завершения прошлого. Commit прохода
+// (#229) живёт там же и по той же причине (source_commit): триггерам
+// подтверждения хватает подзапроса по (swarm_id, sequence), а копия на каждом
+// шаге потребовала бы ещё одной ограды против чужого commit.
+// RESULT: IMPLEMENTED — схема 25: swarm_steps.goal, swarm_steps.source_commit
+// и swarm_steps_pass_fence.
 // STATUS: DONE
 
 import (
@@ -49,8 +55,9 @@ import (
 // operation does not start from; the message names the state.
 var ErrSwarmExecutionState = errors.New("swarm state conflict")
 
-// ErrSwarmGraphPinned: a restart named another definition or commit than the
-// snapshot the swarm was first started with.
+// ErrSwarmGraphPinned: a restart named another definition than the snapshot
+// the swarm was first started with, or the project repository is no longer
+// the origin the swarm's actors work in.
 var ErrSwarmGraphPinned = errors.New("swarm graph is pinned")
 
 // ErrWorkflowDefinitionMissing: the named definition is not in the catalog
@@ -61,12 +68,12 @@ var ErrWorkflowDefinitionMissing = errors.New("workflow definition is not in the
 // validation: strict parsing, graph rules and supported semantics.
 var ErrWorkflowGraphInvalid = errors.New("workflow graph is not executable")
 
-// ErrSwarmSourceInvalid: the first start cannot pin a source snapshot: the
+// ErrSwarmSourceInvalid: the start cannot pin the source of its pass: the
 // project has no repository or the commit is missing or malformed.
 var ErrSwarmSourceInvalid = errors.New("swarm source is invalid")
 
 // ErrSwarmSourceChanged: the project repository changed after the server
-// resolved the commit of the first start from it.
+// resolved the commit of the start from it.
 var ErrSwarmSourceChanged = errors.New("swarm source changed during start")
 
 // SwarmStart is a request to start a new pass of the swarm graph.
@@ -75,13 +82,12 @@ type SwarmStart struct {
 	// Definition names a definition of the project catalog on the first
 	// start; a restart must name the definition of the pinned snapshot.
 	Definition string
-	// Commit is the full commit of the project repository the first start
-	// pins as the source snapshot; the first start requires it, the server
-	// resolves it when the caller names none. A restart runs on the pinned
-	// source; a non-empty Commit must then equal it.
+	// Commit is the full commit of the project repository the new pass runs
+	// on (#229); every start requires it, the server resolves it when the
+	// caller names none. Passes of one swarm may run on different commits.
 	Commit string
 	// Origin, when set, is the repository the server resolved Commit from
-	// before the transaction (#228). The first start refuses with
+	// before the transaction (#228). The start refuses with
 	// ErrSwarmSourceChanged if the project repository is another by then.
 	Origin string
 	// Goal is the operator's task for the new pass (#242), required on every
@@ -127,11 +133,11 @@ type passPlan struct {
 // waiting. Every start names the goal of its pass (ValidSwarmGoal); the
 // first step of the pass keeps it. The first start takes the definition from
 // the catalog of the swarm's project, validates it as the runner would and
-// pins it with its identity and source; a restart reuses the pinned
-// snapshot. Every role of the graph must be bound to a running actor
-// (CheckSwarmRolesFit). All checks precede the first write and run in the
-// transaction that writes, so of concurrent starts exactly one succeeds. No
-// actor is created or touched.
+// pins it with its identity and the repository origin; a restart reuses the
+// pinned snapshot. Every pass pins its own commit (#229). Every role of the
+// graph must be bound to a running actor (CheckSwarmRolesFit). All checks
+// precede the first write and run in the transaction that writes, so of
+// concurrent starts exactly one succeeds. No actor is created or touched.
 func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(context.Context) bool) (Swarm, error) {
 	var started Swarm
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -153,7 +159,7 @@ func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(co
 			return err
 		}
 		if plan.attach {
-			if err := s.AttachSwarmGraph(ctx, w.ID, plan.graph, plan.def.Name, plan.def.Version, plan.def.Revision, plan.source); err != nil {
+			if err := s.AttachSwarmGraph(ctx, w.ID, plan.graph, plan.def.Name, plan.def.Version, plan.def.Revision, plan.source.Origin); err != nil {
 				return err
 			}
 		}
@@ -230,7 +236,8 @@ func (s *Store) manageableSwarm(ctx context.Context, swarmID, userID, operation 
 }
 
 // planPass проверяет запуск без записи: первый запуск берёт определение из
-// каталога, повторный — привязанный снимок роя.
+// каталога, повторный — привязанный снимок роя; источник прохода — каждый
+// раз из repository проекта и названного commit.
 func (s *Store) planPass(ctx context.Context, w Swarm, in SwarmStart) (passPlan, error) {
 	var plan passPlan
 	var err error
@@ -242,14 +249,22 @@ func (s *Store) planPass(ctx context.Context, w Swarm, in SwarmStart) (passPlan,
 	if err != nil {
 		return passPlan{}, err
 	}
+	if plan.source, err = s.startSource(ctx, w.ProjectID, in); err != nil {
+		return passPlan{}, err
+	}
+	// Акторы роя привязаны к его origin: проход в другом repository
+	// подтвердить им нечем.
+	if w.Graph != nil && plan.source.Origin != w.Source.Origin {
+		return passPlan{}, fmt.Errorf("%w: the swarm actors work in repository %s, the project repository is now %s; start the workflow in another swarm", ErrSwarmGraphPinned, w.Source.Origin, plan.source.Origin)
+	}
 	if plan.entry, err = pipeline.Begin(plan.doc); err != nil {
 		return passPlan{}, fmt.Errorf("%w: %v", ErrWorkflowGraphInvalid, err)
 	}
 	return plan, nil
 }
 
-// catalogPass — первый запуск: определение каталога своего проекта,
-// валидатор исполнителя и источник из repository проекта.
+// catalogPass — первый запуск: определение каталога своего проекта и
+// валидатор исполнителя.
 func (s *Store) catalogPass(ctx context.Context, w Swarm, in SwarmStart) (passPlan, error) {
 	if !validPipelineField(in.Definition) {
 		return passPlan{}, fmt.Errorf("%w: a definition name is required", ErrWorkflowDefinitionMissing)
@@ -266,15 +281,11 @@ func (s *Store) catalogPass(ctx context.Context, w Swarm, in SwarmStart) (passPl
 	if err != nil {
 		return passPlan{}, fmt.Errorf("%w: workflow %q: %v", ErrWorkflowGraphInvalid, def.Name, err)
 	}
-	source, err := s.startSource(ctx, w.ProjectID, in)
-	if err != nil {
-		return passPlan{}, err
-	}
-	return passPlan{doc: doc, attach: true, graph: graph, def: def, source: source}, nil
+	return passPlan{doc: doc, attach: true, graph: graph, def: def}, nil
 }
 
-// pinnedPass — повторный запуск на снимке первого: другое определение или
-// другой commit — отказ, а не тихая подмена.
+// pinnedPass — повторный запуск на снимке первого: другое определение —
+// отказ, а не тихая подмена.
 func pinnedPass(w Swarm, in SwarmStart) (passPlan, error) {
 	if in.Definition != w.DefinitionName {
 		return passPlan{}, fmt.Errorf("%w: the swarm runs workflow %q version %d revision %s; start %q in another swarm", ErrSwarmGraphPinned, w.DefinitionName, w.DefinitionVersion, w.DefinitionRevision, in.Definition)
@@ -284,9 +295,6 @@ func pinnedPass(w Swarm, in SwarmStart) (passPlan, error) {
 	if w.Source == nil {
 		return passPlan{}, fmt.Errorf("%w: the swarm graph has no source snapshot; start the workflow in a new swarm", ErrSwarmSourceInvalid)
 	}
-	if in.Commit != "" && in.Commit != w.Source.Commit {
-		return passPlan{}, fmt.Errorf("%w: the first start pinned commit %s", ErrSwarmGraphPinned, w.Source.Commit)
-	}
 	doc, err := executableGraph(w.Graph)
 	if err != nil {
 		return passPlan{}, fmt.Errorf("%w: workflow %q: %v", ErrWorkflowGraphInvalid, w.DefinitionName, err)
@@ -294,8 +302,7 @@ func pinnedPass(w Swarm, in SwarmStart) (passPlan, error) {
 	return passPlan{doc: doc}, nil
 }
 
-// startSource — снимок источника первого запуска: repository проекта и
-// названный commit. Без repository или без полного commit пиннить нечего.
+// startSource — источник прохода: repository проекта и названный commit. Без repository или без полного commit пиннить нечего.
 // Commit, который сервер разрешил до транзакции (#228), принадлежит
 // repository in.Origin: сменившийся с тех пор repository проекта — отказ, а не
 // снимок из commit одного repository и адреса другого.
@@ -311,7 +318,7 @@ func (s *Store) startSource(ctx context.Context, projectID string, in SwarmStart
 		return nil, fmt.Errorf("%w: the project repository changed while its branch was resolved; start again", ErrSwarmSourceChanged)
 	}
 	if in.Commit == "" {
-		return nil, fmt.Errorf("%w: the first start requires the commit to pin", ErrSwarmSourceInvalid)
+		return nil, fmt.Errorf("%w: the start requires the commit to pin", ErrSwarmSourceInvalid)
 	}
 	source, err := canonicalPipelineSource(&PipelineSource{Origin: origin, Commit: in.Commit})
 	if err != nil {
@@ -321,7 +328,8 @@ func (s *Store) startSource(ctx context.Context, projectID string, in SwarmStart
 }
 
 // beginPass открывает проход: первый шаг стартового узла получает
-// следующий номер роя и задачу прохода, шаги прошлых проходов не трогаются.
+// следующий номер роя, задачу и commit прохода, шаги прошлых проходов не
+// трогаются.
 // Шаг узла-человека
 // открывает свой запрос в той же транзакции, как у преемника в
 // progressPipeline, но без материала: предыдущий шаг роя принадлежит
@@ -332,7 +340,7 @@ func (s *Store) beginPass(ctx context.Context, swarmID, goal string, plan passPl
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0)+1 FROM swarm_steps WHERE swarm_id=?`, swarmID).Scan(&sequence); err != nil {
 		return err
 	}
-	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal) VALUES (?,?,?,?,?)`, swarmID, sequence, plan.entry.Next, plan.entry.NextState, goal); err != nil {
+	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal,source_commit) VALUES (?,?,?,?,?,?)`, swarmID, sequence, plan.entry.Next, plan.entry.NextState, goal, plan.source.Commit); err != nil {
 		return err
 	}
 	if plan.entry.NextState == "waiting" {

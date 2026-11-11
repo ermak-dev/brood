@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"brood.dev/go/brood/gitorigin"
 )
 
 // Swarm — строка таблицы swarms. State — состояние инфраструктуры
@@ -33,7 +35,8 @@ type Swarm struct {
 	DefinitionName     string
 	DefinitionVersion  int64
 	DefinitionRevision string
-	// Source — снимок источника запуска, заполняется чтением.
+	// Source — origin роя и commit его последнего прохода (#229), заполняется
+	// чтением; Commit пуст, пока проход не открыт.
 	Source *PipelineSource
 }
 
@@ -99,10 +102,11 @@ func (s *Store) GetSwarm(ctx context.Context, id string) (Swarm, error) {
 	return w, nil
 }
 
-// swarmSource читает снимок источника роя; отсутствие — не ошибка.
+// swarmSource читает origin роя и commit его последнего прохода; рой без
+// origin — не ошибка.
 func (s *Store) swarmSource(ctx context.Context, id string) *PipelineSource {
 	var origin, commit string
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT origin,commit_sha FROM pipeline_sources WHERE swarm_id=?`, id).Scan(&origin, &commit)
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT origin,COALESCE((SELECT source_commit FROM swarm_steps WHERE swarm_id=p.swarm_id AND source_commit IS NOT NULL ORDER BY sequence DESC LIMIT 1),'') FROM pipeline_sources p WHERE swarm_id=?`, id).Scan(&origin, &commit)
 	if err != nil {
 		return nil
 	}
@@ -213,10 +217,11 @@ func (s *Store) updateSwarm(ctx context.Context, id string, arg any, set string)
 }
 
 // AttachSwarmGraph привязывает к рою снимок графа вместе с личностью
-// определения и обязательным снимком источника (#206). Снимок
-// валидируется до записи и неизменяем после: повторная привязка,
-// замена и правка личности — отказ. Авторизация принадлежит вызывающему.
-func (s *Store) AttachSwarmGraph(ctx context.Context, swarmID string, graph []byte, defName string, defVer int64, defRev string, source *PipelineSource) error {
+// определения и обязательным origin источника (#206); commit закрепляет
+// каждый проход (#229). Снимок валидируется до записи и неизменяем после:
+// повторная привязка, замена и правка личности — отказ. Авторизация
+// принадлежит вызывающему.
+func (s *Store) AttachSwarmGraph(ctx context.Context, swarmID string, graph []byte, defName string, defVer int64, defRev string, origin string) error {
 	if !validPipelineField(swarmID) || len(graph) == 0 || len(graph) > MaxPipelineGraphBytes {
 		return errors.New("invalid swarm graph or swarm ID")
 	}
@@ -226,9 +231,9 @@ func (s *Store) AttachSwarmGraph(ctx context.Context, swarmID string, graph []by
 	if _, err := executableGraph(graph); err != nil {
 		return err
 	}
-	canonical, err := canonicalPipelineSource(source)
+	canonical, err := gitorigin.Canonical(origin)
 	if err != nil {
-		return err
+		return errors.New("invalid pipeline source origin")
 	}
 	return s.WithTx(ctx, func(ctx context.Context) (err error) {
 		if _, err = s.conn(ctx).ExecContext(ctx, `SAVEPOINT swarm_graph_attach`); err != nil {
@@ -249,7 +254,7 @@ func (s *Store) AttachSwarmGraph(ctx context.Context, swarmID string, graph []by
 		if !exists {
 			return fmt.Errorf("%w: swarm %q", ErrNotFound, swarmID)
 		}
-		if _, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_sources(swarm_id,origin,commit_sha) VALUES (?,?,?)`, swarmID, canonical.Origin, canonical.Commit); err != nil {
+		if _, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_sources(swarm_id,origin) VALUES (?,?)`, swarmID, canonical); err != nil {
 			return err
 		}
 		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET graph=?,execution='idle',definition_name=?,definition_version=?,definition_revision=?,updated_at=? WHERE id=? AND graph IS NULL`, graph, defName, defVer, defRev, nowRFC3339(), swarmID)

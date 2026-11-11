@@ -258,12 +258,19 @@ func TestSwarmStartStopWire(t *testing.T) {
 		t.Fatalf("answer after stop advanced the graph:\n%s\nwant\n%s", got, frozen)
 	}
 
-	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "release"})
+	// Повторный запуск на новом commit — проход на нём (#229).
+	next := strings.Repeat("b", 40)
+	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "release", "commit": next})
 	expectStatus(t, "restart", r, b, http.StatusOK)
-	if b["step"].(map[string]any)["sequence"] != float64(2) || b["source"].(map[string]any)["commit"] != startAPICommit {
+	if b["step"].(map[string]any)["sequence"] != float64(2) || b["source"].(map[string]any)["commit"] != next {
 		t.Fatalf("restart response: %v", b)
 	}
-	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "approve"})
+	if run := f.run(t); runNode(t, run, 0)["sourceCommit"] != startAPICommit || runNode(t, run, 1)["sourceCommit"] != next {
+		t.Fatalf("pass commits: %v", run)
+	}
+	r, b = f.stop(f.alice)
+	expectStatus(t, "stop the second pass", r, b, http.StatusOK)
+	r, b = f.start(f.alice, map[string]any{"goal": startAPIGoal, "definition": "approve", "commit": next})
 	expectStatus(t, "restart with another definition", r, b, http.StatusConflict)
 	if got := f.lifeState(t); got != life {
 		t.Fatalf("restart touched actors:\n%s\nwant\n%s", got, life)
