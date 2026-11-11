@@ -25,6 +25,13 @@ const cases = [
     page: `address-e2e.html?run=${run}#/swarms/s-docs`,
     expected: `PASS ${run}: opened`,
   })),
+  // #262: a reload keeps the query and hash of its address once the session is restored.
+  // A sign-in without a session returns to the address as well.
+  ...[
+    ['reload-swarm', '/swarms/s-docs?probe=1#step-2'],
+    ['reload-project', '/projects/p-brood?project=p-brood#catalog'],
+    ['sign-in', '/projects/p-brood?project=p-brood#catalog'],
+  ].map(([run, address]) => ({ page: `address-e2e.html?run=${run}#${address}`, expected: `PASS ${run}: opened` })),
 ];
 
 // bun run test:browser <substring> runs only the matching pages.

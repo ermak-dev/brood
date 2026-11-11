@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -13,13 +13,12 @@ import { INLINE_LOGO } from '@/assets/logoInline';
 import type { ApiError } from '@/types';
 import { LegacyBackendError } from '@/services/api/legacyBackendProbe';
 import { BroodAuthError } from '@/services/brood/session';
+import { returnAddress } from '@/router/returnAddress';
 import styles from './LoginPage.module.scss';
 
 /**
  * 将 API 错误转换为本地化的用户友好消息
  */
-type RedirectState = { from?: { pathname?: string } };
-
 function getLocalizedErrorMessage(error: unknown, t: (key: string) => string): string {
   if (error instanceof LegacyBackendError) return t('login.error_legacy_backend');
   // brood: a refusal of the brood sign-in itself, not of the management API.
@@ -89,7 +88,6 @@ function getLocalizedErrorMessage(error: unknown, t: (key: string) => string): s
 
 export function LoginPage() {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const location = useLocation();
   const { showNotification } = useNotificationStore();
   const language = useLanguageStore((state) => state.language);
@@ -149,8 +147,10 @@ export function LoginPage() {
     setError('');
     try {
       await login({ username, password });
+      // Адрес после входа выбирает переход ниже (isAuthenticated), как после
+      // восстановления; прежний navigate('/') здесь шёл за ним и уводил на
+      // корень, участника — к списку проектов (#240, #262).
       showNotification(t('common.connected_status'), 'success');
-      navigate('/', { replace: true });
     } catch (err: unknown) {
       const message = getLocalizedErrorMessage(err, t);
       setError(message);
@@ -158,7 +158,7 @@ export function LoginPage() {
     } finally {
       setLoading(false);
     }
-  }, [login, navigate, password, showNotification, t, username]);
+  }, [login, password, showNotification, t, username]);
 
   const handleSubmitKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
@@ -171,8 +171,8 @@ export function LoginPage() {
   );
 
   if (isAuthenticated && !autoLoading) {
-    const redirect = (location.state as RedirectState | null)?.from?.pathname || '/';
-    return <Navigate to={redirect} replace />;
+    // #262: весь адрес, с которого увёл ProtectedRoute, с query и hash.
+    return <Navigate to={returnAddress(location.state)} replace />;
   }
 
   if (autoLoading) {
