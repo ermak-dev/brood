@@ -176,12 +176,20 @@ func isLowerHex(text string) bool {
 	return true
 }
 
+// ArtifactInstaller installs one Bootstrap artifact read from stream. size and
+// digest (lowercase hex sha256) come from the server manifest: the installer
+// reads exactly size bytes and never publishes content whose sha256 differs
+// from digest.
+type ArtifactInstaller func(ctx context.Context, name string, stream io.Reader, size int64, digest string) error
+
 // FetchArtifacts скачивает манифест и все артефакты Bootstrap на проверенном
 // машинном маршруте сервера: без proxy и redirects, с Bearer-токеном актора.
 // Каждый артефакт стримится через установщик с проверкой ELF-магии и лимита
-// size+1; успех только когда установщик вернулся без ошибки, получил ровно
-// size байт и sha256 совпал. Причины отказов статичны: без тел и токенов.
-func FetchArtifacts(parent context.Context, cfg relay.ClientConfig, hosts []string, install func(context.Context, string, io.Reader, int64) error) error {
+// size+1; установщик получает size и sha256 манифеста и сверяет digest до
+// публикации (#265). Успех только когда установщик вернулся без ошибки,
+// получил ровно size байт и sha256 совпал. Причины отказов статичны: без тел
+// и токенов.
+func FetchArtifacts(parent context.Context, cfg relay.ClientConfig, hosts []string, install ArtifactInstaller) error {
 	fail := artifactFailure
 	route, err := newServerRoute(cfg)
 	if err != nil {
@@ -243,7 +251,7 @@ func fetchArtifactManifest(ctx context.Context, route serverRoute) (ArtifactMani
 
 // fetchArtifact стримит один артефакт через установщика, считая digest; успех
 // требует ELF-магию, ровно size байт у установщика и совпавший sha256.
-func fetchArtifact(ctx context.Context, route serverRoute, artifact Artifact, install func(context.Context, string, io.Reader, int64) error) error {
+func fetchArtifact(ctx context.Context, route serverRoute, artifact Artifact, install ArtifactInstaller) error {
 	target := *route.origin
 	target.Path = route.path("/api/proxmox/artifacts/") + "/" + artifact.Name
 	transport := route.transport(30 * time.Second)
@@ -273,7 +281,7 @@ func fetchArtifact(ctx context.Context, route serverRoute, artifact Artifact, in
 	if _, err := io.ReadFull(tee, magic); err != nil || string(magic) != "\x7fELF" {
 		return artifactFailure()
 	}
-	if err := install(ctx, artifact.Name, io.MultiReader(bytes.NewReader(magic), tee), artifact.Size); err != nil {
+	if err := install(ctx, artifact.Name, io.MultiReader(bytes.NewReader(magic), tee), artifact.Size, artifact.SHA256); err != nil {
 		return artifactFailure()
 	}
 	// Установщик обязан прочесть весь артефакт: добираем остаток лимита и

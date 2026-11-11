@@ -13,11 +13,11 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"reflect"
 	"strings"
 	"testing"
 
+	"brood.dev/go/brood/proxmox/guest"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -26,7 +26,7 @@ func TestProjectSecretColdStartup(t *testing.T) {
 	defer cancel()
 	network := newFake()
 	var events []string
-	d := dependencies{euid: func() int { return 0 }, artifacts: func(context.Context, relay.ClientConfig, []string, func(context.Context, string, io.Reader, int64) error) error {
+	d := dependencies{euid: func() int { return 0 }, artifacts: func(context.Context, relay.ClientConfig, []string, guest.ArtifactInstaller) error {
 		return nil
 	}, reexec: func([]string) error { return nil }, network: func(context.Context) (service, error) { events = append(events, "network"); return network, nil }, secrets: func(context.Context, relay.ClientConfig) error {
 		events = append(events, "secrets")

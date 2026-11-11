@@ -8,8 +8,9 @@ package guest
 // closed name list, 0 < size <= 512 MiB, lowercase hex64 digest, no trailing
 // documents, 16 KiB read limit). FetchArtifacts GETs the manifest and each
 // artifact on the verified server route without proxy or redirects, checks
-// the ELF magic, streams through sha256 into the installer and succeeds only
-// when the installer consumed exactly size bytes and the digest matches.
+// the ELF magic, streams through sha256 into the installer together with the
+// manifest size and digest and succeeds only when the installer consumed
+// exactly size bytes and the digest matches.
 // IMPLEMENTATION: httptest TLS server as Brood, recording installer.
 
 import (
@@ -129,14 +130,15 @@ func (s *artifactServer) requestsSnapshot() []string {
 }
 
 type artifactInstall struct {
-	name string
-	size int64
-	data []byte
+	name   string
+	size   int64
+	digest string
+	data   []byte
 }
 
 // recordInstall читает поток установки целиком, как настоящий установщик.
-func recordInstall(records *[]artifactInstall, fail bool) func(context.Context, string, io.Reader, int64) error {
-	return func(_ context.Context, name string, reader io.Reader, size int64) error {
+func recordInstall(records *[]artifactInstall, fail bool) ArtifactInstaller {
+	return func(_ context.Context, name string, reader io.Reader, size int64, digest string) error {
 		if fail {
 			return fmt.Errorf("install refused %s", name)
 		}
@@ -144,7 +146,7 @@ func recordInstall(records *[]artifactInstall, fail bool) func(context.Context, 
 		if err != nil {
 			return err
 		}
-		*records = append(*records, artifactInstall{name: name, size: size, data: data})
+		*records = append(*records, artifactInstall{name: name, size: size, digest: digest, data: data})
 		return nil
 	}
 }
@@ -233,7 +235,8 @@ func TestFetchArtifacts(t *testing.T) {
 		t.Fatalf("installs: %+v", records)
 	}
 	for i, want := range []string{"bro", "brood-guest", "claude"} {
-		if records[i].name != want || records[i].size != int64(len(files[want])) || string(records[i].data) != string(files[want]) {
+		sum := sha256.Sum256(files[want])
+		if records[i].name != want || records[i].size != int64(len(files[want])) || records[i].digest != hex.EncodeToString(sum[:]) || string(records[i].data) != string(files[want]) {
 			t.Fatalf("install %d: %+v want %s", i, records[i], want)
 		}
 	}
@@ -295,7 +298,7 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 	})
 	t.Run("install did not consume", func(t *testing.T) {
 		_, cfg := newFixture(t)
-		skipping := func(context.Context, string, io.Reader, int64) error { return nil }
+		skipping := func(context.Context, string, io.Reader, int64, string) error { return nil }
 		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, skipping))
 	})
 	t.Run("artifact status", func(t *testing.T) {
