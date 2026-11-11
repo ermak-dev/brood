@@ -12,7 +12,7 @@ sources:
     gitMetadata: true
   substrate:
     type: git
-    repository: git@git.ermak.dev:ermak/substrate.git
+    repository: https://github.com/ermak-dev/substrate.git
     revisionPin: SUBSTRATE_COMMIT
     destination: substrate
     gitMetadata: true

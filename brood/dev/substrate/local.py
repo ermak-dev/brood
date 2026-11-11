@@ -62,7 +62,7 @@ MARKERS = ("hack/kind.sh", "hack/install-ate-kind.sh", "cmd/kubectl-ate")
 # по digest: раскатка одного коммита brood всегда ставит один и тот же
 # Substrate. Новый Substrate -- правка pins.json после сверки DEPLOY с его
 # hack/install-ate-kind.sh; тот же pin использует Broodfile.
-REPOSITORY = "git@git.ermak.dev:ermak/substrate.git"
+REPOSITORY = "https://github.com/ermak-dev/substrate.git"
 COMMIT = json.loads(Path(__file__).parents[1].joinpath("pins.json").read_text())["SUBSTRATE_COMMIT"]
 
 

@@ -14,10 +14,13 @@ brood substrate uninstall  # удалить кластер вместе с да�
 ## Откуда Substrate
 
 Без `SUBSTRATE_SOURCE` команда `install` берёт проверенный форк
-`git@git.ermak.dev:ermak/substrate.git`, runtime commit закреплён ключом
+`https://github.com/ermak-dev/substrate.git`, runtime commit закреплён ключом
 `SUBSTRATE_COMMIT` в `brood/dev/pins.json` (его читает `local.COMMIT`).
-Доступ к приватному Git выполняет хостовый Git; ключи не копируются в образы
-или акторы. Свой клон лежит в каталоге данных
+Форк публичный: клон и сборка workbench обходятся без учётных данных, ключи
+не копируются в образы или акторы. Клон, заведённый до переезда форка, с
+origin `git@git.ermak.dev:ermak/substrate.git`, `install` отказывает как
+чужой; перевести его — `git -C <клон> remote set-url origin
+https://github.com/ermak-dev/substrate.git`. Свой клон лежит в каталоге данных
 пользователя, `$XDG_DATA_HOME/brood/substrate` (по умолчанию
 `~/.local/share/brood/substrate`), а не в рабочей копии brood: записи владения
 кластера в `<checkout>/bin/substrate` переживают джобу CI. `install` заводит
