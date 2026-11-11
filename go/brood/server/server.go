@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
 	"brood.dev/go/brood/kube"
@@ -56,6 +57,9 @@ type Server struct {
 	// actorGitDomain — домен Git-идентичности акторов (#249); пусто —
 	// идентичность гостю не отдаётся.
 	actorGitDomain string
+	// actorModels — модели Claude Code акторов (#263); пусто — гостю не
+	// отдаются, модель выбирает Claude Code.
+	actorModels actormodel.Models
 
 	managedLLM  http.Handler
 	adminModels *adminModelClient
@@ -110,7 +114,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("actor step recovery failed")
 	}
-	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain}
+	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.steps = newStepDispatcher(srv)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {

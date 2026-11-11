@@ -12,6 +12,7 @@ import (
 	"os"
 	"time"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -54,10 +55,11 @@ func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts 
 	}
 	fields := map[string]string{}
 	var identity gitidentity.Identity
+	var models actormodel.Models
 	for decoder.More() {
 		token, err := decoder.Token()
 		key, ok := token.(string)
-		if err != nil || !ok || (key != "origin" && key != "mode" && key != "gitIdentity") {
+		if err != nil || !ok || (key != "origin" && key != "mode" && key != "gitIdentity" && key != "models") {
 			return fail()
 		}
 		if _, exists := fields[key]; exists {
@@ -75,6 +77,15 @@ func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts 
 			fields[key] = ""
 			continue
 		}
+		if key == "models" {
+			// Сервер шлёт только заданные имена (#263): пустой объект и пустое
+			// имя — не его ответ, как и null.
+			if models, ok = decodeModels(raw); !ok {
+				return fail()
+			}
+			fields[key] = ""
+			continue
+		}
 		var value string
 		if json.Unmarshal(raw, &value) != nil {
 			return fail()
@@ -87,7 +98,7 @@ func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts 
 	if err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || !hasOrigin || !hasMode {
 		return fail()
 	}
-	origin := WorkspaceOrigin{Origin: fields["origin"], Mode: fields["mode"], GitIdentity: identity}
+	origin := WorkspaceOrigin{Origin: fields["origin"], Mode: fields["mode"], GitIdentity: identity, Models: models}
 	if ValidateWorkspaceOrigin(origin.Origin, origin.Mode, hosts) != nil || checkWorkspaceOrigin(origin) != nil {
 		return fail()
 	}
@@ -112,6 +123,36 @@ func decodeGitIdentity(raw json.RawMessage) (gitidentity.Identity, bool) {
 		return gitidentity.Identity{}, false
 	}
 	return identity, true
+}
+
+// decodeModels accepts one nonempty object of the model and smallModel strings,
+// each at most once and each a valid model name.
+func decodeModels(raw json.RawMessage) (actormodel.Models, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if first, err := decoder.Token(); err != nil || first != json.Delim('{') {
+		return actormodel.Models{}, false
+	}
+	names := map[string]string{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || (key != "model" && key != "smallModel") {
+			return actormodel.Models{}, false
+		}
+		if _, exists := names[key]; exists {
+			return actormodel.Models{}, false
+		}
+		token, err = decoder.Token()
+		name, ok := token.(string)
+		if err != nil || !ok || !actormodel.ValidName(name) {
+			return actormodel.Models{}, false
+		}
+		names[key] = name
+	}
+	if end, err := decoder.Token(); err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || len(names) == 0 {
+		return actormodel.Models{}, false
+	}
+	return actormodel.Models{Model: names["model"], Small: names["smallModel"]}, true
 }
 
 // RefreshWorkspaceOrigin stages the verified response for the UID 1000 wrapper.

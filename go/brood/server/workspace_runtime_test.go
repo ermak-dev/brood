@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/proxmox"
 	"brood.dev/go/brood/store"
 )
@@ -408,4 +409,48 @@ func TestGuestWorkspaceGitIdentity(t *testing.T) {
 	expectWorkspace(t, "no origin with domain", f.serve("GET", clone, nil, bearer(f.token(f.clone))), "", "")
 	setProjectRepository(t, f.ts, f.swarm, gitTestOrigin)
 	expectWorkspaceDenied(t, "wrong token with domain", f.serve("GET", clone, nil, bearer(strings.Repeat("A", 43))), http.StatusUnauthorized, f)
+}
+
+// FEATURE: Installation Claude Code models delivered with the workspace (#263).
+// SPEC: With BROOD_ACTOR_MODEL or BROOD_ACTOR_SMALL_MODEL set, the workspace
+// response carries models {model, smallModel} with only the set names, for an
+// actor with or without origin: Claude runs in every actor, a clone is not
+// needed. Without both settings the body is exactly {origin, mode} as before.
+// Denied responses never carry the models.
+func TestGuestWorkspaceActorModels(t *testing.T) {
+	f := workspaceSetup(t)
+	clone := workspacePath(f.clone)
+	expectWorkspace(t, "unset models", f.serve("GET", clone, nil, bearer(f.token(f.clone))), gitTestOrigin, "gateway")
+
+	body := func(what string) map[string]any {
+		t.Helper()
+		w := f.serve("GET", clone, nil, bearer(f.token(f.clone)))
+		var got map[string]any
+		if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || json.Unmarshal(w.Body.Bytes(), &got) != nil {
+			t.Fatalf("%s: status=%d header=%v body=%s", what, w.Code, w.Header(), w.Body.String())
+		}
+		return got
+	}
+	f.ts.srv.actorModels = actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}
+	both := map[string]any{"model": "glm-5.3", "smallModel": "glm-5.3-flash"}
+	if got, want := body("both"), map[string]any{"origin": gitTestOrigin, "mode": "gateway", "models": both}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("both models: %v; want %v", got, want)
+	}
+	f.ts.srv.actorModels = actormodel.Models{Small: "glm-5.3-flash"}
+	if got, want := body("small"), map[string]any{"origin": gitTestOrigin, "mode": "gateway", "models": map[string]any{"smallModel": "glm-5.3-flash"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("small model: %v; want %v", got, want)
+	}
+
+	// Без origin клона нет, но Claude запускается: модели идут и так.
+	f.ts.srv.actorModels = actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}
+	setProjectRepository(t, f.ts, f.swarm, "")
+	if got, want := body("no origin"), map[string]any{"origin": "", "mode": "", "models": both}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("models without origin: %v; want %v", got, want)
+	}
+	setProjectRepository(t, f.ts, f.swarm, gitTestOrigin)
+	denied := f.serve("GET", clone, nil, bearer(strings.Repeat("A", 43)))
+	expectWorkspaceDenied(t, "wrong token with models", denied, http.StatusUnauthorized, f)
+	if strings.Contains(denied.Body.String(), "glm-5.3") {
+		t.Fatalf("denied response carried the models: %s", denied.Body.String())
+	}
 }

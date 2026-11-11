@@ -247,7 +247,7 @@ type appLayout struct {
 func prepareProjectApp(l appLayout, warn io.Writer) ([]string, error) {
 	origin, err := readWorkspaceOrigin(l.Run, l.RunUID, l.RunGID)
 	if err != nil {
-		fmt.Fprintln(warn, "brood: workspace origin is unavailable; the first-start clone is skipped")
+		fmt.Fprintln(warn, "brood: workspace origin is unavailable; the first-start clone is skipped and Claude starts without installation models")
 	} else if err = cloneWorkspace(context.Background(), cloneSpec{Project: l.Project, Home: l.Home, Origin: origin.Origin, Mode: origin.Mode, Identity: origin.GitIdentity, Gateway: l.Gateway, Timeout: l.CloneTimeout}); err != nil {
 		fmt.Fprintf(warn, "brood: %s; Claude starts now and the clone is retried on the next start while the workspace is empty\n", err)
 	}
@@ -268,7 +268,10 @@ func prepareProjectApp(l appLayout, warn io.Writer) ([]string, error) {
 	if err := prepareClaudeConfig(l.Home, l.Project); err != nil {
 		fmt.Fprintf(warn, "brood: %s; Claude may stop on its first-run dialogs\n", err)
 	}
-	return env, nil
+	// Модели установки (#263) — после секретов: проектный секрет не назовётся
+	// ANTHROPIC_* (projectsecret их резервирует). Без проекции origin их нет,
+	// и Claude выбирает модель сам, как до #263.
+	return append(env, claudeModelEnv(origin.Models)...), nil
 }
 
 func missingCheckout(project string) bool {

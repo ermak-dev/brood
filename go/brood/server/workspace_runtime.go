@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/gitidentity"
 )
 
@@ -17,10 +18,13 @@ func publicWorkspacePath(path string) bool { return strings.HasPrefix(path, work
 // workspaceOrigin — ответ /api/proxmox/workspace: origin актора и его режим на
 // этот запрос, либо оба пустые. GitIdentity (#249) идёт только с origin и
 // только при настроенном BROOD_ACTOR_GIT_DOMAIN: без клона ей некуда писаться.
+// Models (#263) — модели Claude Code из настроек установки; идут и без origin:
+// Claude запускается в каждом акторе, клон ему не нужен.
 type workspaceOrigin struct {
 	Origin      string               `json:"origin"`
 	Mode        string               `json:"mode"`
 	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
+	Models      actormodel.Models    `json:"models,omitzero"`
 }
 
 // serveGuestWorkspace отдаёт root supervisor гостя источник клона workspace
@@ -53,6 +57,7 @@ func (s *Server) serveGuestWorkspace(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	body.Models = s.actorModels
 	data, err := json.Marshal(body)
 	if err != nil {
 		writeDetail(w, 503, "workspace origin delivery unavailable")

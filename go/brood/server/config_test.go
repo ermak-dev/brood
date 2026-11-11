@@ -4,7 +4,10 @@ package server
 
 import (
 	"errors"
+	"strings"
 	"testing"
+
+	"brood.dev/go/brood/actormodel"
 )
 
 func TestConfigRouterCredentials(t *testing.T) {
@@ -171,6 +174,38 @@ func TestConfigActorGitDomain(t *testing.T) {
 		var ce *ConfigError
 		if !errors.As(err, &ce) || ce.Setting != "BROOD_ACTOR_GIT_DOMAIN" {
 			t.Fatalf("%q accepted or misreported: %v", bad, err)
+		}
+	}
+}
+
+// FEATURE: Installation Claude Code models of actors (#263).
+// SPEC: BROOD_ACTOR_MODEL and BROOD_ACTOR_SMALL_MODEL are optional, each on
+// its own, and have no default; a value must be 1..256 bytes of printable
+// ASCII without spaces, otherwise the server refuses to start naming the
+// setting and not the value. Quotes are stripped like every .env value.
+func TestConfigActorModels(t *testing.T) {
+	load := func(values map[string]string) (Config, error) {
+		return LoadConfig(func(k string) string { return values[k] })
+	}
+	cfg, err := load(nil)
+	if err != nil || !cfg.ActorModels.IsZero() {
+		t.Fatalf("unset models: %+v %v", cfg.ActorModels, err)
+	}
+	cfg, err = load(map[string]string{"BROOD_ACTOR_MODEL": "'glm-5.3'", "BROOD_ACTOR_SMALL_MODEL": `"glm-5.3-flash"`})
+	if err != nil || cfg.ActorModels != (actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}) {
+		t.Fatalf("models: %+v %v", cfg.ActorModels, err)
+	}
+	cfg, err = load(map[string]string{"BROOD_ACTOR_SMALL_MODEL": "glm-5.3-flash"})
+	if err != nil || cfg.ActorModels != (actormodel.Models{Small: "glm-5.3-flash"}) {
+		t.Fatalf("small model alone: %+v %v", cfg.ActorModels, err)
+	}
+	for _, setting := range []string{"BROOD_ACTOR_MODEL", "BROOD_ACTOR_SMALL_MODEL"} {
+		for _, bad := range []string{"private model", "private\tmodel", "private-модель", "private-" + strings.Repeat("m", 256)} {
+			_, err := load(map[string]string{setting: bad})
+			var ce *ConfigError
+			if !errors.As(err, &ce) || ce.Setting != setting || strings.Contains(err.Error(), "private") {
+				t.Fatalf("%s=%q accepted or misreported: %v", setting, bad, err)
+			}
 		}
 	}
 }
