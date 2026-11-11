@@ -369,8 +369,9 @@ describe('selected node', () => {
     expect(html).not.toContain('Approve the proposal?');
   });
 
-  test('a human node shows its question; the gate form appears only on that node', () => {
-    const gate = createElement('form', { 'data-gate': 'yes' });
+  // #259: the card of the request at its node carries no form; the one form is in the inbox.
+  test('a human node shows its question; the request card appears only on that node', () => {
+    const gate = createElement('article', { 'data-gate': 'yes' });
     expect(render({ selected: 'decision', gateNode: 'decision', gate })).toContain('data-gate');
     expect(render({ selected: 'decision', gateNode: 'decision', gate })).toContain(
       'Approve the proposal?'

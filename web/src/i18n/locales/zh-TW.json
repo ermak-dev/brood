@@ -3313,6 +3313,7 @@
       "no": "否"
     },
     "submit": "送出回答",
+    "answer_above": "在上方回答",
     "sent": "回答已記錄。",
     "refused": "未被接受：{{reason}}",
     "answer": "回答",

@@ -3288,6 +3288,7 @@
       "no": "No"
     },
     "submit": "Send answer",
+    "answer_above": "Answer above",
     "sent": "Answer recorded.",
     "refused": "Not accepted: {{reason}}",
     "answer": "Answer",

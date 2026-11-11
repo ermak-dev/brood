@@ -2,7 +2,8 @@
 // SPEC: A node request routes the graph only through one of its options,
 // with an optional comment; an actor request never routes: its choice or
 // confirmation is the answer text. Open requests come first, answered ones
-// stay as history with the label that was chosen. Only managers of an
+// stay as history with the label that was chosen; a request answered on the
+// page keeps its place among the open ones (#259). Only managers of an
 // active swarm answer; a failed delivery to an actor can be retried. Every
 // key of the request inbox exists in all six locales.
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -179,14 +180,37 @@ describe('inbox order', () => {
       actorAsk({ id: 'open-old', createdAt: '2026-11-10T08:00:00Z' }),
       actorAsk({ id: 'answered-new', state: 'answered', answeredAt: '2026-11-10T08:30:00Z' }),
     ];
-    const { open, history } = inboxSections(requests);
+    const { open, current, history } = inboxSections(requests);
     expect(open.map((request) => request.id)).toEqual(['open-old', 'open-new']);
+    expect(current).toEqual(open);
     expect(history.map((request) => request.id)).toEqual([
       'answered-new',
       'cancelled',
       'answered-old',
     ]);
-    expect(inboxSections(null)).toEqual({ open: [], history: [] });
+    expect(inboxSections(null)).toEqual({ open: [], current: [], history: [] });
+  });
+
+  // #259: the inbox is the one place to answer. A request answered on this
+  // page keeps its place among the open ones, so its confirmation is not
+  // folded away into the history; the open count still counts only the open.
+  test('a request answered on this page keeps its place, out of the history', () => {
+    const requests = [
+      nodeAsk({ id: 'open-new', createdAt: '2026-11-10T09:00:00Z' }),
+      nodeAsk({
+        id: 'answered-here',
+        state: 'answered',
+        createdAt: '2026-11-10T08:30:00Z',
+        answeredAt: '2026-11-10T09:10:00Z',
+      }),
+      actorAsk({ id: 'open-old', createdAt: '2026-11-10T08:00:00Z' }),
+      nodeAsk({ id: 'answered-old', state: 'answered', answeredAt: '2026-11-09T10:00:00Z' }),
+    ];
+    const ids = (list: SwarmRequest[]) => list.map((request) => request.id);
+    const sections = inboxSections(requests, ['answered-here']);
+    expect(ids(sections.open)).toEqual(['open-old', 'open-new']);
+    expect(ids(sections.current)).toEqual(['open-old', 'answered-here', 'open-new']);
+    expect(ids(sections.history)).toEqual(['answered-old']);
   });
 });
 
