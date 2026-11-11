@@ -1,17 +1,18 @@
 // FEATURE: A project is the only global context; swarms are not globally selected.
-// SPEC: Admins see every section; ordinary users see only projects, swarms, templates and actors.
+// SPEC: Admins see every section; ordinary users see only the project overview at the
+// root (#197), projects, swarms, templates and actors.
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { visibleAccessPath } from '@/features/access/permissions';
 const source = (path: string) => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8');
 
 test('ordinary navigation is exactly the requested four resource sections', () => {
-  for (const path of ['/projects', '/swarms', '/actors', '/templates']) {
+  for (const path of ['/', '/projects', '/swarms', '/actors', '/templates']) {
     expect(visibleAccessPath(path, false)).toBe(true);
     expect(visibleAccessPath(path, true)).toBe(true);
   }
   for (const path of [
-    '/',
+    '/dashboard',
     '/policy',
     '/users',
     '/permissions',

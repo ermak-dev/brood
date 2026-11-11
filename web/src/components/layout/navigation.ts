@@ -6,6 +6,7 @@ import {
   IconSidebarDashboard,
   IconSidebarLogs,
   IconSidebarOauth,
+  IconSidebarOverview,
   IconSidebarPlugins,
   IconSidebarPolicy,
   IconSidebarProjectList,
@@ -54,11 +55,18 @@ export interface NavSection {
 // установки, администрирование, AI-шлюз и сама система. Видимость решает
 // visibleAccessPath: участнику остаются проект с его ресурсами и каталог
 // проектов, остальное — администратору; сервер проверяет каждый запрос.
+// Обзор проекта открывает панель (#197), статистика шлюза живёт в его группе.
 const sections = (plugins: boolean): NavSection[] => [
   {
     id: 'project',
     labelKey: 'nav_groups.project',
     entries: [
+      {
+        path: '/',
+        labelKey: 'nav.overview',
+        metaKey: 'nav_meta.overview',
+        icon: IconSidebarOverview,
+      },
       {
         path: '/project',
         labelKey: 'nav.project',
@@ -117,8 +125,8 @@ const sections = (plugins: boolean): NavSection[] => [
     labelKey: 'nav_groups.gateway',
     entries: [
       {
-        path: '/',
-        labelKey: 'nav.overview',
+        path: '/dashboard',
+        labelKey: 'nav.gateway_dashboard',
         metaKey: 'nav_meta.dashboard',
         icon: IconSidebarDashboard,
       },

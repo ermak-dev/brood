@@ -306,7 +306,8 @@
     "worker_pools": "워커 풀",
     "project": "프로젝트",
     "overview": "개요",
-    "waiting_swarms": "답변 대기: {{count}}"
+    "waiting_swarms": "답변 대기: {{count}}",
+    "gateway_dashboard": "게이트웨이 통계"
   },
   "nav_groups": {
     "project": "프로젝트",
@@ -320,7 +321,7 @@
     "control": "제어"
   },
   "nav_meta": {
-    "dashboard": "운영 개요",
+    "dashboard": "트래픽, 제공자, 자격 증명",
     "quick_start": "APIKEY.FUN 설정",
     "ai_providers": "업스트림 모델 라우팅",
     "auth_files": "인증 파일 및 자격 증명",
@@ -337,7 +338,8 @@
     "workers": "actor를 호스팅하는 풀",
     "policy": "역할과 주체",
     "worker_pools": "워커 용량을 제공할 풀을 만드세요.",
-    "project": "현재 프로젝트 정보"
+    "project": "현재 프로젝트 정보",
+    "overview": "스웜, 실행, 처리할 일"
   },
   "dashboard": {
     "hero_verdict_good": "모든 시스템 정상",
@@ -3394,5 +3396,49 @@
     "workers": "워커",
     "no_workers": "이 풀에 워커가 없습니다",
     "workers_failed": "워커를 읽지 못했습니다: {{reason}}"
+  },
+  "project_overview": {
+    "title": "개요",
+    "details": "프로젝트 세부 정보",
+    "choose_title": "프로젝트 선택",
+    "choose_hint": "개요는 한 프로젝트의 스웜, 실행, 워크플로를 보여 줍니다. 여기서 또는 헤더의 프로젝트 전환기에서 선택하세요.",
+    "project_swarms": "스웜: {{count}}",
+    "none_title": "아직 프로젝트가 없습니다",
+    "none_admin": "프로젝트에서 프로젝트를 만들고 구성원을 추가하면 스웜과 실행이 여기에 표시됩니다.",
+    "none_member": "아직 열람할 수 있는 프로젝트가 없습니다. 관리자에게 프로젝트에 추가해 달라고 요청하세요.",
+    "open_projects": "프로젝트 열기",
+    "summary_label": "운영자를 기다리는 항목",
+    "waiting": "처리 대기",
+    "open_requests": "미답변 질문: {{count}}",
+    "undelivered": "전달되지 않은 답변",
+    "undelivered_hint": "스웜 페이지에서 전달을 다시 시도하세요",
+    "undelivered_unknown": "이 서버는 이를 집계하지 않습니다",
+    "running": "실행 중",
+    "running_hint": "진행 중인 실행",
+    "stuck": "멈춤",
+    "stuck_hint": "스웜 페이지에 단계와 원인이 표시됩니다",
+    "unknown_swarms": "실행 요약이 없는 스웜: {{count}}",
+    "swarms_hint": "각 스웜이 지금 하는 일입니다. 스웜의 실행이 곧 그 실행 상태이며, 그래프와 질문, 단계 기록은 스웜 페이지에 있습니다.",
+    "no_swarms": "아직 스웜이 없습니다",
+    "no_swarms_hint": "스웜은 워크플로의 Actor와 그 실행을 담습니다. 스웜 목록에서 만드세요.",
+    "open_swarms": "스웜으로 이동",
+    "hidden_swarms": "여기에 표시되지 않음: {{count}}. 스웜 목록에 모두 있습니다.",
+    "refresh_failed": "스웜 목록을 새로 고칠 수 없습니다: {{reason}}",
+    "no_summary": "서버가 이 스웜의 실행 요약을 보내지 않았습니다",
+    "undelivered_answers": "전달되지 않은 답변: {{count}}",
+    "swarm_objects": "스웜의 Actor와 템플릿",
+    "workflows": "워크플로 정의",
+    "workflows_hint": "bro build가 게시한 정의입니다. 스웜의 첫 시작이 그중 하나를 고정합니다.",
+    "catalog_link": "카탈로그의 그래프",
+    "capacity": "용량",
+    "cpu": "CPU",
+    "memory": "메모리",
+    "used_of": "{{used}} / {{limit}}",
+    "used_unlimited": "{{used}}, 제한 없음",
+    "limit_only": "한도 {{limit}}",
+    "members": "구성원",
+    "members_count": "구성원: {{count}}",
+    "more_members": "프로젝트 페이지에 {{count}}명 더 있음",
+    "no_members": "아직 구성원이 없습니다"
   }
 }

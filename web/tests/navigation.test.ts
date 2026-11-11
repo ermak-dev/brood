@@ -4,6 +4,8 @@
 // system. Each object type has its own icon. Members see the same sections as
 // before. The work of a swarm lives on its page (#217): no menu entry or link
 // leads to the old Workflows and Pipelines addresses, which only redirect.
+// The start page is the overview of the active project (#197), open to
+// members; the gateway statistics live in the gateway group.
 import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -32,7 +34,7 @@ const layout = (administrator: boolean, plugins: boolean) =>
     section.entries.map((entry) => entry.path),
   ]);
 
-const projectLevel = ['project', ['/project', '/swarms', '/actors', '/templates']];
+const projectLevel = ['project', ['/', '/project', '/swarms', '/actors', '/templates']];
 
 describe('navigation groups', () => {
   test('an administrator sees every object level in order', () => {
@@ -40,7 +42,7 @@ describe('navigation groups', () => {
       projectLevel,
       ['infrastructure', ['/worker-pools', '/workers', '/substrate-policy']],
       ['administration', ['/projects', '/users']],
-      ['gateway', ['/', '/ai-providers', '/auth-files', '/oauth', '/quota']],
+      ['gateway', ['/dashboard', '/ai-providers', '/auth-files', '/oauth', '/quota']],
       ['system', ['/logs', '/config', '/plugins', '/plugin-store', '/system']],
     ]);
   });
@@ -122,6 +124,8 @@ describe('navigation groups', () => {
       }
     }
     expect(routes).toContain("path: '/project', element: <ProjectDetailPage />");
+    expect(routes).toContain("path: '/', element: <ProjectOverviewPage />");
+    expect(routes).toContain("path: '/dashboard', element: <DashboardPage />");
     expect(source('components/layout/MainLayout.tsx')).toContain('navSections({');
   });
 });
@@ -141,6 +145,7 @@ describe('member visibility', () => {
   // переадресации на рой, а не упала в список проектов.
   test('the active project and the old run addresses are open to members', () => {
     for (const path of [
+      '/',
       '/project',
       '/workflows',
       '/workflows/runs/:id',
@@ -159,7 +164,6 @@ describe('member visibility', () => {
       '/substrate-policy',
       '/users',
       '/projects/p/members',
-      '/',
       '/dashboard',
       '/ai-providers',
       '/auth-files',

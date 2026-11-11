@@ -306,7 +306,8 @@
     "worker_pools": "Worker pools",
     "project": "Project",
     "overview": "Overview",
-    "waiting_swarms": "Waiting for an answer: {{count}}"
+    "waiting_swarms": "Waiting for an answer: {{count}}",
+    "gateway_dashboard": "Gateway statistics"
   },
   "nav_groups": {
     "project": "Project",
@@ -320,7 +321,7 @@
     "control": "Control"
   },
   "nav_meta": {
-    "dashboard": "Operations overview",
+    "dashboard": "Traffic, providers and credentials",
     "quick_start": "APIKEY.FUN setup",
     "ai_providers": "Upstream model routing",
     "auth_files": "Auth files & credentials",
@@ -337,7 +338,8 @@
     "workers": "The pool hosting actors",
     "policy": "Roles and principals",
     "worker_pools": "Create a pool to provide worker capacity.",
-    "project": "Current project details"
+    "project": "Current project details",
+    "overview": "Swarms, runs and what needs you"
   },
   "dashboard": {
     "hero_verdict_good": "All systems steady",
@@ -3394,5 +3396,49 @@
     "workers": "Workers",
     "no_workers": "The pool has no workers",
     "workers_failed": "Workers could not be read: {{reason}}"
+  },
+  "project_overview": {
+    "title": "Overview",
+    "details": "Project details",
+    "choose_title": "Choose a project",
+    "choose_hint": "The overview shows the swarms, runs and workflows of one project. Choose it here or in the project switcher of the header.",
+    "project_swarms": "Swarms: {{count}}",
+    "none_title": "No projects yet",
+    "none_admin": "Create a project and add its members in Projects; its swarms and runs then appear here.",
+    "none_member": "No project is open to you yet. Ask an administrator to add you to a project.",
+    "open_projects": "Open Projects",
+    "summary_label": "What waits for the operator",
+    "waiting": "Waiting for you",
+    "open_requests": "Open questions: {{count}}",
+    "undelivered": "Undelivered answers",
+    "undelivered_hint": "Retry the delivery on the swarm page",
+    "undelivered_unknown": "This server does not count them",
+    "running": "Running",
+    "running_hint": "Runs in progress",
+    "stuck": "Stuck",
+    "stuck_hint": "The swarm page names the step and the cause",
+    "unknown_swarms": "Swarms without an execution summary: {{count}}",
+    "swarms_hint": "What each swarm is doing now. A swarm's run is its execution: the graph, the questions and the step history are on the swarm page.",
+    "no_swarms": "No swarms yet",
+    "no_swarms_hint": "A swarm holds the actors of a workflow and its run. Create one in the swarm list.",
+    "open_swarms": "Go to swarms",
+    "hidden_swarms": "Not shown here: {{count}}. The swarm list has all of them.",
+    "refresh_failed": "The swarm list could not be refreshed: {{reason}}",
+    "no_summary": "The server sent no execution summary for this swarm",
+    "undelivered_answers": "Undelivered answers: {{count}}",
+    "swarm_objects": "Actors and templates of the swarm",
+    "workflows": "Workflows",
+    "workflows_hint": "Definitions published by bro build. A swarm's first start pins one of them.",
+    "catalog_link": "Graphs in the catalog",
+    "capacity": "Capacity",
+    "cpu": "CPU",
+    "memory": "Memory",
+    "used_of": "{{used}} of {{limit}}",
+    "used_unlimited": "{{used}}, no limit",
+    "limit_only": "Limit {{limit}}",
+    "members": "Members",
+    "members_count": "Members: {{count}}",
+    "more_members": "And {{count}} more on the project page",
+    "no_members": "No members yet"
   }
 }
