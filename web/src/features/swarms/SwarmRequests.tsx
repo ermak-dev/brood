@@ -27,10 +27,12 @@ import local from './SwarmRequests.module.scss';
 /** Инбокс роя: открытые запросы сверху и целиком, ниже отвеченные и
  * закрытые — историей, свёрнутой в счётчик (#253). Единственное место
  * ответа (#259): запрос, на который отвечали здесь, остаётся на своём
- * месте с подтверждением или отказом до ухода со страницы. Узел запроса —
- * кнопкой, она выбирает его на графе. Пояснения у секции нет: карточка
- * сама говорит, кто спрашивает, а место на первом экране нужно вопросу и
- * графу. */
+ * месте с подтверждением или отказом до ухода со страницы. Ответ, которого
+ * актор не получил, в историю не уходит (#264): он стоит группой «Доставка
+ * требует внимания» под открытыми, с повтором под рукой, а шапка считает
+ * его рядом с открытыми. Узел запроса — кнопкой, она выбирает его на
+ * графе. Пояснения у секции нет: карточка сама говорит, кто спрашивает, а
+ * место на первом экране нужно вопросу и графу. */
 export function RequestInbox({
   model,
   onSelectNode,
@@ -39,7 +41,11 @@ export function RequestInbox({
   onSelectNode?: (node: string) => void;
 }) {
   const { t } = useTranslation();
-  const { open, current, history } = inboxSections(model.requests, model.handledHere);
+  const { open, current, attention, undelivered, history } = inboxSections(
+    model.requests,
+    model.handledHere,
+    model.retriedHere
+  );
   const card = (request: SwarmRequest) => (
     <li key={request.id}>
       <RequestCard model={model} request={request} onSelectNode={onSelectNode} />
@@ -49,10 +55,19 @@ export function RequestInbox({
     <Section
       title={t('swarm_requests.title')}
       action={
-        open.length > 0 ? (
-          <StatusBadge tone="attention">
-            {t('swarm_requests.open_count', { count: open.length })}
-          </StatusBadge>
+        open.length > 0 || undelivered.length > 0 ? (
+          <span className={local.counts}>
+            {open.length > 0 && (
+              <StatusBadge tone="attention">
+                {t('swarm_requests.open_count', { count: open.length })}
+              </StatusBadge>
+            )}
+            {undelivered.length > 0 && (
+              <StatusBadge tone="attention">
+                {t('swarm_requests.undelivered_count', { count: undelivered.length })}
+              </StatusBadge>
+            )}
+          </span>
         ) : undefined
       }
     >
@@ -68,6 +83,14 @@ export function RequestInbox({
         )}
         {open.length === 0 && <p className={page.hint}>{t('swarm_requests.none_open')}</p>}
         {current.length > 0 && <ol className={local.list}>{current.map(card)}</ol>}
+        {attention.length > 0 && (
+          <Section
+            title={t('swarm_requests.attention_title')}
+            hint={t('swarm_requests.attention_hint')}
+          >
+            <ol className={local.list}>{attention.map(card)}</ol>
+          </Section>
+        )}
         {history.length > 0 && (
           <details className={local.history}>
             <summary className={local.historySummary}>
@@ -141,6 +164,7 @@ export function RequestCard({
       ref={cardRef}
       className={atNode ? `${local.card} ${local.embedded}` : local.card}
       data-state={request.state}
+      data-undelivered={deliveryRetryable(request) ? request.delivery : undefined}
       aria-labelledby={atNode ? undefined : questionId}
       aria-label={atNode ? request.question : undefined}
     >
@@ -422,6 +446,9 @@ function Delivery({
   const delivery = request.delivery ?? '';
   const unconfirmed = delivery === 'unconfirmed';
   const twice = Boolean(retry) && retryMayDuplicate(request);
+  // Причина прошлой неудачи не относится к доставленному ответу: карточка
+  // остаётся на виду и после доставки, замеченной опросом (#264).
+  const why = delivery === 'delivered' ? undefined : reason;
 
   const send = async () => {
     if (!retry || retrying) return;
@@ -446,10 +473,10 @@ function Delivery({
       {unconfirmed ? (
         <span className={local.unconfirmed}>
           <span>{t('swarm_requests.unconfirmed_note')}</span>
-          {reason && <span className={local.reason}>{reason}</span>}
+          {why && <span className={local.reason}>{why}</span>}
         </span>
       ) : (
-        reason && <span>{reason}</span>
+        why && <span>{why}</span>
       )}
       {retry && (
         <Button

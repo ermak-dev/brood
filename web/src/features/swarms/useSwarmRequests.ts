@@ -47,6 +47,9 @@ export interface RequestInboxModel {
    * отклонён): в инбоксе они остаются на своём месте, а не уходят в
    * свёрнутую историю вместе с итогом. */
   handledHere: string[];
+  /** Запросы, доставку ответа которых повторяли на этой странице: в группе
+   * недоставленных они остаются и после удачи, до ухода со страницы (#264). */
+  retriedHere: string[];
   /** Карточка инбокса, которой забрать фокус, и куда в ней. */
   focus: RequestFocus | null;
   focused: () => void;
@@ -65,6 +68,7 @@ export function useSwarmRequests(
   const [error, setError] = useState('');
   const [notices, setNotices] = useState<Record<string, RequestNotice>>({});
   const [handledHere, setHandledHere] = useState<string[]>([]);
+  const [retriedHere, setRetriedHere] = useState<string[]>([]);
   const [focus, setFocus] = useState<RequestFocus | null>(null);
   // Номер последнего чтения: чтение, начатое до ответа, не возвращает
   // отвеченный запрос в открытые.
@@ -127,6 +131,9 @@ export function useSwarmRequests(
 
   const deliver = async (request: SwarmRequest) => {
     note(request.id, {});
+    // Удачный повтор не уносит карточку в свёрнутую историю вместе с
+    // фокусом: новое состояние доставки остаётся на месте (#264).
+    setRetriedHere((ids) => (ids.includes(request.id) ? ids : [...ids, request.id]));
     try {
       const recorded = await requestsApi.deliver(swarmId, request.id);
       settle(recorded);
@@ -144,6 +151,7 @@ export function useSwarmRequests(
     canAnswer: canAnswerRequests(swarm),
     notices,
     handledHere,
+    retriedHere,
     focus,
     focused,
     answer,

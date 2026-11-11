@@ -55,6 +55,24 @@
   &[data-state='open'] {
     border-left: 3px solid var(--amber-color);
   }
+
+  /* Ответ, которого актор не получил (#264), тоже ждёт оператора: левая
+   * полоса, как у открытого запроса, цвета провала; у неподтверждённой
+   * доставки пунктир цвета внимания: знак неизвестного исхода (#261). */
+  &[data-undelivered] {
+    border-left: 3px solid var(--viz-failure);
+  }
+
+  &[data-undelivered='unconfirmed'] {
+    border-left: 3px dashed var(--amber-color);
+  }
+}
+
+/* Счётчики шапки инбокса: открытые и недоставленные (#264). */
+.counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 /* Карточка у узла стоит внутри карточки узла: без второй рамки. */
@@ -78,8 +96,13 @@
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 14%, transparent);
   }
 
-  &[data-state='open']:focus-within {
+  &[data-state='open']:focus-within,
+  &[data-undelivered='unconfirmed']:focus-within {
     border-left-color: var(--amber-color);
+  }
+
+  &[data-undelivered='failed']:focus-within {
+    border-left-color: var(--viz-failure);
   }
 }
 

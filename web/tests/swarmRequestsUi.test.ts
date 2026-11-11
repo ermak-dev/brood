@@ -7,7 +7,9 @@
 // the history shows the chosen label. A failed delivery shows its reason and
 // a retry; an unconfirmed one (#261) says the answer may have reached the
 // actor and asks before a retry that may deliver it twice; after a retry
-// the card shows the new state and reason. A refusal shows the server reason. The node request also opens at
+// the card shows the new state and reason. An undelivered answer stays in
+// sight under its own heading and is counted in the head of the inbox until
+// a delivery succeeds (#264). A refusal shows the server reason. The node request also opens at
 // its node on the graph through the same card, and the page answers through
 // the swarm request API instead of the old pipeline-run route. The form is
 // one, in the inbox (#259): the card at the node leads to it and, once
@@ -99,6 +101,7 @@ const model = (over: Partial<RequestInboxModel> = {}, recorded?: Recorded): Requ
   canAnswer: true,
   notices: {},
   handledHere: [],
+  retriedHere: [],
   focus: null,
   focused: () => {},
   answer: async (request, body) => {
@@ -117,6 +120,14 @@ const wrap = (node: ReactNode) =>
   createElement(I18nextProvider, { i18n }, createElement(MemoryRouter, null, node));
 const markup = (node: ReactNode) => renderToStaticMarkup(wrap(node));
 const visibleText = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+/** Подпись счётчика с любым числом: шаблон локали, где вместо {{count}} цифры. */
+const counted = (template: string) =>
+  new RegExp(
+    template
+      .split('{{count}}')
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\d+')
+  );
 
 /** Живой рендер в happy-dom: клики и отправка формы, как в браузере. */
 async function mount(node: ReactNode): Promise<{ container: HTMLElement; root: Root }> {
@@ -676,6 +687,20 @@ describe('delivery to the actor', () => {
     }
   });
 
+  // #264: the card stays in sight after its delivery succeeds elsewhere (a
+  // poll); the reason of an earlier failed retry is not the reason of a
+  // delivered answer and is not shown next to it.
+  test('a delivered answer drops the reason of an earlier failed retry', () => {
+    const html = markup(
+      createElement(RequestCard, {
+        model: model({ notices: { [failed.id]: { deliveryError: 'delivery unavailable' } } }),
+        request: { ...failed, delivery: 'delivered' },
+      })
+    );
+    expect(visibleText(html)).toContain(t.delivery_states.delivered);
+    expect(visibleText(html)).not.toContain('delivery unavailable');
+  });
+
   test('a delivered answer offers no retry', () => {
     const html = markup(
       createElement(RequestCard, { model: model(), request: { ...failed, delivery: 'delivered' } })
@@ -736,9 +761,10 @@ describe('retry through the swarm request API', () => {
   async function retryConfirmed() {
     const view = await mount(createElement(LiveInbox));
     await settle();
-    const history = view.container.querySelector('details');
-    if (history) history.open = true;
-    await click(buttonNamed(view.container, t.retry_delivery));
+    // #264: the undelivered answer is in sight, not folded into the history.
+    const retry = buttonNamed(view.container, t.retry_delivery);
+    expect(retry?.closest('details:not([open])')).toBeNull();
+    await click(retry);
     await settle();
     await confirmDialog();
     await settle(400);
@@ -778,10 +804,106 @@ describe('retry through the swarm request API', () => {
       expect(focused?.tagName).toBe('DD');
       expect(view.container.contains(focused)).toBe(true);
       expect(focused?.textContent).toContain(t.delivery_states.delivered);
+      // #264: delivered, the card keeps its place until the page is left, and
+      // the head no longer counts it.
+      expect(focused?.closest('details:not([open])')).toBeNull();
+      expect(text).not.toMatch(counted(t.undelivered_count));
     } finally {
       await unmount(view);
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+// #264: an answer the actor did not get stays in sight until a delivery
+// succeeds: under its own heading between the open requests and the folded
+// history, with its retry at hand, and the head of the inbox counts it next
+// to the open ones. A delivered answer is history, as before.
+describe('undelivered answers', () => {
+  const answered = {
+    state: 'answered',
+    answeredAt: '2026-11-10T08:30:00Z',
+    answeredBy: 'alice',
+    response: 'Postgres',
+  } as const;
+  const failed = actorAsk({
+    ...answered,
+    id: 'req-actor-failed',
+    question: 'Which queue should the worker use?',
+    delivery: 'failed',
+  });
+  const unconfirmed = actorAsk({
+    ...answered,
+    id: 'req-actor-unconfirmed',
+    question: 'Which region hosts the database?',
+    delivery: 'unconfirmed',
+  });
+  const delivered = actorAsk({
+    ...answered,
+    id: 'req-actor-delivered',
+    question: 'Which cache should the proposal keep?',
+    delivery: 'delivered',
+  });
+  const heading = new RegExp(`<h\\d[^>]*>${t.attention_title}</h\\d>`);
+  const badge = (text: string) => new RegExp(`data-tone="attention"[^>]*>${text}<`);
+
+  test('an undelivered answer stays in sight under its own heading, out of the history', () => {
+    const html = markup(
+      createElement(RequestInbox, {
+        model: model({ requests: [nodeAsk(), failed, unconfirmed, delivered] }),
+      })
+    );
+    const fold = html.indexOf(`>${t.history_count.replace('{{count}}', '1')}</summary>`);
+    expect(fold).toBeGreaterThan(0);
+    const inSight = html.slice(0, html.lastIndexOf('<details', fold));
+    const title = inSight.match(heading);
+    expect(title).not.toBeNull();
+    const start = inSight.indexOf(title?.[0] ?? '');
+    // The open request first, then the group with both undelivered answers.
+    expect(inSight.indexOf('Approve the proposal?')).toBeLessThan(start);
+    const group = inSight.slice(start);
+    expect(visibleText(group)).toContain(t.attention_hint);
+    expect(visibleText(group)).toContain('Which queue should the worker use?');
+    expect(visibleText(group)).toContain('Which region hosts the database?');
+    expect(group.split(`>${t.retry_delivery}<`).length - 1).toBe(2);
+    // The delivered answer alone is folded into the history.
+    const history = visibleText(html.slice(fold));
+    expect(history).toContain('Which cache should the proposal keep?');
+    expect(history).not.toContain('Which queue should the worker use?');
+    expect(history).not.toContain('Which region hosts the database?');
+    // The head counts the open request and the undelivered answers apart.
+    expect(html).toMatch(badge(t.open_count.replace('{{count}}', '1')));
+    expect(html).toMatch(badge(t.undelivered_count.replace('{{count}}', '2')));
+  });
+
+  test('an undelivered answer given here keeps its place and is counted', () => {
+    const html = markup(
+      createElement(RequestInbox, {
+        model: model({
+          requests: [failed, delivered],
+          notices: { [failed.id]: { answered: true, deliveryError: 'recipient is not connected' } },
+          handledHere: [failed.id],
+        }),
+      })
+    );
+    const fold = html.indexOf(`>${t.history_count.replace('{{count}}', '1')}</summary>`);
+    const inSight = html.slice(0, html.lastIndexOf('<details', fold));
+    expect(inSight).toMatch(new RegExp(`role="status"[^>]*>${t.sent}<`));
+    expect(visibleText(inSight)).toContain('recipient is not connected');
+    expect(inSight).toContain(`>${t.retry_delivery}<`);
+    // Shown once, at its place: no group for it alone, but it is counted.
+    expect(html).not.toMatch(heading);
+    expect(html.split('Which queue should the worker use?').length - 1).toBe(1);
+    expect(html).toMatch(badge(t.undelivered_count.replace('{{count}}', '1')));
+  });
+
+  test('without an undelivered answer there is no such group and no such count', () => {
+    const html = markup(
+      createElement(RequestInbox, { model: model({ requests: [nodeAsk(), delivered] }) })
+    );
+    expect(html).not.toMatch(heading);
+    expect(visibleText(html)).not.toContain(t.attention_hint);
+    expect(visibleText(html)).not.toMatch(counted(t.undelivered_count));
   });
 });
 
@@ -807,6 +929,8 @@ describe('readers', () => {
     expect(html).not.toContain('<form');
     expect(html).not.toContain(t.retry_delivery);
     expect(visibleText(html)).toContain(t.read_only);
+    // #264: a viewer sees the undelivered answers too, in sight.
+    expect(visibleText(html)).toContain(t.attention_title);
   });
 });
 

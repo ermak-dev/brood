@@ -3293,6 +3293,9 @@
     "open_count": "{{count}} 個待處理",
     "none_open": "沒有待處理的請求。",
     "history_count": "已回答 {{count}} 個",
+    "undelivered_count": "{{count}} 個未送達",
+    "attention_title": "送達需要處理",
+    "attention_hint": "Actor 未收到這些回答，或送達未確認。在送達成功之前，它們會一直顯示在這裡。",
     "states": {
       "open": "待處理",
       "answered": "已回答",
