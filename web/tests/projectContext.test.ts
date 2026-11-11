@@ -37,7 +37,8 @@ test('global switcher contains projects only, with no Projects shortcut', () => 
   expect(switcher).not.toContain('scopesApi');
   expect(switcher).not.toContain("navigate('/projects')");
   expect(switcher).not.toContain('access.projects');
-  expect(switcher).toContain('projectSelectionPath(pathname, item.id)');
+  // #194: the address carries the selection of the old project, which the switch drops.
+  expect(switcher).toContain('projectSelectionPath(pathname, item.id, search)');
   expect(switcher).toContain('if (destination) navigate(destination)');
   expect(switcher).not.toContain('role="menuitem"');
   expect(source('stores/useProjectStore.ts')).toContain("name: 'brood-project'");

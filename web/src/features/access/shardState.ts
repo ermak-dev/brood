@@ -1,12 +1,29 @@
 import type { AccessSwarm, AccessUser, ShardCapacity, SwarmMember } from '@/services/brood/access';
+import { readSelection, withSelection } from '@/features/objects/address';
 import { userOption } from './state';
 
-/** Куда перейти при смене проекта в шапке: детали проекта — к деталям
- * нового, страница роя — к списку роёв нового проекта (рой принадлежит
- * одному проекту, #215). Остальные разделы и так следуют контексту. */
-export function projectSelectionPath(pathname: string, project: string): string | null {
+// Разделы ресурсов проекта, адрес которых несёт выбор проекта и роя (#194).
+const PROJECT_OBJECT_PAGES = ['/actors', '/templates'];
+
+/** Куда перейти при смене проекта в шапке: детали проекта -- к деталям
+ * нового, страница роя -- к списку роёв нового проекта (рой принадлежит
+ * одному проекту, #215), акторы и шаблоны -- к тому же разделу без выбора
+ * прежнего проекта в адресе (#194). Остальные разделы и так следуют
+ * контексту. */
+export function projectSelectionPath(
+  pathname: string,
+  project: string,
+  search = ''
+): string | null {
   if (/^\/projects\/[^/]+\/?$/.test(pathname)) return `/projects/${encodeURIComponent(project)}`;
-  return /^\/swarms\/[^/]+\/?$/.test(pathname) ? '/swarms' : null;
+  if (/^\/swarms\/[^/]+\/?$/.test(pathname)) return '/swarms';
+  if (!PROJECT_OBJECT_PAGES.includes(pathname)) return null;
+  const selection = readSelection(search);
+  if (!selection.project && !selection.swarm && !selection.actor && !selection.template) {
+    return null;
+  }
+  const rest = withSelection(search, { project: null, swarm: null, actor: null, template: null });
+  return `${pathname}${rest}`;
 }
 
 export function swarmCapabilities(swarm: AccessSwarm, administrator: boolean) {

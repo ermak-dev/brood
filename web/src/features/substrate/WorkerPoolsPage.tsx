@@ -10,6 +10,7 @@ import { BroodApiError, errorMessage } from '@/services/brood/http';
 import { proxmoxPoolsApi, workerPoolsApi, type ProxmoxPool, type WorkerPool } from '@/services/brood/substrate';
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { useAdministrator } from '@/features/access/shared';
+import { useObjectSelection, usePanel } from '@/features/objects/useObjectSelection';
 import { ConnectionForm } from './ConnectionForm';
 import { EditorSheet } from './components/EditorSheet';
 import { EntityPanel } from './components/EntityPanel';
@@ -17,6 +18,7 @@ import { EntityTable, type Column } from './components/EntityTable';
 import { Field, Section } from './components/form';
 import { KeyValueEditor } from './components/KeyValueEditor';
 import { PageHeader } from './components/PageHeader';
+import { ObjectUnavailable } from './components/SelectionNotice';
 import { DASH, formatCpu, formatMemory, fromPairs, toPairs, type Pair } from './format';
 import { useActions, useResource } from './hooks';
 import { proxmoxPoolActionGroups, workerPoolActionGroups, type ProxmoxPoolActionId } from './poolActions';
@@ -114,12 +116,17 @@ export function WorkerPoolsPage() {
   useHeaderRefresh(connections.refresh);
   const { confirm } = useActions(refresh);
   const [editing, setEditing] = useState<{ name?: string } | null>(null);
-  // Имя, а не объект: панель показывает пул после обновления списка, а
-  // удалённый пул закрывает её сам.
-  const [viewingName, setViewingName] = useState<string | null>(null);
-  const viewing = (viewingName !== null && data?.find((pool) => pool.metadata.name === viewingName)) || null;
+  // Панель пула -- по адресу (?pool=, #194). Имя, а не объект: панель
+  // показывает пул после обновления списка, а удалённый пул закрывает её сам.
+  const { selection, open, close } = useObjectSelection();
+  const panel = usePanel(selection.pool);
+  const viewing = (panel.name && data?.find((pool) => pool.metadata.name === panel.name)) || null;
+  const closePanel = () => close('pool');
+  const unavailable = Boolean(
+    selection.pool && data && !data.some((pool) => pool.metadata.name === selection.pool)
+  );
   const edit = (name: string) => {
-    setViewingName(null);
+    closePanel();
     setEditing({ name });
   };
   const columns: Column<WorkerPool>[] = [
@@ -138,17 +145,20 @@ export function WorkerPoolsPage() {
       {data?.some((pool) => pool.spec.sandboxClasses.some((entry) => entry.name === 'lxc')) && (
         <p className={styles.notice} role="note">{t('worker_pools.lxc_warning')}</p>
       )}
+      {unavailable && selection.pool && (
+        <ObjectUnavailable name={selection.pool} onClose={closePanel} />
+      )}
       {loading ? <LoadingSpinner /> : error ? (
         <EmptyState title={t('substrate.load_failed')} description={error} action={<Button onClick={() => void refresh()}>{t('worker_pools.retry')}</Button>} />
       ) : data?.length ? (
         <EntityTable columns={columns} rows={data} rowKey={(pool) => pool.metadata.uid ?? pool.metadata.name}
-          onRowClick={(pool) => setViewingName(pool.metadata.name)}
-          isActive={(pool) => pool.metadata.name === viewingName}
+          onRowClick={(pool) => open({ pool: pool.metadata.name })}
+          isActive={(pool) => pool.metadata.name === selection.pool}
         />
       ) : <EmptyState title={t('worker_pools.empty')} description={t('worker_pools.empty_hint')} action={create} />}
       <EntityPanel
-        open={viewing !== null}
-        onClose={() => setViewingName(null)}
+        open={panel.open && viewing !== null}
+        onClose={closePanel}
         eyebrow={viewing && sandboxOf(viewing)}
         title={viewing?.metadata.name ?? ''}
         status={viewing && <span>{t('worker_pools.ready')}: {readyReplicas(viewing)} / {viewing.spec.replicas}</span>}
@@ -158,13 +168,21 @@ export function WorkerPoolsPage() {
           edit: () => edit(viewing.metadata.name),
           remove: async () => {
             await workerPoolsApi.remove(viewing);
-            setViewingName(null);
+            closePanel();
           },
         }) : []}
       >
         {viewing && <WorkerPoolDetails pool={viewing} />}
       </EntityPanel>
-      <ProxmoxConnections items={connections.data} error={connections.error} onRetry={connections.refresh} canAdd={administrator} />
+      <ProxmoxConnections
+        items={connections.data}
+        error={connections.error}
+        onRetry={connections.refresh}
+        canAdd={administrator}
+        selected={selection.proxmox}
+        onOpen={(name) => open({ proxmox: name })}
+        onClose={() => close('proxmox')}
+      />
       {editing && <PoolEditor key={editing.name ?? ''} name={editing.name} onClose={() => setEditing(null)} refresh={refresh} />}
     </div>
   );
@@ -188,6 +206,10 @@ interface ProxmoxConnectionsProps {
   onRetry: () => void | Promise<void>;
   /** Форма настройки пула — администратору (#118); без права кнопки нет. */
   canAdd?: boolean;
+  /** Пул, открытый адресом (?proxmox=, #194); открывает и закрывает его панель страница. */
+  selected?: string;
+  onOpen?: (name: string) => void;
+  onClose?: () => void;
 }
 
 /** Подписанные поля подключения; ни токена, ни его ID здесь нет. */
@@ -249,16 +271,25 @@ export function ProxmoxPoolDetails({ pool }: { pool: ProxmoxPool }) {
 
 /** Подключения и резервирования видны даже при отказе Kubernetes; секреты скрыты.
  * Строка открывает панель пула: активация, вывод и включение живут в ней (#157). */
-export function ProxmoxConnections({ items, error, onRetry, canAdd }: ProxmoxConnectionsProps) {
+export function ProxmoxConnections({
+  items,
+  error,
+  onRetry,
+  canAdd,
+  selected,
+  onOpen,
+  onClose,
+}: ProxmoxConnectionsProps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   // Отказ относится к пулу, над которым шло действие: панель другого пула его не показывает.
   const [actionError, setActionError] = useState<{ pool: string; message: string } | null>(null);
   const [adding, setAdding] = useState(false);
-  // Имя, а не объект: после действия панель остаётся открытой и показывает
-  // новое состояние пула и следующее действие.
-  const [viewingName, setViewingName] = useState<string | null>(null);
-  const viewing = (viewingName !== null && items?.find((pool) => pool.name === viewingName)) || null;
+  // Имя из адреса, а не объект: после действия панель остаётся открытой и
+  // показывает новое состояние пула и следующее действие.
+  const panel = usePanel(selected);
+  const viewing = (panel.name && items?.find((pool) => pool.name === panel.name)) || null;
+  const unavailable = Boolean(selected && items && !items.some((pool) => pool.name === selected));
   const reload = useCallback(async () => { await onRetry(); }, [onRetry]);
   const { confirm } = useActions(reload);
   const perform = async (pool: ProxmoxPool, action: ProxmoxPoolActionId) => {
@@ -310,14 +341,17 @@ export function ProxmoxConnections({ items, error, onRetry, canAdd }: ProxmoxCon
             <p className={styles.sectionHint}>{t('proxmox_connections.profile_hint')}</p>
           }
           {actionError && !viewing && <p className={styles.fieldError} role="alert">{actionError.message}</p>}
+          {unavailable && selected && onClose && (
+            <ObjectUnavailable name={selected} onClose={onClose} />
+          )}
           <EntityTable columns={columns} rows={items ?? []} rowKey={(pool) => pool.name}
-            onRowClick={(pool) => setViewingName(pool.name)}
-            isActive={(pool) => pool.name === viewingName} />
+            onRowClick={(pool) => onOpen?.(pool.name)}
+            isActive={(pool) => pool.name === selected} />
         </>
       )}
       <EntityPanel
-        open={viewing !== null}
-        onClose={() => setViewingName(null)}
+        open={panel.open && viewing !== null}
+        onClose={() => onClose?.()}
         eyebrow={t('proxmox_connections.title')}
         title={viewing?.name ?? ''}
         status={viewing && (

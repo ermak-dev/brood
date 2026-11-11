@@ -20,10 +20,13 @@ test('actor and template pages pass explicit swarm capabilities to every workloa
       // #157: actions live in the actor's panel; builders take the swarm role.
       expect(page).toMatch(/nativeActionGroups\(editorActor, \{\s*t,\s*canManage,/);
       expect(page).toMatch(/\{dialog && canManage && \(\s*<ManagedActionDialog/);
-      expect(page).toContain('canViewActorDetails(canManage, editor.actor)');
+      // #194: the new-actor editor and an existing actor's panel are separate gates.
+      expect(page).toContain('canViewActorDetails(canManage, null)');
+      expect(page).toContain('canViewActorDetails(canManage, editorActor)');
       expect(page).toContain('if (!canManage) return false;');
     }
   }
   expect(source('Actors')).toContain('!goldenOf(a) && canViewActorDetails(canManage, a)');
-  expect(source('Templates')).toContain('onRowClick={(tpl) => setViewingKey(keyOf(tpl))}');
+  // #194: a row opens the template's panel through its address.
+  expect(source('Templates')).toContain('onRowClick={(tpl) => openTemplate(tpl.metadata.name)}');
 });

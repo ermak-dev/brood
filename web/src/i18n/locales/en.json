@@ -24,6 +24,8 @@
     }
   },
   "access": {
+    "all_swarms": "All swarms",
+    "swarm_unavailable": "The swarm from the address is not among the active swarms of this project.",
     "project_details": "Project details",
     "capacity": "Capacity and reservations",
     "edit_capacity": "Edit limits",
@@ -2665,6 +2667,7 @@
     "deleted": "Policy deleted"
   },
   "substrate": {
+    "object_unavailable": "“{{name}}” does not open here: it is not in this list, or its panel is not available to you.",
     "name": "Name",
     "state": "State",
     "created": "Created",

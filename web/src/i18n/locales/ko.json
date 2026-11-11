@@ -24,6 +24,8 @@
     }
   },
   "access": {
+    "all_swarms": "모든 스웜",
+    "swarm_unavailable": "주소의 스웜이 이 프로젝트의 활성 스웜 중에 없습니다.",
     "project_details": "프로젝트 세부 정보",
     "capacity": "용량 및 예약",
     "edit_capacity": "한도 편집",
@@ -2665,6 +2667,7 @@
     "deleted": "정책 삭제됨"
   },
   "substrate": {
+    "object_unavailable": "“{{name}}”을(를) 여기서 열 수 없습니다. 이 목록에 없거나 패널을 열 권한이 없습니다.",
     "name": "이름",
     "state": "상태",
     "created": "생성",

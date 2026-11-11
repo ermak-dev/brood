@@ -12,7 +12,7 @@ import { errorMessage } from '@/services/brood/http';
  * проекты; управление ими находится в левой панели, не дублируется здесь. */
 export function ProjectSwitcher() {
   const { t } = useTranslation();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const project = useProjectStore((state) => state.project);
   const setProject = useProjectStore((state) => state.setProject);
@@ -87,7 +87,7 @@ export function ProjectSwitcher() {
                   aria-checked={project === item.id}
                   onClick={() => {
                     setProject(item.id);
-                    const destination = projectSelectionPath(pathname, item.id);
+                    const destination = projectSelectionPath(pathname, item.id, search);
                     if (destination) navigate(destination);
                     setOpen(false);
                   }}

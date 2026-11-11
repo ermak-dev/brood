@@ -3,27 +3,46 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { useProjectStore } from '@/stores';
 import { accessApi, type AccessProject } from '@/services/brood/access';
 import { LoadState, useAccessResource } from '@/features/access/shared';
+import { useAddressedProject } from '@/features/objects/useObjectSelection';
 import { PageHeader } from './PageHeader';
 import styles from '../substrate.module.scss';
 
 interface ProjectScopeProps {
   title: string;
   headingLevel?: 1 | 2;
+  /** Страница адресует проект параметром ?project= (#194). */
+  addressed?: boolean;
   children: (project: AccessProject) => ReactNode;
 }
 
 /** Проект проверяется по доступному каталогу. Сохранённый ID не даёт прав
- * и не подменяется первым проектом, если членство было отозвано. */
-export function ProjectScope({ title, children, headingLevel = 1 }: ProjectScopeProps) {
+ * и не подменяется первым проектом, если членство было отозвано. Проект
+ * адреса выбирается глобальным контекстом до показа страницы. */
+export function ProjectScope({
+  title,
+  children,
+  headingLevel = 1,
+  addressed = false,
+}: ProjectScopeProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const selected = useProjectStore((state) => state.project);
+  const pending = useAddressedProject(addressed);
   const resource = useAccessResource(accessApi.projects, { headerRefresh: false });
-  const project = resource.data?.find((item) => item.id === selected);
+  const project = pending ? undefined : resource.data?.find((item) => item.id === selected);
   if (project) return <Fragment key={project.id}>{children(project)}</Fragment>;
+  if (pending) {
+    return (
+      <div className={styles.page}>
+        <PageHeader title={title} headingLevel={headingLevel} />
+        <LoadingSpinner />
+      </div>
+    );
+  }
   return (
     <div className={styles.page}>
       <PageHeader title={title} headingLevel={headingLevel} />
