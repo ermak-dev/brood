@@ -3120,6 +3120,19 @@
         "skipped": "已停止或跳过",
         "unconfirmed": "结果未知"
       }
+    },
+    "catalog": {
+      "title": "工作流定义",
+      "hint": "由 bro build 从项目的 Broodfile 发布。群组首次启动会固定其中一个；新版本不会改变已经启动的群组。",
+      "choose": "要显示的定义",
+      "version": "版本 {{version}}",
+      "revision": "修订号 {{revision}}",
+      "published": "发布于 {{time}}",
+      "published_unknown": "发布时间未知",
+      "graph": "{{name}} 的图，版本 {{version}}",
+      "copy_revision": "复制修订号",
+      "empty": "没有已发布的定义",
+      "empty_hint": "在项目的 Broodfile 中描述 workflows 并运行 bro build：它会在这里发布定义，群组首次启动时从中选择一个。"
     }
   },
   "swarm_page": {

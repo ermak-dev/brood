@@ -3123,6 +3123,19 @@
         "skipped": "Stopped or skipped",
         "unconfirmed": "Outcome unknown"
       }
+    },
+    "catalog": {
+      "title": "Workflow definitions",
+      "hint": "Published by bro build from the project's Broodfile. A swarm's first start pins one of them; a newer version does not change a swarm that has already started.",
+      "choose": "Definition to show",
+      "version": "version {{version}}",
+      "revision": "Revision {{revision}}",
+      "published": "published {{time}}",
+      "published_unknown": "publication time unknown",
+      "graph": "Graph of {{name}}, version {{version}}",
+      "copy_revision": "Copy revision",
+      "empty": "No published definitions",
+      "empty_hint": "Describe workflows in the project's Broodfile and run bro build: it publishes them here, and a swarm's first start picks one of them."
     }
   },
   "swarm_page": {

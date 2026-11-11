@@ -3129,6 +3129,19 @@
         "skipped": "Đã dừng hoặc bỏ qua",
         "unconfirmed": "Chưa rõ kết quả"
       }
+    },
+    "catalog": {
+      "title": "Định nghĩa quy trình",
+      "hint": "Do bro build xuất bản từ Broodfile của dự án. Lần khởi chạy đầu tiên của bầy ghim một định nghĩa; phiên bản mới hơn không thay đổi bầy đã khởi chạy.",
+      "choose": "Định nghĩa cần hiển thị",
+      "version": "phiên bản {{version}}",
+      "revision": "Bản sửa đổi {{revision}}",
+      "published": "xuất bản {{time}}",
+      "published_unknown": "không rõ thời điểm xuất bản",
+      "graph": "Đồ thị của {{name}}, phiên bản {{version}}",
+      "copy_revision": "Sao chép bản sửa đổi",
+      "empty": "Chưa có định nghĩa nào được xuất bản",
+      "empty_hint": "Mô tả workflows trong Broodfile của dự án rồi chạy bro build: lệnh này xuất bản chúng tại đây, và lần khởi chạy đầu tiên của bầy sẽ chọn một trong số đó."
     }
   },
   "swarm_page": {

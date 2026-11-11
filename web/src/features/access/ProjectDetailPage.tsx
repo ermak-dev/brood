@@ -11,6 +11,7 @@ import {
 import { ProjectScope } from '@/features/substrate/components/ProjectScope';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { EntityTable } from '@/features/substrate/components/EntityTable';
+import { WorkflowCatalog } from '@/features/pipelines/WorkflowCatalog';
 import { CapacityEditor } from './CapacityEditor';
 import { ProjectMembers } from './PermissionsPage';
 import { ProjectRepository } from './ProjectRepository';
@@ -143,6 +144,7 @@ function ProjectDetailView({ project }: { project: AccessProject }) {
         {detail && <CapacitySection detail={detail} />}
       </LoadState>
       <ProjectRepository project={project} />
+      <WorkflowCatalog projectId={project.id} />
       <ProjectMembers project={project} />
       {editing && admin && (
         <CapacityEditor
