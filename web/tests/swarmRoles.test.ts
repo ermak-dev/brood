@@ -380,13 +380,13 @@ describe('start dialog note', () => {
 });
 
 describe('state tone', () => {
-  test('ready reads as success; unbound waits; a broken binding is a failure', () => {
-    expect(roleTone('ready')).toBe('success');
-    expect(roleTone('unbound')).toBe('warning');
+  test('ready needs nothing; unbound waits for a human; a broken binding is a problem', () => {
+    expect(roleTone('ready')).toBe('neutral');
+    expect(roleTone('unbound')).toBe('attention');
     for (const state of ['stale', 'inactive', 'foreign', 'missing']) {
-      expect({ state, tone: roleTone(state) }).toEqual({ state, tone: 'danger' });
+      expect({ state, tone: roleTone(state) }).toEqual({ state, tone: 'problem' });
     }
-    expect(roleTone('newer-state')).toBe('muted');
+    expect(roleTone('newer-state')).toBe('neutral');
   });
 });
 

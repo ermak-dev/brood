@@ -8,6 +8,7 @@ import {
   svgNodeState,
   svgViewBoxSize,
 } from './svgFilter';
+import { legendEntries, type LegendEntry } from './legend';
 import graphStyles from './pipelines.module.scss';
 import styles from '@/features/substrate/substrate.module.scss';
 
@@ -36,6 +37,7 @@ export function RunGraph({
   // Разбор и фильтрация дороги: один раз на строку SVG.
   const root = useMemo(() => parseServerSVG(svg)[0], [svg]);
   const known = useMemo(() => collectNodeIDs(root), [root]);
+  const legend = useMemo(() => legendEntries(root), [root]);
   // Выбор узла, которого нет в этом графе, не подсвечивается: так выбор
   // не переживает смену графа.
   const selected = selectedNode !== undefined && known.has(selectedNode) ? selectedNode : undefined;
@@ -65,7 +67,31 @@ export function RunGraph({
       <p id={descriptionId} className={styles.srOnly}>
         {t('pipelines.graph_description')}
       </p>
+      <Legend entries={legend} />
     </div>
+  );
+}
+
+/** Легенда под графом (#254): цвет и штрих узла названы словами. Одна на
+ * граф, только то, что в нём есть; графу без состояний и с одним видом
+ * узлов она не нужна. */
+function Legend({ entries }: { entries: LegendEntry[] }) {
+  const { t } = useTranslation();
+  if (entries.length === 0) return null;
+  return (
+    <ul className={graphStyles['graph-legend']} aria-label={t('pipelines.legend.title')}>
+      {entries.map((entry) => (
+        <li key={`${entry.group}-${entry.id}`} className={graphStyles['legend-item']}>
+          <span
+            className={`${graphStyles['legend-swatch']} ${graphStyles[`legend-${entry.group}-${entry.id}`]}`}
+            aria-hidden="true"
+          />
+          {entry.group === 'kind'
+            ? t(`pipelines.kind.${entry.id}`)
+            : t(`pipelines.legend.state.${entry.id}`)}
+        </li>
+      ))}
+    </ul>
   );
 }
 

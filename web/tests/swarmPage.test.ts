@@ -77,14 +77,14 @@ describe('execution state', () => {
     expect(swarmExecution(run({ status: 'paused' as PipelineRun['status'] }))).toBe('paused');
   });
 
-  test('stopped and waiting never share a tone; failure stays red', () => {
-    expect(executionTone('waiting')).toBe('warning');
-    expect(executionTone('stopped')).toBe('muted');
-    expect(executionTone('failed')).toBe('danger');
-    expect(executionTone('running')).toBe('success');
-    expect(executionTone('succeeded')).toBe('success');
-    expect(executionTone('idle')).toBe('muted');
-    expect(executionTone('paused')).toBe('muted');
+  test('stopped and waiting never share a tone; failure stays a problem', () => {
+    expect(executionTone('waiting')).toBe('attention');
+    expect(executionTone('stopped')).toBe('neutral');
+    expect(executionTone('failed')).toBe('problem');
+    expect(executionTone('running')).toBe('progress');
+    expect(executionTone('succeeded')).toBe('neutral');
+    expect(executionTone('idle')).toBe('neutral');
+    expect(executionTone('paused')).toBe('neutral');
   });
 
   test('a finished execution stops polling; unread, running and waiting keep it', () => {

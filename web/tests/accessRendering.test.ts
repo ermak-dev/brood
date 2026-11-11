@@ -1,3 +1,4 @@
+import { BADGE_TONES } from '@/features/access/state';
 // FEATURE: Состояния загрузки доступа и защита от обновления прежнего проекта.
 // SPEC: Ошибка сервера показана текстом с повтором; старый callback не грузит прежний контекст.
 // IMPLEMENTATION: Общий LoadState и отсечение callback после cleanup.
@@ -19,7 +20,6 @@ import { LoadState, useAccessResource } from '@/features/access/shared';
 import {
   ACTIVITY_LIMIT,
   activityTargets,
-  badgeTone,
   executionActivityTone,
   loadSwarmActivities,
   swarmActivityOf,
@@ -196,8 +196,7 @@ test('loadSwarmActivities aggregates the run and the open requests per swarm', a
   );
 });
 
-// Тоны #254 (attention/progress/problem/neutral): пока их нет в
-// access/state.ts, маппинг на нынешние BadgeTone живёт рядом со сводкой.
+// Тон исполнения — сразу тон бейджа из словаря #254 (access/state.ts).
 test('execution tones name attention for waiting and problem for a failed pass', () => {
   expect(executionActivityTone('waiting')).toBe('attention');
   expect(executionActivityTone('running')).toBe('progress');
@@ -205,10 +204,9 @@ test('execution tones name attention for waiting and problem for a failed pass',
   for (const execution of ['idle', 'succeeded', 'stopped', 'later-state']) {
     expect(executionActivityTone(execution)).toBe('neutral');
   }
-  expect(badgeTone('attention')).toBe('warning');
-  expect(badgeTone('progress')).toBe('success');
-  expect(badgeTone('problem')).toBe('danger');
-  expect(badgeTone('neutral')).toBe('muted');
+  for (const execution of ['waiting', 'running', 'failed', 'idle']) {
+    expect(BADGE_TONES).toContain(executionActivityTone(execution));
+  }
 });
 
 test('the swarm list shows execution and open questions, waiting swarms first', () => {
@@ -242,9 +240,9 @@ test('the swarm list shows execution and open questions, waiting swarms first', 
   expect(cells('State')).toContain('Stopped');
   expect(markup).not.toContain('access.states.stopped');
   // Ждущий рой и его вопросы -- тоном внимания, идущий -- тоном работы.
-  expect(markup).toContain('data-tone="warning">Waiting for answer<');
-  expect(markup).toContain('data-tone="warning">3<');
-  expect(markup).toContain('data-tone="success">Running<');
+  expect(markup).toContain('data-tone="attention">Waiting for answer<');
+  expect(markup).toContain('data-tone="attention">3<');
+  expect(markup).toContain('data-tone="progress">Running<');
 });
 
 test('the project list counts swarms and marks the selected project', () => {

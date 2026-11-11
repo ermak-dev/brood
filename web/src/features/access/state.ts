@@ -63,12 +63,76 @@ export function retainedRow<T>(
   return resource.data?.find((row) => same(row, selected)) ?? null;
 }
 
-export type BadgeTone = 'success' | 'warning' | 'danger' | 'muted';
+/** Семантические тоны бейджей (#254): attention -- ждёт человека, progress --
+ * система работает, problem -- встало, neutral -- ничего не требует.
+ * Тон отвечает на вопрос «надо ли смотреть», а не называет состояние: здоровое
+ * состояние покоя (active рой, ready роль, answered запрос) не красится.
+ * Классы `.tone-<тон>` живут в substrate.module.scss, цвета -- в
+ * `--<тон>-badge-*` темы. Один словарь для роёв, исполнения, ролей,
+ * запросов и объектов Substrate: #253 и #255 берут его отсюда. */
+export const BADGE_TONES = ['attention', 'progress', 'problem', 'neutral'] as const;
 
-/** Тон бейджа состояния роя: сбой -- сбой, переходные -- ожидание. */
+export type BadgeTone = (typeof BADGE_TONES)[number];
+
+/** Состояние роя: переходные -- работа системы, error -- проблема. */
 export function swarmTone(state: string): BadgeTone {
-  if (state === 'active') return 'success';
-  if (state === 'provisioning' || state === 'deleting') return 'warning';
-  if (state === 'error') return 'danger';
-  return 'muted';
+  if (state === 'provisioning' || state === 'deleting') return 'progress';
+  if (state === 'error') return 'problem';
+  return 'neutral';
+}
+
+/** Исполнение роя (#206): ждущий ответа зовёт оператора, остановленный --
+ * нет; они не делят тон. Незнакомое состояние ничего не требует. */
+export function executionTone(execution: string): BadgeTone {
+  switch (execution) {
+    case 'waiting':
+      return 'attention';
+    case 'running':
+      return 'progress';
+    case 'failed':
+      return 'problem';
+    default:
+      return 'neutral';
+  }
+}
+
+const brokenRoleStates = new Set(['stale', 'inactive', 'foreign', 'missing']);
+
+/** Роль роя (#241): непривязанную должен привязать человек, сломанная
+ * привязка -- проблема, готовая ничего не требует. Незнакомое состояние
+ * (сервер новее панели) не выдаётся за другое. */
+export function roleTone(state: string): BadgeTone {
+  if (state === 'unbound') return 'attention';
+  return brokenRoleStates.has(state) ? 'problem' : 'neutral';
+}
+
+/** Запрос оператору (#216): открытый ждёт человека, остальное -- история. */
+export function requestTone(state: string): BadgeTone {
+  return state === 'open' ? 'attention' : 'neutral';
+}
+
+/** Доставка ответа актору: идёт -- работа, провал -- проблема. */
+export function deliveryTone(delivery: string): BadgeTone {
+  if (delivery === 'delivered') return 'neutral';
+  if (delivery === 'failed') return 'problem';
+  return 'progress';
+}
+
+const substrateTones: Record<string, BadgeTone> = {
+  running: 'progress',
+  active: 'progress',
+  resuming: 'progress',
+  suspending: 'progress',
+  reverting: 'progress',
+  draining: 'progress',
+  deleting: 'progress',
+  suspended: 'neutral',
+  unavailable: 'problem',
+  crashed: 'problem',
+};
+
+/** Актор или воркер Substrate по короткому имени состояния: работающий и
+ * переходный -- работа, упавший и недоступный -- проблема. */
+export function substrateTone(state: string): BadgeTone {
+  return substrateTones[state] ?? 'neutral';
 }

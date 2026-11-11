@@ -45,9 +45,9 @@ describe('substrate format', () => {
   test('enum names and tones', () => {
     expect(shortState('ACTOR_STATE_RUNNING', 'ACTOR_STATE_')).toBe('running');
     expect(shortState(undefined, 'ACTOR_STATE_')).toBe('');
-    expect(toneOf('running')).toBe('success');
-    expect(toneOf('crashed')).toBe('danger');
-    expect(toneOf('something-new')).toBe('muted');
+    expect(toneOf('running')).toBe('progress');
+    expect(toneOf('crashed')).toBe('problem');
+    expect(toneOf('something-new')).toBe('neutral');
   });
 
   test('int64 sizes from protojson strings, unit kept with the number', () => {

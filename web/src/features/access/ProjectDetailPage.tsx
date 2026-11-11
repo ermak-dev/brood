@@ -64,7 +64,7 @@ export function CapacitySection({ detail }: { detail: ProjectDetail }) {
         <h2 className={styles.groupTitle}>{t('access.capacity')}</h2>
         {!available && (
           <span role="status" className={styles.groupStatus}>
-            <StatusBadge tone="muted">{t('access.unknown')}</StatusBadge>
+            <StatusBadge tone="neutral">{t('access.unknown')}</StatusBadge>
             {t('access.usage_unknown')}
             {detail.usage_error ? `: ${detail.usage_error}` : ''}
           </span>

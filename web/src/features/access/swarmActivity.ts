@@ -95,8 +95,8 @@ export async function loadSwarmCounts(
   return Object.fromEntries(entries);
 }
 
-/** Тоны #254 по смыслу: внимание оператора, работа, проблема, ничего. */
-export type ActivityTone = 'attention' | 'progress' | 'problem' | 'neutral';
+/** Тон исполнения в словаре бейджей #254: внимание оператора, работа, проблема, ничего. */
+export type ActivityTone = BadgeTone;
 
 /** Ждущий рой требует оператора, вставший -- тоже, но это уже проблема;
  * идущий работает; остальное нейтрально. */
@@ -113,20 +113,6 @@ export function executionActivityTone(execution: string): ActivityTone {
   }
 }
 
-/** Локальный маппинг тонов #254 на нынешние тона бейджей, пока
- * access/state.ts не завёл attention/progress/problem/neutral сам. */
-export function badgeTone(tone: ActivityTone): BadgeTone {
-  switch (tone) {
-    case 'attention':
-      return 'warning';
-    case 'progress':
-      return 'success';
-    case 'problem':
-      return 'danger';
-    default:
-      return 'muted';
-  }
-}
 
 const RANK: Record<string, number> = {
   waiting: 0,

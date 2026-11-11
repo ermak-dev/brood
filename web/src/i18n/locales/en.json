@@ -3112,7 +3112,18 @@
     },
     "graph_label": "Run graph",
     "graph_description": "Each node is a button named by its step, kind and state; the node where the run stands is marked current. Selecting a node shows its details below the graph.",
-    "graph_empty": "No graph available"
+    "graph_empty": "No graph available",
+    "legend": {
+      "title": "Legend",
+      "state": {
+        "pending": "Not reached",
+        "active": "In progress",
+        "done": "Done",
+        "failed": "Failed or refused",
+        "skipped": "Stopped or skipped",
+        "unconfirmed": "Outcome unknown"
+      }
+    }
   },
   "swarm_page": {
     "project": "Project",

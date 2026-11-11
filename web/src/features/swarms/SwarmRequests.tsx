@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Markdown } from '@/components/ui/Markdown';
 import type { SwarmRequest } from '@/services/brood/requests';
-import type { BadgeTone } from '@/features/access/state';
+import { deliveryTone, requestTone } from '@/features/access/state';
 import { LoadState, StatusBadge } from '@/features/access/shared';
 import { Section } from '@/features/substrate/components/form';
 import { DASH } from '@/features/substrate/format';
@@ -20,18 +20,6 @@ import type { RequestInboxModel, RequestPlace } from './useSwarmRequests';
 import styles from '@/features/substrate/substrate.module.scss';
 import page from './SwarmPage.module.scss';
 import local from './SwarmRequests.module.scss';
-
-function requestTone(state: string): BadgeTone {
-  if (state === 'open') return 'warning';
-  if (state === 'answered') return 'success';
-  return 'muted';
-}
-
-function deliveryTone(delivery: string): BadgeTone {
-  if (delivery === 'delivered') return 'success';
-  if (delivery === 'failed') return 'danger';
-  return 'warning';
-}
 
 /** Инбокс роя: открытые запросы сверху, ниже отвеченные и закрытые —
  * историей. Узел запроса — кнопкой, она выбирает его на графе. */
@@ -55,7 +43,7 @@ export function RequestInbox({
       hint={t('swarm_requests.hint')}
       action={
         open.length > 0 ? (
-          <StatusBadge tone="warning">
+          <StatusBadge tone="attention">
             {t('swarm_requests.open_count', { count: open.length })}
           </StatusBadge>
         ) : undefined

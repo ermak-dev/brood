@@ -3109,7 +3109,18 @@
     },
     "graph_label": "运行图",
     "graph_description": "每个节点都是按钮，名称由步骤、类型和状态组成；运行所在的节点标记为当前。选择节点后，其详情显示在图下方。",
-    "graph_empty": "暂无图表"
+    "graph_empty": "暂无图表",
+    "legend": {
+      "title": "图例",
+      "state": {
+        "pending": "未到达",
+        "active": "进行中",
+        "done": "已完成",
+        "failed": "失败或拒绝",
+        "skipped": "已停止或跳过",
+        "unconfirmed": "结果未知"
+      }
+    }
   },
   "swarm_page": {
     "project": "项目",

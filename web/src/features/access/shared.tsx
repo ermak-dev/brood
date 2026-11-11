@@ -124,7 +124,7 @@ export function PanelDetails({ details }: { details: Detail[] }) {
 export function AccountBadge({ user }: { user: AccessUser }) {
   const { t } = useTranslation();
   return (
-    <StatusBadge tone={user.disabled ? 'muted' : 'success'}>
+    <StatusBadge tone="neutral">
       {t(user.disabled ? 'access.disabled' : 'access.enabled')}
     </StatusBadge>
   );

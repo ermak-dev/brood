@@ -2,7 +2,7 @@
  * Чистая логика страницы роя (#215): состояние исполнения, выбранный узел
  * графа и имена вместо идентификаторов. Страница только рисует результат.
  */
-import type { BadgeTone } from '@/features/access/state';
+import { executionTone } from '@/features/access/state';
 import type { AccessProject, AccessSwarm } from '@/services/brood/access';
 import type { NodeStatus, PipelineRun, RunGraph, RunNode } from '@/services/brood/pipelines';
 
@@ -24,21 +24,8 @@ export function runIsLive(run: PipelineRun | null): boolean {
   return run === null || run.status === 'running' || run.status === 'waiting_human';
 }
 
-/** Остановленный и ждущий ответа рой различимы и цветом, и текстом:
- * ждущий требует оператора, остановленный — нет. */
-export function executionTone(execution: string): BadgeTone {
-  switch (execution) {
-    case 'running':
-    case 'succeeded':
-      return 'success';
-    case 'waiting':
-      return 'warning';
-    case 'failed':
-      return 'danger';
-    default:
-      return 'muted';
-  }
-}
+/** Тон исполнения живёт в общем словаре тонов (#254). */
+export { executionTone };
 
 /** Узлы, известные этому рою: из графа и из шагов. */
 function knownNodes(run: PipelineRun | null, graph: RunGraph | null): Set<string> {
