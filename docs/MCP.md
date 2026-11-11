@@ -121,11 +121,17 @@ workspace-preserving reboot CT — отдельные задачи #133 и #130.
 `claude --dangerously-skip-permissions` с сервером `brood`, без диалогов
 onboarding, trust и bypass ([PROXMOX.md](PROXMOX.md), «Автономный запуск
 Claude»). Модель новой сессии выполняет инструменты без запросов
-разрешений; то же относится к `recycle`. Для `restart`,
-`wipe` и `recycle` нужен проверенный Git-клон строго в `/workspace/project`.
-Неизвестный Git state, неподходящая конфигурация, symlink/gitdir вне корня,
-живые процессы и несовпадающая PTY identity дают отказ до очистки. Эти
-команды не загружают произвольный origin, bootstrap или shell из аргументов.
+разрешений; то же относится к `recycle`. Для `wipe` и `recycle` нужен
+проверенный Git-клон строго в `/workspace/project`: неизвестный Git state,
+неподходящая конфигурация, symlink/gitdir вне корня дают отказ до остановки
+сессии и очистки. `restart` workspace не чистит и Git-клона не требует (#158):
+актору без origin хватает каталога `/workspace/project` без symlink.
+Проверенный клон, найденный до остановки, `restart` проверяет снова перед
+запуском, и потеря клона или каталога за время остановки даёт unknown.
+Несовпадающая PTY identity даёт отказ до остановки сессии; живые процессы в
+workspace дают отказ `wipe`, а у `restart` и `recycle` после остановки дают
+unknown. Эти команды не загружают произвольный origin, bootstrap или shell из
+аргументов.
 `restart` и `recycle` ждут освобождения workspace до 4 секунд и нового session
 proof до 8 секунд в общем бюджете helper 15 секунд; timeout или отмена после
 эффекта дают unknown без автоматического освобождения reservation.

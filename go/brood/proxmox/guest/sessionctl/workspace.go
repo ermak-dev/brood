@@ -51,7 +51,8 @@ type workspaceFacts struct {
 
 // RunWorkspace performs fixed-clone operations inside the unprivileged helper.
 // The caller must hold the server's actor operation lease and authorization;
-// restart means a session restart in the same CT, never a PVE reset or reboot.
+// restart means a session restart in the same CT, never a PVE reset or reboot,
+// and unlike wipe and recycle it needs no Git checkout.
 func RunWorkspace(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
 	if err := requireActorIdentity("workspace helper"); err != nil {
 		return failure(err.Error())
@@ -120,7 +121,8 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 	if !a.Confirm {
 		return failure("workspace operation requires confirm=true")
 	}
-	if err := e.repository(ctx); err != nil {
+	checkout, err := e.require(ctx, req.Operation)
+	if err != nil {
 		return failure(err.Error())
 	}
 	if req.Operation != "wipe" {
@@ -162,8 +164,8 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		if err != nil || !quiet {
 			return workspaceUnknown("session stopped; workspace is live or process inventory is unknown")
 		}
-		if err = e.repository(ctx); err != nil {
-			return workspaceUnknown("session stopped; repository proof was lost")
+		if err = e.reprove(ctx, checkout); err != nil {
+			return workspaceUnknown("session stopped; " + err.Error())
 		}
 		if reply, err = e.call(ctx, ptysession.Request{Action: "ensure"}); err != nil || !reply.OK {
 			return workspaceUnknown("session launch result is unknown")
@@ -252,6 +254,45 @@ func (e *workspaceEngine) clean(ctx context.Context) error {
 	return nil
 }
 
+// require proves, before any effect, what the operation needs of the workspace.
+// Wipe and recycle clean the clone and need its Git checkout. Restart keeps the
+// workspace and runs no Git effect (#158): the fixed directory suffices, as for
+// an actor without origin; a checkout it does find is reported, and the launch
+// requires it again.
+func (e *workspaceEngine) require(ctx context.Context, operation string) (checkout bool, err error) {
+	err = e.repository(ctx)
+	if err == nil || operation != "restart" {
+		return err == nil, err
+	}
+	return false, fixedDirectory(e.root)
+}
+
+// reprove repeats after the stop the proof that require gave before it: the
+// old session no longer runs, so a lost proof means someone else changed the
+// workspace, and the operation can no longer claim to have preserved it.
+func (e *workspaceEngine) reprove(ctx context.Context, checkout bool) error {
+	if !checkout {
+		if fixedDirectory(e.root) != nil {
+			return errors.New("fixed workspace proof was lost")
+		}
+		return nil
+	}
+	if e.repository(ctx) != nil {
+		return errors.New("repository proof was lost")
+	}
+	return nil
+}
+
+// fixedDirectory proves that workspace is a directory reached without symlinks.
+func fixedDirectory(workspace string) error {
+	root, err := openSafe(workspace, true)
+	if err != nil {
+		return errors.New("fixed workspace is unavailable or unsafe")
+	}
+	root.Close()
+	return nil
+}
+
 // repository rejects indirection and executable Git configuration before status
 // or checkout. No origin, credential helper, network, or bootstrap is invoked.
 func (e *workspaceEngine) repository(ctx context.Context) error {
@@ -310,11 +351,9 @@ func scanIndex(r *bufio.Reader, limit int) error {
 // recorded user keys must then repeat it; workspace operations pass zero and
 // keep the key allowlist of #125, which treats the user keys as data.
 func repositoryLayout(ctx context.Context, workspace string, git func(context.Context, ...string) (string, error), wholeTree bool, indirect []string, identity gitidentity.Identity) error {
-	root, err := openSafe(workspace, true)
-	if err != nil {
-		return errors.New("fixed workspace is unavailable or unsafe")
+	if err := fixedDirectory(workspace); err != nil {
+		return err
 	}
-	root.Close()
 	gitdir, err := openSafe(filepath.Join(workspace, ".git"), true)
 	if err != nil {
 		return errors.New("workspace must be a Git clone with an in-place .git directory")
