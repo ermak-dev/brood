@@ -7,7 +7,10 @@
 // the history shows the chosen label. A failed delivery shows its reason and
 // a retry; a refusal shows the server reason. The node request also opens at
 // its node on the graph through the same card, and the page answers through
-// the swarm request API instead of the old pipeline-run route.
+// the swarm request API instead of the old pipeline-run route. The form is
+// one, in the inbox (#259): the card at the node leads to it and, once
+// answered, shows the chosen label; focus after the answer goes to the
+// confirmation or the refusal in the inbox, where the request keeps its place.
 import { afterAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { act, createElement, type ReactNode } from 'react';
@@ -79,9 +82,13 @@ const answeredNode = nodeAsk({
 });
 
 interface Recorded {
-  answers: Array<{ id: string; body: RequestAnswer; place: string }>;
+  answers: Array<{ id: string; body: RequestAnswer }>;
   deliveries: string[];
+  /** Запросы, к форме которых вели от узла. */
+  reached: string[];
 }
+
+const recorder = (): Recorded => ({ answers: [], deliveries: [], reached: [] });
 
 const model = (over: Partial<RequestInboxModel> = {}, recorded?: Recorded): RequestInboxModel => ({
   requests: [actorAsk(), nodeAsk(), answeredNode],
@@ -89,10 +96,14 @@ const model = (over: Partial<RequestInboxModel> = {}, recorded?: Recorded): Requ
   refresh: async () => {},
   canAnswer: true,
   notices: {},
+  handledHere: [],
   focus: null,
   focused: () => {},
-  answer: async (request, body, place) => {
-    recorded?.answers.push({ id: request.id, body, place });
+  answer: async (request, body) => {
+    recorded?.answers.push({ id: request.id, body });
+  },
+  reach: (request) => {
+    recorded?.reached.push(request.id);
   },
   deliver: async (request) => {
     recorded?.deliveries.push(request.id);
@@ -231,7 +242,7 @@ describe('inbox', () => {
 
 describe('node request form', () => {
   test('the options are a radio group by label; nothing is chosen and sent at first', async () => {
-    const recorded: Recorded = { answers: [], deliveries: [] };
+    const recorded = recorder();
     const view = await mount(
       createElement(RequestCard, { model: model({}, recorded), request: nodeAsk() })
     );
@@ -258,7 +269,7 @@ describe('node request form', () => {
   });
 
   test('the chosen option is checked, not only coloured, and its outcome is sent', async () => {
-    const recorded: Recorded = { answers: [], deliveries: [] };
+    const recorded = recorder();
     const view = await mount(
       createElement(RequestCard, { model: model({}, recorded), request: nodeAsk() })
     );
@@ -278,7 +289,6 @@ describe('node request form', () => {
         {
           id: 'req-node-3',
           body: { outcome: 'fail', response: 'needs a second architect' },
-          place: 'inbox',
         },
       ]);
     } finally {
@@ -286,8 +296,10 @@ describe('node request form', () => {
     }
   });
 
-  test('at the node the same card answers without repeating the node question', async () => {
-    const recorded: Recorded = { answers: [], deliveries: [] };
+  // #259: one form per request. The card at the node shows that the node
+  // waits and leads to the form in the inbox instead of repeating it.
+  test('at the node the card leads to the inbox form instead of a second one', async () => {
+    const recorded = recorder();
     const view = await mount(
       createElement(RequestCard, {
         model: model({}, recorded),
@@ -297,14 +309,59 @@ describe('node request form', () => {
     );
     try {
       expect(view.container.textContent).not.toContain('Approve the proposal?');
-      expect(view.container.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')).toBe(
-        'Approve the proposal?'
+      expect(view.container.textContent).toContain(t.states.open);
+      expect(view.container.querySelector('form')).toBeNull();
+      expect(view.container.querySelector('[role="radiogroup"]')).toBeNull();
+      expect(view.container.querySelector('textarea')).toBeNull();
+      const above = [...view.container.querySelectorAll('button')].find(
+        (button) => button.textContent === t.answer_above
       );
-      await click(radioLabelled(view.container, 'Approve'));
-      await click(submitButton(view.container));
-      expect(recorded.answers).toEqual([
-        { id: 'req-node-3', body: { outcome: 'success' }, place: 'node' },
-      ]);
+      expect(above?.getAttribute('type')).toBe('button');
+      await click(above);
+      expect(recorded.reached).toEqual(['req-node-3']);
+      expect(recorded.answers).toEqual([]);
+    } finally {
+      await unmount(view);
+    }
+  });
+
+  test('a viewer at the node gets no way to a form it cannot use', () => {
+    const html = markup(
+      createElement(RequestCard, {
+        model: model({ canAnswer: false }),
+        request: nodeAsk(),
+        variant: 'node',
+      })
+    );
+    expect(html).not.toContain(t.answer_above);
+    expect(visibleText(html)).toContain(t.read_only);
+  });
+
+  test('led from the node, focus lands on the inbox form of that request, once', async () => {
+    let focused = 0;
+    const requests = model({
+      focus: { id: 'req-node-3', target: 'form' },
+      focused: () => {
+        focused += 1;
+      },
+    });
+    // Обе карточки на странице: фокус берёт форма инбокса, не карточка узла.
+    const view = await mount(
+      createElement(
+        'div',
+        null,
+        createElement(RequestCard, { key: 'inbox', model: requests, request: nodeAsk() }),
+        createElement(RequestCard, {
+          key: 'node',
+          model: requests,
+          request: nodeAsk(),
+          variant: 'node',
+        })
+      )
+    );
+    try {
+      expect(document.activeElement).toBe(radioLabelled(view.container, 'Approve') ?? null);
+      expect(focused).toBe(1);
     } finally {
       await unmount(view);
     }
@@ -313,7 +370,7 @@ describe('node request form', () => {
 
 describe('actor request form', () => {
   test('a text request has no route choice; its text is required and sent alone', async () => {
-    const recorded: Recorded = { answers: [], deliveries: [] };
+    const recorded = recorder();
     const view = await mount(
       createElement(RequestCard, { model: model({}, recorded), request: actorAsk() })
     );
@@ -324,16 +381,14 @@ describe('actor request form', () => {
       expect(submitButton(view.container).disabled).toBe(true);
       await type(field, 'Postgres 16');
       await click(submitButton(view.container));
-      expect(recorded.answers).toEqual([
-        { id: 'req-actor-1', body: { response: 'Postgres 16' }, place: 'inbox' },
-      ]);
+      expect(recorded.answers).toEqual([{ id: 'req-actor-1', body: { response: 'Postgres 16' } }]);
     } finally {
       await unmount(view);
     }
   });
 
   test('a confirmation is a yes/no radio group sent as text', async () => {
-    const recorded: Recorded = { answers: [], deliveries: [] };
+    const recorded = recorder();
     const view = await mount(
       createElement(RequestCard, {
         model: model({}, recorded),
@@ -348,9 +403,7 @@ describe('actor request form', () => {
       expect(view.container.querySelector('textarea')).toBeNull();
       await click(radioLabelled(view.container, t.confirm.yes));
       await click(submitButton(view.container));
-      expect(recorded.answers).toEqual([
-        { id: 'req-actor-1', body: { response: 'yes' }, place: 'inbox' },
-      ]);
+      expect(recorded.answers).toEqual([{ id: 'req-actor-1', body: { response: 'yes' } }]);
     } finally {
       await unmount(view);
     }
@@ -391,24 +444,103 @@ describe('after the answer', () => {
     expect(html).not.toContain('type="radio"');
   });
 
-  test('the confirmation takes focus where the answer was sent, once', async () => {
+  test('the confirmation in the inbox takes focus, once', async () => {
     let focused = 0;
+    const requests = model({
+      notices: { [answeredNode.id]: { answered: true } },
+      focus: { id: answeredNode.id, target: 'result' },
+      focused: () => {
+        focused += 1;
+      },
+    });
     const view = await mount(
+      createElement(
+        'div',
+        null,
+        createElement(RequestCard, { key: 'inbox', model: requests, request: answeredNode }),
+        createElement(RequestCard, {
+          key: 'node',
+          model: requests,
+          request: answeredNode,
+          variant: 'node',
+        })
+      )
+    );
+    try {
+      const statuses = view.container.querySelectorAll('[role="status"]');
+      expect(statuses.length).toBe(1);
+      expect(statuses[0].textContent).toBe(t.sent);
+      expect(document.activeElement).toBe(statuses[0]);
+      expect(focused).toBe(1);
+    } finally {
+      await unmount(view);
+    }
+  });
+
+  // #259: the node shows what was chosen, as before; the confirmation and a
+  // refusal belong to the inbox card, where the answer was given.
+  test('at the node the answer shows its chosen label, not a second confirmation', () => {
+    const html = markup(
       createElement(RequestCard, {
         model: model({
+          notices: { [answeredNode.id]: { answered: true, refusal: 'already answered' } },
+        }),
+        request: answeredNode,
+        variant: 'node',
+      })
+    );
+    const text = visibleText(html);
+    expect(text).toContain('Approve');
+    expect(text).not.toMatch(/\bsuccess\b/);
+    expect(text).toContain('keep the cache layer');
+    expect(html).not.toContain('role="status"');
+    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain(t.answer_above);
+  });
+
+  test('a request answered here keeps its place with the confirmation, unfolded', () => {
+    const html = markup(
+      createElement(RequestInbox, {
+        model: model({
+          requests: [answeredNode, nodeAsk({ id: 'req-node-0', state: 'cancelled' })],
           notices: { [answeredNode.id]: { answered: true } },
-          focus: { id: answeredNode.id, place: 'inbox' },
+          handledHere: [answeredNode.id],
+        }),
+      })
+    );
+    const fold = html.indexOf(`>${t.history_count.replace('{{count}}', '1')}</summary>`);
+    expect(fold).toBeGreaterThan(0);
+    const before = html.slice(0, html.lastIndexOf('<details', fold));
+    expect(before).toMatch(new RegExp(`role="status"[^>]*>${t.sent}<`));
+    expect(visibleText(before)).toContain('Approve');
+    expect(visibleText(before)).toContain(t.none_open);
+    expect(html).not.toContain(t.open_count.replace('{{count}}', '1'));
+    expect(html.slice(fold)).not.toContain(t.sent);
+  });
+
+  // #259: a request closed elsewhere refuses the answer and leaves the open
+  // list; the card it was answered in stays, and focus goes to the reason.
+  test('a refusal in the inbox takes focus and keeps the card in place', async () => {
+    const closed = { ...answeredNode, answeredBy: 'bob' };
+    let focused = 0;
+    const view = await mount(
+      createElement(RequestInbox, {
+        model: model({
+          requests: [closed],
+          notices: { [closed.id]: { refusal: 'swarm request is no longer open' } },
+          handledHere: [closed.id],
+          focus: { id: closed.id, target: 'result' },
           focused: () => {
             focused += 1;
           },
         }),
-        request: answeredNode,
       })
     );
     try {
-      const status = view.container.querySelector('[role="status"]');
-      expect(status?.textContent).toBe(t.sent);
-      expect(document.activeElement).toBe(status);
+      const alert = view.container.querySelector('[role="alert"]');
+      expect(alert?.textContent).toContain('swarm request is no longer open');
+      expect(alert?.closest('details')).toBeNull();
+      expect(document.activeElement).toBe(alert);
       expect(focused).toBe(1);
     } finally {
       await unmount(view);
@@ -448,7 +580,7 @@ describe('delivery to the actor', () => {
   });
 
   test('a failed delivery shows its state, the reason and a retry', async () => {
-    const recorded: Recorded = { answers: [], deliveries: [] };
+    const recorded = recorder();
     const view = await mount(
       createElement(RequestCard, {
         model: model(
@@ -560,90 +692,197 @@ describe('swarm page', () => {
     expect(page).toContain('useSwarmRequests');
   });
 
-  test('the open node request is answered once from the inbox and shows at its node', async () => {
-    let requests: SwarmRequest[] = [nodeAsk({ swarmId: swarm.id })];
-    const posted: Array<{ url: string; body: unknown }> = [];
+  const advanced: PipelineRun = {
+    ...run,
+    status: 'running',
+    currentNode: 'ship',
+    nodes: [
+      { ...run.nodes[0], status: 'done', outcome: 'success' },
+      { id: 'ship', kind: 'actor', label: 'ship', status: 'active', sequence: 4 },
+    ],
+  };
+  const shipGraph: RunGraph = {
+    svg: svg.replace(
+      '</svg>',
+      '<g class="node node-actor" data-node-id="ship">' +
+        '<rect x="60" y="40" width="50" height="20"/></g></svg>'
+    ),
+    nodes: [...graph.nodes, { id: 'ship', kind: 'actor', prompt: 'Ship it' }],
+  };
+  const closedBy = (who: string): SwarmRequest => ({
+    ...nodeAsk({ swarmId: swarm.id }),
+    state: 'answered',
+    answeredAt: '2026-11-10T09:00:00Z',
+    answeredBy: who,
+    outcome: 'success',
+    optionLabel: 'Approve',
+  });
+
+  /** Сервер страницы: его состояние меняет ответ на POST. */
+  interface Stand {
+    run: PipelineRun;
+    requests: SwarmRequest[];
+    posted: Array<{ url: string; body: unknown }>;
+    post: (stand: Stand) => { status: number; body: unknown };
+  }
+
+  /** Живая страница роя в happy-dom на подменённом fetch. */
+  async function openPage(stand: Stand) {
     const originalFetch = globalThis.fetch;
     const documentCookie = Object.getOwnPropertyDescriptor(document, 'cookie');
     Object.defineProperty(document, 'cookie', { configurable: true, value: 'csrf=token' });
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
       if (init?.method === 'POST') {
-        posted.push({ url, body: JSON.parse(String(init.body)) });
-        const answered = {
-          ...requests[0],
-          state: 'answered',
-          answeredAt: '2026-11-10T09:00:00Z',
-          answeredBy: 'alice',
-          outcome: 'success',
-          optionLabel: 'Approve',
-        };
-        requests = [answered];
-        return json(answered);
+        stand.posted.push({ url, body: JSON.parse(String(init.body)) });
+        const { status, body } = stand.post(stand);
+        return json(body, status);
       }
       if (url === `/api/swarms/${swarm.id}`) return json(swarm);
       if (url === '/api/projects') return json([{ id: swarm.project_id, name: 'brood' }]);
-      if (url === `/api/pipeline-runs/${swarm.id}`) return json(run);
-      if (url === `/api/pipeline-runs/${swarm.id}/graph`) return json(graph);
-      if (url === `/api/swarms/${swarm.id}/requests?all=1`) return json({ results: requests });
+      if (url === `/api/pipeline-runs/${swarm.id}`) return json(stand.run);
+      if (url === `/api/pipeline-runs/${swarm.id}/graph`) return json(shipGraph);
+      if (url === `/api/swarms/${swarm.id}/requests?all=1`) {
+        return json({ results: stand.requests });
+      }
       return json({ detail: 'not found' }, 404);
     }) as typeof fetch;
     const { SwarmPage } = await import('@/features/swarms/SwarmPage');
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
-    try {
-      await act(async () =>
-        root.render(
+    await act(async () =>
+      root.render(
+        createElement(
+          I18nextProvider,
+          { i18n },
           createElement(
-            I18nextProvider,
-            { i18n },
-            createElement(
-              MemoryRouter,
-              { initialEntries: [`/swarms/${swarm.id}`] },
-              createElement(Routes, null, [
-                createElement(Route, {
-                  key: 'swarm',
-                  path: '/swarms/:id',
-                  element: createElement(SwarmPage),
-                }),
-              ])
-            )
+            MemoryRouter,
+            { initialEntries: [`/swarms/${swarm.id}`] },
+            createElement(Routes, null, [
+              createElement(Route, {
+                key: 'swarm',
+                path: '/swarms/:id',
+                element: createElement(SwarmPage),
+              }),
+            ])
           )
         )
-      );
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
-      // The inbox card and the card at the selected node: two forms, one request.
+      )
+    );
+    await settle();
+    return {
+      container,
+      close: async () => {
+        await act(async () => root.unmount());
+        container.remove();
+        globalThis.fetch = originalFetch;
+        if (documentCookie) Object.defineProperty(document, 'cookie', documentCookie);
+        else Reflect.deleteProperty(document, 'cookie');
+      },
+    };
+  }
+  const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+  const nodePanel = (container: HTMLElement) =>
+    [...container.querySelectorAll('h2, h3')]
+      .find((heading) => heading.textContent === en.swarm_page.node)
+      ?.closest('section') as HTMLElement;
+  /** Выбрать вариант в единственной форме и отправить её. */
+  async function answerApprove(container: HTMLElement) {
+    const inbox = container.querySelector('form') as HTMLFormElement;
+    await click(radioLabelled(inbox, 'Approve'));
+    await click(submitButton(inbox));
+    await settle();
+  }
+
+  // #259: one form on the page, in the inbox. The node leads to it; after
+  // the answer the graph moves on, the confirmation in the inbox takes focus
+  // and the node that asked still shows the chosen label.
+  test('the open node request has one form, in the inbox, and the node leads to it', async () => {
+    const stand: Stand = {
+      run,
+      requests: [nodeAsk({ swarmId: swarm.id })],
+      posted: [],
+      post: (state) => {
+        state.requests = [closedBy('alice')];
+        state.run = advanced;
+        return { status: 200, body: state.requests[0] };
+      },
+    };
+    const page = await openPage(stand);
+    const { container } = page;
+    try {
+      // One request, one form: in the inbox list, not in the node panel.
+      expect(container.querySelectorAll('form').length).toBe(1);
       const groups = container.querySelectorAll('[role="radiogroup"]');
-      expect(groups.length).toBe(2);
+      expect(groups.length).toBe(1);
       const inbox = groups[0].closest('form') as HTMLFormElement;
-      const approve = [...inbox.querySelectorAll('input[type="radio"]')].find((input) =>
-        input.closest('label')?.textContent?.includes('Approve')
+      expect(inbox.closest('li')).not.toBeNull();
+      const panel = nodePanel(container);
+      expect(panel.textContent).toContain('Approve the proposal?');
+      expect(panel.querySelector('form')).toBeNull();
+      const above = [...panel.querySelectorAll('button')].find(
+        (button) => button.textContent === t.answer_above
       );
-      await click(approve);
-      await click(inbox.querySelector('button[type="submit"]'));
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
-      expect(posted).toEqual([
+      expect(above).toBeDefined();
+      await click(above);
+      expect(document.activeElement).toBe(radioLabelled(inbox, 'Approve') ?? null);
+      await answerApprove(container);
+      expect(stand.posted).toEqual([
         {
           url: `/api/swarms/${swarm.id}/requests/req-node-3/answer`,
           body: { outcome: 'success' },
         },
       ]);
       expect(container.querySelector('[role="radiogroup"]')).toBeNull();
-      // Confirmation at the inbox card and at the node card; focus at the inbox one.
+      // One confirmation, in the inbox and not folded into the history; it has focus.
       const sent = [...container.querySelectorAll('[role="status"]')].filter(
         (element) => element.textContent === t.sent
       );
-      expect(sent.length).toBe(2);
+      expect(sent.length).toBe(1);
       expect(document.activeElement).toBe(sent[0]);
       expect(sent[0].closest('li')).not.toBeNull();
-      expect(container.textContent).toContain('Approve');
+      expect(sent[0].closest('details:not([open])')).toBeNull();
+      // The graph moved on to ship; the node that asked stays selected with its label.
+      expect(stand.run.currentNode).toBe('ship');
+      const answeredPanel = nodePanel(container);
+      expect(answeredPanel.textContent).toContain('Approve the proposal?');
+      expect(answeredPanel.textContent).toContain('Approve');
+      expect(answeredPanel.textContent).not.toContain(t.answer_above);
+      expect(answeredPanel.textContent).not.toContain(t.sent);
     } finally {
-      await act(async () => root.unmount());
-      container.remove();
-      globalThis.fetch = originalFetch;
-      if (documentCookie) Object.defineProperty(document, 'cookie', documentCookie);
-      else Reflect.deleteProperty(document, 'cookie');
+      await page.close();
+    }
+  });
+
+  // #259: another manager answered first. The refused card stays where the
+  // answer was given, its reason is not folded into the history, and focus
+  // goes to the reason instead of being lost with the form.
+  test('a refused answer keeps its card in place with the reason in focus', async () => {
+    const stand: Stand = {
+      run,
+      requests: [nodeAsk({ swarmId: swarm.id })],
+      posted: [],
+      post: (state) => {
+        state.requests = [closedBy('bob')];
+        return { status: 409, body: { detail: 'swarm request is no longer open' } };
+      },
+    };
+    const page = await openPage(stand);
+    const { container } = page;
+    try {
+      await answerApprove(container);
+      expect(stand.posted.length).toBe(1);
+      const alert = [...container.querySelectorAll('[role="alert"]')].find((element) =>
+        element.textContent?.includes('swarm request is no longer open')
+      );
+      expect(alert).toBeDefined();
+      expect(alert?.closest('details:not([open])')).toBeNull();
+      expect(alert?.closest('li')?.textContent).toContain('bob');
+      expect(document.activeElement).toBe(alert ?? null);
+      expect(nodePanel(container).querySelector('[role="alert"]')).toBeNull();
+    } finally {
+      await page.close();
     }
   });
 });

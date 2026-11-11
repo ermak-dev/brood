@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Markdown } from '@/components/ui/Markdown';
+import { prefersReducedMotion } from '@/hooks/motion';
 import type { SwarmRequest } from '@/services/brood/requests';
 import { deliveryTone, requestTone } from '@/features/access/state';
 import { LoadState, StatusBadge } from '@/features/access/shared';
@@ -22,9 +23,12 @@ import page from './SwarmPage.module.scss';
 import local from './SwarmRequests.module.scss';
 
 /** Инбокс роя: открытые запросы сверху и целиком, ниже отвеченные и
- * закрытые — историей, свёрнутой в счётчик (#253). Узел запроса — кнопкой,
- * она выбирает его на графе. Пояснения у секции нет: карточка сама говорит,
- * кто спрашивает, а место на первом экране нужно вопросу и графу. */
+ * закрытые — историей, свёрнутой в счётчик (#253). Единственное место
+ * ответа (#259): запрос, на который отвечали здесь, остаётся на своём
+ * месте с подтверждением или отказом до ухода со страницы. Узел запроса —
+ * кнопкой, она выбирает его на графе. Пояснения у секции нет: карточка
+ * сама говорит, кто спрашивает, а место на первом экране нужно вопросу и
+ * графу. */
 export function RequestInbox({
   model,
   onSelectNode,
@@ -33,7 +37,7 @@ export function RequestInbox({
   onSelectNode?: (node: string) => void;
 }) {
   const { t } = useTranslation();
-  const { open, history } = inboxSections(model.requests);
+  const { open, current, history } = inboxSections(model.requests, model.handledHere);
   const card = (request: SwarmRequest) => (
     <li key={request.id}>
       <RequestCard model={model} request={request} onSelectNode={onSelectNode} />
@@ -60,11 +64,8 @@ export function RequestInbox({
             {model.error}
           </p>
         )}
-        {open.length === 0 ? (
-          <p className={page.hint}>{t('swarm_requests.none_open')}</p>
-        ) : (
-          <ol className={local.list}>{open.map(card)}</ol>
-        )}
+        {open.length === 0 && <p className={page.hint}>{t('swarm_requests.none_open')}</p>}
+        {current.length > 0 && <ol className={local.list}>{current.map(card)}</ol>}
         {history.length > 0 && (
           <details className={local.history}>
             <summary className={local.historySummary}>
@@ -80,7 +81,9 @@ export function RequestInbox({
 
 /** Один запрос: кто и когда спросил, вопрос и материал, затем форма
  * ответа или то, чем он закрыт. Тот же компонент стоит у выбранного узла
- * графа (variant="node"): там вопрос уже показан узлом и не повторяется.
+ * графа (variant="node"): там вопрос уже показан узлом и не повторяется, а
+ * формы нет (#259) — вместо неё кнопка к форме в инбоксе; подтверждение и
+ * отказ тоже остаются инбоксу, узел показывает подпись выбранного варианта.
  * Материал свёрнут под своей подписью (#253): спрашивает вопрос, материал
  * читают по желанию. В широком инбоксе открытый запрос встаёт в две
  * колонки — вопрос слева, ответ справа, — чтобы граф остался на первом
@@ -99,21 +102,41 @@ export function RequestCard({
   const { t, i18n } = useTranslation();
   const questionId = useId();
   const statusRef = useRef<HTMLParagraphElement>(null);
-  const notice = model.notices[request.id];
+  const refusalRef = useRef<HTMLParagraphElement>(null);
+  const replyRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLElement>(null);
   const atNode = variant === 'node';
-  // Отправленная форма исчезает вместе с кнопкой в фокусе: фокус переходит
-  // к подтверждению там, откуда ответ ушёл, и только один раз.
+  // Подтверждение и отказ — у формы, то есть в инбоксе.
+  const notice = atNode ? undefined : model.notices[request.id];
+  // Фокус берёт только карточка инбокса и только один раз: после отправки
+  // форма может исчезнуть вместе с кнопкой в фокусе — фокус к итогу,
+  // подтверждению или отказу; от узла («Ответить выше») — к выбору варианта.
+  const target = !atNode && model.focus?.id === request.id ? model.focus.target : undefined;
   const takeFocus =
-    Boolean(notice?.answered) && model.focus?.id === request.id && model.focus.place === variant;
+    target === 'result'
+      ? Boolean(notice?.answered || notice?.refusal)
+      : target === 'form' && request.state === 'open';
   const { focused } = model;
   useEffect(() => {
-    if (!takeFocus || !statusRef.current) return;
-    statusRef.current.focus();
+    if (!takeFocus) return;
+    if (target === 'result') {
+      (statusRef.current ?? refusalRef.current)?.focus();
+    } else {
+      const control = firstControl(replyRef.current);
+      if (control) {
+        control.focus({ preventScroll: true });
+        cardRef.current?.scrollIntoView?.({
+          behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+          block: 'center',
+        });
+      }
+    }
     focused();
-  }, [takeFocus, focused]);
+  }, [takeFocus, target, focused]);
 
   return (
     <article
+      ref={cardRef}
       className={atNode ? `${local.card} ${local.embedded}` : local.card}
       data-state={request.state}
       aria-labelledby={atNode ? undefined : questionId}
@@ -145,16 +168,15 @@ export function RequestCard({
         </div>
       )}
       {request.state === 'open' && (
-        <div className={local.reply}>
-          {model.canAnswer ? (
-            <AnswerForm
-              request={request}
-              place={variant}
-              labelledBy={atNode ? undefined : questionId}
-              answer={model.answer}
-            />
-          ) : (
+        <div ref={replyRef} className={local.reply}>
+          {!model.canAnswer ? (
             <p className={page.hint}>{t('swarm_requests.read_only')}</p>
+          ) : atNode ? (
+            <button type="button" className={local.above} onClick={() => model.reach(request)}>
+              {t('swarm_requests.answer_above')}
+            </button>
+          ) : (
+            <AnswerForm request={request} labelledBy={questionId} answer={model.answer} />
           )}
         </div>
       )}
@@ -174,11 +196,21 @@ export function RequestCard({
         </p>
       )}
       {notice?.refusal && (
-        <p role="alert" className={local.refusal}>
+        <p ref={refusalRef} tabIndex={-1} role="alert" className={local.refusal}>
           {t('swarm_requests.refused', { reason: notice.refusal })}
         </p>
       )}
     </article>
+  );
+}
+
+/** Куда перевести фокус в форме ответа: на выбранный вариант, иначе на
+ * первое поле — как при переходе в форму клавишей Tab. */
+function firstControl(reply: HTMLElement | null): HTMLElement | null {
+  return (
+    reply?.querySelector<HTMLElement>('input:checked:not(:disabled)') ??
+    reply?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled)') ??
+    null
   );
 }
 
@@ -219,13 +251,11 @@ function Asker({
  * кнопка заблокирована, и отправка формы без тела ничего не шлёт. */
 function AnswerForm({
   request,
-  place,
   labelledBy,
   answer,
 }: {
   request: SwarmRequest;
-  place: RequestPlace;
-  labelledBy?: string;
+  labelledBy: string;
   answer: RequestInboxModel['answer'];
 }) {
   const { t } = useTranslation();
@@ -242,7 +272,7 @@ function AnswerForm({
     if (sending || !body) return;
     setSending(true);
     try {
-      await answer(request, body, place);
+      await answer(request, body);
     } finally {
       setSending(false);
     }
@@ -254,7 +284,6 @@ function AnswerForm({
         <div
           role="radiogroup"
           aria-labelledby={labelledBy}
-          aria-label={labelledBy ? undefined : request.question}
           aria-required="true"
           className={local.choices}
         >

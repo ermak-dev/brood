@@ -3288,6 +3288,7 @@
       "no": "아니요"
     },
     "submit": "답변 보내기",
+    "answer_above": "위에서 답변하기",
     "sent": "답변이 기록되었습니다.",
     "refused": "수락되지 않음: {{reason}}",
     "answer": "답변",

@@ -3285,6 +3285,7 @@
       "no": "否"
     },
     "submit": "发送回答",
+    "answer_above": "在上方回答",
     "sent": "回答已记录。",
     "refused": "未被接受：{{reason}}",
     "answer": "回答",

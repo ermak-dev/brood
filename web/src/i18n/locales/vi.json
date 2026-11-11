@@ -3294,6 +3294,7 @@
       "no": "Không"
     },
     "submit": "Gửi câu trả lời",
+    "answer_above": "Trả lời ở phía trên",
     "sent": "Đã ghi nhận câu trả lời.",
     "refused": "Không được chấp nhận: {{reason}}",
     "answer": "Câu trả lời",

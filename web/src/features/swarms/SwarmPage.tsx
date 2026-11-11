@@ -82,11 +82,14 @@ function SwarmScreen({ id }: { id: string }) {
   const [chosen, setChosen] = useState<string>();
   // Определение, выбранное в диалоге первого запуска: его роли — в блоке ролей.
   const [startDefinition, setStartDefinition] = useState('');
-  // Запросы оператору (#216). Ответ узловому запросу продвигает граф;
-  // ответ, данный у узла, оставляет выбор на нём, рядом с подтверждением.
-  const inbox = useSwarmRequests(id, swarm.data, (answered, place) => {
+  const selected = selectedNodeId(run, graph.data, chosen);
+  // Запросы оператору (#216), ответ — только в инбоксе (#259). Ответ
+  // узловому запросу продвигает граф; узел, выбранный в панели, остаётся
+  // выбранным: панель показывает подпись выбранного варианта, а строка
+  // состояния — куда граф пошёл.
+  const inbox = useSwarmRequests(id, swarm.data, (answered) => {
     if (answered.origin !== 'node') return;
-    if (place === 'node' && answered.nodeId) setChosen(answered.nodeId);
+    if (answered.nodeId && answered.nodeId === selected) setChosen(answered.nodeId);
     void execution.refresh();
     void graph.refresh();
   });
@@ -119,7 +122,6 @@ function SwarmScreen({ id }: { id: string }) {
       </div>
     );
   }
-  const selected = selectedNodeId(run, graph.data, chosen);
   const asked = nodeRequest(inbox.requests, selected);
   const projectName = swarmProjectName(data, projects.data, run);
   // Исполнение, которое не прочитано или не перечитывается, действия не даёт:
@@ -199,7 +201,8 @@ export interface SwarmViewProps {
   retryGraph: () => Promise<void>;
   selected?: string;
   onSelect: (node: string) => void;
-  /** Узел запроса оператору и его карточка (#216): форма ответа или ответ. */
+  /** Узел запроса оператору и его карточка (#216): путь к форме ответа в
+   * инбоксе или ответ (#259). */
   gateNode?: string;
   gate?: ReactNode;
   /** Инбокс запросов оператору: сразу под строкой состояния, выше графа. */
@@ -624,8 +627,9 @@ function StepSpan({ step }: { step: RunNode }) {
 
 /** Выбранный узел: что поручает граф, исход, актор, причина, commit, отчёт
  * и моменты последнего посещения. Совет застрявшему шагу стоит в первом
- * блоке страницы, здесь не повторяется. Вопрос оператору этого узла —
- * форма ответа здесь же. */
+ * блоке страницы, здесь не повторяется. Запрос оператору этого узла —
+ * карточкой без формы (#259): форма одна, в инбоксе, сюда — кнопка к ней,
+ * а после ответа — подпись выбранного варианта. */
 function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
   const { t, i18n } = useTranslation();
   const rows: Array<{ label: string; value: ReactNode }> = [];

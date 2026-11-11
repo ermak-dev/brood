@@ -86,21 +86,31 @@ export function answerBody(request: SwarmRequest, draft: RequestDraft): RequestA
 const byTime = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
 /** Инбокс: открытые сверху, дольше ждущий первым; ниже история, свежий
- * ответ первым. */
-export function inboxSections(requests: SwarmRequest[] | null): {
+ * ответ первым. Запрос, на который отвечали на этой странице (handledHere:
+ * ответ принят или отклонён), остаётся на своём месте среди открытых
+ * (#259): подтверждение или отказ не уходят в свёрнутую историю, а open
+ * считает только ждущие ответа. */
+export function inboxSections(
+  requests: SwarmRequest[] | null,
+  handledHere: readonly string[] = []
+): {
   open: SwarmRequest[];
+  /** Карточки над историей: открытые и те, на которые отвечали здесь, по
+   * моменту вопроса. */
+  current: SwarmRequest[];
   history: SwarmRequest[];
 } {
   const all = requests ?? [];
-  const open = all
-    .filter((request) => request.state === 'open')
-    .sort((left, right) => byTime(left.createdAt, right.createdAt));
+  const here = new Set(handledHere);
+  const stays = (request: SwarmRequest) => request.state === 'open' || here.has(request.id);
+  const current = all.filter(stays).sort((left, right) => byTime(left.createdAt, right.createdAt));
+  const open = current.filter((request) => request.state === 'open');
   const history = all
-    .filter((request) => request.state !== 'open')
+    .filter((request) => !stays(request))
     .sort((left, right) =>
       byTime(right.answeredAt ?? right.createdAt, left.answeredAt ?? left.createdAt)
     );
-  return { open, history };
+  return { open, current, history };
 }
 
 /** Что осталось от ответа: подпись нажатого варианта, а не машинный

@@ -64,6 +64,52 @@
   background: transparent;
 }
 
+/* Карточка инбокса с фокусом внутри (#259): форма, к которой привела
+ * кнопка узла, или подтверждение ответа. Кольца у радио после перехода
+ * мышью нет — карточку отмечает рамка, а левая полоса открытого запроса
+ * остаётся своей. */
+.card:not(.embedded) {
+  transition:
+    border-color var(--dur-hover) var(--ease-out-strong),
+    box-shadow var(--dur-hover) var(--ease-out-strong);
+
+  &:focus-within {
+    border-color: color-mix(in srgb, var(--primary-color) 55%, var(--card-border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 14%, transparent);
+  }
+
+  &[data-state='open']:focus-within {
+    border-left-color: var(--amber-color);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card:not(.embedded) {
+    transition: none;
+  }
+}
+
+/* Путь от узла к форме ответа в инбоксе (#259): текстовая кнопка, как
+ * имя узла, но с целью нажатия не меньше 32px — она стоит одна. */
+.above {
+  @include button-reset;
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: 32px;
+  color: var(--primary-color);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;
