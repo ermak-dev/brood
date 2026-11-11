@@ -53,6 +53,10 @@ type Config struct {
 func (Config) String() string     { return "proxmox.Config{redacted}" }
 func (c Config) GoString() string { return c.String() }
 
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (c Config) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, c.String()) }
+
 // Ownership is a durable identity, not a hostname or a reusable VMID. The caller
 // generates and persists the nonce and operation intent before any PVE write.
 type Ownership struct {
@@ -80,8 +84,12 @@ func (o Ownership) valid() bool {
 // PVE receives a deterministic NUL-separated KEY=value list, not shell syntax.
 type BootstrapEnv map[string]string
 
-func (BootstrapEnv) String() string               { return "proxmox.BootstrapEnv{redacted}" }
-func (e BootstrapEnv) GoString() string           { return e.String() }
+func (BootstrapEnv) String() string     { return "proxmox.BootstrapEnv{redacted}" }
+func (e BootstrapEnv) GoString() string { return e.String() }
+
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (e BootstrapEnv) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, e.String()) }
 func (BootstrapEnv) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`), nil }
 
 // CTSpec exposes no raw PVE options. Resource bounds are 1..128 cores,
@@ -101,6 +109,10 @@ type CTSpec struct {
 
 func (CTSpec) String() string     { return "proxmox.CTSpec{redacted}" }
 func (s CTSpec) GoString() string { return s.String() }
+
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (c CTSpec) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, c.String()) }
 
 // OwnedCT identifies the exact durable allocation to operate on.
 type OwnedCT struct {
@@ -132,6 +144,10 @@ type Client struct {
 
 func (*Client) String() string     { return "proxmox.Client{redacted}" }
 func (c *Client) GoString() string { return c.String() }
+
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (c *Client) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, c.String()) }
 
 var (
 	name         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)

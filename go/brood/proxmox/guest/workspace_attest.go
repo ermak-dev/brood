@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -35,6 +36,10 @@ type WorkspaceAttestor struct {
 
 func (*WorkspaceAttestor) String() string     { return "guest.WorkspaceAttestor{redacted}" }
 func (a *WorkspaceAttestor) GoString() string { return a.String() }
+
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (a *WorkspaceAttestor) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, a.String()) }
 
 // NewWorkspaceAttestor binds production effects to the root bootstrap identity
 // and origin; quiesce is the runtime's Quiesce.

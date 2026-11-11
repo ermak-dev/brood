@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -71,6 +73,10 @@ func NewHub(installationRelayKey []byte, authorize func(string, int64, string) b
 }
 func (*Hub) String() string     { return "relay.Hub{redacted}" }
 func (h *Hub) GoString() string { return h.String() }
+
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (h *Hub) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, h.String()) }
 
 // HostKey returns the public SSH host key in authorized_keys format for guest pinning.
 func (h *Hub) HostKey() string {

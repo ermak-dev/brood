@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/url"
@@ -43,6 +44,10 @@ type ClientConfig struct {
 
 func (ClientConfig) String() string     { return "relay.ClientConfig{redacted}" }
 func (c ClientConfig) GoString() string { return c.String() }
+
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (c ClientConfig) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, c.String()) }
 
 type clientOptions struct {
 	ws             *websocket.Config
