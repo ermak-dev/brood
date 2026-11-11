@@ -3118,7 +3118,18 @@
     },
     "graph_label": "Đồ thị lần chạy",
     "graph_description": "Mỗi nút là một nút bấm được đặt tên theo bước, loại và trạng thái; nút mà lần chạy đang đứng được đánh dấu là hiện tại. Chọn một nút sẽ hiển thị chi tiết bên dưới đồ thị.",
-    "graph_empty": "Không có đồ thị"
+    "graph_empty": "Không có đồ thị",
+    "legend": {
+      "title": "Chú giải",
+      "state": {
+        "pending": "Chưa đến",
+        "active": "Đang thực hiện",
+        "done": "Hoàn tất",
+        "failed": "Thất bại hoặc bị từ chối",
+        "skipped": "Đã dừng hoặc bỏ qua",
+        "unconfirmed": "Chưa rõ kết quả"
+      }
+    }
   },
   "swarm_page": {
     "project": "Dự án",

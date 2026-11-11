@@ -576,13 +576,16 @@
     gap: $spacing-xs;
   }
 
+  /* Заголовок группы меню: 11px и вторая ступень текста, не прозрачная
+   * смесь (2,4:1 на белом, #254). Разрядка держит капитель читаемой. */
   .nav-group-label {
     padding: 0 10px 2px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    font-size: 11px;
+    line-height: var(--lh-12);
+    font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: color-mix(in srgb, var(--text-primary) 42%, transparent);
+    color: var(--text-secondary);
     user-select: none;
   }
 

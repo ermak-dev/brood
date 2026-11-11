@@ -4,7 +4,7 @@
  * запуск отвергнет. Сервер остаётся судьёй каждой привязки; панель только
  * не предлагает того, что он заведомо отвергнет.
  */
-import type { BadgeTone } from '@/features/access/state';
+import { roleTone } from '@/features/access/state';
 import { swarmCapabilities } from '@/features/access/shardState';
 import type { AccessSwarm } from '@/services/brood/access';
 import type { PipelineRun } from '@/services/brood/pipelines';
@@ -84,12 +84,5 @@ export function unreadyRoles(view: SwarmRolesView | null): GraphRole[] {
   return (view?.roles ?? []).filter((role) => role.inGraph && role.state !== 'ready');
 }
 
-const brokenStates = new Set(['stale', 'inactive', 'foreign', 'missing']);
-
-/** Готовая роль — успех, непривязанная ждёт, сломанная привязка — сбой.
- * Незнакомое состояние (сервер новее панели) не выдаётся за другое. */
-export function roleTone(state: string): BadgeTone {
-  if (state === 'ready') return 'success';
-  if (state === 'unbound') return 'warning';
-  return brokenStates.has(state) ? 'danger' : 'muted';
-}
+/** Тон роли живёт в общем словаре тонов (#254). */
+export { roleTone };

@@ -15,7 +15,6 @@ import { swarmTone } from './state';
 import {
   ACTIVITY_LIMIT,
   activityTargets,
-  badgeTone,
   executionActivityTone,
   swarmActivityOf,
   swarmOrder,
@@ -80,7 +79,7 @@ export function SwarmsTable({
         if (activity === undefined) return PENDING;
         if (activity === null) return DASH;
         return (
-          <StatusBadge tone={badgeTone(executionActivityTone(activity.execution))}>
+          <StatusBadge tone={executionActivityTone(activity.execution)}>
             {t(`access.execution_states.${activity.execution}`, {
               defaultValue: activity.execution,
             })}
@@ -96,7 +95,7 @@ export function SwarmsTable({
         if (activity === undefined) return PENDING;
         if (activity === null) return DASH;
         return activity.openRequests > 0 ? (
-          <StatusBadge tone={badgeTone('attention')}>{activity.openRequests}</StatusBadge>
+          <StatusBadge tone="attention">{activity.openRequests}</StatusBadge>
         ) : (
           String(activity.openRequests)
         );

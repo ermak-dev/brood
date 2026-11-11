@@ -72,16 +72,77 @@ test('an open panel follows its row through list refreshes', async () => {
   expect(retainedRow(open, { data: null, loading: false, error: 'refused' }, same)).toBe(open);
 });
 
-// Состояние роя в панели -- бейдж с тоном: сбой виден как сбой, переходное
-// как ожидание, а не всё одинаково серым.
+// Тоны бейджей семантические (#254): attention -- ждёт человека, progress --
+// работает, problem -- встал, neutral -- ничего не требует. Здоровое
+// состояние покоя не красится: цвет зовёт, только когда есть зачем.
+test('badge tones are the four semantic ones', async () => {
+  const { BADGE_TONES } = await import('../src/features/access/state');
+  expect([...BADGE_TONES]).toEqual(['attention', 'progress', 'problem', 'neutral']);
+});
+
+// Состояние роя: переходное -- работа системы, сбой -- проблема, активный и
+// удалённый не требуют внимания.
 test('swarm state badges distinguish failure from transition', async () => {
   const { swarmTone } = await import('../src/features/access/state');
-  expect(swarmTone('active')).toBe('success');
-  expect(swarmTone('provisioning')).toBe('warning');
-  expect(swarmTone('deleting')).toBe('warning');
-  expect(swarmTone('error')).toBe('danger');
-  expect(swarmTone('deleted')).toBe('muted');
-  expect(swarmTone('unexpected')).toBe('muted');
+  expect(swarmTone('active')).toBe('neutral');
+  expect(swarmTone('provisioning')).toBe('progress');
+  expect(swarmTone('deleting')).toBe('progress');
+  expect(swarmTone('error')).toBe('problem');
+  expect(swarmTone('deleted')).toBe('neutral');
+  expect(swarmTone('unexpected')).toBe('neutral');
+});
+
+// Исполнение роя: ждущий ответа зовёт оператора, идущий работает, встал --
+// проблема; завершённый и остановленный ничего не требуют и не делят тон
+// с ждущим.
+test('execution tones separate waiting for a human from running and stopped', async () => {
+  const { executionTone } = await import('../src/features/access/state');
+  expect(executionTone('waiting')).toBe('attention');
+  expect(executionTone('running')).toBe('progress');
+  expect(executionTone('failed')).toBe('problem');
+  expect(executionTone('succeeded')).toBe('neutral');
+  expect(executionTone('stopped')).toBe('neutral');
+  expect(executionTone('idle')).toBe('neutral');
+  expect(executionTone('paused')).toBe('neutral');
+});
+
+// Роль роя: непривязанная ждёт, чтобы человек выбрал актора; сломанная
+// привязка -- проблема; готовая ничего не требует.
+test('role tones: unbound waits for a human, a broken binding is a problem', async () => {
+  const { roleTone } = await import('../src/features/access/state');
+  expect(roleTone('ready')).toBe('neutral');
+  expect(roleTone('unbound')).toBe('attention');
+  for (const state of ['stale', 'inactive', 'foreign', 'missing']) {
+    expect({ state, tone: roleTone(state) }).toEqual({ state, tone: 'problem' });
+  }
+  expect(roleTone('newer-state')).toBe('neutral');
+});
+
+// Запрос оператору: открытый ждёт человека; отвеченный и отменённый --
+// история. Доставка ответа актору: идёт -- работа, провал -- проблема.
+test('request and delivery tones', async () => {
+  const { requestTone, deliveryTone } = await import('../src/features/access/state');
+  expect(requestTone('open')).toBe('attention');
+  expect(requestTone('answered')).toBe('neutral');
+  expect(requestTone('cancelled')).toBe('neutral');
+  expect(deliveryTone('pending')).toBe('progress');
+  expect(deliveryTone('delivered')).toBe('neutral');
+  expect(deliveryTone('failed')).toBe('problem');
+});
+
+// Актор и воркер Substrate: работающий и переходный -- работа, остановленный
+// -- покой, упавший и недоступный -- проблема.
+test('substrate object tones map to the semantic four', async () => {
+  const { substrateTone } = await import('../src/features/access/state');
+  expect(substrateTone('running')).toBe('progress');
+  expect(substrateTone('active')).toBe('progress');
+  expect(substrateTone('resuming')).toBe('progress');
+  expect(substrateTone('draining')).toBe('progress');
+  expect(substrateTone('deleting')).toBe('progress');
+  expect(substrateTone('suspended')).toBe('neutral');
+  expect(substrateTone('crashed')).toBe('problem');
+  expect(substrateTone('unavailable')).toBe('problem');
+  expect(substrateTone('unknown-state')).toBe('neutral');
 });
 
 // Выбор теперь явный и глобальный; функция автоматического выбора первого

@@ -3137,7 +3137,18 @@
     },
     "graph_label": "執行圖",
     "graph_description": "每個節點都是按鈕，名稱由步驟、類型和狀態組成；執行所在的節點標記為目前。選擇節點後，其詳情顯示在圖下方。",
-    "graph_empty": "暫無圖表"
+    "graph_empty": "暫無圖表",
+    "legend": {
+      "title": "圖例",
+      "state": {
+        "pending": "未到達",
+        "active": "進行中",
+        "done": "已完成",
+        "failed": "失敗或拒絕",
+        "skipped": "已停止或略過",
+        "unconfirmed": "結果未知"
+      }
+    }
   },
   "swarm_page": {
     "project": "專案",

@@ -404,7 +404,7 @@ export function ActorTable({
       render: (a) =>
         goldenOf(a) ? (
           <span title={t('actors.golden_hint', { template: goldenOf(a) })}>
-            <span className={`${styles.badge} ${styles['tone-muted']}`}>
+            <span className={`${styles.badge} ${styles['tone-neutral']}`}>
               {t('actors.golden', { template: goldenOf(a) })}
             </span>
           </span>
@@ -428,7 +428,7 @@ export function ActorTable({
             </span>
           )}
           {uncertain.has(a.metadata.name) && (
-            <span className={`${styles.badge} ${styles['tone-warning']}`}>
+            <span className={`${styles.badge} ${styles['tone-attention']}`}>
               {t('actors.ops.unconfirmed_badge')}
             </span>
           )}

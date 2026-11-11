@@ -5,32 +5,19 @@
 
 import { formatDateValue } from '@/utils/format';
 import type { Selector } from '@/services/brood/substrate';
+import { substrateTone, type BadgeTone } from '@/features/access/state';
 
 export const DASH = '—';
 
-export type Tone = 'success' | 'warning' | 'danger' | 'muted';
+export type Tone = BadgeTone;
 
 /** 'ACTOR_STATE_RUNNING' -> 'running'; the prefix is the enum's name. */
 export function shortState(state: string | undefined, prefix: string): string {
   return (state ?? '').replace(prefix, '').toLowerCase();
 }
 
-const TONES: Record<string, Tone> = {
-  running: 'success',
-  active: 'success',
-  suspended: 'muted',
-  resuming: 'warning',
-  suspending: 'warning',
-  reverting: 'warning',
-  draining: 'warning',
-  unavailable: 'warning',
-  deleting: 'warning',
-  crashed: 'danger',
-};
-
-export function toneOf(state: string): Tone {
-  return TONES[state] ?? 'muted';
-}
+/** Badge tone of a short state; the dictionary is shared (#254). */
+export const toneOf = substrateTone;
 
 export function formatDate(value: string | undefined, language: string): string {
   return value ? formatDateValue(value, language) : DASH;

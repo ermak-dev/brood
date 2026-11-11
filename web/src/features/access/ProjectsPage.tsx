@@ -66,7 +66,7 @@ export function ProjectsTable({
         <span className={styles.nameCell}>
           {project.name}
           {project.id === selected && (
-            <StatusBadge tone="success">{t('substrate.switcher_title')}</StatusBadge>
+            <StatusBadge tone="neutral">{t('substrate.switcher_title')}</StatusBadge>
           )}
         </span>
       ),
@@ -173,7 +173,7 @@ export function AccessProjectsPage() {
         title={viewing?.name ?? ''}
         status={
           viewing?.id === selected && (
-            <StatusBadge tone="success">{t('substrate.switcher_title')}</StatusBadge>
+            <StatusBadge tone="neutral">{t('substrate.switcher_title')}</StatusBadge>
           )
         }
         actions={viewing ? panelGroups(projectPlan(admin), actions(viewing), t) : []}

@@ -14,9 +14,12 @@
   --floating-surface: #fffdf9;
   --floating-shadow: 0 12px 26px rgba(0, 0, 0, 0.14);
 
+  // Текст: три ступени, каждая не ниже 4,5:1 на странице и на карточке
+  // (tests/themeTokens.test.ts); четвёртая -- только для декора (точки,
+  // контуры), не для слов. #254.
   --text-primary: #2d2a26;
-  --text-secondary: #6d6760;
-  --text-tertiary: #a29c95;
+  --text-secondary: #67615a;
+  --text-tertiary: #716a62;
   --text-quaternary: #c0bab3;
   --text-muted: var(--text-tertiary);
 
@@ -25,9 +28,34 @@
   --border-primary: #d5d2cb;
   --border-hover: #cecac4;
 
-  --primary-color: #8b8680; // 行动色（主色）
-  --primary-hover: #7f7a74;
-  --primary-active: #726d67;
+  // Два уровня карточек (#254): вложенная читается цветом, не только рамкой.
+  // В светлой теме карточка темнее страницы, вложенная -- снова светлее,
+  // как поле формы: «углубление» в бумаге.
+  --card-bg: var(--bg-primary);
+  --card-border: var(--border-color);
+  --card-inset-bg: #f7f5f0;
+  --card-inset-border: #d9d6cf;
+
+  // Бейджи по семантическим тонам (features/access/state.ts): текст на
+  // две ступени темнее оттенка, чтобы держать 4,5:1 на подложке.
+  --attention-badge-bg: #fbefd0;
+  --attention-badge-fg: #7a4a0a;
+  --attention-badge-border: #e6c77a;
+  --progress-badge-bg: #d1fae5;
+  --progress-badge-fg: #065f46;
+  --progress-badge-border: #6ee7b7;
+  --problem-badge-bg: #f7dcd7;
+  --problem-badge-fg: #7d2f25;
+  --problem-badge-border: #e3a79d;
+  --neutral-badge-bg: #e9e6df;
+  --neutral-badge-fg: #5f5953;
+  --neutral-badge-border: #d5d2cb;
+
+  // Основной цвет -- ссылка на странице и подложка кнопки под белым текстом:
+  // обе пары не ниже 4,5:1 (#254). Прежний #8b8680 давал 3,6:1.
+  --primary-color: #6f6a64; // 行动色（主色）
+  --primary-hover: #645f59;
+  --primary-active: #5a554f;
   --primary-contrast: #ffffff;
 
   --success-color: #10b981;
@@ -90,6 +118,26 @@
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --dur-press: 160ms;
   --dur-hover: 200ms;
+
+  // Шкала типографики (#254): шесть размеров, у каждого одно межстрочное.
+  // Темы её не переопределяют. 12 -- подписи и бейджи, 13 -- текст таблиц
+  // и форм, 14 -- заголовки секций и кнопки действий, 16 -- заголовки
+  // карточек и диалогов, 20 -- подзаголовок страницы, 28 -- заголовок
+  // страницы. Межстрочное -- в пикселях: при вложении размер не умножается.
+  --fs-12: 12px;
+  --lh-12: 16px;
+  --fs-13: 13px;
+  --lh-13: 18px;
+  --fs-14: 14px;
+  --lh-14: 20px;
+  --fs-16: 16px;
+  --lh-16: 22px;
+  --fs-20: 20px;
+  --lh-20: 26px;
+  --fs-28: 28px;
+  --lh-28: 32px;
+  // Предел ширины текста в карточках: длиннее 72 знаков строка читается хуже.
+  --measure: 72ch;
 }
 
 // 纯白主题
@@ -104,8 +152,8 @@
   --floating-shadow: 0 12px 26px rgba(0, 0, 0, 0.12);
 
   --text-primary: #2d2a26;
-  --text-secondary: #6d6760;
-  --text-tertiary: #a29c95;
+  --text-secondary: #67615a;
+  --text-tertiary: #716a62;
   --text-quaternary: #c0bab3;
   --text-muted: var(--text-tertiary);
 
@@ -114,9 +162,28 @@
   --border-primary: #d9d9d9;
   --border-hover: #cccccc;
 
-  --primary-color: #8b8680;
-  --primary-hover: #7f7a74;
-  --primary-active: #726d67;
+  // Карточка и страница здесь одного цвета: вложенность несёт серый.
+  --card-bg: var(--bg-primary);
+  --card-border: var(--border-color);
+  --card-inset-bg: #f6f6f6;
+  --card-inset-border: #dcdcdc;
+
+  --attention-badge-bg: #fbefd0;
+  --attention-badge-fg: #7a4a0a;
+  --attention-badge-border: #e6c77a;
+  --progress-badge-bg: #d1fae5;
+  --progress-badge-fg: #065f46;
+  --progress-badge-border: #6ee7b7;
+  --problem-badge-bg: #f7dcd7;
+  --problem-badge-fg: #7d2f25;
+  --problem-badge-border: #e3a79d;
+  --neutral-badge-bg: #f0f0f0;
+  --neutral-badge-fg: #5f5953;
+  --neutral-badge-border: #d9d9d9;
+
+  --primary-color: #6f6a64;
+  --primary-hover: #645f59;
+  --primary-active: #5a554f;
   --primary-contrast: #ffffff;
 
   --success-color: #10b981;
@@ -185,10 +252,31 @@
   --border-primary: #4a453f;
   --border-hover: #5a544d;
 
+  // В тёмной теме вложенная карточка светлее внешней: ближе к зрителю.
+  --card-bg: var(--bg-primary);
+  --card-border: var(--border-color);
+  --card-inset-bg: #262320;
+  --card-inset-border: #4a453f;
+
+  --attention-badge-bg: #473515;
+  --attention-badge-fg: #fcd34d;
+  --attention-badge-border: #8a6a1f;
+  --progress-badge-bg: #163a2f;
+  --progress-badge-fg: #6ee7b7;
+  --progress-badge-border: #1f7a5a;
+  --problem-badge-bg: #4a241f;
+  --problem-badge-fg: #f1b0a6;
+  --problem-badge-border: #8a3f35;
+  --neutral-badge-bg: #2e2a26;
+  --neutral-badge-fg: #c9c3bb;
+  --neutral-badge-border: #4a453f;
+
+  // В тёмной теме кнопка светлеет при наведении, поэтому текст на ней
+  // тёмный: белый на #8b8680 давал 3,6:1 и падал дальше на hover.
   --primary-color: #8b8680;
   --primary-hover: #9a948e;
   --primary-active: #a6a099;
-  --primary-contrast: #ffffff;
+  --primary-contrast: #151412;
 
   --success-color: #10b981;
   --quota-medium-color: #ffd862;
