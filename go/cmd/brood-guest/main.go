@@ -5,10 +5,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,7 +71,7 @@ type dependencies struct {
 	origin  func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error)
 	// artifacts ставит три бинарных артефакта сервера (#155); reexec
 	// подменяет процесс на установленную runtime-стадию.
-	artifacts func(context.Context, relay.ClientConfig, []string, func(context.Context, string, io.Reader, int64) error) error
+	artifacts func(context.Context, relay.ClientConfig, []string, guest.ArtifactInstaller) error
 	reexec    func(env []string) error
 	// boot — UID 1000 цель --brood-guest-autostart; autorun — root-цикл,
 	// который её запускает до появления сессии Claude.
@@ -360,10 +360,11 @@ func runtimeEnv(c config) []string {
 	return append(env, "BROOD_GUEST_STAGE=runtime")
 }
 
-// installArtifact ставит один артефакт атомарно: спул в tmp, 0755, fsync
-// файла и каталога, rename в bin. Повторная установка идентичного бинарника
-// допустима; существующий другой контент или не-файл — отказ.
-func installArtifact(_ context.Context, name string, stream io.Reader, size int64) error {
+// installArtifact ставит один артефакт атомарно: спул в tmp, сверка его
+// sha256 с digest манифеста, 0755, fsync файла и каталога, rename в bin.
+// Повторная установка идентичного бинарника допустима, когда и он, и поток
+// совпадают с манифестом; существующий другой контент или не-файл — отказ.
+func installArtifact(_ context.Context, name string, stream io.Reader, size int64, digest string) error {
 	// Имена закрыты списком манифеста; повторная проверка отсекает
 	// произвольные пути из ошибочной доставки.
 	if name != "brood-guest" && name != "bro" && name != "claude" {
@@ -389,7 +390,12 @@ func installArtifact(_ context.Context, name string, stream io.Reader, size int6
 		if err != nil {
 			return errors.New("guest artifact stream invalid")
 		}
-		if !bytes.Equal(sum, received) {
+		if hex.EncodeToString(received) != digest {
+			return errors.New("guest artifact digest mismatch")
+		}
+		// Установленный файл сверяется с манифестом, а не только с потоком:
+		// совпадение с неверной доставкой не делает его верным (#265).
+		if hex.EncodeToString(sum) != digest {
 			return errors.New("guest artifact differs from the installed binary")
 		}
 		return nil
@@ -400,10 +406,17 @@ func installArtifact(_ context.Context, name string, stream io.Reader, size int6
 		return errors.New("guest artifact staging unavailable")
 	}
 	defer os.Remove(spool.Name())
-	written, err := io.Copy(spool, io.LimitReader(stream, size))
+	spooled := sha256.New()
+	written, err := io.Copy(io.MultiWriter(spool, spooled), io.LimitReader(stream, size))
 	if err != nil || written != size {
 		spool.Close()
 		return errors.New("guest artifact stream invalid")
+	}
+	// Digest спула сверяется до rename: неверный поток не попадает в bin и не
+	// блокирует следующую доставку верного артефакта (#265).
+	if hex.EncodeToString(spooled.Sum(nil)) != digest {
+		spool.Close()
+		return errors.New("guest artifact digest mismatch")
 	}
 	if err := spool.Chmod(0755); err != nil {
 		spool.Close()
