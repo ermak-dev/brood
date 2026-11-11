@@ -303,6 +303,13 @@ changed; list the swarm actors and bind again`. Текст ошибок хран
   другой записанной идентичностью. Без настройки поля нет и поведение
   прежнее (docs/PROXMOX.md, «Origin и первый клон», «Подтверждение
   workspace»).
+- Модели Claude Code актора (#263): тот же ответ при заданных
+  `BROOD_ACTOR_MODEL` и/или `BROOD_ACTOR_SMALL_MODEL` несёт `models`
+  `{model, smallModel}` только с заданными именами, с origin и без; гость
+  ставит `model` в `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL` и
+  `ANTHROPIC_DEFAULT_SONNET_MODEL`, `smallModel` — в
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL` окружения Claude Code. Без настроек поля
+  нет и окружение прежнее (docs/PROXMOX.md, «Модели Claude Code актора»).
 - Инструкция — одно сообщение канала роя: `from` — `swarm:<id роя>`, `to` —
   имя привязанного актора, `waitSec` 0. Тело: `[brood swarm <имя>] Step <n>,
   node <узел>.`, блок `Goal of this pass (started at step <первый шаг

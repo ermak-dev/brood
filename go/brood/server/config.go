@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/gitidentity"
 )
 
@@ -99,6 +100,10 @@ type Config struct {
 	// (BROOD_ACTOR_GIT_DOMAIN, #249): свойство установки, без дефолта.
 	// Пусто — гость идентичность не получает и не пишет.
 	ActorGitDomain string
+	// ActorModels — модели Claude Code акторов (BROOD_ACTOR_MODEL основная,
+	// BROOD_ACTOR_SMALL_MODEL быстрых задач, #263): свойство установки, без
+	// дефолта, каждая сама по себе. Пусто — модель выбирает Claude Code.
+	ActorModels actormodel.Models
 	// artifactsDir — каталог артефактов бутстрапа гостя (BROOD_ARTIFACTS_DIR):
 	// свойство машины, без дефолта. Пусто — доставка артефактов не настроена.
 	artifactsDir string
@@ -156,6 +161,7 @@ func LoadConfig(get getenv) (Config, error) {
 		ActorLLMURL:           envGet(get, "BROOD_ACTOR_LLM_URL"),
 		ActorLLMAPIKey:        envGet(get, "BROOD_ACTOR_LLM_API_KEY"),
 		ActorGitDomain:        envGet(get, "BROOD_ACTOR_GIT_DOMAIN"),
+		ActorModels:           actormodel.Models{Model: envGet(get, "BROOD_ACTOR_MODEL"), Small: envGet(get, "BROOD_ACTOR_SMALL_MODEL")},
 		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 	}
@@ -222,6 +228,14 @@ func (cfg Config) validateAdapters() error {
 	}
 	if cfg.ActorGitDomain != "" && !gitidentity.ValidDomain(cfg.ActorGitDomain) {
 		return &ConfigError{Setting: "BROOD_ACTOR_GIT_DOMAIN", Detail: "must be a lowercase DNS name"}
+	}
+	for _, model := range []struct{ setting, name string }{
+		{"BROOD_ACTOR_MODEL", cfg.ActorModels.Model},
+		{"BROOD_ACTOR_SMALL_MODEL", cfg.ActorModels.Small},
+	} {
+		if model.name != "" && !actormodel.ValidName(model.name) {
+			return &ConfigError{Setting: model.setting, Detail: "must be at most 256 printable ASCII characters without spaces"}
+		}
 	}
 	if err := cfg.validateRegistry(); err != nil {
 		return err

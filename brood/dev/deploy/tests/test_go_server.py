@@ -982,6 +982,38 @@ class GoDeploymentTests(unittest.TestCase):
                 self.assertNotIn(bad, str(raised.exception))
                 deploy.cluster.shell.output.assert_not_called()
 
+    # FEATURE: BROOD_ACTOR_MODEL и BROOD_ACTOR_SMALL_MODEL доходят до сервера (#263).
+    # SPEC: модели Claude Code акторов — настройки установки без дефолта, каждая
+    # сама по себе; выкладка проверяет форму (печатаемый ASCII без пробелов,
+    # до 256 байт) до сборки и передаёт их через Secret и secretKeyRef, как
+    # остальные настройки; снятие убирает ключ и env. Отказ называет
+    # настройку, а не значение.
+    def test_actor_models_reach_server_env_and_are_validated(self):
+        def server(objects):
+            secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
+            deployment = next(o for o in objects if o["kind"] == "Deployment")
+            env = {e["name"]: e for e in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+            return {key: base64.b64decode(value).decode() for key, value in secret["data"].items()}, env
+
+        settings = {"BROOD_ACTOR_MODEL": "glm-5.3", "BROOD_ACTOR_SMALL_MODEL": "glm-5.3-flash"}
+        data, env = server(self.capture_release(settings))
+        for key, value in settings.items():
+            self.assertEqual(data[key], value)
+            self.assertEqual(env[key], {"name": key, "valueFrom": {"secretKeyRef": {"name": "brood-go-env", "key": key}}})
+        data, env = server(self.capture_release({"BROOD_ACTOR_SMALL_MODEL": "glm-5.3-flash"}))
+        self.assertEqual((data.get("BROOD_ACTOR_MODEL"), data["BROOD_ACTOR_SMALL_MODEL"]), (None, "glm-5.3-flash"))
+        self.assertEqual(set(settings) & set(env), {"BROOD_ACTOR_SMALL_MODEL"})
+        data, env = server(self.capture_release({}))
+        self.assertFalse(set(settings) & (set(data) | set(env)))
+        for key in settings:
+            for bad in ("private model", "private-model\t", "private-модель", "private-" + "m" * 256):
+                with self.subTest(setting=key, model=bad):
+                    deploy = self.deploy({key: bad})
+                    with self.assertRaisesRegex(RuntimeError, key) as raised:
+                        deploy.run()
+                    self.assertNotIn("private", str(raised.exception))
+                    deploy.cluster.shell.output.assert_not_called()
+
     def test_config_only_does_not_resolve_or_open_api_egress(self):
         with patch.object(go_server.socket, "getaddrinfo", side_effect=AssertionError("unexpected DNS")):
             objects = self.capture_release({"BROOD_PROXMOX_POOLS": '{"lab":{"endpoint":"https://pve.invalid:8006"}}',

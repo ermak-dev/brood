@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"brood.dev/go/brood/actormodel"
 )
 
 // ActorSpec contains only fixed actor settings, never supervisor credentials.
@@ -29,6 +31,27 @@ func actorSpec(executable string) ActorSpec {
 }
 func actorEnv() []string {
 	return []string{"HOME=/workspace/home", "PWD=/workspace/project", "USER=claude", "LOGNAME=claude", "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "GOTOOLCHAIN=local", "GOMAXPROCS=4", "GOFLAGS=-p=2", "DISABLE_AUTOUPDATER=1", "TERM=xterm-256color", "LANG=C.UTF-8", "HTTP_PROXY=http://127.0.0.1:3128", "HTTPS_PROXY=http://127.0.0.1:3128", "http_proxy=http://127.0.0.1:3128", "https_proxy=http://127.0.0.1:3128", "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost", "ANTHROPIC_BASE_URL=http://127.0.0.1:8317", "ANTHROPIC_AUTH_TOKEN=brood-local", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1", "BROOD_EXECUTION_MODE=guest"}
+}
+
+// claudeModelEnv maps the installation models (#263) onto the model variables
+// of pinned Claude Code 2.1.310. The main model is the session model
+// (ANTHROPIC_MODEL, which also outranks a /model choice saved in the actor
+// home) and the opus and sonnet aliases, so opusplan, agent definitions and
+// the Agent tool resolve to it. The small model is the haiku alias, which
+// Claude Code also uses for background tasks. Subagents without a model of
+// their own inherit the session model, so CLAUDE_CODE_SUBAGENT_MODEL stays
+// unset rather than downshifting delegated work. The fable alias stays
+// unpinned: Claude Code treats the ANTHROPIC_DEFAULT_FABLE_MODEL name as a
+// Fable model in its prompt, labels and fallback.
+func claudeModelEnv(m actormodel.Models) []string {
+	var env []string
+	if m.Model != "" {
+		env = append(env, "ANTHROPIC_MODEL="+m.Model, "ANTHROPIC_DEFAULT_OPUS_MODEL="+m.Model, "ANTHROPIC_DEFAULT_SONNET_MODEL="+m.Model)
+	}
+	if m.Small != "" {
+		env = append(env, "ANTHROPIC_DEFAULT_HAIKU_MODEL="+m.Small)
+	}
+	return env
 }
 
 const drifttyIndex = "/usr/local/share/brood/driftty/index.html"

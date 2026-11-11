@@ -25,6 +25,9 @@ GIT_REMOTES = "BROOD_GIT_REMOTES"
 # Домен Git-идентичности акторов (#249): свойство установки без дефолта,
 # сервер выводит из него `<актор>@<домен>`; форму проверяет и сам.
 ACTOR_GIT_DOMAIN = "BROOD_ACTOR_GIT_DOMAIN"
+# Модели Claude Code акторов (#263): основная и быстрых задач, свойства
+# установки без дефолта; сервер отдаёт их гостю и проверяет форму сам.
+ACTOR_MODELS = ("BROOD_ACTOR_MODEL", "BROOD_ACTOR_SMALL_MODEL")
 # Канон origin из контракта сервера (docs/DEPLOY.md, «Git remotes»): https, DNS-host в нижнем регистре,
 # только неявный порт 443, непустой путь без "/" в конце, без userinfo, query,
 # fragment и percent-encoding. Строже сервера безопасно: отказ здесь — до сборки.
@@ -176,6 +179,15 @@ def actor_git_domain(raw):
     return raw
 
 
+def actor_models(get):
+    """BROOD_ACTOR_MODEL/BROOD_ACTOR_SMALL_MODEL -> заданные; не 1..256 печатаемых ASCII без пробелов -> отказ без значения."""
+    models = {key: get(key) or "" for key in ACTOR_MODELS}
+    for key, name in models.items():
+        if name and not (isinstance(name, str) and len(name) <= 256 and all(33 <= ord(c) <= 126 for c in name)):
+            raise RuntimeError(f"{key} must be at most 256 printable ASCII characters without spaces")
+    return {key: name for key, name in models.items() if name}
+
+
 def git_remote_egress(hosts, resolver):
     """Hosts remotes -> egress сервера на TCP 443 каждого найденного адреса.
 
@@ -263,7 +275,8 @@ def artifact_pod(deployment, replicasets, pods):
 
 
 def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False,
-              proxy_api_key=False, actor_llm_settings=(), git_remotes=False, actor_git_domain=False):
+              proxy_api_key=False, actor_llm_settings=(), git_remotes=False, actor_git_domain=False,
+              actor_model_settings=()):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -326,6 +339,8 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
     if actor_git_domain:
         container["env"].append({"name": ACTOR_GIT_DOMAIN, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": ACTOR_GIT_DOMAIN}}})
+    container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
+        "name": "brood-go-env", "key": key}}} for key in ACTOR_MODELS if key in actor_model_settings)
     if proxmox:
         container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": key}}} for key in PROXMOX_SETTINGS)
@@ -455,6 +470,8 @@ class Deploy:
         domain = actor_git_domain(self.get(ACTOR_GIT_DOMAIN))
         if domain:
             environment[ACTOR_GIT_DOMAIN] = domain
+        models = actor_models(self.get)
+        environment.update(models)
         proxy_url = self.get("CLIPROXY_URL")
         model_key = self.get("CLIPROXY_API_KEY")
         if model_key:
@@ -512,7 +529,8 @@ class Deploy:
                                 proxy_api_key=bool(model_key), proxmox=all(key in environment for key in PROXMOX_SETTINGS),
                                 proxmox_runtime=all(key in environment for key in PROXMOX_RUNTIME_SETTINGS),
                                 actor_llm_settings=tuple(actor_env), git_remotes=GIT_REMOTES in environment,
-                                actor_git_domain=ACTOR_GIT_DOMAIN in environment)
+                                actor_git_domain=ACTOR_GIT_DOMAIN in environment,
+                                actor_model_settings=tuple(models))
             # data сохраняет владение apply ключами, включая их удаление при отключении.
             env_data = {key: base64.b64encode(value.encode("utf-8")).decode("ascii")
                         for key, value in environment.items()}

@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/gitidentity"
 )
 
@@ -25,11 +26,15 @@ const originLimit = 1024
 // WorkspaceOrigin is the clone source of an actor: both fields empty, or a
 // canonical HTTPS origin with mode gateway (Brood Git gateway) or direct.
 // GitIdentity (#249) is the installation-assigned commit identity, present
-// only with an origin; zero when the installation has none.
+// only with an origin; zero when the installation has none. Models (#263) are
+// the installation Claude Code models; they do not depend on the origin,
+// since Claude starts in every actor, and are zero when the installation
+// leaves the choice to Claude Code.
 type WorkspaceOrigin struct {
 	Origin      string               `json:"origin"`
 	Mode        string               `json:"mode"`
 	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
+	Models      actormodel.Models    `json:"models,omitzero"`
 }
 
 // ValidateWorkspaceOrigin checks the bootstrap pair. It mirrors the server's
@@ -48,7 +53,11 @@ func ValidateWorkspaceOrigin(origin, mode string, hosts []string) error {
 }
 
 // checkWorkspaceOrigin treats the identity like the mode: it never stands alone.
+// The models stand alone and are checked first.
 func checkWorkspaceOrigin(o WorkspaceOrigin) error {
+	if err := o.Models.Validate(); err != nil {
+		return err
+	}
 	switch {
 	case o.Origin == "" && !o.GitIdentity.IsZero():
 		return errors.New("workspace Git identity requires an origin")
