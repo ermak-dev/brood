@@ -172,7 +172,9 @@ test('viewers can inspect managed details without native edit or lifecycle permi
   expect(canViewActorDetails(false, null)).toBe(false);
   expect(canViewActorDetails(true, null)).toBe(true);
   const source = readFileSync(new URL('../src/features/substrate/ActorsPage.tsx', import.meta.url), 'utf8');
-  expect(source).toContain('canViewActorDetails(canManage, editor.actor)');
+  expect(source).toContain('canViewActorDetails(canManage, null)');
+  expect(source).toContain('canViewActorDetails(canManage, editorActor)');
+  expect(source).toContain('canViewActorDetails(canManage, detailsActor)');
   expect(source).toContain('canViewActorDetails(canManage, a)');
 });
 

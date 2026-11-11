@@ -6,10 +6,13 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { templatesApi, type ActorTemplate } from '@/services/brood/substrate';
 import { swarmCapabilities } from '@/features/access/shardState';
 import { useAdministrator } from '@/features/access/shared';
+import { selectedIn } from '@/features/objects/address';
+import { useObjectSelection, usePanel } from '@/features/objects/useObjectSelection';
 import { EntityPanel } from './components/EntityPanel';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
 import { ProjectScope } from './components/ProjectScope';
+import { ObjectUnavailable } from './components/SelectionNotice';
 import { GroupBar, SwarmSections, useSwarmSectionFailure } from './components/SwarmSections';
 import { DASH, formatCpu, formatDate, formatMemory, selectorText } from './format';
 import { useActions, useResource } from './hooks';
@@ -25,12 +28,13 @@ export function TemplatesPage() {
   const { t } = useTranslation();
   const admin = useAdministrator();
   return (
-    <ProjectScope title={t('templates.title')}>
+    <ProjectScope title={t('templates.title')} addressed>
       {(project) => (
         <SwarmSections project={project} title={t('templates.title')}>
           {(swarm) => (
             <Templates
               project={swarm.id}
+              projectId={project.id}
               name={swarm.name}
               canManage={swarmCapabilities(swarm, admin).manage}
             />
@@ -50,10 +54,12 @@ const keyOf = (tpl: ActorTemplate) => tpl.metadata.uid ?? tpl.metadata.name;
 
 function Templates({
   project,
+  projectId,
   name,
   canManage,
 }: {
   project: string;
+  projectId: string;
   name: string;
   canManage: boolean;
 }) {
@@ -63,10 +69,19 @@ function Templates({
   // Отказ загрузки уходит в общую плашку над группами (#255).
   useSwarmSectionFailure(project, name, error);
   const { run, confirm } = useActions(refresh);
-  // Ключ, а не объект: после обновления списка панель показывает свежий
-  // шаблон (статус золотого снапшота), а удалённый закрывает её сам.
-  const [viewingKey, setViewingKey] = useState<string | null>(null);
-  const viewing = (viewingKey && data?.find((tpl) => keyOf(tpl) === viewingKey)) || null;
+  // Панель шаблона -- по адресу (#194). Имя, а не объект: после обновления
+  // списка панель показывает свежий шаблон (статус золотого снапшота), а
+  // удалённый закрывает её сам.
+  const { selection, open: openPanel, close } = useObjectSelection();
+  const selected = selectedIn(selection, project, 'template');
+  const panel = usePanel(selected);
+  const viewing = (panel.name && data?.find((tpl) => tpl.metadata.name === panel.name)) || null;
+  const closePanel = () => close('template');
+  const openTemplate = (template: string) =>
+    openPanel({ project: projectId, swarm: project, template });
+  const unavailable = Boolean(
+    selected && data && !data.some((tpl) => tpl.metadata.name === selected)
+  );
   const [editor, setEditor] = useState({
     source: null as ActorTemplate | null,
     open: false,
@@ -74,7 +89,7 @@ function Templates({
   });
 
   const openEditor = (source: ActorTemplate | null) => {
-    setViewingKey(null);
+    if (selected) closePanel();
     setEditor((prev) => ({ source, open: true, session: prev.session + 1 }));
   };
   const closeEditor = () => setEditor((prev) => ({ ...prev, open: false }));
@@ -137,6 +152,7 @@ function Templates({
         meta={[data && t('templates.meta_count', { count: data.length })]}
         actions={create}
       />
+      {unavailable && selected && <ObjectUnavailable name={selected} onClose={closePanel} />}
 
       {loading ? (
         <LoadingSpinner />
@@ -145,8 +161,8 @@ function Templates({
           columns={columns}
           rows={data}
           rowKey={keyOf}
-          onRowClick={(tpl) => setViewingKey(keyOf(tpl))}
-          isActive={(tpl) => keyOf(tpl) === viewingKey}
+          onRowClick={(tpl) => openTemplate(tpl.metadata.name)}
+          isActive={(tpl) => tpl.metadata.name === selected}
         />
       ) : (
         <div className={styles.empty}>
@@ -159,8 +175,8 @@ function Templates({
       )}
 
       <EntityPanel
-        open={viewing !== null}
-        onClose={() => setViewingKey(null)}
+        open={panel.open && viewing !== null}
+        onClose={closePanel}
         eyebrow={project}
         title={viewing?.metadata.name ?? ''}
         description={t('templates.immutable_hint')}
@@ -173,7 +189,7 @@ function Templates({
                 duplicate: () => openEditor(viewing),
                 remove: async () => {
                   await templatesApi.remove(project, viewing.metadata.name);
-                  setViewingKey(null);
+                  closePanel();
                 },
               })
             : []

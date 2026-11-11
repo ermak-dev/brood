@@ -6,6 +6,8 @@ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { actorsApi, templatesApi, type Actor, type ActorAction } from '@/services/brood/substrate';
 import { swarmCapabilities } from '@/features/access/shardState';
 import { useAdministrator } from '@/features/access/shared';
+import { selectedIn } from '@/features/objects/address';
+import { useObjectSelection, usePanel } from '@/features/objects/useObjectSelection';
 import { ActorDetailsSheet } from './ActorDetailsSheet';
 import { ActorEditor } from './ActorEditor';
 import { ActorActionFailure } from './components/ActorActionFailure';
@@ -14,6 +16,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { EntityTable, type Column } from './components/EntityTable';
 import { ProjectScope } from './components/ProjectScope';
 import { GroupBar, SwarmSections, useSwarmSectionFailure } from './components/SwarmSections';
+import { ObjectUnavailable } from './components/SelectionNotice';
 import { StateBadge } from './components/StateBadge';
 import { DASH, formatDate } from './format';
 import {
@@ -49,7 +52,7 @@ export function ActorsPage() {
   const { t } = useTranslation();
   const admin = useAdministrator();
   return (
-    <ProjectScope title={t('actors.title')}>
+    <ProjectScope title={t('actors.title')} addressed>
       {(project) => (
         <SwarmSections project={project} title={t('actors.title')}>
           {(swarm) => (
@@ -68,18 +71,9 @@ export function ActorsPage() {
   );
 }
 
-/** Which actor the editor is open for (null -- a new one); `session` remounts
- * the editor on every open so it starts from the object as read. */
-interface EditorState {
-  actor: Actor | null;
-  open: boolean;
-  session: number;
-}
-
-/** Managed-актор в деталях — по имени: строка списка обновляется после
- * каждого действия, и детали показывают её текущее состояние. */
-interface DetailsState {
-  name: string;
+/** Editor of a new actor; `session` remounts it on every open so it starts
+ * empty. An existing actor's panel comes from the address instead (#194). */
+interface CreateState {
   open: boolean;
   session: number;
 }
@@ -127,24 +121,31 @@ function Actors({
   const goldenOf = (actor: Actor) => loaded?.golden.get(actor.metadata.name);
   const { run, confirm } = useActions(refresh);
   const ops = useActorOperations(project, refresh);
-  const [editor, setEditor] = useState<EditorState>({ actor: null, open: false, session: 0 });
-  const [details, setDetails] = useState<DetailsState>({ name: '', open: false, session: 0 });
+  const [creating, setCreating] = useState<CreateState>({ open: false, session: 0 });
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
-  const openEditor = (actor: Actor | null) =>
-    setEditor((prev) => ({ actor, open: true, session: prev.session + 1 }));
-  const closeEditor = () => setEditor((prev) => ({ ...prev, open: false }));
+  const openCreate = () => setCreating((prev) => ({ open: true, session: prev.session + 1 }));
+  const closeCreate = () => setCreating((prev) => ({ ...prev, open: false }));
+
+  // Панель актора -- по адресу (#194): строка открывает её записью истории,
+  // ссылка -- своим адресом, «Назад» закрывает. Актор берётся из свежего
+  // списка по имени: после каждого действия панель показывает его нынешнее
+  // состояние (после suspend шаблон native-актора становится изменяемым).
+  const { selection, open: openPanel, close } = useObjectSelection();
+  const selected = selectedIn(selection, project, 'actor');
+  const panel = usePanel(selected);
+  const closePanel = () => close('actor');
   const open = (actor: Actor) =>
-    actor.provider === 'proxmox'
-      ? setDetails((prev) => ({ name: actor.metadata.name, open: true, session: prev.session + 1 }))
-      : openEditor(actor);
-  const detailsActor = data?.find((a) => a.metadata.name === details.name);
-  // Редактор native-актора — его панель: действия и состояние берутся из
-  // свежего списка (после suspend шаблон становится изменяемым), снимок на
-  // момент открытия — только пока актора в списке нет.
+    openPanel({ project: projectId, swarm: project, actor: actor.metadata.name });
+  const panelActor = data?.find((a) => a.metadata.name === panel.name);
+  // Managed-актор открывается в деталях, native -- в своём редакторе (#157);
+  // golden-актора ведёт ateapi, его не открывает и адрес.
+  const openable = (a: Actor) => !goldenOf(a) && canViewActorDetails(canManage, a);
+  const detailsActor = panelActor?.provider === 'proxmox' ? panelActor : undefined;
   const editorActor =
-    editor.actor &&
-    (data?.find((a) => a.metadata.name === editor.actor?.metadata.name) ?? editor.actor);
+    panelActor && panelActor.provider !== 'proxmox' && openable(panelActor) ? panelActor : null;
+  const selectedActor = selected ? data?.find((a) => a.metadata.name === selected) : undefined;
+  const unavailable = Boolean(selected && data && !(selectedActor && openable(selectedActor)));
 
   // Native-действия: прежний поток, отказ — в той же плашке. Идущее действие
   // помнится по актору: его кнопка в панели ждёт исхода, повтор не уходит.
@@ -179,7 +180,7 @@ function Actors({
     confirm(
       deleteConfirmation(actor, t, async () => {
         await actorsApi.remove(project, actor.metadata.name);
-        closeEditor();
+        closePanel();
       })
     );
 
@@ -201,7 +202,7 @@ function Actors({
 
   const count = (state: string) => (data ?? []).filter((a) => stateOf(a) === state).length;
   const create = canManage ? (
-    <Button onClick={() => openEditor(null)}>{t('actors.create')}</Button>
+    <Button onClick={openCreate}>{t('actors.create')}</Button>
   ) : undefined;
 
   return (
@@ -228,6 +229,9 @@ function Actors({
         />
       )}
       <ActorOutcomeNotices items={ops.unknown} onDismiss={ops.dismissUnknown} />
+      {unavailable && selected && (
+        <ObjectUnavailable name={selected} onClose={closePanel} />
+      )}
 
       {loading ? (
         <LoadingSpinner />
@@ -251,29 +255,43 @@ function Actors({
         </div>
       )}
 
-      {canViewActorDetails(canManage, editor.actor) && (
+      {canViewActorDetails(canManage, null) && (
         <ActorEditor
-          key={`editor-${editor.session}`}
+          key={`create-${creating.session}`}
+          project={project}
+          projectId={projectId}
+          actor={null}
+          templates={loaded?.templates ?? null}
+          open={creating.open}
+          onClose={closeCreate}
+          onSubmit={async (actor) => {
+            if (!canManage) return false;
+            const name = actor.metadata.name;
+            const ok = await run(() => actorsApi.create(project, actor), t('actors.created', { name }));
+            if (ok) closeCreate();
+            return ok;
+          }}
+        />
+      )}
+
+      {editorActor && canViewActorDetails(canManage, editorActor) && (
+        <ActorEditor
+          key={`editor-${panel.session}`}
           project={project}
           projectId={projectId}
           actor={editorActor}
           templates={loaded?.templates ?? null}
-          open={editor.open}
-          onClose={closeEditor}
-          actions={
-            editorActor
-              ? nativeActionGroups(editorActor, {
-                  t,
-                  canManage,
-                  pending: acting[editorActor.metadata.name],
-                  terminal: actorsApi.terminal(project, editorActor.metadata.name),
-                  onAction: (action) => void act(editorActor, action),
-                  onRemove: () => remove(editorActor),
-                }).map((group) => ({ ...group, actions: group.actions.filter((action) => action.id !== 'terminal') }))
-              : []
-          }
+          open={panel.open}
+          onClose={closePanel}
+          actions={nativeActionGroups(editorActor, {
+            t,
+            canManage,
+            pending: acting[editorActor.metadata.name],
+            terminal: actorsApi.terminal(project, editorActor.metadata.name),
+            onAction: (action) => void act(editorActor, action),
+            onRemove: () => remove(editorActor),
+          }).map((group) => ({ ...group, actions: group.actions.filter((action) => action.id !== 'terminal') }))}
           notice={
-            editorActor &&
             ops.failure?.name === editorActor.metadata.name && (
               <ActorActionFailure
                 name={ops.failure.name}
@@ -286,11 +304,8 @@ function Actors({
           onSubmit={async (actor) => {
             if (!canManage) return false;
             const name = actor.metadata.name;
-            const ok = await run(
-              () => (editor.actor ? updateFresh(project, actor) : actorsApi.create(project, actor)),
-              editor.actor ? t('actors.saved', { name }) : t('actors.created', { name })
-            );
-            if (ok) closeEditor();
+            const ok = await run(() => updateFresh(project, actor), t('actors.saved', { name }));
+            if (ok) closePanel();
             return ok;
           }}
         />
@@ -298,9 +313,9 @@ function Actors({
 
       {detailsActor && canViewActorDetails(canManage, detailsActor) && (
         <ActorDetailsSheet
-          key={`details-${details.session}`}
-          open={details.open}
-          onClose={() => setDetails((prev) => ({ ...prev, open: false }))}
+          key={`details-${panel.session}`}
+          open={panel.open}
+          onClose={closePanel}
           actor={detailsActor}
           swarm={project}
           swarmName={name}

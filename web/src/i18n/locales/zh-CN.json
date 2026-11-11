@@ -24,6 +24,8 @@
     }
   },
   "access": {
+    "all_swarms": "全部群组",
+    "swarm_unavailable": "地址中的群组不在此项目的活跃群组中。",
     "project_details": "项目详情",
     "capacity": "容量与预留",
     "edit_capacity": "编辑限制",
@@ -2663,6 +2665,7 @@
     "deleted": "策略已删除"
   },
   "substrate": {
+    "object_unavailable": "无法在此打开“{{name}}”：它不在此列表中，或您无法打开它的面板。",
     "name": "名称",
     "state": "状态",
     "created": "创建时间",

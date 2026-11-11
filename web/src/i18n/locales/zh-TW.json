@@ -24,6 +24,8 @@
     }
   },
   "access": {
+    "all_swarms": "全部群組",
+    "swarm_unavailable": "網址中的群組不在此專案的有效群組中。",
     "project_details": "專案詳情",
     "capacity": "容量與保留",
     "edit_capacity": "編輯限制",
@@ -2691,6 +2693,7 @@
     "deleted": "策略已刪除"
   },
   "substrate": {
+    "object_unavailable": "無法在此開啟「{{name}}」：它不在此清單中，或您無法開啟它的面板。",
     "name": "名稱",
     "state": "状態",
     "created": "創建時間",

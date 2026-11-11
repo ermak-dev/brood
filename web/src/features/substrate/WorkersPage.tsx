@@ -1,14 +1,15 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { workersApi, type Worker, type WorkerResources } from '@/services/brood/substrate';
+import { useObjectSelection, usePanel } from '@/features/objects/useObjectSelection';
 import { EntityPanel, type PanelActionGroup } from './components/EntityPanel';
 import { EntityTable, type Column } from './components/EntityTable';
 import { Section } from './components/form';
 import { PageHeader } from './components/PageHeader';
+import { ObjectUnavailable } from './components/SelectionNotice';
 import { StateBadge } from './components/StateBadge';
 import { DASH, formatCpu, formatDate, formatMemory, shortState } from './format';
 import { useActions, useResource } from './hooks';
@@ -40,7 +41,14 @@ export function WorkersPage() {
   const navigate = useNavigate();
   const { data, error, loading, refresh } = useResource(workersApi.list);
   const { confirm } = useActions(refresh);
-  const [viewing, setViewing] = useState<Worker | null>(null);
+  // Панель воркера -- по адресу (?worker=, #194), воркер -- из свежего списка.
+  const { selection, open, close } = useObjectSelection();
+  const panel = usePanel(selection.worker);
+  const viewing = (panel.name && data?.find((w) => w.metadata.name === panel.name)) || null;
+  const closePanel = () => close('worker');
+  const unavailable = Boolean(
+    selection.worker && data && !data.some((w) => w.metadata.name === selection.worker)
+  );
 
   // Единственное действие воркера зависит от состояния: вывод из работы
   // необратим (отдельный блок), восстановление ёмкости — обычное.
@@ -56,7 +64,7 @@ export function WorkersPage() {
       }),
       run: async () => {
         await workersApi[next](worker.metadata.name);
-        setViewing(null);
+        closePanel();
       },
     });
     const action = {
@@ -111,6 +119,9 @@ export function WorkersPage() {
       {count('draining') > 0 && (
         <p className={styles.notice} role="note">{t('workers.drained_hint', { count: count('draining') })}</p>
       )}
+      {unavailable && selection.worker && (
+        <ObjectUnavailable name={selection.worker} onClose={closePanel} />
+      )}
 
       {loading ? (
         <LoadingSpinner />
@@ -123,7 +134,8 @@ export function WorkersPage() {
           columns={columns}
           rows={data}
           rowKey={(w) => w.metadata.uid ?? w.metadata.name}
-          onRowClick={setViewing}
+          onRowClick={(w) => open({ worker: w.metadata.name })}
+          isActive={(w) => w.metadata.name === selection.worker}
         />
       ) : (
         <div className={styles.empty}>
@@ -133,8 +145,8 @@ export function WorkersPage() {
       )}
 
       <EntityPanel
-        open={viewing !== null}
-        onClose={() => setViewing(null)}
+        open={panel.open && viewing !== null}
+        onClose={closePanel}
         eyebrow={viewing?.workerPool}
         title={viewing?.metadata.name ?? ''}
         status={viewing && <StateBadge state={stateOf(viewing)} namespace="workers.state" />}

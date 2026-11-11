@@ -24,6 +24,8 @@
     }
   },
   "access": {
+    "all_swarms": "Tất cả bầy",
+    "swarm_unavailable": "Bầy trong địa chỉ không nằm trong các bầy đang hoạt động của dự án này.",
     "project_details": "Chi tiết dự án",
     "capacity": "Dung lượng và tài nguyên đặt trước",
     "edit_capacity": "Sửa giới hạn",
@@ -2671,6 +2673,7 @@
     "deleted": "Đã xóa chính sách"
   },
   "substrate": {
+    "object_unavailable": "Không thể mở “{{name}}” tại đây: mục này không có trong danh sách, hoặc bạn không thể mở bảng của nó.",
     "name": "Tên",
     "state": "Trạng thái",
     "created": "Tạo lúc",

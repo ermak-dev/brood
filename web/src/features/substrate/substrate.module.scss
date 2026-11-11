@@ -79,6 +79,13 @@
   gap: 8px;
 }
 
+/* Фильтр роя в шапке (#194): список шириной с кнопку, иначе имена роёв
+ * переносятся по дефису. */
+.swarmFilter {
+  min-width: 14rem;
+  max-width: 100%;
+}
+
 @include mobile {
   .header {
     flex-direction: column;

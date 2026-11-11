@@ -168,7 +168,8 @@ test('the page builds the panels from the shared builders and keeps viewer gates
   expect(page).toContain('const openable = (a: Actor) => !goldenOf(a) && canViewActorDetails(canManage, a);');
   expect(page).toMatch(/nativeActionGroups\(editorActor, \{\s*t,\s*canManage,/);
   expect(page).toMatch(/\{dialog && canManage && \(\s*<ManagedActionDialog/);
-  for (const [scope, state] of [['editor', 'editor'], ['details', 'details'], ['confirmation', 'dialog']]) {
+  // #194: an actor's panel follows the address; each showing remounts it.
+  for (const [scope, state] of [['create', 'creating'], ['editor', 'panel'], ['details', 'panel'], ['confirmation', 'dialog']]) {
     expect(page).toContain('key={`' + scope + '-${' + state + '.session}`}');
   }
   const sheet = readFileSync(

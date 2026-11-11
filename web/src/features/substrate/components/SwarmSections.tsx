@@ -13,9 +13,13 @@ import { accessApi, type AccessProject, type AccessSwarm } from '@/services/broo
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconChevronRight } from '@/components/ui/icons';
+import { Select } from '@/components/ui/Select';
 import { LoadState } from '@/features/access/shared';
+import { swarmsShown } from '@/features/objects/address';
+import { useObjectSelection } from '@/features/objects/useObjectSelection';
 import { useResource } from '../hooks';
 import { PageHeader } from './PageHeader';
+import { SelectionNotice } from './SelectionNotice';
 import styles from '../substrate.module.scss';
 
 interface SectionFailure {
@@ -78,10 +82,41 @@ export function GroupBar({ meta, actions }: { meta: ReactNode[]; actions?: React
   );
 }
 
+/** Фильтр по рою (#194): «Все рои» -- прежний вид страницы, рой -- одна его
+ * группа. Выбор уходит в адрес вместе с проектом, так что ссылку на
+ * отфильтрованную страницу можно отдать; объект прежнего роя из адреса
+ * снимается. */
+function SwarmFilter({
+  project,
+  swarms,
+  selected,
+}: {
+  project: string;
+  swarms: AccessSwarm[];
+  selected: string;
+}) {
+  const { t } = useTranslation();
+  const { change } = useObjectSelection();
+  return (
+    <Select
+      value={selected}
+      ariaLabel={t('access.swarm')}
+      size="sm"
+      className={styles.swarmFilter}
+      options={[
+        { value: '', label: t('access.all_swarms') },
+        ...swarms.map((swarm) => ({ value: swarm.id, label: swarm.name })),
+      ]}
+      onChange={(swarm) => change({ project, swarm, actor: null, template: null })}
+    />
+  );
+}
+
 /** Каталог уже отфильтрован сервером: администратору все рои проекта,
  * участнику только собственные. Каждый редактор получает ID своего роя,
  * даже когда в общей странице встречаются одинаковые имена акторов.
- * Группы сворачиваются; отказы групп -- в плашках над ними. */
+ * Группы сворачиваются; отказы групп -- в плашках над ними. Рой из адреса
+ * (?swarm=, #194) оставляет на странице одну его группу. */
 export function SwarmSections({
   project,
   title,
@@ -93,9 +128,11 @@ export function SwarmSections({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { selection, change } = useObjectSelection();
   const load = useCallback(() => accessApi.swarms(project.id), [project.id]);
   const resource = useResource(load);
-  const swarms = resource.data?.filter((swarm) => swarm.state === 'active') ?? [];
+  const active = resource.data?.filter((swarm) => swarm.state === 'active') ?? [];
+  const { shown: swarms, missing } = swarmsShown(active, selection.swarm);
   const [failures, setFailures] = useState<Record<string, SectionFailure>>({});
   const report = useCallback<Report>((swarmId, name, error) => {
     setFailures((current) => {
@@ -110,10 +147,25 @@ export function SwarmSections({
     });
   }, []);
   const notices = groupFailures(swarms.map((swarm) => failures[swarm.id]).filter(Boolean));
+  const filter =
+    active.length > 1 ? (
+      <SwarmFilter
+        project={project.id}
+        swarms={active}
+        selected={missing ? '' : (selection.swarm ?? '')}
+      />
+    ) : undefined;
   return (
     <div className={styles.page}>
-      <PageHeader title={title} meta={[project.name]} />
+      <PageHeader title={title} meta={[project.name]} actions={filter} />
       <LoadState {...resource} error={resource.error ?? ''} retry={resource.refresh}>
+        {missing && active.length > 0 && (
+          <SelectionNotice
+            text={t('access.swarm_unavailable')}
+            action={t('access.all_swarms')}
+            onAction={() => change({ swarm: null, actor: null, template: null })}
+          />
+        )}
         {notices.map((notice) => (
           <p
             key={notice.error}
@@ -138,7 +190,7 @@ export function SwarmSections({
               </details>
             ))}
           </FailureContext.Provider>
-        ) : (
+        ) : missing && active.length > 0 ? null : (
           <EmptyState
             title={t('access.no_active_swarms')}
             action={<Button onClick={() => navigate('/swarms')}>{t('access.swarms')}</Button>}
