@@ -11,13 +11,16 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
+	"strconv"
 	"time"
 
 	"brood.dev/go/brood/proxmox/relay"
 )
 
 // artifactNames — закрытый список артефактов Bootstrap (#155): точные имена
-// файлов в /opt/brood/bin, каждое ровно один раз; порядок алфавитный.
+// файлов набора /opt/brood/releases/<id> (на него указывает /opt/brood/bin,
+// #184), каждое ровно один раз; порядок алфавитный, он же порядок ReleaseID.
 var artifactNames = [3]string{"bro", "brood-guest", "claude"}
 
 const artifactManifestLimit = 16 << 10
@@ -146,16 +149,46 @@ func parseArtifactEntry(data []byte) (Artifact, error) {
 	if err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || len(seen) != 3 {
 		return fail()
 	}
-	if !allowedArtifactName(artifact.Name) {
-		return fail()
-	}
-	if artifact.Size <= 0 || artifact.Size > artifactMaxSize {
-		return fail()
-	}
-	if len(artifact.SHA256) != 64 || !isLowerHex(artifact.SHA256) {
+	if !validArtifact(artifact) {
 		return fail()
 	}
 	return artifact, nil
+}
+
+// validArtifact: имя из закрытого списка, размер в (0, 512 MiB], строчный
+// hex256 digest.
+func validArtifact(artifact Artifact) bool {
+	return allowedArtifactName(artifact.Name) && artifact.Size > 0 && artifact.Size <= artifactMaxSize && len(artifact.SHA256) == 64 && isLowerHex(artifact.SHA256)
+}
+
+// releaseIDDomain открывает канонический текст id набора: отделяет его от
+// других sha256 и версионирует форму.
+const releaseIDDomain = "brood guest release v1\n"
+
+// ReleaseID names the Bootstrap release that m describes (#184): the
+// lowercase hex sha256 of a canonical text, the line "brood guest release v1"
+// followed by one line "name size sha256" per artifact in the closed name
+// order. Equal artifact sets have equal IDs whatever the entry order; another
+// name, size or digest gives another ID. A manifest that is not exactly the
+// closed name list with valid sizes and digests has no ID.
+func (m ArtifactManifest) ReleaseID() (string, error) {
+	if len(m.Artifacts) != len(artifactNames) {
+		return "", artifactFailure()
+	}
+	byName := map[string]Artifact{}
+	for _, artifact := range m.Artifacts {
+		if _, duplicate := byName[artifact.Name]; duplicate || !validArtifact(artifact) {
+			return "", artifactFailure()
+		}
+		byName[artifact.Name] = artifact
+	}
+	digest := sha256.New()
+	io.WriteString(digest, releaseIDDomain)
+	for _, name := range artifactNames {
+		artifact := byName[name]
+		io.WriteString(digest, name+" "+strconv.FormatInt(artifact.Size, 10)+" "+artifact.SHA256+"\n")
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func allowedArtifactName(name string) bool {
@@ -182,14 +215,27 @@ func isLowerHex(text string) bool {
 // from digest.
 type ArtifactInstaller func(ctx context.Context, name string, stream io.Reader, size int64, digest string) error
 
-// FetchArtifacts скачивает манифест и все артефакты Bootstrap на проверенном
-// машинном маршруте сервера: без proxy и redirects, с Bearer-токеном актора.
-// Каждый артефакт стримится через установщик с проверкой ELF-магии и лимита
-// size+1; установщик получает size и sha256 манифеста и сверяет digest до
-// публикации (#265). Успех только когда установщик вернулся без ошибки,
-// получил ровно size байт и sha256 совпал. Причины отказов статичны: без тел
-// и токенов.
-func FetchArtifacts(parent context.Context, cfg relay.ClientConfig, hosts []string, install ArtifactInstaller) error {
+// ArtifactRelease installs the Bootstrap release that a verified server
+// manifest describes (#184). FetchArtifacts calls it once, after the manifest
+// and before any artifact request. The release downloads through download
+// only the artifacts it still needs and may download none when an intact copy
+// of the release is already installed.
+type ArtifactRelease func(ctx context.Context, manifest ArtifactManifest, download ArtifactDownload) error
+
+// ArtifactDownload streams one artifact of the manifest into install with the
+// checks of FetchArtifacts. An artifact that is not an entry of the manifest
+// is refused without a request.
+type ArtifactDownload func(ctx context.Context, artifact Artifact, install ArtifactInstaller) error
+
+// FetchArtifacts читает манифест на проверенном машинном маршруте сервера
+// (без proxy и redirects, с Bearer-токеном актора) и передаёт его release до
+// первого запроса артефакта (#184): что качать, решает установщик набора.
+// Каждая загрузка стримит артефакт через установщик с проверкой ELF-магии и
+// лимита size+1; установщик получает size и sha256 манифеста и
+// сверяет digest до публикации (#265). Загрузка успешна только когда
+// установщик вернулся без ошибки, получил ровно size байт и sha256 совпал.
+// Причины отказов статичны: без тел и токенов.
+func FetchArtifacts(parent context.Context, cfg relay.ClientConfig, hosts []string, release ArtifactRelease) error {
 	fail := artifactFailure
 	route, err := newServerRoute(cfg)
 	if err != nil {
@@ -201,25 +247,18 @@ func FetchArtifacts(parent context.Context, cfg relay.ClientConfig, hosts []stri
 	if err != nil {
 		return fail()
 	}
-	for _, artifact := range sortedArtifacts(manifest) {
-		if err := fetchArtifact(ctx, route, artifact, install); err != nil {
+	// Загрузчик качает только записи этого манифеста: путь запроса строится
+	// из имени, а сверка из size и sha256 записи.
+	download := func(ctx context.Context, artifact Artifact, install ArtifactInstaller) error {
+		if !slices.Contains(manifest.Artifacts, artifact) {
 			return fail()
 		}
+		return fetchArtifact(ctx, route, artifact, install)
+	}
+	if err := release(ctx, manifest, download); err != nil {
+		return fail()
 	}
 	return nil
-}
-
-// sortedArtifacts отдаёт артефакты в порядке закрытого списка имён.
-func sortedArtifacts(manifest ArtifactManifest) []Artifact {
-	byName := map[string]Artifact{}
-	for _, artifact := range manifest.Artifacts {
-		byName[artifact.Name] = artifact
-	}
-	ordered := make([]Artifact, 0, len(artifactNames))
-	for _, name := range artifactNames {
-		ordered = append(ordered, byName[name])
-	}
-	return ordered
 }
 
 // fetchArtifactManifest читает манифест машинным маршрутом с коротким таймаутом.

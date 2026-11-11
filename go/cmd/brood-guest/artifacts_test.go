@@ -4,15 +4,16 @@ package main
 
 // FEATURE: Bootstrap guest binaries from verified server artifacts (#155).
 // SPEC: The root supervisor stage splits: bootstrap installs the three
-// verified artifacts into /opt/brood/bin and execs the runtime stage before
-// any network service; runtime prepends /opt/brood/bin to the helper PATH and
-// never fetches. BROOD_GUEST_STAGE is process env only, never a PVE variable:
-// unknown values are rejected by name. Install is atomic temp-then-rename and
-// refuses changed content over an existing binary. A stream whose sha256
-// differs from the manifest never reaches the bin directory (#265).
+// verified artifacts as a release under /opt/brood/releases, switches
+// /opt/brood/bin to it (#184) and execs the runtime stage of that release
+// before any network service; runtime prepends /opt/brood/bin to the helper
+// PATH and never fetches. BROOD_GUEST_STAGE is process env only, never a PVE
+// variable: unknown values are rejected by name. A stream whose sha256
+// differs from the manifest never becomes visible (#265); a changed server
+// set after a deploy is a new release, not a refusal (#184).
 // IMPLEMENTATION: Stage field in config, artifacts/reexec dependencies with
-// fakes here, real atomic installer under a redirected artifact root, real
-// guest.FetchArtifacts against an httptest TLS server as Brood.
+// fakes here, the real release installer under a redirected artifact root,
+// real guest.FetchArtifacts against an httptest TLS server as Brood.
 
 import (
 	"context"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -86,12 +88,13 @@ func supervisorDeps(t *testing.T, events *[]string, stop func()) dependencies {
 
 func TestBootstrapStageFetchesThenReexecesBeforeServices(t *testing.T) {
 	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
-	// Тест проходит через реальный installArtifact: как TestInstallArtifact,
-	// уводим artifactRoot во временный каталог, не в системный /opt/brood.
-	base := t.TempDir()
+	// Тест проходит через настоящую установку набора: artifactRoot уводим во
+	// временный каталог, не в системный /opt/brood.
+	root := newRoot(t)
 	previous := artifactRoot
-	artifactRoot = base
+	artifactRoot = root
 	t.Cleanup(func() { artifactRoot = previous })
+	set := newReleaseSet("bootstrap")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var events []string
@@ -105,15 +108,21 @@ func TestBootstrapStageFetchesThenReexecesBeforeServices(t *testing.T) {
 	}, relay: func(context.Context, relay.ClientConfig) error {
 		events = append(events, "relay")
 		return nil
-	}, artifacts: func(_ context.Context, cfg relay.ClientConfig, hosts []string, install guest.ArtifactInstaller) error {
+	}, artifacts: func(_ context.Context, cfg relay.ClientConfig, hosts []string, release guest.ArtifactRelease) error {
 		events = append(events, "artifacts")
 		if cfg.Token != "private-token" || !reflect.DeepEqual(hosts, []string{"github.com"}) {
 			t.Error("artifacts fetch did not receive the supervisor relay config")
 		}
-		payload := "\x7fELFbootstrap"
-		return install(context.Background(), "brood-guest", strings.NewReader(payload), int64(len(payload)), sha256Hex(payload))
-	}, reexec: func(env []string) error {
+		server := &fakeServer{set: set}
+		return release(context.Background(), set.manifest(), server.download)
+	}, reexec: func(executable string, env []string) error {
 		events = append(events, "reexec")
+		// Runtime-стадия: brood-guest проверенного набора, а bin уже
+		// указывает на него: фиксированные пути видят тот же набор.
+		if want := filepath.Join(root, "releases", set.id(t), "brood-guest"); executable != want {
+			t.Errorf("runtime executable %q, want %q", executable, want)
+		}
+		assertActive(t, root, set)
 		// Настоящий exec не возвращается: всё, что bootstrap должен закрыть,
 		// закрыто до него, а runtime получает исходный bootstrap env.
 		if !network.closed {
@@ -154,16 +163,29 @@ func TestBootstrapStageFetchesThenReexecesBeforeServices(t *testing.T) {
 
 func TestBootstrapFailureFailsClosed(t *testing.T) {
 	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
-	for _, failure := range []string{"artifacts", "reexec"} {
+	previous := artifactRoot
+	t.Cleanup(func() { artifactRoot = previous })
+	for _, failure := range []string{"artifacts", "release", "reexec"} {
 		t.Run(failure, func(t *testing.T) {
+			artifactRoot = newRoot(t)
+			set := newReleaseSet("closed")
+			reexeced := false
 			d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) {
 				return newFake(), nil // сеть теперь стартует раньше артефактов (#155)
-			}, artifacts: func(context.Context, relay.ClientConfig, []string, guest.ArtifactInstaller) error {
-				if failure != "artifacts" {
-					return nil
+			}, artifacts: func(_ context.Context, _ relay.ClientConfig, _ []string, release guest.ArtifactRelease) error {
+				switch failure {
+				case "artifacts":
+					return errors.New("private-token")
+				case "release":
+					// Набор с чужим digest: установка отказывает, runtime не стартует.
+					// Тело той же длины, что claude-closed, и с секретом внутри.
+					server := &fakeServer{set: set, serve: map[string]string{"claude": "\x7fELFprivate-token"}}
+					return release(context.Background(), set.manifest(), server.download)
 				}
-				return errors.New("private-token")
-			}, reexec: func([]string) error {
+				server := &fakeServer{set: set}
+				return release(context.Background(), set.manifest(), server.download)
+			}, reexec: func(string, []string) error {
+				reexeced = true
 				if failure == "reexec" {
 					return errors.New("private-token")
 				}
@@ -172,6 +194,9 @@ func TestBootstrapFailureFailsClosed(t *testing.T) {
 			err := dispatch(context.Background(), nil, func() []string { return stageEnv(t, "bootstrap") }, d)
 			if err == nil || !strings.HasPrefix(err.Error(), "guest bootstrap failed:") || strings.Contains(err.Error(), "private-token") {
 				t.Fatalf("unsafe or missing bootstrap failure: %v", err)
+			}
+			if failure != "reexec" && reexeced {
+				t.Fatal("runtime stage started without a verified release")
 			}
 		})
 	}
@@ -183,11 +208,11 @@ func TestRuntimeStageSkipsBootstrapAndPrependsPath(t *testing.T) {
 	defer cancel()
 	var events []string
 	d := supervisorDeps(t, &events, cancel)
-	d.artifacts = func(context.Context, relay.ClientConfig, []string, guest.ArtifactInstaller) error {
+	d.artifacts = func(context.Context, relay.ClientConfig, []string, guest.ArtifactRelease) error {
 		t.Fatal("runtime stage fetched artifacts")
 		return nil
 	}
-	d.reexec = func([]string) error {
+	d.reexec = func(string, []string) error {
 		t.Fatal("runtime stage reexeced")
 		return nil
 	}
@@ -208,101 +233,29 @@ func sha256Hex(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func TestInstallArtifact(t *testing.T) {
-	base := t.TempDir()
-	previous := artifactRoot
-	artifactRoot = base
-	t.Cleanup(func() { artifactRoot = previous })
-	install := func(name, content string, size int64) error {
-		return installArtifact(context.Background(), name, strings.NewReader(content), size, sha256Hex(content))
-	}
-	exact := func(name, content string) error { return install(name, content, int64(len(content))) }
-	if err := exact("brood-guest", "\x7fELFbootstrap"); err != nil {
-		t.Fatal(err)
-	}
-	if err := exact("bro", "\x7fELFclient"); err != nil {
-		t.Fatal(err)
-	}
-	if err := exact("claude", "\x7fELFclaude"); err != nil {
-		t.Fatal(err)
-	}
-	for name, want := range map[string]string{"brood-guest": "\x7fELFbootstrap", "bro": "\x7fELFclient", "claude": "\x7fELFclaude"} {
-		data, err := os.ReadFile(filepath.Join(base, "bin", name))
-		if err != nil || string(data) != want {
-			t.Fatalf("%s content: %q %v", name, data, err)
-		}
-		info, err := os.Lstat(filepath.Join(base, "bin", name))
-		if err != nil || info.Mode().Perm() != 0755 {
-			t.Fatalf("%s mode: %+v %v", name, info, err)
-		}
-	}
-	if residue, _ := os.ReadDir(filepath.Join(base, "tmp")); len(residue) != 0 {
-		t.Fatalf("staging residue: %v", residue)
-	}
-	if err := exact("brood-guest", "\x7fELFbootstrap"); err != nil {
-		t.Fatalf("identical reinstall: %v", err)
-	}
-	if data, _ := os.ReadFile(filepath.Join(base, "bin", "brood-guest")); string(data) != "\x7fELFbootstrap" {
-		t.Fatal("reinstall changed the binary")
-	}
-	if err := exact("brood-guest", "\x7fELFother"); err == nil {
-		t.Fatal("changed content accepted over an existing binary")
-	}
-	if err := install("bro", "short", 100); err == nil {
-		t.Fatal("short stream accepted")
-	}
-	if err := os.Mkdir(filepath.Join(base, "bin", "sh"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := exact("sh", "x"); err == nil {
-		t.Fatal("non-regular destination accepted")
-	}
-	if data, _ := os.ReadFile(filepath.Join(base, "bin", "brood-guest")); string(data) != "\x7fELFbootstrap" {
-		t.Fatal("failed installs changed an existing binary")
-	}
-}
-
-// TestInstallArtifactChecksManifestDigest: digest манифеста сверяется до
-// публикации (#265), и идентичный установленный файл сверяется с манифестом,
-// а не только с потоком.
-func TestInstallArtifactChecksManifestDigest(t *testing.T) {
-	base := t.TempDir()
-	previous := artifactRoot
-	artifactRoot = base
-	t.Cleanup(func() { artifactRoot = previous })
-	install := func(content, digest string) error {
-		return installArtifact(context.Background(), "bro", strings.NewReader(content), int64(len(content)), digest)
-	}
-	good, forged := "\x7fELFclient", "\x7fELFclienX"
-	if err := install(forged, sha256Hex(good)); err == nil {
-		t.Fatal("stream with a wrong sha256 accepted")
-	}
-	if _, err := os.Lstat(filepath.Join(base, "bin", "bro")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("wrong digest published: %v", err)
-	}
-	if residue, _ := os.ReadDir(filepath.Join(base, "tmp")); len(residue) != 0 {
-		t.Fatalf("staging residue: %v", residue)
-	}
-	if err := install(good, sha256Hex(good)); err != nil {
-		t.Fatalf("correct artifact after a refused one: %v", err)
-	}
-	if err := install(good, sha256Hex(forged)); err == nil {
-		t.Fatal("installed binary accepted under a different manifest digest")
-	}
-	if err := install(forged, sha256Hex(good)); err == nil {
-		t.Fatal("wrong stream accepted over the installed binary")
-	}
-	if data, _ := os.ReadFile(filepath.Join(base, "bin", "bro")); string(data) != good {
-		t.Fatal("failed installs changed the installed binary")
-	}
-}
-
-// artifactDelivery — Brood на httptest TLS: манифест описывает files, тела
+// artifactDelivery: Brood на httptest TLS: манифест описывает files, тела
 // отдаются из files, пока serve не подменяет тело артефакта.
 type artifactDelivery struct {
-	mu    sync.Mutex
-	files map[string][]byte
-	serve map[string][]byte
+	mu       sync.Mutex
+	files    map[string][]byte
+	serve    map[string][]byte
+	requests []string
+}
+
+// deploy заменяет набор сервера, как выкладка BROOD_ARTIFACTS_DIR.
+func (d *artifactDelivery) deploy(files map[string][]byte) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.files = files
+}
+
+// took отдаёт имена запрошенных артефактов ("" означает манифест) и сбрасывает журнал.
+func (d *artifactDelivery) took() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	requests := d.requests
+	d.requests = nil
+	return requests
 }
 
 func (d *artifactDelivery) override(name string, body []byte) {
@@ -326,7 +279,13 @@ func (d *artifactDelivery) start(t *testing.T) relay.ClientConfig {
 			http.Error(w, "denied", http.StatusForbidden)
 			return
 		}
+		name, _ := strings.CutPrefix(strings.TrimPrefix(r.URL.Path, prefix), "/")
+		d.requests = append(d.requests, name)
 		if r.URL.Path == prefix {
+			if len(d.files) == 0 {
+				http.Error(w, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			entries := []string{}
 			for _, name := range []string{"bro", "brood-guest", "claude"} {
 				entries = append(entries, fmt.Sprintf(`{"name":%q,"size":%d,"sha256":%q}`, name, len(d.files[name]), sha256Hex(string(d.files[name]))))
@@ -334,7 +293,6 @@ func (d *artifactDelivery) start(t *testing.T) relay.ClientConfig {
 			_, _ = w.Write([]byte(`{"artifacts":[` + strings.Join(entries, ",") + `]}`))
 			return
 		}
-		name, _ := strings.CutPrefix(r.URL.Path, prefix+"/")
 		body, ok := d.serve[name]
 		if !ok {
 			body, ok = d.files[name]
@@ -349,33 +307,89 @@ func (d *artifactDelivery) start(t *testing.T) relay.ClientConfig {
 	return relay.ClientConfig{URL: strings.Replace(server.URL, "https:", "wss:", 1), ActorUID: "actor-1", Generation: 1, Token: token, CAPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})}
 }
 
+// releaseFrom: release-зависимость bootstrap над корнем root: записывает
+// исполняемый файл runtime-стадии проверенного набора.
+func releaseFrom(root string, executable *string) guest.ArtifactRelease {
+	return func(ctx context.Context, manifest guest.ArtifactManifest, download guest.ArtifactDownload) error {
+		path, err := installRelease(ctx, root, manifest, download, func(error) {})
+		*executable = path
+		return err
+	}
+}
+
 func TestFetchArtifactsRefusesWrongDigestBeforePublish(t *testing.T) {
-	base := t.TempDir()
-	previous := artifactRoot
-	artifactRoot = base
-	t.Cleanup(func() { artifactRoot = previous })
+	root := newRoot(t)
 	files := map[string][]byte{"bro": []byte("\x7fELFclient"), "brood-guest": []byte("\x7fELFbootstrap"), "claude": []byte("\x7fELFclaude")}
 	delivery := &artifactDelivery{files: files, serve: map[string][]byte{}}
 	cfg := delivery.start(t)
 	// Подмена в пути: размер из манифеста и ELF-магия на месте, sha256 другой.
 	delivery.override("bro", []byte("\x7fELFclienX"))
-	if err := guest.FetchArtifacts(context.Background(), cfg, nil, installArtifact); err == nil {
-		t.Fatal("artifact with a wrong sha256 accepted")
+	var executable string
+	if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err == nil || executable != "" {
+		t.Fatalf("artifact with a wrong sha256 accepted: %q %v", executable, err)
 	}
-	if published, _ := os.ReadDir(filepath.Join(base, "bin")); len(published) != 0 {
-		t.Errorf("wrong digest published into bin: %v", published)
+	if published, _ := os.ReadDir(filepath.Join(root, "releases")); len(published) != 0 {
+		t.Errorf("wrong digest published into releases: %v", published)
 	}
-	if residue, _ := os.ReadDir(filepath.Join(base, "tmp")); len(residue) != 0 {
-		t.Errorf("staging residue: %v", residue)
+	if _, err := os.Lstat(filepath.Join(root, "bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("wrong digest published bin: %v", err)
 	}
 	// Следующий старт получает верный артефакт и ставит весь набор.
 	delivery.override("bro", nil)
-	if err := guest.FetchArtifacts(context.Background(), cfg, nil, installArtifact); err != nil {
+	if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err != nil {
 		t.Fatalf("correct delivery after a refused one: %v", err)
 	}
 	for name, want := range files {
-		if data, err := os.ReadFile(filepath.Join(base, "bin", name)); err != nil || string(data) != string(want) {
+		if data, err := os.ReadFile(filepath.Join(root, "bin", name)); err != nil || string(data) != string(want) {
 			t.Fatalf("%s content: %q %v", name, data, err)
 		}
+	}
+}
+
+// TestStopStartAfterDeploySwitchesRelease: сценарий #184 на настоящем
+// FetchArtifacts: повторный старт без выкладки не качает ничего, старт после
+// выкладки ставит новый набор рядом с прежним, откат сервера возвращает
+// прежний без загрузки.
+func TestStopStartAfterDeploySwitchesRelease(t *testing.T) {
+	root := newRoot(t)
+	setFiles := func(set releaseSet) map[string][]byte {
+		files := map[string][]byte{}
+		for name, body := range set {
+			files[name] = []byte(body)
+		}
+		return files
+	}
+	a, b := newReleaseSet("a"), newReleaseSet("b")
+	delivery := &artifactDelivery{files: setFiles(a), serve: map[string][]byte{}}
+	cfg := delivery.start(t)
+	boot := func(want releaseSet, requests []string) {
+		t.Helper()
+		var executable string
+		if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err != nil {
+			t.Fatal(err)
+		}
+		if executable != filepath.Join(root, "releases", want.id(t), "brood-guest") {
+			t.Fatalf("runtime executable %q", executable)
+		}
+		assertActive(t, root, want)
+		if got := delivery.took(); !slices.Equal(got, requests) {
+			t.Fatalf("requests %q, want %q", got, requests)
+		}
+	}
+	full := []string{"", "bro", "brood-guest", "claude"}
+	boot(a, full)
+	boot(a, []string{""})
+	delivery.deploy(setFiles(b))
+	boot(b, full)
+	if previous := linkTarget(t, filepath.Join(root, "previous")); previous != "releases/"+a.id(t) {
+		t.Fatalf("previous %q", previous)
+	}
+	delivery.deploy(setFiles(a))
+	boot(a, []string{""})
+	// Сервер недоступен: старт отказывает, а не грузит установленный набор.
+	delivery.deploy(map[string][]byte{})
+	var executable string
+	if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err == nil || executable != "" {
+		t.Fatalf("start without a verified server manifest: %q %v", executable, err)
 	}
 }
