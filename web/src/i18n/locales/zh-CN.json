@@ -3128,6 +3128,7 @@
     "your_role": "你的角色",
     "id": "群组 ID",
     "copy_id": "复制群组 ID",
+    "details": "详情",
     "control": {
       "start": "启动",
       "restart": "再次启动",
@@ -3162,9 +3163,9 @@
       "started": "群组 {{name}} 已启动",
       "stopped": "群组 {{name}} 已停止"
     },
-    "infrastructure": "基础设施",
-    "atespace": "Atespace",
-    "execution": "执行",
+    "space": "Substrate 空间",
+    "infrastructure_label": "基础设施",
+    "infrastructure_alert": "该群组的基础设施处于{{state}}状态，尚未激活：在激活之前，图和执行者无法工作。生命周期操作在页面末尾。",
     "execution_states": {
       "idle": "未开始",
       "running": "运行中",
@@ -3182,19 +3183,19 @@
       "failed": "图在失败的步骤上结束。",
       "stopped": "图已停止，不会推进。"
     },
-    "current_node": "当前节点",
+    "now_label": "当前状态",
+    "now_node": "节点",
     "pass_goal": {
-      "label": "本轮任务",
+      "current": "当前轮次",
       "pass": "第 {{number}} 轮，从步骤 #{{step}} 开始"
     },
     "graph": "图",
-    "graph_hint": "定义 {{name}} 的快照。选择节点以查看其指令、结果和 Actor。",
     "graph_label": "群组 {{name}} 的图",
     "snapshot": {
       "label": "快照",
       "definition": "定义",
-      "version": "版本",
-      "revision": "修订",
+      "version_short": "v{{version}}",
+      "copy_revision": "复制快照修订号",
       "hint": "在首次启动时记录。目录中的新版本不会改变此群组。"
     },
     "node": "所选节点",
@@ -3205,7 +3206,14 @@
     "outcome": "结果",
     "started": "开始",
     "finished": "结束",
-    "visits": "访问次数",
+    "duration_label": "耗时",
+    "duration": {
+      "s": "{{count}} 秒",
+      "min": "{{count}} 分钟",
+      "h": "{{count}} 小时",
+      "d": "{{count}} 天"
+    },
+    "entered": "进入过 {{count}} 次，显示最近一次。",
     "reason": "原因",
     "commit": "已确认的提交",
     "copy_commit": "复制提交",
@@ -3230,20 +3238,21 @@
     "step_guidance": {
       "refused": "该步骤已关闭且未产生效果，图不会自行推进。请消除原因（绑定角色、提交或撤销 actor 工作区中的更改、连接 actor），如群组仍在运行则先停止，然后在同一快照上开始新一轮。",
       "unconfirmed": "服务器不知道该步骤如何结束，因此既不重试也不推进图。由你决定：先查明 actor 那边发生了什么，如群组仍在运行则停止它，然后开始新一轮。",
+      "release_title": "如果工作区仍被保留",
       "release": "如果原因中提到被保留的工作区操作，请由管理员检查工作区并按该操作 ID 释放它，否则新一轮会因工作区被占用而被拒绝："
     },
     "steps": "步骤历史",
     "steps_hint": "图节点的每次访问，按从早到晚排列。点击节点名称可在图上显示该节点。",
     "steps_empty": "暂无步骤。",
+    "pass_steps": "步骤：{{count}}",
     "management": "访问与生命周期",
     "management_hint": "谁可以使用此群组、其所有权以及删除。"
   },
   "swarm_requests": {
     "title": "操作员请求",
-    "hint": "此群组中图节点和 Actor 提出的问题。未处理的请求排在前面；已回答的留在下方作为历史。",
     "open_count": "{{count}} 个待处理",
     "none_open": "没有待处理的请求。",
-    "history": "历史",
+    "history_count": "已回答 {{count}} 个",
     "states": {
       "open": "待处理",
       "answered": "已回答",
@@ -3283,6 +3292,8 @@
   "swarm_roles": {
     "title": "角色",
     "hint": "图中每个执行者节点都指定一个角色。启动要求图中的每个角色都绑定到此蜂群中正在运行的托管执行者。",
+    "fold_ready": "{{count}} 个就绪",
+    "fold_unready": "{{count}} 个未就绪",
     "graph_pinned": "快照 {{name}}（版本 {{version}}）的角色。",
     "graph_definition": "在启动对话框中选择的 {{name}}（版本 {{version}}）的角色。首次启动会固定此定义。",
     "graph_none": "尚无图。在启动对话框中选择定义后，其角色会显示在这里。",
@@ -3308,7 +3319,7 @@
       "unbound": "没有执行者担任此角色；在绑定之前启动会被拒绝。",
       "stale": "绑定后执行者已被重新创建。请重新绑定角色以使用其新实例。",
       "inactive": "执行者未运行或不应运行。请启动它，或绑定其他执行者。",
-      "foreign": "执行者已离开此蜂群或其 atespace。请绑定此蜂群的执行者。",
+      "foreign": "执行者已离开此蜂群或其 Substrate 空间。请绑定此蜂群的执行者。",
       "missing": "绑定的执行者已不存在。请绑定其他执行者。"
     },
     "phases": {

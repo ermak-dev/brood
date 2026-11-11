@@ -208,6 +208,27 @@ describe('what each role shows', () => {
     expect(html).toContain('role="alert"');
     expect(visibleText(html)).toContain('swarm not found');
   });
+
+  // #253: the block is a fold; it stands open only when a role needs a hand
+  // or the swarm is not working, and its summary counts what is not ready.
+  test('the block folds while the swarm works with every role ready, and opens otherwise', () => {
+    const folded = markup({
+      control: 'busy',
+      view: rolesView({ execution: 'running', roles: [ready()] }),
+    });
+    expect(folded).toMatch(/<details(?![^>]*\sopen)[^>]*>/);
+    expect(folded.slice(0, folded.indexOf('</summary>'))).toContain(
+      fill(t.fold_ready, { count: 1 })
+    );
+    const unbound = markup({ control: 'busy', view: rolesView({ execution: 'running' }) });
+    expect(unbound).toMatch(/<details[^>]*\sopen/);
+    expect(unbound.slice(0, unbound.indexOf('</summary>'))).toContain(
+      fill(t.fold_unready, { count: 1 })
+    );
+    expect(markup()).toMatch(/<details[^>]*\sopen/);
+    // The title stays a heading the page outline names.
+    expect(markup()).toMatch(new RegExp(`<h[2-4][^>]*>${t.title}</h[2-4]>`));
+  });
 });
 
 describe('who gets controls', () => {
@@ -606,7 +627,7 @@ describe('before the first start', () => {
     });
     const container = await openPage();
     expect(rolesBlock(container).textContent).toContain(t.graph_none);
-    const start = container.querySelector('header button');
+    const start = container.querySelector('[data-swarm-action] button');
     await click(start);
     expect(calls.some((c) => c.url.includes('?definition='))).toBe(false);
     await click(dialog()?.querySelector('input[value="review"]'));
@@ -633,7 +654,7 @@ describe('before the first start', () => {
       ...pageRoutes({ roles: () => rolesView({ roles: [ready()] }) }),
     });
     const container = await openPage();
-    await click(container.querySelector('header button'));
+    await click(container.querySelector('[data-swarm-action] button'));
     const note = dialog()?.querySelector('[data-roles-note]');
     expect(note?.textContent).toContain(t.start.ready);
   });
@@ -645,7 +666,7 @@ describe('before the first start', () => {
       })
     );
     const container = await openPage();
-    await click(container.querySelector('header button'));
+    await click(container.querySelector('[data-swarm-action] button'));
     const note = dialog()?.querySelector('[data-roles-note]');
     expect(note?.textContent).toContain('builder');
     expect(note?.textContent).toContain(t.states.stale);

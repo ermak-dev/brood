@@ -5,6 +5,7 @@
 import { executionTone } from '@/features/access/state';
 import type { AccessProject, AccessSwarm } from '@/services/brood/access';
 import type { NodeStatus, PipelineRun, RunGraph, RunNode } from '@/services/brood/pipelines';
+import type { SwarmRolesView } from '@/services/brood/roles';
 
 /** Состояние исполнения роя (#206). Оно не смешивается с состоянием
  * инфраструктуры (provisioning, active, ...): у каждого свой значок. */
@@ -150,6 +151,96 @@ export function nodeView(run: PipelineRun | null, graph: RunGraph | null, id: st
     report: last?.report || undefined,
     guidance: status === 'refused' || status === 'unconfirmed' ? status : undefined,
   };
+}
+
+/** Строка «что сейчас» (#253): исполнение, узел, на котором оно стоит, и
+ * состояние этого шага — только когда слово добавляет к исполнению
+ * (фаза работы, отказ, неизвестный исход), а не повторяет его. Совет и
+ * актор — у застрявшего шага, по которому проход встал. */
+export interface ExecutionNow {
+  execution: string;
+  node?: string;
+  step?: NodeStatus;
+  guidance?: StepGuidance;
+  actorName?: string;
+}
+
+/** Слова шага, которые повторяют исполнение, а не уточняют его. */
+const quietSteps: Record<string, Set<string>> = {
+  running: new Set(['active', 'pending']),
+  waiting: new Set(['active', 'waiting', 'pending']),
+  succeeded: new Set(['done', 'completed', 'answered']),
+  failed: new Set(['failed']),
+  stopped: new Set(['stopped', 'skipped']),
+};
+
+/** Состояние шага, которое уточняет исполнение: фаза работы, отказ,
+ * неизвестный исход. Законченный или ещё не начатый шаг и слово, которое
+ * повторяет исполнение, ничего не добавляют. */
+function stepTells(execution: string, status: NodeStatus): boolean {
+  if (quietSteps[execution]?.has(status)) return false;
+  const mark = stepMark(status);
+  return mark !== 'done' && mark !== 'pending';
+}
+
+export function executionNow(run: PipelineRun | null): ExecutionNow {
+  const execution = swarmExecution(run);
+  if (!run) return { execution };
+  const now: ExecutionNow = { execution };
+  const node = run.currentNode;
+  if (!node) return now;
+  now.node = node;
+  const last = run.nodes[run.nodes.length - 1];
+  if (!last || last.id !== node) return now;
+  if (stepTells(execution, last.status)) now.step = last.status;
+  if (last.status === 'refused' || last.status === 'unconfirmed') {
+    now.guidance = last.status;
+    if (last.actorName) now.actorName = last.actorName;
+  }
+  return now;
+}
+
+/** Длительность шага в миллисекундах по записанным моментам; без одного из
+ * них — ничего. Конец раньше начала (часы серверов) — ноль, не минус. */
+export function stepDuration(step: { startedAt?: string; finishedAt?: string }): number | undefined {
+  if (!step.startedAt || !step.finishedAt) return undefined;
+  const started = Date.parse(step.startedAt);
+  const finished = Date.parse(step.finishedAt);
+  if (Number.isNaN(started) || Number.isNaN(finished)) return undefined;
+  return Math.max(0, finished - started);
+}
+
+export type DurationUnit = 's' | 'min' | 'h' | 'd';
+
+export interface DurationPart {
+  unit: DurationUnit;
+  value: number;
+}
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** Длительность словами: старшая единица, и следующая — только когда она
+ * не ноль и старшая крупнее минуты. «10 min», «1 h 5 min», «2 d». */
+export function durationParts(ms: number): DurationPart[] {
+  if (ms < MINUTE) return [{ unit: 's', value: Math.floor(ms / 1000) }];
+  if (ms < HOUR) return [{ unit: 'min', value: Math.floor(ms / MINUTE) }];
+  const [major, minor, size, step]: [DurationUnit, DurationUnit, number, number] =
+    ms < DAY ? ['h', 'min', HOUR, MINUTE] : ['d', 'h', DAY, HOUR];
+  const parts: DurationPart[] = [{ unit: major, value: Math.floor(ms / size) }];
+  const rest = Math.floor((ms % size) / step);
+  if (rest > 0) parts.push({ unit: minor, value: rest });
+  return parts;
+}
+
+/** Блок ролей (#253) раскрыт, когда роли ждут человека — есть роль графа
+ * не ready — или рой не работает, и оператор может их менять. Пока рой
+ * идёт или ждёт ответа с готовыми ролями, блок свёрнут. */
+export function rolesUnfolded(view: SwarmRolesView | null): boolean {
+  if (!view) return false;
+  if (view.roles.some((role) => role.inGraph && role.state !== 'ready')) return true;
+  return view.execution !== 'running' && view.execution !== 'waiting';
 }
 
 /** Колонки времени шага есть, только если сервер записал моменты: иначе

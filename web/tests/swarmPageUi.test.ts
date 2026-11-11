@@ -142,25 +142,44 @@ describe('identity', () => {
   });
 });
 
-describe('state', () => {
-  const card = (html: string, label: string) => {
-    const start = html.indexOf(`>${label}<`);
-    return html.slice(start, html.indexOf('</section>', start));
-  };
+/** Блок «что сейчас» (#253): от его атрибута до инбокса или графа. */
+const now = (html: string) => {
+  const start = html.indexOf('data-swarm-now');
+  if (start < 0) throw new Error('no "what now" block');
+  const ends = [html.indexOf('data-inbox', start), html.indexOf(`>${en.swarm_page.graph}<`, start)]
+    .filter((index) => index > start);
+  return html.slice(start, ends.length > 0 ? Math.min(...ends) : undefined);
+};
+/** Строка-мета под заголовком: сведения о рое. */
+const meta = (html: string) => {
+  const start = html.indexOf('data-swarm-meta');
+  if (start < 0) throw new Error('no meta row');
+  return html.slice(start, html.indexOf('data-swarm-now', start));
+};
 
-  test('infrastructure and execution are separate cards with their own badges', () => {
+describe('state', () => {
+  // #253: infrastructure and execution are no longer two cards: the
+  // infrastructure is a badge in the meta row, the execution is the first line.
+  test('the infrastructure badge sits in the meta row; the execution opens the page', () => {
     const html = render();
-    const infrastructure = card(html, en.swarm_page.infrastructure);
-    const execution = card(html, en.swarm_page.execution);
-    expect(infrastructure).toContain(en.access.states.active);
-    expect(infrastructure).not.toContain(en.swarm_page.execution_states.waiting);
-    expect(execution).toContain(en.swarm_page.execution_states.waiting);
-    expect(execution).not.toContain(en.access.states.active);
+    expect(meta(html)).toContain(en.access.states.active);
+    expect(meta(html)).not.toContain(en.swarm_page.execution_states.waiting);
+    expect(now(html)).toContain(en.swarm_page.execution_states.waiting);
+    expect(now(html)).not.toContain(en.access.states.active);
+    expect(html).not.toContain(`>${en.swarm_page.pass_goal.label}<`);
+  });
+
+  test('a swarm whose infrastructure is not active says so under the meta row', () => {
+    const active = render();
+    expect(active).not.toContain('data-infrastructure-alert');
+    const provisioning = render({ swarm: { ...swarm, state: 'provisioning' } });
+    const alert = provisioning.slice(provisioning.indexOf('data-infrastructure-alert'));
+    expect(alert.slice(0, alert.indexOf('</p>'))).toContain(en.access.states.provisioning);
   });
 
   test('a stopped swarm and a swarm waiting for an answer read differently', () => {
-    const waiting = card(render(), en.swarm_page.execution);
-    const stopped = card(render({ run: run({ status: 'stopped' }) }), en.swarm_page.execution);
+    const waiting = now(render());
+    const stopped = now(render({ run: run({ status: 'stopped' }) }));
     expect(waiting).toContain(en.swarm_page.execution_hints.waiting);
     expect(stopped).toContain(en.swarm_page.execution_states.stopped);
     expect(stopped).toContain(en.swarm_page.execution_hints.stopped);
@@ -170,9 +189,173 @@ describe('state', () => {
 
   test('a swarm without a graph says so instead of drawing an empty graph', () => {
     const html = render({ run: null, graph: null, selected: undefined });
-    expect(html).toContain(en.swarm_page.execution_hints.no_graph);
+    expect(now(html)).toContain(en.swarm_page.execution_hints.no_graph);
     expect(html).not.toContain('role="group"');
     expect(html).not.toContain(en.swarm_page.steps);
+  });
+});
+
+describe('first screen (#253)', () => {
+  const inbox = createElement('section', { 'data-inbox': 'yes' });
+  const stuck = run({
+    status: 'running',
+    currentNode: 'architecture',
+    nodes: [
+      {
+        id: 'architecture',
+        kind: 'actor',
+        label: 'architecture',
+        status: 'unconfirmed',
+        actorName: 'architect',
+        detail: 'workspace attestation outcome is unknown; workspace operation op-7 stays reserved',
+        sequence: 1,
+      },
+    ],
+  });
+
+  test('the page opens with the execution line, then the open question, then the graph', () => {
+    const html = render({ requests: inbox });
+    const line = html.indexOf('data-swarm-now');
+    const question = html.indexOf('data-inbox');
+    const graph = html.indexOf(`>${en.swarm_page.graph}<`);
+    expect(line).toBeGreaterThan(html.indexOf('</header>'));
+    expect(question).toBeGreaterThan(line);
+    expect(graph).toBeGreaterThan(question);
+    // The goal of the pass belongs to the first screen, under the line.
+    const withGoal = render({ requests: inbox, run: run({ goal: 'Fix issue #12' }) });
+    expect(withGoal.indexOf('data-pass-goal')).toBeGreaterThan(withGoal.indexOf('data-swarm-now'));
+    expect(withGoal.indexOf('data-pass-goal')).toBeLessThan(withGoal.indexOf('data-inbox'));
+  });
+
+  test('one line names the execution, the node it stands on and the state of that step', () => {
+    const line = now(render({ run: stuck, selected: 'architecture' }));
+    const text = visibleText(line).replace(/\s+/g, ' ');
+    expect(text).toContain(en.swarm_page.execution_states.running);
+    expect(line).toMatch(/<button[^>]*>architecture<\/button>/);
+    expect(text).toContain(en.swarm_page.node_states.unconfirmed);
+    // Nothing is said twice: the waiting execution does not repeat the step word.
+    const waiting = visibleText(now(render()));
+    expect(waiting.split(en.swarm_page.execution_states.waiting).length - 1).toBe(1);
+    expect(now(render())).toMatch(/<button[^>]*>decision<\/button>/);
+  });
+
+  test('the advice for a stuck step stands in the first block, once, with the action beside it', () => {
+    const action = createElement('button', { 'data-action': 'yes' }, 'act');
+    const html = render({ run: stuck, selected: 'architecture', actions: action });
+    const first = now(html);
+    expect(first).toContain('role="note"');
+    expect(first).toContain('bro dispatch architect --request-id');
+    expect(html.split('role="note"').length - 1).toBe(1);
+    expect(first).toContain('data-action="yes"');
+    // The hint of a running graph would contradict the stuck step: the advice replaces it.
+    expect(visibleText(first)).not.toContain(en.swarm_page.execution_hints.running);
+    expect(html.slice(html.indexOf(`>${en.swarm_page.node}<`))).not.toContain('role="note"');
+    // What to do comes first; how an administrator releases the workspace is
+    // folded under its own summary, the command inside it.
+    const release = first.slice(first.indexOf('<details'));
+    expect(first.indexOf(en.swarm_page.step_guidance.unconfirmed)).toBeLessThan(
+      first.indexOf('<details')
+    );
+    expect(release.slice(0, release.indexOf('>'))).not.toContain(' open');
+    expect(release.slice(0, release.indexOf('</summary>'))).toContain(
+      en.swarm_page.step_guidance.release_title
+    );
+    expect(release).toContain('bro dispatch architect --request-id');
+  });
+
+  test('the facts are one meta row under the title; the ID keeps its copy button', () => {
+    const row = meta(render());
+    const text = visibleText(row).replace(/\s+/g, ' ');
+    expect(text).toContain('brood');
+    expect(text).toContain('alice');
+    expect(text).toContain(en.access.swarm_roles.owner);
+    expect(text).toContain(swarm.atespace_name);
+    expect(row).toContain(`aria-label="${en.swarm_page.copy_id}"`);
+    expect(row).toMatch(new RegExp(`<code[^>]*>${swarm.id}</code>`));
+    expect(row).not.toContain('<dl');
+  });
+
+  test('the graph and the node panel share one row above 1024 px; the panel sticks', () => {
+    const page = source('features/swarms/SwarmPage.tsx');
+    expect(page).toContain('className={local.work}');
+    const styles = source('features/swarms/SwarmPage.module.scss');
+    const work = styles.slice(styles.indexOf('.work {'));
+    expect(work.slice(0, work.indexOf('}'))).toContain('grid-template-columns');
+    expect(work.slice(0, work.indexOf('}'))).toContain('minmax(');
+    expect(styles).toMatch(/\.workAside[^}]*position: sticky/);
+    // The graph section comes first in the row; the node panel is its aside.
+    // The roles stand after the row, before the history: not on the first screen.
+    const html = render({ roles: createElement('section', { 'data-roles': 'yes' }) });
+    expect(html.indexOf(`>${en.swarm_page.graph}<`)).toBeLessThan(
+      html.indexOf(`>${en.swarm_page.node}<`)
+    );
+    expect(html.indexOf(`>${en.swarm_page.node}<`)).toBeLessThan(html.indexOf('data-roles'));
+    expect(html.indexOf('data-roles')).toBeLessThan(html.indexOf(`>${en.swarm_page.steps}<`));
+    // A swarm without a graph still shows its roles, under the inbox.
+    expect(
+      render({
+        run: null,
+        graph: null,
+        selected: undefined,
+        roles: createElement('section', { 'data-roles': 'yes' }),
+      })
+    ).toContain('data-roles');
+  });
+
+  test('the goal of the pass is one or two lines that unfold; the whole text is there', () => {
+    const goal = 'Line one of the goal\nLine two\nLine three\nLine four';
+    const html = render({ run: run({ goal }) });
+    const card = html.slice(html.indexOf('data-pass-goal'));
+    expect(card).toContain('data-collapsed');
+    expect(card).toContain('Line four');
+    expect(card).toContain(`aria-expanded="false"`);
+  });
+
+  test('a step in the history shows how long it took; the moments stay in its title', () => {
+    const timed = run({
+      nodes: [
+        {
+          id: 'architecture',
+          kind: 'actor',
+          label: 'architecture',
+          status: 'done',
+          sequence: 1,
+          startedAt: '2026-11-03T09:00:00Z',
+          finishedAt: '2026-11-03T09:10:00Z',
+        },
+        {
+          id: 'decision',
+          kind: 'human',
+          label: 'decision',
+          status: 'active',
+          sequence: 2,
+          startedAt: '2026-11-03T09:10:00Z',
+        },
+      ],
+    });
+    const html = render({ run: timed, selected: undefined });
+    const history = html.slice(html.indexOf(`>${en.swarm_page.steps}<`));
+    expect(visibleText(history)).toContain(
+      en.swarm_page.duration.min.replace('{{count}}', '10')
+    );
+    expect(history).toMatch(new RegExp(`title="${en.swarm_page.started} [^"]+${en.swarm_page.finished} [^"]+"`));
+    expect(history).not.toContain(`>${en.swarm_page.finished}<`);
+    // A step still running has no duration yet: its start is named instead.
+    expect(visibleText(history)).toContain(en.swarm_page.started);
+  });
+
+  test('the node panel says how many times a node was entered only when it was more than once', () => {
+    const twice = run({
+      nodes: [
+        { id: 'architecture', kind: 'actor', label: 'architecture', status: 'done', sequence: 1 },
+        { id: 'architecture', kind: 'actor', label: 'architecture', status: 'done', sequence: 2 },
+      ],
+    });
+    const once = render({ selected: 'architecture' });
+    expect(visibleText(once)).not.toContain(en.swarm_page.entered.replace('{{count}}', '1'));
+    expect(visibleText(render({ run: twice, selected: 'architecture' }))).toContain(
+      en.swarm_page.entered.replace('{{count}}', '2')
+    );
   });
 });
 
@@ -402,7 +585,6 @@ describe('pass goal', () => {
   test('the goal of the current pass is markdown without HTML, line breaks kept', () => {
     const html = render({ run: run({ goal, nodes: passes.nodes.slice(0, 2) }) });
     const card = goalCard(html);
-    expect(card).toContain(en.swarm_page.pass_goal.label);
     expect(card).toContain('data-goal-text=""');
     // Markdown (#252): the author's tag is text, the line breaks stay.
     expect(card).toContain('<p>Fix issue #12\n- keep the API\n&lt;b&gt;as is&lt;/b&gt;</p>');
@@ -428,8 +610,9 @@ describe('pass goal', () => {
   });
 
   test('the goal text keeps its line breaks on screen', () => {
-    const styles = source('features/swarms/SwarmPage.module.scss');
-    const rule = styles.slice(styles.indexOf('.goalText'));
+    // Markdown (#252) keeps the breaks inside a paragraph: the rule lives there.
+    const styles = source('components/ui/Markdown.module.scss');
+    const rule = styles.slice(styles.indexOf('  p {'));
     expect(rule.slice(0, rule.indexOf('}'))).toContain('white-space: pre-wrap');
   });
 
@@ -446,11 +629,42 @@ describe('pass goal', () => {
     expect(earlier).toContain('#1<');
     expect(earlier).toContain('#2<');
     expect(earlier).not.toContain('#3<');
-    expect(later).toContain('Fix issue #13');
     expect(later).toContain('#3<');
     expect(visibleText(later)).toContain(
       en.swarm_page.pass_goal.pass.replace('{{number}}', '2').replace('{{step}}', '3')
     );
+    // #253: the goal of the current pass stands once, in the first block;
+    // its pass in the history does not repeat it.
+    expect(goalCard(html)).toContain('Fix issue #13');
+    expect(html.split('Fix issue #13').length - 1).toBe(1);
+  });
+
+  // #253: earlier passes are history of the history: folded into their
+  // heading and step count, while the current pass stands open.
+  test('earlier passes fold into their heading; the current pass stands open', () => {
+    const html = render({ run: passes, selected: undefined });
+    const history = html.slice(html.indexOf(`>${en.swarm_page.steps}<`));
+    const earlier = history.slice(history.indexOf('data-pass="1"'), history.indexOf('data-pass="3"'));
+    const later = history.slice(history.indexOf('data-pass="3"'));
+    expect(earlier).toMatch(/<details(?![^>]*\sopen)[^>]*>/);
+    expect(later).toMatch(/<details[^>]*\sopen/);
+    // The summary names the pass and how many steps it took; the heading stays a heading.
+    const summary = earlier.slice(0, earlier.indexOf('</summary>'));
+    expect(summary).toMatch(
+      new RegExp(
+        `<h[2-4][^>]*>${en.swarm_page.pass_goal.pass.replace('{{number}}', '1').replace('{{step}}', '1')}</h[2-4]>`
+      )
+    );
+    expect(visibleText(summary)).toContain(en.swarm_page.pass_steps.replace('{{count}}', '2'));
+    expect(visibleText(later.slice(0, later.indexOf('</summary>')))).toContain(
+      en.swarm_page.pass_steps.replace('{{count}}', '1')
+    );
+    // The goal and the steps of a folded pass are still there to unfold.
+    expect(earlier).toContain('&lt;b&gt;as is&lt;/b&gt;');
+    expect(earlier).toContain('#2<');
+    // A single pass is the current one: open.
+    const single = render({ run: run({ goal, nodes: passes.nodes.slice(0, 2) }), selected: undefined });
+    expect(single.slice(single.indexOf('data-pass="1"'))).toMatch(/<details[^>]*\sopen/);
   });
 
   test('steps without passes keep the plain history', () => {

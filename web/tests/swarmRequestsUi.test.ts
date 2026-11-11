@@ -150,12 +150,44 @@ describe('inbox', () => {
   test('open requests come first; answered ones follow as history', () => {
     const html = markup(createElement(RequestInbox, { model: model() }));
     const text = visibleText(html);
-    const history = text.indexOf(t.history);
+    const history = text.indexOf(t.history_count.replace('{{count}}', '1'));
     expect(history).toBeGreaterThan(0);
     expect(text.indexOf('Which database')).toBeLessThan(history);
     expect(text.indexOf('Approve the proposal?')).toBeLessThan(history);
     expect(text.indexOf('keep the cache layer')).toBeGreaterThan(history);
     expect(text).toContain(t.open_count.replace('{{count}}', '2'));
+  });
+
+  // #253: the history is folded into its count. The material of every
+  // request folds under its label: the question is what is asked, the
+  // material is read on demand, so an open request leaves room for the graph.
+  test('the history folds into its count, and the material of every request folds', () => {
+    const answered = actorAsk({
+      id: 'req-actor-0',
+      state: 'answered',
+      answeredAt: '2026-11-09T10:00:00Z',
+      answeredBy: 'alice',
+      response: 'SQLite',
+      context: 'The draft compares SQLite and Postgres.',
+    });
+    const html = markup(
+      createElement(RequestInbox, { model: model({ requests: [actorAsk(), answered] }) })
+    );
+    const material = new RegExp(
+      `<details(?![^>]*\\sopen)[^>]*>\\s*<summary[^>]*>${t.context}</summary>`
+    );
+    const fold = html.indexOf(`>${t.history_count.replace('{{count}}', '1')}</summary>`);
+    expect(fold).toBeGreaterThan(0);
+    const history = html.slice(html.lastIndexOf('<details', fold));
+    expect(history.slice(0, history.indexOf('>'))).not.toContain(' open');
+    // The open request before the history: its question in full, its material folded.
+    const open = html.slice(0, html.lastIndexOf('<details', fold));
+    expect(visibleText(open)).toContain('Which database should the proposal assume?');
+    expect(open).toMatch(material);
+    expect(open).toContain('The draft compares SQLite and Postgres.');
+    // Inside the history the material is a fold of its own, under the same label.
+    expect(history.slice(history.indexOf('</summary>'))).toMatch(material);
+    expect(history).toContain('The draft compares SQLite and Postgres.');
   });
 
   test('each request shows its question, context, who asks, the node and when', () => {
@@ -185,7 +217,7 @@ describe('inbox', () => {
       markup(createElement(RequestInbox, { model: model({ requests: [] }) }))
     );
     expect(text).toContain(t.none_open);
-    expect(text).not.toContain(t.history);
+    expect(text).not.toContain('<details');
   });
 
   test('a failed read shows its reason and a retry', () => {

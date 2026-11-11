@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useId, useState, type ReactNode } fro
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Markdown, PlainText } from '@/components/ui/Markdown';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useProjectStore } from '@/stores';
 import { accessApi, type AccessSwarm } from '@/services/brood/access';
 import {
@@ -30,6 +31,8 @@ import { SnapshotFacts, SwarmExecutionControl } from './SwarmControls';
 import { SwarmRoles } from './SwarmRoles';
 import { executionAction, snapshotIdentity } from './swarmControl';
 import {
+  durationParts,
+  executionNow,
   executionTone,
   hasStepTimes,
   nodeView,
@@ -38,16 +41,22 @@ import {
   runIsLive,
   selectedNodeId,
   shortCommit,
+  stepDuration,
   stepMark,
   stepPasses,
-  swarmExecution,
   swarmProjectName,
+  type ExecutionNow,
   type NodeView,
   type StepGuidance,
 } from './swarmState';
 import styles from '@/features/substrate/substrate.module.scss';
 import graphStyles from '@/features/pipelines/pipelines.module.scss';
 import local from './SwarmPage.module.scss';
+
+/** Высота задачи прохода в свёрнутом виде (#253): две строки по 13px/1.55. */
+const GOAL_LINES_HEIGHT = 42;
+/** Телефон: сведения о рое складываются под «Сведения» (#253). */
+const PHONE = '(max-width: 768px)';
 
 /** Страница роя (#215) — главный объект панели. Ключ по ID: другой рой
  * не наследует ни выбранный узел, ни загруженные данные. */
@@ -174,7 +183,8 @@ function SwarmsLink() {
 export interface SwarmViewProps {
   swarm: AccessSwarm;
   projectName: string;
-  /** Действие исполнения роя в шапке: запуск или остановка (#218). */
+  /** Действие исполнения роя (#218): запуск или остановка, рядом со
+   * строкой состояния — там, где совет говорит остановить и запустить. */
   actions?: ReactNode;
   /** Сбой перечитывания уже показанного роя: данные остаются, причина видна. */
   refreshError?: string;
@@ -192,18 +202,21 @@ export interface SwarmViewProps {
   /** Узел запроса оператору и его карточка (#216): форма ответа или ответ. */
   gateNode?: string;
   gate?: ReactNode;
-  /** Инбокс запросов оператору: под состояниями, выше графа. */
+  /** Инбокс запросов оператору: сразу под строкой состояния, выше графа. */
   requests?: ReactNode;
-  /** Роли графа и их акторы (#241): под инбоксом, выше графа. */
+  /** Роли графа и их акторы (#241): свёрнуты под графом, перед историей
+   * шагов; у роя без графа — под инбоксом. */
   roles?: ReactNode;
   /** Доступ и жизненный цикл: в конце страницы, после работы роя. */
   management?: ReactNode;
 }
 
-/** Рой целиком: сведения, два раздельных состояния и задача текущего
- * прохода (#242), запросы оператору (#216), граф сверху вниз, выбранный
- * узел и история шагов по проходам, затем доступ и удаление. Запуск и
- * остановка (#218) — в действиях заголовка; рядом с графом — личность
+/** Рой целиком (#253): первый экран отвечает «что сейчас и что от меня
+ * нужно» — сведения одной строкой под заголовком, строка состояния
+ * исполнения с советом застрявшего шага и действием (#218), задача прохода
+ * (#242) в две строки, открытые запросы оператору (#216); дальше граф и
+ * панель выбранного узла в две колонки, свёрнутые роли (#241), история
+ * шагов по проходам, затем доступ и удаление. Подпись к графу — личность
  * снимка роя, а не текущее определение каталога. */
 export function SwarmView({
   swarm,
@@ -231,180 +244,271 @@ export function SwarmView({
   const current = passGoal(run);
   return (
     <div className={styles.page}>
-      <PageHeader title={swarm.name} meta={[<SwarmsLink key="list" />]} actions={actions} />
-      <SwarmFacts swarm={swarm} projectName={projectName} />
+      <PageHeader title={swarm.name} meta={[<SwarmsLink key="list" />]} />
+      <SwarmMeta swarm={swarm} projectName={projectName} />
       {refreshError && (
         <p className={`${styles.notice} ${styles.operationFailure}`} role="alert">
           {refreshError}
         </p>
       )}
-      <div className={local.states}>
-        <StateCard label={t('swarm_page.infrastructure')}>
-          <StatusBadge tone={swarmTone(swarm.state)}>
-            {t(`access.states.${swarm.state}`, { defaultValue: swarm.state })}
-          </StatusBadge>
-          <p className={local.stateText}>
-            {t('swarm_page.atespace')}: <span className={local.id}>{swarm.atespace_name}</span>
-          </p>
-        </StateCard>
-        <StateCard label={t('swarm_page.execution')}>
-          <LoadState loading={runLoading} error={runError} retry={retryRun}>
-            <ExecutionState run={run} selected={selected} onSelect={onSelect} />
-          </LoadState>
-        </StateCard>
-        {current && <PassGoal {...current} />}
-      </div>
+      <NowBlock
+        run={run}
+        swarmId={swarm.id}
+        loading={runLoading}
+        error={runError}
+        retry={retryRun}
+        selected={selected}
+        onSelect={onSelect}
+        actions={actions}
+        goal={current}
+      />
       {requests}
-      {roles}
       {run && (
         <>
-          <Section
-            title={t('swarm_page.graph')}
-            hint={t('swarm_page.graph_hint', { name: run.name })}
-          >
-            {identity && <SnapshotFacts identity={identity} />}
-            <LoadState loading={graphLoading} error={graphError} retry={retryGraph}>
-              {graph?.svg ? (
-                <RunGraph
-                  svg={graph.svg}
-                  label={t('swarm_page.graph_label', { name: swarm.name })}
-                  activeNode={run.currentNode}
-                  selectedNode={selected}
-                  onSelect={onSelect}
-                />
-              ) : (
-                <p className={local.hint}>{t('pipelines.graph_empty')}</p>
-              )}
-            </LoadState>
-          </Section>
-          <Section title={t('swarm_page.node')}>
-            {selected ? (
-              <NodeDetails
-                node={nodeView(run, graph, selected)}
-                swarmId={swarm.id}
-                gate={selected === gateNode ? gate : null}
-              />
-            ) : (
-              <p className={local.hint}>{t('swarm_page.node_hint')}</p>
-            )}
-          </Section>
+          <div className={local.work}>
+            <Section
+              title={t('swarm_page.graph')}
+              action={
+                identity && (
+                  <div className={local.graphCaption}>
+                    <SnapshotFacts identity={identity} />
+                  </div>
+                )
+              }
+            >
+              <LoadState loading={graphLoading} error={graphError} retry={retryGraph}>
+                {graph?.svg ? (
+                  <RunGraph
+                    svg={graph.svg}
+                    label={t('swarm_page.graph_label', { name: swarm.name })}
+                    activeNode={run.currentNode}
+                    selectedNode={selected}
+                    onSelect={onSelect}
+                  />
+                ) : (
+                  <p className={local.hint}>{t('pipelines.graph_empty')}</p>
+                )}
+              </LoadState>
+            </Section>
+            <div className={local.workAside}>
+              <Section title={t('swarm_page.node')}>
+                {selected ? (
+                  <NodeDetails
+                    node={nodeView(run, graph, selected)}
+                    gate={selected === gateNode ? gate : null}
+                  />
+                ) : (
+                  <p className={local.hint}>{t('swarm_page.node_hint')}</p>
+                )}
+              </Section>
+            </div>
+          </div>
+          {roles}
           <Section title={t('swarm_page.steps')} hint={t('swarm_page.steps_hint')}>
             <StepHistory
               steps={run.nodes}
               selected={selected}
               onSelect={onSelect}
               times={hasStepTimes(run)}
+              shownPass={current?.pass}
             />
           </Section>
         </>
       )}
+      {!run && roles}
       {management}
     </div>
   );
 }
 
-/** Проект — ссылкой на его страницу, владелец и роль — именами, полный ID
- * роя — отдельным элементом с копированием. */
-function SwarmFacts({ swarm, projectName }: { swarm: AccessSwarm; projectName: string }) {
+/** Сведения о рое одной строкой под заголовком: проект ссылкой, владелец и
+ * роль именами, полный ID с копированием, пространство в Substrate и
+ * состояние инфраструктуры бейджем; не активная инфраструктура — строкой
+ * тревоги под ними. На телефоне строка складывается под «Сведения». */
+function SwarmMeta({ swarm, projectName }: { swarm: AccessSwarm; projectName: string }) {
   const { t } = useTranslation();
-  return (
-    <dl className={local.facts}>
-      <div>
-        <dt>{t('swarm_page.project')}</dt>
-        <dd>
-          <Link to={`/projects/${encodeURIComponent(swarm.project_id)}`}>{projectName}</Link>
-        </dd>
-      </div>
-      <div>
-        <dt>{t('swarm_page.owner')}</dt>
-        <dd>{swarm.owner_username}</dd>
-      </div>
-      <div>
-        <dt>{t('swarm_page.your_role')}</dt>
-        <dd>{t(`access.swarm_roles.${swarm.role}`, { defaultValue: swarm.role })}</dd>
-      </div>
-      <div className={local.factWide}>
-        <dt>{t('swarm_page.id')}</dt>
-        <dd>
-          <code className={local.id}>{swarm.id}</code>
-          <CopyButton value={swarm.id} label={t('swarm_page.copy_id')} />
-        </dd>
-      </div>
-    </dl>
+  const phone = useMediaQuery(PHONE);
+  const state = t(`access.states.${swarm.state}`, { defaultValue: swarm.state });
+  const facts = (
+    <ul className={local.metaList}>
+      <li>
+        <span className={local.metaLabel}>{t('swarm_page.project')}</span>
+        <Link to={`/projects/${encodeURIComponent(swarm.project_id)}`}>{projectName}</Link>
+      </li>
+      <li>
+        <span className={local.metaLabel}>{t('swarm_page.owner')}</span>
+        {swarm.owner_username}
+      </li>
+      <li>
+        <span className={local.metaLabel}>{t('swarm_page.your_role')}</span>
+        {t(`access.swarm_roles.${swarm.role}`, { defaultValue: swarm.role })}
+      </li>
+      <li>
+        <span className={local.metaLabel}>{t('swarm_page.id')}</span>
+        <code className={local.id}>{swarm.id}</code>
+        <CopyButton value={swarm.id} label={t('swarm_page.copy_id')} />
+      </li>
+      <li>
+        <span className={local.metaLabel}>{t('swarm_page.space')}</span>
+        <code className={local.id}>{swarm.atespace_name}</code>
+      </li>
+      <li>
+        <span className={local.metaLabel}>{t('swarm_page.infrastructure_label')}</span>
+        <StatusBadge tone={swarmTone(swarm.state)}>{state}</StatusBadge>
+      </li>
+    </ul>
   );
-}
-
-function StateCard({ label, children }: { label: string; children: ReactNode }) {
-  const labelId = useId();
   return (
-    <section className={local.state} aria-labelledby={labelId}>
-      <p id={labelId} className={local.stateLabel}>
-        {label}
-      </p>
-      {children}
-    </section>
-  );
-}
-
-/** Задача текущего прохода (#242) — на всю ширину под состояниями: текст
- * оператора как набран, переводы строк сохранены, markdown без HTML (#252). */
-function PassGoal({ goal, pass, number }: { goal: string; pass?: number; number?: number }) {
-  const { t } = useTranslation();
-  const labelId = useId();
-  return (
-    <section
-      className={`${local.state} ${local.passGoal}`}
-      aria-labelledby={labelId}
-      data-pass-goal=""
-    >
-      <p id={labelId} className={local.stateLabel}>
-        {t('swarm_page.pass_goal.label')}
-      </p>
-      {pass !== undefined && (
-        <p className={local.stateText}>{t('swarm_page.pass_goal.pass', { number, step: pass })}</p>
+    <div className={local.meta} data-swarm-meta="">
+      {phone ? (
+        <details className={local.metaFold}>
+          <summary className={local.metaSummary}>{t('swarm_page.details')}</summary>
+          {facts}
+        </details>
+      ) : (
+        facts
       )}
-      <Markdown className={local.goalText} data-goal-text="" text={goal} collapsible />
+      {swarm.state !== 'active' && (
+        <p className={styles.notice} data-infrastructure-alert="">
+          {t('swarm_page.infrastructure_alert', { state })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Первый блок страницы (#253): одна строка состояния — исполнение, узел,
+ * на котором оно стоит (кнопкой — тем же выбором, что на графе), и слово
+ * шага, когда оно уточняет; рядом действие (#218). Под строкой — совет
+ * застрявшему шагу (#238) или пояснение состояния, затем задача текущего
+ * прохода (#242) в две строки с развёртыванием. */
+function NowBlock({
+  run,
+  swarmId,
+  loading,
+  error,
+  retry,
+  selected,
+  onSelect,
+  actions,
+  goal,
+}: {
+  run: PipelineRun | null;
+  swarmId: string;
+  loading: boolean;
+  error: string;
+  retry: () => Promise<void>;
+  selected?: string;
+  onSelect: (node: string) => void;
+  actions?: ReactNode;
+  goal: ReturnType<typeof passGoal>;
+}) {
+  const { t } = useTranslation();
+  const now = executionNow(run);
+  return (
+    <section className={local.now} aria-label={t('swarm_page.now_label')} data-swarm-now="">
+      <div className={local.nowHead}>
+        <LoadState loading={loading} error={error} retry={retry}>
+          <ExecutionLine now={now} hasGraph={run !== null} selected={selected} onSelect={onSelect} />
+        </LoadState>
+      </div>
+      {actions && (
+        <div className={local.nowActions} data-swarm-action="">
+          {actions}
+        </div>
+      )}
+      {!loading && !error && now.guidance && (
+        <StepAdvice guidance={now.guidance} swarmId={swarmId} actorName={now.actorName} />
+      )}
+      {goal && <PassGoal {...goal} />}
     </section>
   );
 }
 
-/** Состояние исполнения словами: остановленный рой и рой, ждущий ответа,
- * различаются значком, текстом и пояснением. Текущий узел выбирается
- * кнопкой — тем же выбором, что и на графе. */
-function ExecutionState({
-  run,
+/** Строка состояния словами: остановленный рой и рой, ждущий ответа,
+ * различаются значком, текстом и пояснением; у застрявшего шага пояснение
+ * заменяет совет, чтобы «граф идёт» не спорило с «исход неизвестен». */
+function ExecutionLine({
+  now,
+  hasGraph,
   selected,
   onSelect,
 }: {
-  run: PipelineRun | null;
+  now: ExecutionNow;
+  hasGraph: boolean;
   selected?: string;
   onSelect: (node: string) => void;
 }) {
   const { t } = useTranslation();
-  const execution = swarmExecution(run);
-  const current = run?.currentNode;
   return (
-    <>
-      <StatusBadge tone={executionTone(execution)}>
-        {t(`swarm_page.execution_states.${execution}`, { defaultValue: execution })}
-      </StatusBadge>
-      <p className={local.stateText}>
-        {t(`swarm_page.execution_hints.${run ? execution : 'no_graph'}`, { defaultValue: '' })}
+    <div className={local.nowText}>
+      <p className={local.nowLine}>
+        <StatusBadge tone={executionTone(now.execution)}>
+          {t(`swarm_page.execution_states.${now.execution}`, { defaultValue: now.execution })}
+        </StatusBadge>
+        {now.node && (
+          <>
+            <Dot />
+            <span className={local.nowNode}>
+              {t('swarm_page.now_node')}{' '}
+              <button
+                type="button"
+                className={local.nodeButton}
+                aria-pressed={selected === now.node}
+                onClick={() => onSelect(now.node ?? '')}
+              >
+                {now.node}
+              </button>
+            </span>
+          </>
+        )}
+        {now.step && (
+          <>
+            <Dot />
+            <NodeState status={now.step} />
+          </>
+        )}
       </p>
-      {current && (
-        <p className={local.stateText}>
-          {t('swarm_page.current_node')}:{' '}
-          <button
-            type="button"
-            className={local.nodeButton}
-            aria-pressed={selected === current}
-            onClick={() => onSelect(current)}
-          >
-            {current}
-          </button>
+      {!now.guidance && (
+        <p className={local.nowHint}>
+          {t(`swarm_page.execution_hints.${hasGraph ? now.execution : 'no_graph'}`, {
+            defaultValue: '',
+          })}
         </p>
       )}
-    </>
+    </div>
+  );
+}
+
+/** Разделитель частей строки: точка, как в meta-строке заголовка. */
+function Dot() {
+  return (
+    <span className={local.nowDot} aria-hidden="true">
+      ·
+    </span>
+  );
+}
+
+/** Задача текущего прохода (#242) — под строкой состояния, в две строки с
+ * развёртыванием: markdown без HTML (#252), переводы строк сохранены. */
+function PassGoal({ goal, pass, number }: { goal: string; pass?: number; number?: number }) {
+  const { t } = useTranslation();
+  const labelId = useId();
+  return (
+    <section className={local.goal} aria-labelledby={labelId} data-pass-goal="">
+      <p id={labelId} className={local.goalPass}>
+        {pass === undefined
+          ? t('swarm_page.pass_goal.current')
+          : t('swarm_page.pass_goal.pass', { number, step: pass })}
+      </p>
+      <Markdown
+        className={local.goalText}
+        data-goal-text=""
+        text={goal}
+        collapsible
+        collapsedHeight={GOAL_LINES_HEIGHT}
+      />
+    </section>
   );
 }
 
@@ -413,7 +517,7 @@ function StepDot({ status }: { status: string }) {
   return <span className={graphStyles[`timeline-${stepMark(status)}`]} aria-hidden="true" />;
 }
 
-type Translate = (key: string, options?: { defaultValue?: string }) => string;
+type Translate = (key: string, options?: { defaultValue?: string; count?: number }) => string;
 
 /** Состояние шага словом; незнакомое (сервер новее панели) — как есть. */
 function stateWord(t: Translate, status: string) {
@@ -448,7 +552,9 @@ function StepCommit({ commit }: { commit: string }) {
 /** Что делать с шагом, на котором встал проход (docs/MODEL.md, «Шаг
  * актора»): refused — устранить причину, остановить рой и запустить новый
  * проход; unconfirmed — решение оператора, а неподтверждённую lease
- * workspace отпускает администратор по ID операции из причины. */
+ * workspace отпускает администратор по ID операции из причины. Совет
+ * стоит открыто; как отпустить lease — свёрнуто под своей строкой: это
+ * дело администратора и только при занятом workspace. */
 function StepAdvice({
   guidance,
   swarmId,
@@ -463,10 +569,11 @@ function StepAdvice({
     <div className={local.guidance} data-guidance={guidance} role="note">
       <p>{t(`swarm_page.step_guidance.${guidance}`)}</p>
       {guidance === 'unconfirmed' && (
-        <>
+        <details className={local.release}>
+          <summary>{t('swarm_page.step_guidance.release_title')}</summary>
           <p>{t('swarm_page.step_guidance.release')}</p>
           <code className={local.command}>{releaseCommand(swarmId, actorName)}</code>
-        </>
+        </details>
       )}
     </div>
   );
@@ -481,18 +588,45 @@ function kindName(t: Translate, kind: string) {
   return kind === '' ? '' : t(`pipelines.kind.${kind}`, { defaultValue: kind });
 }
 
+/** Длительность словами из частей: «10 min», «1 h 5 min». */
+function durationWords(t: Translate, ms: number): string {
+  return durationParts(ms)
+    .map((part) => t(`swarm_page.duration.${part.unit}`, { count: part.value }))
+    .join(' ');
+}
+
+/** Сколько шёл шаг — одним словом; полные моменты в подсказке. Шаг без
+ * конца называет начало. */
+function StepSpan({ step }: { step: RunNode }) {
+  const { t, i18n } = useTranslation();
+  const ms = stepDuration(step);
+  if (ms === undefined) {
+    if (!step.startedAt) return null;
+    return (
+      <div>
+        <dt>{t('swarm_page.started')}</dt>
+        <dd>{moment(step.startedAt, i18n.language)}</dd>
+      </div>
+    );
+  }
+  const title = `${t('swarm_page.started')} ${moment(step.startedAt, i18n.language)}, ${t(
+    'swarm_page.finished'
+  )} ${moment(step.finishedAt, i18n.language)}`;
+  return (
+    <div>
+      <dt>{t('swarm_page.duration_label')}</dt>
+      <dd>
+        <span title={title}>{durationWords(t, ms)}</span>
+      </dd>
+    </div>
+  );
+}
+
 /** Выбранный узел: что поручает граф, исход, актор, причина, commit, отчёт
- * и моменты последнего посещения; у шага, на котором встал проход, — что
- * делать. Вопрос оператору этого узла — форма ответа здесь же. */
-function NodeDetails({
-  node,
-  swarmId,
-  gate,
-}: {
-  node: NodeView;
-  swarmId: string;
-  gate?: ReactNode;
-}) {
+ * и моменты последнего посещения. Совет застрявшему шагу стоит в первом
+ * блоке страницы, здесь не повторяется. Вопрос оператору этого узла —
+ * форма ответа здесь же. */
+function NodeDetails({ node, gate }: { node: NodeView; gate?: ReactNode }) {
   const { t, i18n } = useTranslation();
   const rows: Array<{ label: string; value: ReactNode }> = [];
   if (node.prompt) {
@@ -537,7 +671,6 @@ function NodeDetails({
       value: moment(node.finishedAt, i18n.language),
     });
   }
-  rows.push({ label: t('swarm_page.visits'), value: String(node.visits) });
   return (
     <div className={local.nodeCard}>
       <p className={local.nodeHead}>
@@ -545,9 +678,6 @@ function NodeDetails({
         <span className={local.kind}>{kindName(t, node.kind)}</span>
         <NodeState status={node.visits === 0 ? 'unvisited' : node.status} />
       </p>
-      {node.guidance && (
-        <StepAdvice guidance={node.guidance} swarmId={swarmId} actorName={node.actorName} />
-      )}
       <dl className={styles.details}>
         {rows.map((row) => (
           <Fragment key={row.label}>
@@ -556,6 +686,9 @@ function NodeDetails({
           </Fragment>
         ))}
       </dl>
+      {node.visits > 1 && (
+        <p className={local.hint}>{t('swarm_page.entered', { count: node.visits })}</p>
+      )}
       {gate}
     </div>
   );
@@ -564,19 +697,22 @@ function NodeDetails({
 /** История шагов — таймлайн посещений по порядку. Имя узла выбирает его
  * на графе; шаги выбранного узла подсвечены. У шага — состояние словом,
  * причина, подтверждённый commit и свёрнутый отчёт, если сервер их отдал;
- * моменты — только если сервер их записал. Шаги проходов (#242) идут под
- * заголовком своего прохода с его задачей; у сервера без проходов список
- * один. */
+ * длительность — только если сервер записал моменты. Шаги проходов (#242)
+ * идут под заголовком своего прохода с его задачей; задачу прохода,
+ * показанную в первом блоке страницы (shownPass), история не повторяет
+ * (#253). У сервера без проходов список один. */
 function StepHistory({
   steps,
   selected,
   onSelect,
   times,
+  shownPass,
 }: {
   steps: RunNode[];
   selected?: string;
   onSelect: (node: string) => void;
   times: boolean;
+  shownPass?: number;
 }) {
   const { t } = useTranslation();
   if (steps.length === 0) return <p className={local.hint}>{t('swarm_page.steps_empty')}</p>;
@@ -607,7 +743,14 @@ function StepHistory({
         pass.pass === undefined ? (
           <Fragment key={`steps-${index}`}>{list(pass.steps)}</Fragment>
         ) : (
-          <PassSteps key={pass.pass} pass={pass.pass} number={pass.number} goal={pass.goal}>
+          <PassSteps
+            key={pass.pass}
+            pass={pass.pass}
+            number={pass.number}
+            goal={pass.pass === shownPass ? undefined : pass.goal}
+            count={pass.steps.length}
+            open={index === passes.length - 1}
+          >
             {list(pass.steps)}
           </PassSteps>
         )
@@ -616,35 +759,58 @@ function StepHistory({
   );
 }
 
-/** Проход в истории шагов: номер, первый шаг и задача прохода над его шагами. */
+/** Проход в истории шагов (#253): заголовок с номером и первым шагом и
+ * число шагов — в summary; задача прохода в две строки с развёртыванием и
+ * его шаги — внутри. Прошлые проходы свёрнуты: это история истории;
+ * текущий (последний) раскрыт, его задача — в первом блоке страницы.
+ * Нажатие оператора React не перебивает. */
 function PassSteps({
   pass,
   number,
   goal,
+  count,
+  open,
   children,
 }: {
   pass: number;
   number?: number;
   goal?: string;
+  count: number;
+  open: boolean;
   children: ReactNode;
 }) {
   const { t } = useTranslation();
   const titleId = useId();
   return (
     <section className={local.pass} aria-labelledby={titleId} data-pass={pass}>
-      <div className={local.passHead}>
-        <h3 id={titleId} className={local.passTitle}>
-          {t('swarm_page.pass_goal.pass', { number, step: pass })}
-        </h3>
-        {goal && <Markdown className={local.goalText} data-goal-text="" text={goal} collapsible />}
-      </div>
-      {children}
+      <details open={open} className={local.passFold}>
+        <summary className={local.passSummary}>
+          <h3 id={titleId} className={local.passTitle}>
+            {t('swarm_page.pass_goal.pass', { number, step: pass })}
+          </h3>
+          <span className={local.foldMeta}>{t('swarm_page.pass_steps', { count })}</span>
+        </summary>
+        <div className={local.passBody}>
+          {goal && (
+            <div className={local.passGoal}>
+              <Markdown
+                className={local.goalText}
+                data-goal-text=""
+                text={goal}
+                collapsible
+                collapsedHeight={GOAL_LINES_HEIGHT}
+              />
+            </div>
+          )}
+          {children}
+        </div>
+      </details>
     </section>
   );
 }
 
 /** Шаг истории: номер, узел кнопкой, вид и состояние словом, затем актор,
- * исход, причина, подтверждённый commit и моменты, свёрнутый отчёт. */
+ * исход, причина, подтверждённый commit и длительность, свёрнутый отчёт. */
 function StepItem({
   step,
   number,
@@ -658,7 +824,7 @@ function StepItem({
   onSelect: (node: string) => void;
   times: boolean;
 }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const chosen = step.id === selected;
   const facts: Array<{ label: string; value: ReactNode }> = [];
   if (step.kind === 'actor') {
@@ -668,16 +834,6 @@ function StepItem({
   if (step.detail) facts.push({ label: t('swarm_page.reason'), value: step.detail });
   if (step.commit) {
     facts.push({ label: t('swarm_page.commit'), value: <StepCommit commit={step.commit} /> });
-  }
-  if (times) {
-    facts.push({
-      label: t('swarm_page.started'),
-      value: moment(step.startedAt, i18n.language),
-    });
-    facts.push({
-      label: t('swarm_page.finished'),
-      value: moment(step.finishedAt, i18n.language),
-    });
   }
   return (
     <li
@@ -700,7 +856,7 @@ function StepItem({
           <span className={local.kind}>{kindName(t, step.kind)}</span>
           <span>{stateWord(t, step.status)}</span>
         </div>
-        {facts.length > 0 && (
+        {(facts.length > 0 || (times && step.startedAt)) && (
           <dl className={local.stepFacts}>
             {facts.map((fact) => (
               <div key={fact.label}>
@@ -708,6 +864,7 @@ function StepItem({
                 <dd>{fact.value}</dd>
               </div>
             ))}
+            {times && <StepSpan step={step} />}
           </dl>
         )}
         {step.report && (

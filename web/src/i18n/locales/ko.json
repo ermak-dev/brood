@@ -3131,6 +3131,7 @@
     "your_role": "내 역할",
     "id": "스웜 ID",
     "copy_id": "스웜 ID 복사",
+    "details": "상세 정보",
     "control": {
       "start": "시작",
       "restart": "다시 시작",
@@ -3165,9 +3166,9 @@
       "started": "스웜 {{name}}이(가) 시작되었습니다",
       "stopped": "스웜 {{name}}이(가) 중지되었습니다"
     },
-    "infrastructure": "인프라",
-    "atespace": "Atespace",
-    "execution": "실행",
+    "space": "Substrate 공간",
+    "infrastructure_label": "인프라",
+    "infrastructure_alert": "이 스웜의 인프라는 {{state}} 상태로 아직 활성화되지 않았습니다. 활성화될 때까지 그래프와 액터는 동작하지 않습니다. 수명 주기 작업은 페이지 끝에 있습니다.",
     "execution_states": {
       "idle": "시작 전",
       "running": "실행 중",
@@ -3185,19 +3186,19 @@
       "failed": "그래프가 실패한 단계에서 끝났습니다.",
       "stopped": "그래프가 중지되어 진행되지 않습니다."
     },
-    "current_node": "현재 노드",
+    "now_label": "현재 상태",
+    "now_node": "노드",
     "pass_goal": {
-      "label": "패스 과제",
+      "current": "현재 패스",
       "pass": "패스 {{number}}, 단계 #{{step}}부터"
     },
     "graph": "그래프",
-    "graph_hint": "{{name}} 정의의 스냅샷입니다. 노드를 선택하면 지시, 결과, 액터를 볼 수 있습니다.",
     "graph_label": "스웜 {{name}}의 그래프",
     "snapshot": {
       "label": "스냅샷",
       "definition": "정의",
-      "version": "버전",
-      "revision": "리비전",
+      "version_short": "v{{version}}",
+      "copy_revision": "스냅샷 리비전 복사",
       "hint": "첫 시작 때 기록되었습니다. 카탈로그의 새 버전은 이 스웜을 바꾸지 않습니다."
     },
     "node": "선택한 노드",
@@ -3208,7 +3209,14 @@
     "outcome": "결과",
     "started": "시작",
     "finished": "종료",
-    "visits": "방문 횟수",
+    "duration_label": "소요 시간",
+    "duration": {
+      "s": "{{count}}초",
+      "min": "{{count}}분",
+      "h": "{{count}}시간",
+      "d": "{{count}}일"
+    },
+    "entered": "{{count}}번 진입했으며 가장 최근 방문을 표시합니다.",
     "reason": "사유",
     "commit": "확인된 커밋",
     "copy_commit": "커밋 복사",
@@ -3233,20 +3241,21 @@
     "step_guidance": {
       "refused": "단계가 효과 없이 닫혔으며 그래프는 스스로 진행되지 않습니다. 원인을 해결하고(역할 바인딩, 액터 workspace의 변경 사항 커밋 또는 되돌리기, 액터 연결), 스웜이 아직 실행 중이면 중지한 뒤 같은 스냅샷에서 새 패스를 시작하세요.",
       "unconfirmed": "서버는 이 단계가 어떻게 끝났는지 알지 못하므로 다시 시도하지도, 그래프를 진행하지도 않습니다. 결정은 운영자에게 있습니다. 액터에서 무슨 일이 있었는지 확인하고, 스웜이 아직 실행 중이면 중지한 뒤 새 패스를 시작하세요.",
+      "release_title": "workspace가 계속 예약되어 있다면",
       "release": "사유에 예약된 workspace 작업이 나오면 관리자가 workspace를 확인한 뒤 해당 작업 ID로 해제합니다. 그렇지 않으면 새 패스가 workspace 사용 중으로 거부됩니다:"
     },
     "steps": "단계 기록",
     "steps_hint": "그래프 노드의 모든 방문을 오래된 순서로 표시합니다. 노드 이름을 누르면 그래프에서 해당 노드를 보여 줍니다.",
     "steps_empty": "아직 단계가 없습니다.",
+    "pass_steps": "단계 {{count}}개",
     "management": "접근 및 수명 주기",
     "management_hint": "이 스웜을 사용할 수 있는 사람, 소유권, 삭제."
   },
   "swarm_requests": {
     "title": "운영자 요청",
-    "hint": "이 스웜의 그래프 노드와 액터가 보낸 질문입니다. 열린 요청이 먼저 표시되고, 답변한 요청은 아래에 기록으로 남습니다.",
     "open_count": "열림 {{count}}개",
     "none_open": "열린 요청이 없습니다.",
-    "history": "기록",
+    "history_count": "답변됨 {{count}}개",
     "states": {
       "open": "열림",
       "answered": "답변됨",
@@ -3286,6 +3295,8 @@
   "swarm_roles": {
     "title": "역할",
     "hint": "그래프의 각 액터 노드는 역할을 지정합니다. 시작하려면 그래프의 모든 역할이 이 스웜에서 실행 중인 관리형 액터에 바인딩되어야 합니다.",
+    "fold_ready": "{{count}}개 준비됨",
+    "fold_unready": "{{count}}개 준비 안 됨",
     "graph_pinned": "스냅샷 {{name}}, 버전 {{version}}의 역할입니다.",
     "graph_definition": "시작 대화상자에서 선택한 {{name}}, 버전 {{version}}의 역할입니다. 첫 시작이 이 정의를 고정합니다.",
     "graph_none": "아직 그래프가 없습니다. 시작 대화상자에서 정의를 선택하면 그 역할이 여기에 표시됩니다.",
@@ -3311,7 +3322,7 @@
       "unbound": "이 역할을 맡은 액터가 없습니다. 바인딩될 때까지 시작이 거부됩니다.",
       "stale": "바인딩 후 액터가 다시 생성되었습니다. 새 인카네이션을 사용하도록 역할을 다시 바인딩하세요.",
       "inactive": "액터가 실행 중이 아니거나 실행되도록 설정되어 있지 않습니다. 액터를 시작하거나 다른 액터를 바인딩하세요.",
-      "foreign": "액터가 이 스웜 또는 해당 atespace를 떠났습니다. 이 스웜의 액터를 바인딩하세요.",
+      "foreign": "액터가 이 스웜 또는 해당 Substrate 공간을 떠났습니다. 이 스웜의 액터를 바인딩하세요.",
       "missing": "바인딩된 액터가 더 이상 없습니다. 다른 액터를 바인딩하세요."
     },
     "phases": {

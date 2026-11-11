@@ -357,7 +357,7 @@ describe('one tick on the page', () => {
   test('a stop still rereads the execution, the graph and the inbox at once', async () => {
     const page = stand(run());
     const container = await openPage();
-    const stop = [...container.querySelectorAll('header button')].find(
+    const stop = [...container.querySelectorAll('[data-swarm-action] button')].find(
       (button) => button.textContent === en.swarm_page.control.stop
     );
     await click(stop);

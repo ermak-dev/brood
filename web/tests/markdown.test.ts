@@ -139,6 +139,31 @@ describe('collapsible', () => {
     expect(html).not.toContain('data-collapsed');
     expect(html).not.toContain('<button');
   });
+
+  // #253: the goal of a pass folds to two lines. A few lines are cut by
+  // lines, not by pixels, so no half line shows; the whole text stays there.
+  test('a short fold cuts by lines and keeps the whole text', () => {
+    const four = 'Line one of the goal\nLine two\nLine three\nLine four';
+    const html = render({ text: four, collapsible: true, collapsedHeight: 42 });
+    expect(html).toContain('data-collapsed=""');
+    expect(html).toContain('data-short=""');
+    expect(html).toContain('--md-lines:2');
+    expect(html).not.toContain('max-height');
+    expect(html).toContain('Line four');
+    expect(html).toContain(`aria-expanded="false"`);
+  });
+
+  test('a text that fits the short fold is not folded', () => {
+    const html = render({ text: 'Ship 1.27.0', collapsible: true, collapsedHeight: 42 });
+    expect(html).not.toContain('data-collapsed');
+    expect(html).not.toContain('<button');
+  });
+
+  test('the default fold still cuts by height', () => {
+    const html = render({ text: long, collapsible: true });
+    expect(html).not.toContain('data-short');
+    expect(html).toContain('max-height:600px');
+  });
 });
 
 describe('plain detail', () => {

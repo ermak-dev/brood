@@ -1,36 +1,38 @@
 @use '../../styles/mixins' as *;
 @use '../../styles/variables' as *;
 
-/* Страница роя (#215): сведения о рое, два раздельных состояния, граф,
- * выбранный узел и история шагов. Цвета — токены темы; состояния шагов —
- * общие --pip-* из pipelines.module.scss (.timeline), как у графа. */
+/* Страница роя (#215, переустройство #253): сведения одной строкой,
+ * строка состояния с советом и действием, задача прохода, запросы, граф и
+ * панель узла в две колонки, история шагов. Цвета и шкала — токены темы
+ * (--fs-N, --lh-N, --card-* и --measure из #254); состояния шагов — общие
+ * --pip-* из pipelines.module.scss, как у графа. */
 
-/* Сведения роя: подписанные значения в строку, на телефоне — столбиком. */
-.facts {
+/* ─── сведения о рое: одна строка под заголовком ───────────────────── */
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.metaList {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 28px;
+  align-items: center;
+  gap: 6px 18px;
   margin: 0;
-  font-size: 13px;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-primary);
 
-  > div {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  dt {
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  dd {
-    display: flex;
+  > li {
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
-    margin: 0;
     overflow-wrap: anywhere;
   }
 
@@ -47,62 +49,145 @@
   }
 }
 
+.metaLabel {
+  color: var(--text-secondary);
+
+  &::after {
+    content: ':';
+  }
+}
+
+/* На телефоне сведения сложены под «Сведения»: первый экран — состоянию. */
+.metaFold {
+  min-width: 0;
+
+  .metaList {
+    margin-top: 8px;
+    gap: 6px 14px;
+  }
+}
+
+.metaSummary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--primary-color);
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
 .id {
   font-family: $font-mono;
-  font-size: 12px;
+  font-size: var(--fs-12);
   overflow-wrap: anywhere;
 }
 
-/* Инфраструктура и исполнение — две отдельные карточки: состояние роя
- * в Substrate и состояние его графа не сводятся к одному значку. */
-.states {
+/* ─── что сейчас: строка состояния, совет, задача прохода ──────────── */
+
+/* Сетка блока: строка, совет и задача — левая колонка, действие — правая
+ * через все строки, чтобы высота кнопки не отодвигала совет от строки.
+ * Отступы — полями, не row-gap: пустые строки сетки (нет совета или
+ * задачи) места не занимают. */
+.now {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 16px;
+  align-items: start;
+  min-width: 0;
+
+  > * {
+    grid-column: 1;
+    min-width: 0;
+  }
+
+  > * + * {
+    margin-top: 10px;
+  }
 }
 
-.state {
+.nowHead {
+  min-width: 0;
+}
+
+.nowText {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, #{$radius-md});
-  background: var(--bg-primary);
 }
 
-.stateLabel {
+/* Одна строка: бейдж исполнения, узел, слово шага — через точку. */
+.nowLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   margin: 0;
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--text-tertiary);
+  font-size: var(--fs-14);
+  line-height: var(--lh-14);
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-.stateText {
+.nowNode {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.nowDot {
+  color: var(--text-quaternary);
+  user-select: none;
+}
+
+.nowHint {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
+  max-width: var(--measure);
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
 
-/* Задача текущего прохода (#242): карточка на всю ширину сетки состояний,
- * чтобы длинный текст не растягивал карточку инфраструктуры. */
-.passGoal {
-  grid-column: 1 / -1;
+/* Действие исполнения (#218) — справа от строки, на телефоне под ней. */
+.now > .nowActions {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 0;
 }
 
-/* Текст задачи как набран: переводы строк и табуляция сохраняются. */
-.goalText {
-  align-self: stretch;
+/* Задача прохода (#242): номер прохода подписью, текст в две строки. */
+.goal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--border-color);
+}
+
+.goalPass {
   margin: 0;
-  white-space: pre-wrap;
-  tab-size: 4;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 1.5;
+  flex-shrink: 0;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Текст задачи: markdown (#252) со своей шкалой от 13px. */
+.goalText {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: var(--fs-13);
   color: var(--text-primary);
 }
 
@@ -127,15 +212,128 @@
   }
 }
 
+/* ─── свёртываемая секция (Fold.tsx): роли, история запросов ───────── */
+
+.fold {
+  gap: 0;
+}
+
+.foldDetails {
+  min-width: 0;
+}
+
+/* Summary со своим маркером-треугольником у заголовка: секции (роли) и
+ * проходы истории складываются одинаково. */
+%foldSummary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 0;
+    height: 0;
+    margin-right: 2px;
+    border-style: solid;
+    border-width: 4px 0 4px 6px;
+    border-color: transparent transparent transparent var(--text-secondary);
+    transform: translateY(-1px);
+    transition: transform var(--dur-hover) var(--ease-out-strong);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+}
+
+/* Summary несёт заголовок секции и итог. */
+.foldSummary {
+  @extend %foldSummary;
+}
+
+.foldDetails[open] > .foldSummary::before,
+.passFold[open] > .passSummary::before {
+  transform: translateY(-1px) rotate(90deg);
+}
+
+.foldMeta {
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-secondary);
+}
+
+.foldBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 12px;
+}
+
+/* ─── граф и панель узла: две колонки от 1024 px ───────────────────── */
+
+.work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  min-width: 0;
+}
+
+/* Подпись к графу — личность снимка — сразу за заголовком секции, а не у
+ * правого края: это подпись, не действие. */
+.graphCaption {
+  min-width: 0;
+  margin-right: auto;
+}
+
+/* Панель узла липкая: пока граф листается, выбранный узел виден. Липнет
+ * к прокрутке .content (layout.scss); отступ — высота плавающей шапки. */
+.workAside {
+  min-width: 0;
+  position: sticky;
+  top: calc(var(--header-height, 80px) + 4px);
+  max-height: calc(100vh - var(--header-height, 80px) - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (min-width: #{$breakpoint-tablet}) {
+  .work {
+    grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+    gap: 24px;
+  }
+}
+
+@media (max-width: #{$breakpoint-tablet - 1}) {
+  .workAside {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
 .nodeCard {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
   padding: 14px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-md, #{$radius-md});
-  background: var(--bg-primary);
+  background: var(--card-bg);
 }
 
 .nodeHead {
@@ -144,13 +342,14 @@
   align-items: center;
   gap: 6px 10px;
   margin: 0;
-  font-size: 16px;
+  font-size: var(--fs-16);
+  line-height: var(--lh-16);
   font-weight: 650;
   overflow-wrap: anywhere;
 }
 
 .kind {
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 500;
   color: var(--text-tertiary);
 }
@@ -163,11 +362,13 @@
 
 .hint {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
   color: var(--text-secondary);
 }
 
-/* История шагов по проходам: заголовок прохода и его задача над шагами. */
+/* ─── история шагов по проходам ────────────────────────────────────── */
+
 .passes {
   display: flex;
   flex-direction: column;
@@ -186,25 +387,38 @@
   }
 }
 
-.passHead {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+/* Проход складывается (#253): заголовок и число шагов в summary, задача
+ * прохода под ним полосой с линией слева, как задача текущего прохода
+ * наверху, затем шаги. */
+.passFold {
   min-width: 0;
+}
 
-  /* Задача — цитатой с линией слева: фон --bg-secondary в светлой теме
-   * совпадает с фоном страницы. */
-  .goalText {
-    padding: 2px 0 2px 12px;
-    border-left: 3px solid var(--border-color);
-  }
+.passSummary {
+  @extend %foldSummary;
 }
 
 .passTitle {
   margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--text-secondary);
+  flex-shrink: 0;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.passBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.passGoal {
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--border-color);
 }
 
 /* История шагов — таймлайн: точка состояния, затем строка шага. */
@@ -231,11 +445,13 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 8px;
+  font-size: var(--fs-14);
+  line-height: var(--lh-14);
 }
 
 .stepNumber {
   font-family: $font-mono;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -245,7 +461,8 @@
   flex-wrap: wrap;
   gap: 2px 14px;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
   color: var(--text-secondary);
 
   > div {
@@ -281,13 +498,14 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-width: var(--measure);
   padding: 10px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--card-inset-border);
   border-left: 3px solid var(--amber-color);
   border-radius: var(--radius-md, #{$radius-md});
-  background: var(--bg-secondary);
-  font-size: 13px;
-  line-height: 1.5;
+  background: var(--card-inset-bg);
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
   color: var(--text-primary);
 
   &[data-guidance='refused'] {
@@ -300,20 +518,41 @@
   }
 }
 
+/* Как отпустить lease — свёрнуто под строкой совета: нужно администратору
+ * и только при занятом workspace. */
+.release {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  summary {
+    width: fit-content;
+    cursor: pointer;
+    color: var(--primary-color);
+  }
+
+  summary:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
 .command {
   display: block;
   padding: 6px 8px;
   border-radius: var(--radius-sm, #{$radius-sm});
   background: var(--bg-tertiary);
   font-family: $font-mono;
-  font-size: 12px;
+  font-size: var(--fs-12);
   overflow-wrap: anywhere;
   user-select: all;
 }
 
 /* Отчёт шага в истории свёрнут: полный — в панели выбранного узла. */
 .stepReport {
-  font-size: 12.5px;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
   color: var(--text-secondary);
 
   summary {
@@ -328,21 +567,39 @@
     border-radius: 2px;
   }
 
-  p {
-    margin-top: 4px;
+  > :not(summary) {
+    margin-top: 6px;
     color: var(--text-primary);
   }
 }
 
-/* На телефоне сведения — в две колонки, длинный ID — на всю ширину. */
+@media (prefers-reduced-motion: reduce) {
+  .foldSummary::before,
+  .passSummary::before {
+    transition: none;
+  }
+}
+
+/* На телефоне: действие под строкой на всю ширину, задача прохода
+ * столбиком. */
 @include mobile {
-  .facts {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 16px;
+  .now {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .factWide {
-    grid-column: 1 / -1;
+  .now > .nowActions {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 10px;
+  }
+
+  .goal {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Столбиком базис строки стал бы высотой: текст берёт свою. */
+  .goalText {
+    flex-basis: auto;
   }
 }

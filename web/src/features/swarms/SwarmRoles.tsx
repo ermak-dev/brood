@@ -7,10 +7,11 @@ import type { AccessSwarm } from '@/services/brood/access';
 import type { PipelineRun } from '@/services/brood/pipelines';
 import { rolesApi, type GraphRole, type RoleActor, type RoleGraph } from '@/services/brood/roles';
 import { LoadState, StatusBadge, useAdministrator } from '@/features/access/shared';
-import { Section } from '@/features/substrate/components/form';
 import { useResource } from '@/features/substrate/hooks';
 import { DASH } from '@/features/substrate/format';
+import { Fold } from './Fold';
 import { actorChoice, roleTone, unreadyRoles } from './roleState';
+import { rolesUnfolded } from './swarmState';
 import { useSwarmRoles, type SwarmRolesModel } from './useSwarmRoles';
 import styles from '@/features/substrate/substrate.module.scss';
 import page from './SwarmPage.module.scss';
@@ -37,14 +38,31 @@ export function SwarmRoles({
   return <RolesSection model={useSwarmRoles(swarm, administrator, run, definition)} />;
 }
 
-/** Роли графа и привязки роя: состояние словами, актор по имени. Пока
- * исполнение идёт или ждёт ответа, а также для зрителя управления нет —
- * вместо него текст, почему. */
+/** Итог блока ролей в его summary: сколько ролей графа не готово, иначе
+ * сколько готово. Без представления итога нет. */
+function rolesSummary(t: Translate, view: SwarmRolesModel['view']): string | undefined {
+  if (!view) return undefined;
+  const unready = unreadyRoles(view).length;
+  if (unready > 0) return t('swarm_roles.fold_unready', { count: unready });
+  const ready = view.roles.filter((role) => role.inGraph).length;
+  return ready > 0 ? t('swarm_roles.fold_ready', { count: ready }) : undefined;
+}
+
+/** Роли графа и привязки роя: состояние словами, актор по имени. Блок
+ * свёрнут (#253), пока рой работает с готовыми ролями; раскрыт, когда
+ * роль ждёт человека или рой стоит. Пока исполнение идёт или ждёт ответа,
+ * а также для зрителя управления нет — вместо него текст, почему. */
 export function RolesSection({ model }: { model: SwarmRolesModel }) {
   const { t } = useTranslation();
   const { view } = model;
   return (
-    <Section title={t('swarm_roles.title')} hint={t('swarm_roles.hint')}>
+    <Fold
+      title={t('swarm_roles.title')}
+      summary={rolesSummary(t, view)}
+      hint={t('swarm_roles.hint')}
+      open={rolesUnfolded(view)}
+      data-swarm-roles=""
+    >
       <LoadState
         loading={view === null && !model.error}
         error={view === null ? model.error : ''}
@@ -76,7 +94,7 @@ export function RolesSection({ model }: { model: SwarmRolesModel }) {
           </div>
         )}
       </LoadState>
-    </Section>
+    </Fold>
   );
 }
 

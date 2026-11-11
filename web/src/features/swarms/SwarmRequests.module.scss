@@ -12,13 +12,34 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  /* Ширина инбокса, а не окна, решает, встанет ли открытый запрос в две
+   * колонки (#253): при открытом меню инбокс уже окна. */
+  container-type: inline-size;
 }
 
-.historyTitle {
-  margin: 6px 0 0;
-  font-size: 13px;
-  font-weight: 650;
+/* История (#253) свёрнута в счётчик: открытые запросы — то, что от
+ * оператора нужно; отвеченные читают по желанию. */
+.history {
+  min-width: 0;
+
+  .list {
+    margin-top: 10px;
+  }
+}
+
+.historySummary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  font-weight: 600;
   color: var(--text-secondary);
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
 }
 
 .card {
@@ -27,9 +48,9 @@
   gap: 10px;
   min-width: 0;
   padding: 12px 14px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-md, #{$radius-md});
-  background: var(--bg-primary);
+  background: var(--card-bg);
 
   &[data-state='open'] {
     border-left: 3px solid var(--amber-color);
@@ -48,7 +69,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
   color: var(--text-secondary);
 
   strong {
@@ -58,11 +80,37 @@
   }
 }
 
+/* Вопрос и материал — одна колонка карточки, ответ — другая. */
+.ask,
+.reply {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Открытый запрос в широком инбоксе (#253): вопрос слева, ответ справа,
+ * строка «кто и когда» и уведомления — на всю ширину. Узкий инбокс и
+ * карточка у узла остаются столбиком. */
+@container (min-width: 720px) {
+  .card[data-state='open']:not(.embedded) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 36%);
+    column-gap: 24px;
+    row-gap: 10px;
+    align-items: start;
+
+    > :not(.ask, .reply) {
+      grid-column: 1 / -1;
+    }
+  }
+}
+
 .question {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-14);
   font-weight: 600;
-  line-height: 1.45;
+  line-height: var(--lh-14);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -74,20 +122,42 @@
   min-width: 0;
   padding: 8px 10px;
   border-radius: var(--radius-md, #{$radius-md});
-  background: var(--bg-secondary);
+  background: var(--card-inset-bg);
 }
 
 .label {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
   font-weight: 600;
   color: var(--text-secondary);
 }
 
+/* Материал запроса свёрнут под своей подписью (#253): строка в подложке,
+ * раскрывается по нажатию. */
+.contextSummary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  font-weight: 600;
+  color: var(--text-secondary);
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  & + * {
+    margin-top: 6px;
+  }
+}
+
 .text {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -117,7 +187,7 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md, #{$radius-md});
   background: var(--bg-primary);
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
   overflow-wrap: anywhere;
   transition:
@@ -163,14 +233,14 @@
 
 .textarea {
   width: 100%;
-  min-height: 80px;
+  min-height: 64px;
   padding: 8px 10px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md, #{$radius-md});
   background: var(--bg-primary);
   color: var(--text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   resize: vertical;
 
   &:focus-visible {
@@ -184,7 +254,7 @@
   flex-direction: column;
   gap: 6px;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
 
   > div {
     display: grid;
@@ -223,7 +293,7 @@
   border-left: 3px solid var(--viz-success);
   border-radius: var(--radius-md, #{$radius-md});
   background: var(--bg-secondary);
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--text-primary);
   overflow-wrap: anywhere;
 

@@ -2,65 +2,43 @@
  * запуска. Цвета — токены темы, граф предпросмотра красится тем же
  * pipelines.module.scss, что граф роя. */
 
-/* Личность снимка: подписанные значения в строку, ревизия переносится. */
+/* Личность снимка (#253): одна строка-подпись к графу и к повторному
+ * запуску — определение, версия, короткая ревизия с копированием. */
 .snapshot {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
   min-width: 0;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, #{$radius-md});
-  background: var(--bg-secondary);
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-secondary);
 }
 
 .snapshotLabel {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  margin-right: 2px;
+
+  &::after {
+    content: ':';
+  }
 }
 
-.snapshotFacts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 24px;
-  margin: 0;
-  font-size: 13px;
+.snapshotName {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 
-  > div {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  dt {
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
+.snapshotDot {
+  color: var(--text-quaternary);
+  user-select: none;
 }
 
 .revision {
   font-family: $font-mono;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.snapshotHint {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-secondary);
+  font-size: var(--fs-12);
+  color: var(--text-primary);
 }
 
 /* Выбор определения: радиогруппа карточками, выбранная — контуром. */
