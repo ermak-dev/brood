@@ -50,10 +50,21 @@ var stepSessionMarker = []byte(`{"mode":"step"}` + "\n")
 // stepManagedSettings — управляемые настройки сессии шага. allowManagedHooksOnly
 // не даёт исполнить hooks настроек, plugins и frontmatter агентов, а statusLine,
 // subagentStatusLine и fileSuggestion берёт только из управляемых настроек
-// (settings-reference, «What runs under allowManagedHooksOnly»).
-// skipDangerousModePermissionPrompt — согласие на bypass: ~/.claude/settings.json,
-// где его держит свободная сессия, в сессии шага не читается.
-var stepManagedSettings = []byte(`{"allowManagedHooksOnly":true,"skipDangerousModePermissionPrompt":true}` + "\n")
+// (settings-reference, «What runs under allowManagedHooksOnly»). Остальные
+// ключи свободная сессия получает в ~/.claude/settings.json, который сессия
+// шага не читает: согласие на bypass и автономный профиль #164.
+// crossSessionInbound и feedbackDrafts Claude Code 2.1.310 берёт только из
+// управляемых настроек, флагов и настроек пользователя, проект может лишь
+// ужесточить первый. Drop-in живёт только в режиме шага, на свободную сессию
+// не действует.
+var stepManagedSettings = stepManagedDocument()
+
+func stepManagedDocument() []byte {
+	settings := map[string]json.RawMessage{"allowManagedHooksOnly": jsonTrue}
+	autonomousSettings(settings)
+	data, _ := json.Marshal(settings)
+	return append(data, '\n')
+}
 
 // actorShellStartupFiles — файлы, которые bash читает при входе (-l), в
 // интерактивном режиме и при exit login shell. Claude снимает окружение shell

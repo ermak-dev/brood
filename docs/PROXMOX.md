@@ -332,8 +332,9 @@ workspace он запускает строже («Сессия шага»). Пе
 `hasCompletedOnboarding=true`, `theme` (если не задан, `dark`),
 `resumeReturnDismissed=true` и
 `projects["/workspace/project"].hasTrustDialogAccepted=true`, а в
-`~/.claude/settings.json` — `skipDangerousModePermissionPrompt=true`.
-Прочие ключи сохраняются байт в байт. Запись атомарна (новый inode и rename),
+`~/.claude/settings.json` пишет `skipDangerousModePermissionPrompt=true` и
+автономный профиль (ниже). Прочие ключи сохраняются байт в байт. Запись
+атомарна (новый inode и rename),
 symlink, hard link, чужой владелец и файл больше 1 MiB — отказ без
 изменений; повреждённый файл или не-объект заменяется минимальным объектом
 с этими ключами, но не пустым файлом. Неудача настройки — предупреждение в
@@ -344,6 +345,60 @@ Bypass снимает запросы разрешений внутри CT: мо�
 nft, DNS и HTTP/CONNECT proxy root supervisor, machine credentials вне
 актора. Не выдавайте проекту секреты, которые его код и модель не должны
 использовать ([SECRETS.md](SECRETS.md)).
+
+### Автономный профиль
+
+У актора нет человека у терминала, поэтому обе сессии, свободная и сессия
+шага, держат один профиль Claude Code (#164, по mop):
+
+- `crossSessionInbound: "accept"`: сообщения других сессий принимаются без
+  диалога Deliver/Deny. Без него закреплённая 2.1.310 в bypass-сессии держит
+  сообщение без `from-mode` (`no-mode-asserted`) и сообщение, пришедшее до
+  готовности сессии (`mode-unknown`), а `from-mode` конверта учитывает только
+  при включённом флаге `tengu_harbor_kite_mode_emit`. Явная настройка решает
+  раньше всего этого. Проектные настройки (`.claude/settings.json`, в
+  свободной сессии и `.claude/settings.local.json`) могут лишь ужесточить её
+  до `hold` или `refuse`;
+- `permissions.deny` для `SendMessage`, `ListAgents`, `AskUserQuestion`,
+  `EnterWorktree`, `ExitWorktree` и `SendFeedback`. Deny убирает инструмент
+  из списка модели (и из ToolSearch), не только отказывает при вызове, и под
+  `--dangerously-skip-permissions` тоже. Встроенный обмен видит только сессии
+  этого CT, сообщения роя идут через MCP `brood`; `AskUserQuestion` паркует
+  сессию; worktree уводит работу из `/workspace/project`; черновики отзыва
+  показывать некому;
+- `feedbackDrafts: "off"`, а в фиксированном окружении
+  `DISABLE_FEEDBACK_COMMAND=1` и `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1`: ни
+  черновиков, ни `/feedback`, ни опроса качества. Проектный секрет этих имён
+  не переопределит.
+
+В свободной сессии wrapper сливает ключи в `~/.claude/settings.json` при
+каждом старте: `crossSessionInbound` и `feedbackDrafts` принадлежат brood и
+ставятся заново, в `deny` дописываются только недостающие имена после
+записей актора. `allow`, `ask`, прежние `deny`, прочие члены `permissions`,
+модели, hooks, `env` и неизвестные ключи не меняются; `permissions`
+не-объектом или `deny` не-массивом Claude Code не прочитал бы, они
+заменяются. Сессия шага этот файл не читает и получает те же ключи из
+drop-in root («Сессия шага»): `crossSessionInbound` и `feedbackDrafts`
+Claude Code берёт только из управляемых настроек, флагов и настроек
+пользователя. Drop-in существует только в режиме шага, на свободную сессию не
+действует. Списки инструментов и приём сообщения без `from-mode` и с чужим
+`from-mode` в обоих режимах проверены запуском закреплённого бинарника без
+сети против локального фальшивого API.
+
+Не переносятся из профиля оператора: URL и токены, plugins и MCP-серверы,
+`NODE_TLS_REJECT_UNAUTHORIZED=0`, предпочтения интерфейса (vim,
+fullscreen, thinking, effort по моделям) и `CLAUDE_CODE_MAX_CONTEXT_TOKENS`.
+Окно контекста принадлежит модели установки, а не профилю: закреплённая
+2.1.310 применяет эту переменную только к модели с именем не `claude-*` без
+окна в каталоге модели (одно значение на основную, малую и модели
+подагентов), а без неё считает такой модели 200000 токенов. Настройки
+установки для окна пока нет, и переменная не задаётся.
+
+Изоляцию подагентов в worktree (`isolation: "worktree"` у Agent tool)
+настройкой 2.1.310 не выключить: её отключает только
+`CLAUDE_CODE_EVAL_CONFINED` харнесса оценки plugins с иными побочными
+эффектами. Файлы worktree подагента в `.claude/worktrees/` откажут
+следующему подтверждению шага («Сессия шага»).
 
 ## Origin и первый клон
 
@@ -558,10 +613,13 @@ recycle и dispatch к актору. Перед вызовом сервер за
   файл пуст;
 - пишет drop-in управляемых настроек Claude Code
   `/etc/claude-code/managed-settings.d/brood-swarm-step.json` (root 0644 в
-  каталогах root 0755) с `allowManagedHooksOnly: true` и
-  `skipDangerousModePermissionPrompt: true`; базовый `managed-settings.json`
-  не трогается. Путь в закреплённой 2.1.310 фиксирован: переопределение
-  `CLAUDE_CODE_MANAGED_SETTINGS_PATH` из публичной сборки вырезано;
+  каталогах root 0755) с `allowManagedHooksOnly: true`,
+  `skipDangerousModePermissionPrompt: true` и автономным профилем
+  (`crossSessionInbound`, `feedbackDrafts`, `permissions.deny`, «Автономный
+  профиль», #164) и ничем больше: ни hooks, ни `env`, ни MCP, ни plugins;
+  базовый `managed-settings.json` не трогается. Путь в закреплённой 2.1.310
+  фиксирован: переопределение `CLAUDE_CODE_MANAGED_SETTINGS_PATH` из
+  публичной сборки вырезано;
 - переименовывает `~/.bash_profile`, `~/.bash_login`, `~/.profile`,
   `~/.bashrc` и `~/.bash_logout` в `<имя>.brood-<время UTC>` рядом, с
   номером, если копия того же момента уже есть. Так они приводятся к образу,
@@ -681,11 +739,14 @@ Helper проверяет личность, сбрасывает capabilities и
 
 Получатель выбирается по единственной живой сессии `/workspace/project`.
 Конверт заявляет `from-mode="bypass"`: managed Claude запускается с
-`--dangerously-skip-permissions`, а режим конверта, отличный от режима
-получателя, Claude Code удерживает как `mode-mismatch`.
-`crossSessionInbound: accept` не устанавливается. Peer key передаётся первым кадром; обратный сокет создаётся
-рядом с inbox, принимает квитанции только своего UID, ограничивает их размер
-и сверяет `orig_msg_id`. `notify_when_idle` имеет отдельный идентификатор.
+`--dangerously-skip-permissions`. Сессия любого режима принимает его с
+`crossSessionInbound: "accept"` («Автономный профиль»), поэтому ни
+`mode-mismatch`, ни `no-mode-asserted`, ни `mode-unknown` сразу после старта
+не ставят сообщение в диалог Deliver/Deny; удержать его может только
+проектная настройка `hold`. Peer key передаётся первым кадром; обратный
+сокет создаётся рядом с inbox, принимает квитанции только своего UID,
+ограничивает их размер и сверяет `orig_msg_id`. `notify_when_idle` имеет
+отдельный идентификатор.
 
 `delivered` возвращается только по явной совпавшей квитанции. `held`, `denied`,
 `refused`, `expired`, `dropped` остаются отрицательными вердиктами. Запись кадра
@@ -812,6 +873,10 @@ Code (закреплённая 2.1.310) после проектных секре
 тоже не задаётся: имя из неё Claude Code считает моделью Fable (подпись,
 промпт, fallback) и назвал бы так основную модель. Явный выбор `fable` или
 `best` поэтому уходит к имени Claude и без его ключей в proxy получает отказ.
+
+Окно контекста модели установки гость не задаёт
+(`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, «Автономный профиль»): для имени не
+`claude-*` Claude Code считает 200000 токенов.
 
 Без настроек поля нет, окружение Claude прежнее и модель выбирает Claude
 Code; старый сервер поля не отдаёт, и новый гость ведёт себя так же. Задана
