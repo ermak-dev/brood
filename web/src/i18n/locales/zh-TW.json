@@ -306,7 +306,8 @@
     "worker_pools": "工作節點池",
     "project": "專案",
     "overview": "總覽",
-    "waiting_swarms": "等待回答：{{count}}"
+    "waiting_swarms": "等待回答：{{count}}",
+    "gateway_dashboard": "閘道統計"
   },
   "nav_groups": {
     "project": "專案",
@@ -320,7 +321,7 @@
     "control": "控制"
   },
   "nav_meta": {
-    "dashboard": "運行總覽",
+    "dashboard": "流量、供應商與憑證",
     "quick_start": "APIKEY.FUN 快速設定",
     "ai_providers": "上游模型路由",
     "auth_files": "Auth 檔案與憑證",
@@ -337,7 +338,8 @@
     "workers": "承載 actor 的池",
     "policy": "角色與主體",
     "worker_pools": "建立池以提供工作節點容量。",
-    "project": "目前專案詳情"
+    "project": "目前專案詳情",
+    "overview": "群組、執行與待處理事項"
   },
   "dashboard": {
     "hero_verdict_good": "運行平穩",
@@ -3419,5 +3421,49 @@
     "workers": "工作節點",
     "no_workers": "此池暫無工作節點",
     "workers_failed": "無法讀取工作節點：{{reason}}"
+  },
+  "project_overview": {
+    "title": "總覽",
+    "details": "專案詳情",
+    "choose_title": "選擇專案",
+    "choose_hint": "總覽顯示一個專案的群組、執行與工作流程。可在此處或頁首的專案切換器中選擇。",
+    "project_swarms": "群組：{{count}}",
+    "none_title": "還沒有專案",
+    "none_admin": "在「專案」中建立專案並加入成員，之後其群組與執行會顯示在這裡。",
+    "none_member": "目前沒有向你開放的專案。請聯絡管理員將你加入專案。",
+    "open_projects": "開啟「專案」",
+    "summary_label": "等待操作員處理的事項",
+    "waiting": "等待你處理",
+    "open_requests": "待答問題：{{count}}",
+    "undelivered": "未送達的回答",
+    "undelivered_hint": "在群組頁面重試送達",
+    "undelivered_unknown": "此伺服器不統計此項",
+    "running": "執行中",
+    "running_hint": "正在進行的執行",
+    "stuck": "已卡住",
+    "stuck_hint": "群組頁面會指出步驟與原因",
+    "unknown_swarms": "沒有執行摘要的群組：{{count}}",
+    "swarms_hint": "每個群組目前在做什麼。群組的執行就是它的運作：圖、問題與步驟歷史都在群組頁面上。",
+    "no_swarms": "還沒有群組",
+    "no_swarms_hint": "群組承載工作流程的 Actor 及其執行。請在群組清單中建立。",
+    "open_swarms": "前往群組",
+    "hidden_swarms": "此處未顯示：{{count}}。群組清單包含全部群組。",
+    "refresh_failed": "無法重新整理群組清單：{{reason}}",
+    "no_summary": "伺服器未提供此群組的執行摘要",
+    "undelivered_answers": "未送達的回答：{{count}}",
+    "swarm_objects": "群組的 Actor 與範本",
+    "workflows": "工作流程定義",
+    "workflows_hint": "由 bro build 發布的定義。群組首次啟動時會固定其中一個。",
+    "catalog_link": "目錄中的圖",
+    "capacity": "容量",
+    "cpu": "CPU",
+    "memory": "記憶體",
+    "used_of": "{{used}} / {{limit}}",
+    "used_unlimited": "{{used}}，無限制",
+    "limit_only": "上限 {{limit}}",
+    "members": "成員",
+    "members_count": "成員：{{count}}",
+    "more_members": "另有 {{count}} 位，見專案頁面",
+    "no_members": "還沒有成員"
   }
 }

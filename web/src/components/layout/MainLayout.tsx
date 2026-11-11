@@ -630,9 +630,8 @@ export function MainLayout() {
   const navItems = visibleNavGroups.flatMap((group) => flattenNavItems(group.items));
   const navOrder = navItems.map((item) => item.path);
   const getRouteOrder = (pathname: string) => {
-    const trimmedPath =
+    const normalizedPath =
       pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
-    const normalizedPath = trimmedPath === '/dashboard' ? '/' : trimmedPath;
 
     const authFilesIndex = navOrder.indexOf('/auth-files');
     if (authFilesIndex !== -1) {
@@ -653,11 +652,8 @@ export function MainLayout() {
   };
 
   const getTransitionVariant = useCallback((fromPathname: string, toPathname: string) => {
-    const normalize = (pathname: string) => {
-      const trimmed =
-        pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
-      return trimmed === '/dashboard' ? '/' : trimmed;
-    };
+    const normalize = (pathname: string) =>
+      pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
 
     const from = normalize(fromPathname);
     const to = normalize(toPathname);

@@ -16,6 +16,9 @@ interface ProjectScopeProps {
   headingLevel?: 1 | 2;
   /** Страница адресует проект параметром ?project= (#194). */
   addressed?: boolean;
+  /** Своё пустое состояние по прочитанному каталогу: обзор проекта (#197)
+   * предлагает выбрать проект на месте или говорит, как его получить. */
+  empty?: (projects: AccessProject[]) => ReactNode;
   children: (project: AccessProject) => ReactNode;
 }
 
@@ -27,6 +30,7 @@ export function ProjectScope({
   children,
   headingLevel = 1,
   addressed = false,
+  empty,
 }: ProjectScopeProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -47,11 +51,15 @@ export function ProjectScope({
     <div className={styles.page}>
       <PageHeader title={title} headingLevel={headingLevel} />
       <LoadState {...resource} retry={resource.refresh}>
-        <EmptyState
-          title={t('access.select_project')}
-          description={t('access.select_project_hint')}
-          action={<Button onClick={() => navigate('/projects')}>{t('access.projects')}</Button>}
-        />
+        {empty && resource.data ? (
+          empty(resource.data)
+        ) : (
+          <EmptyState
+            title={t('access.select_project')}
+            description={t('access.select_project_hint')}
+            action={<Button onClick={() => navigate('/projects')}>{t('access.projects')}</Button>}
+          />
+        )}
       </LoadState>
     </div>
   );

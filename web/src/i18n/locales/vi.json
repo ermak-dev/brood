@@ -306,7 +306,8 @@
     "worker_pools": "Nhóm worker",
     "project": "Dự án",
     "overview": "Tổng quan",
-    "waiting_swarms": "Đang chờ trả lời: {{count}}"
+    "waiting_swarms": "Đang chờ trả lời: {{count}}",
+    "gateway_dashboard": "Thống kê gateway"
   },
   "nav_groups": {
     "project": "Dự án",
@@ -320,7 +321,7 @@
     "control": "Điều khiển"
   },
   "nav_meta": {
-    "dashboard": "Tổng quan vận hành",
+    "dashboard": "Lưu lượng, nhà cung cấp và thông tin xác thực",
     "quick_start": "Thiết lập APIKEY.FUN",
     "ai_providers": "Định tuyến model upstream",
     "auth_files": "File xác thực & credential",
@@ -337,7 +338,8 @@
     "workers": "Pool chứa actor",
     "policy": "Vai trò và chủ thể",
     "worker_pools": "Tạo nhóm để cung cấp tài nguyên worker.",
-    "project": "Chi tiết dự án hiện tại"
+    "project": "Chi tiết dự án hiện tại",
+    "overview": "Bầy, lượt chạy và việc cần bạn"
   },
   "dashboard": {
     "hero_verdict_good": "Mọi hệ thống ổn định",
@@ -3400,5 +3402,49 @@
     "workers": "Worker",
     "no_workers": "Nhóm này chưa có worker",
     "workers_failed": "Không đọc được worker: {{reason}}"
+  },
+  "project_overview": {
+    "title": "Tổng quan",
+    "details": "Chi tiết dự án",
+    "choose_title": "Chọn một dự án",
+    "choose_hint": "Tổng quan hiển thị các bầy, lượt chạy và quy trình của một dự án. Chọn dự án tại đây hoặc trong bộ chuyển dự án ở đầu trang.",
+    "project_swarms": "Bầy: {{count}}",
+    "none_title": "Chưa có dự án",
+    "none_admin": "Tạo dự án và thêm thành viên trong mục Dự án; các bầy và lượt chạy của nó sẽ xuất hiện tại đây.",
+    "none_member": "Bạn chưa được mở dự án nào. Hãy nhờ quản trị viên thêm bạn vào một dự án.",
+    "open_projects": "Mở Dự án",
+    "summary_label": "Việc đang chờ người vận hành",
+    "waiting": "Đang chờ bạn",
+    "open_requests": "Câu hỏi đang mở: {{count}}",
+    "undelivered": "Câu trả lời chưa gửi được",
+    "undelivered_hint": "Thử gửi lại trên trang bầy",
+    "undelivered_unknown": "Máy chủ này không đếm mục này",
+    "running": "Đang chạy",
+    "running_hint": "Các lượt chạy đang diễn ra",
+    "stuck": "Bị kẹt",
+    "stuck_hint": "Trang bầy nêu bước và nguyên nhân",
+    "unknown_swarms": "Bầy không có tóm tắt thực thi: {{count}}",
+    "swarms_hint": "Mỗi bầy đang làm gì lúc này. Lượt chạy của bầy chính là quá trình thực thi của nó: đồ thị, câu hỏi và lịch sử các bước nằm trên trang bầy.",
+    "no_swarms": "Chưa có bầy",
+    "no_swarms_hint": "Một bầy chứa các Actor của quy trình và lượt chạy của nó. Hãy tạo bầy trong danh sách bầy.",
+    "open_swarms": "Đến danh sách bầy",
+    "hidden_swarms": "Không hiển thị tại đây: {{count}}. Danh sách bầy có tất cả.",
+    "refresh_failed": "Không thể làm mới danh sách bầy: {{reason}}",
+    "no_summary": "Máy chủ không gửi tóm tắt thực thi của bầy này",
+    "undelivered_answers": "Câu trả lời chưa gửi được: {{count}}",
+    "swarm_objects": "Actor và mẫu của bầy",
+    "workflows": "Định nghĩa quy trình",
+    "workflows_hint": "Các định nghĩa do bro build xuất bản. Lần khởi động đầu tiên của bầy cố định một trong số đó.",
+    "catalog_link": "Đồ thị trong danh mục",
+    "capacity": "Dung lượng",
+    "cpu": "CPU",
+    "memory": "Bộ nhớ",
+    "used_of": "{{used}} / {{limit}}",
+    "used_unlimited": "{{used}}, không giới hạn",
+    "limit_only": "Giới hạn {{limit}}",
+    "members": "Thành viên",
+    "members_count": "Thành viên: {{count}}",
+    "more_members": "Và {{count}} người khác trên trang dự án",
+    "no_members": "Chưa có thành viên"
   }
 }

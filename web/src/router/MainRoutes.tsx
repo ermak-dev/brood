@@ -10,6 +10,7 @@ import { LegacyRunRoute } from '@/features/swarms/LegacyRunRoute';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
+import { ProjectOverviewPage } from '@/features/overview/ProjectOverviewPage';
 import { ActorsPage } from '@/features/substrate/ActorsPage';
 import { PolicyPage } from '@/features/substrate/PolicyPage';
 import { TemplatesPage } from '@/features/substrate/TemplatesPage';
@@ -55,7 +56,9 @@ function LegacyProjectRoute({ section }: { section: 'swarms' | 'members' | 'deta
 }
 
 const createMainRoutes = (supportsPlugin: boolean) => [
-  { path: '/', element: <DashboardPage /> },
+  // Стартовая страница -- обзор выбранного проекта (#197); статистика
+  // AI-шлюза -- в группе шлюза, по своему адресу.
+  { path: '/', element: <ProjectOverviewPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
   // Проект — глобальный контекст; прежние адреса сохраняют выбор проекта.
   { path: '/project', element: <ProjectDetailPage /> },
