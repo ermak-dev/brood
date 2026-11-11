@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"brood.dev/go/brood/command"
 )
 
 var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -100,7 +102,7 @@ func TestExchangeReceipts(t *testing.T) {
 			}()
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			result, err := Exchange(ctx, path, "peer-key", "lead", "hello", 0)
+			result, err := Exchange(ctx, path, "peer-key", "lead", "hello", 0, time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +172,7 @@ func TestExchangeIdleDoesNotProveDelivery(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	result, err := Exchange(ctx, path, "peer-key", "lead", "hello", 1)
+	result, err := Exchange(ctx, path, "peer-key", "lead", "hello", 1, command.ReceiptWait)
 	if err != nil || result.Status != "unconfirmed" || !result.Idle {
 		t.Fatalf("idle must not mean delivered: %#v %v", result, err)
 	}
@@ -181,16 +183,17 @@ func TestExchangeIdleDoesNotProveDelivery(t *testing.T) {
 
 func TestExchangeRejectsInvalidInputBeforeDial(t *testing.T) {
 	for _, tc := range []struct {
-		body string
-		wait int
-	}{{"", 0}, {strings.Repeat("x", 128*1024), 0}, {"hello", -1}, {"hello", 301}} {
-		if _, err := Exchange(context.Background(), "/does/not/exist.sock", "key", "lead", tc.body, tc.wait); err == nil {
+		body    string
+		wait    int
+		receipt time.Duration
+	}{{"", 0, time.Second}, {strings.Repeat("x", 128*1024), 0, time.Second}, {"hello", -1, time.Second}, {"hello", 301, time.Second}, {"hello", 0, 0}, {"hello", 0, 301 * time.Second}} {
+		if _, err := Exchange(context.Background(), "/does/not/exist.sock", "key", "lead", tc.body, tc.wait, tc.receipt); err == nil {
 			t.Fatal("invalid input accepted")
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Exchange(ctx, "/does/not/exist.sock", "key", "lead", "hello", 0); err == nil {
+	if _, err := Exchange(ctx, "/does/not/exist.sock", "key", "lead", "hello", 0, time.Second); err == nil {
 		t.Fatal("canceled exchange accepted")
 	}
 }
@@ -208,15 +211,25 @@ func TestExchangeNotSentBeforeTheWrite(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "42.sock")
 	for name, call := range map[string]func() error{
 		"invalid input": func() error {
-			_, err := Exchange(context.Background(), missing, "key", "lead", "hello", 301)
+			_, err := Exchange(context.Background(), missing, "key", "lead", "hello", 301, time.Second)
 			return err
 		},
-		"canceled": func() error { _, err := Exchange(canceled, missing, "key", "lead", "hello", 0); return err },
+		"invalid receipt wait": func() error {
+			_, err := Exchange(context.Background(), missing, "key", "lead", "hello", 0, 0)
+			return err
+		},
+		"canceled": func() error {
+			_, err := Exchange(canceled, missing, "key", "lead", "hello", 0, time.Second)
+			return err
+		},
 		"no callback directory": func() error {
-			_, err := Exchange(context.Background(), "/does/not/exist.sock", "key", "lead", "hello", 0)
+			_, err := Exchange(context.Background(), "/does/not/exist.sock", "key", "lead", "hello", 0, time.Second)
 			return err
 		},
-		"inbox not listening": func() error { _, err := Exchange(context.Background(), missing, "key", "lead", "hello", 0); return err },
+		"inbox not listening": func() error {
+			_, err := Exchange(context.Background(), missing, "key", "lead", "hello", 0, time.Second)
+			return err
+		},
 	} {
 		if err := call(); !errors.Is(err, ErrNotSent) {
 			t.Errorf("%s: %v is not ErrNotSent", name, err)
@@ -241,7 +254,119 @@ func TestExchangeNotSentBeforeTheWrite(t *testing.T) {
 		_, _ = io.Copy(io.Discard, c)
 		stop()
 	}()
-	if _, err := Exchange(ctx, path, "peer-key", "lead", "hello", 1); err == nil || errors.Is(err, ErrNotSent) {
+	if _, err := Exchange(ctx, path, "peer-key", "lead", "hello", 1, time.Second); err == nil || errors.Is(err, ErrNotSent) {
 		t.Fatalf("written message classified as not sent: %v", err)
 	}
+}
+
+// TestExchangeWaitsForALateReceipt — Claude Code присылает квитанцию не
+// сразу (#260): без ожидания простоя Exchange ждёт её до предела и
+// возвращается сразу по получении, а не по истечении предела.
+func TestExchangeWaitsForALateReceipt(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("transport intentionally refuses root")
+	}
+	for _, tc := range []struct {
+		status, want string
+		after        time.Duration
+	}{{"delivered", "delivered", 2 * time.Second}, {"refused", "refused", time.Second}} {
+		t.Run(tc.status, func(t *testing.T) {
+			path := lateReceiptInbox(t, tc.status, tc.after)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			began := time.Now()
+			result, err := Exchange(ctx, path, "peer-key", "lead", "hello", 0, command.ReceiptWait)
+			took := time.Since(began)
+			if err != nil || result.Status != tc.want || result.Idle {
+				t.Fatalf("late receipt: %#v %v", result, err)
+			}
+			if took < tc.after || took > tc.after+2*time.Second {
+				t.Fatalf("returned after %v, receipt sent after %v", took, tc.after)
+			}
+		})
+	}
+}
+
+// lateReceiptInbox — inbox сессии, который присылает квитанцию status на
+// обратный сокет через after после записи сообщения.
+func lateReceiptInbox(t *testing.T, status string, after time.Duration) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "42.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		s := bufio.NewScanner(c)
+		var msg Frame
+		for msg["type"] != "user" && s.Scan() {
+			msg = Frame{}
+			_ = json.Unmarshal(s.Bytes(), &msg)
+		}
+		time.Sleep(after)
+		cb, err := net.Dial("unix", strings.TrimPrefix(msg["from"].(string), "uds:"))
+		if err != nil {
+			return
+		}
+		defer cb.Close()
+		_ = json.NewEncoder(cb).Encode(Frame{"type": "control", "action": "peer_message_status", "orig_msg_id": msg["msg_id"], "status": status})
+	}()
+	return path
+}
+
+// TestExchangeReceiptWaitIsBounded — квитанции нет: без ожидания простоя
+// Exchange ждёт её ровно до предела и отвечает unconfirmed без ошибки
+// канала (#260). Ожидание простоя (waitSec > 0) предел квитанции не
+// удлиняет: оно кончается через waitSec, как прежде.
+func TestExchangeReceiptWaitIsBounded(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("transport intentionally refuses root")
+	}
+	for _, tc := range []struct {
+		name    string
+		wait    int
+		receipt time.Duration
+		limit   time.Duration
+	}{{"receipt", 0, time.Second, time.Second}, {"idle", 1, command.ReceiptWait, time.Second}} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := silentInbox(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			began := time.Now()
+			result, err := Exchange(ctx, path, "peer-key", "lead", "hello", tc.wait, tc.receipt)
+			took := time.Since(began)
+			if err != nil || result.Status != "unconfirmed" || result.Idle {
+				t.Fatalf("no receipt: %#v %v", result, err)
+			}
+			if took < tc.limit || took > tc.limit+2*time.Second {
+				t.Fatalf("returned after %v, limit %v", took, tc.limit)
+			}
+		})
+	}
+}
+
+// silentInbox — inbox сессии, который читает кадры и ничего не отвечает.
+func silentInbox(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "42.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = io.Copy(io.Discard, c)
+	}()
+	return path
 }

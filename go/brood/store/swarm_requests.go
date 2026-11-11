@@ -509,21 +509,26 @@ func (s *Store) recordAnswer(ctx context.Context, req SwarmRequest, userID, outc
 	return nil
 }
 
-// RecordSwarmRequestDelivery записывает исход доставки ответа спросившему
-// актору (#210). Доставка идёт после коммита ответа, поэтому её сбой не
-// откатывает ответ, а запись исхода не трогает ни ответ, ни граф. Пишется
-// только у отвеченного запроса актора с доставкой pending или failed:
-// доставленный ответ не переоткрывается, у узлового запроса адресата нет —
-// иначе ErrPipelineVisitConflict. Запрос чужого роя — ErrNotFound.
-func (s *Store) RecordSwarmRequestDelivery(ctx context.Context, swarmID, id string, delivered bool) (SwarmRequest, error) {
+// RecordSwarmRequestDelivery записывает исход попытки доставки ответа
+// спросившему актору (#210): delivered — гость подтвердил приём, failed —
+// ответ заведомо не ушёл, unconfirmed — ушёл без квитанции, исход неизвестен
+// (#260); другой исход — ErrSwarmRequestInvalid. Доставка идёт после коммита
+// ответа, поэтому её сбой не откатывает ответ, а запись исхода не трогает ни
+// ответ, ни граф. Пишется только у отвеченного запроса актора с доставкой
+// pending, failed или unconfirmed: доставленный ответ не переоткрывается, у
+// узлового запроса адресата нет — иначе ErrPipelineVisitConflict. failed
+// поверх unconfirmed оставляет unconfirmed: прежняя попытка могла дойти.
+// Запрос чужого роя — ErrNotFound.
+func (s *Store) RecordSwarmRequestDelivery(ctx context.Context, swarmID, id, outcome string) (SwarmRequest, error) {
 	if !validPipelineField(swarmID) || !validPipelineField(id) {
 		return SwarmRequest{}, ErrNotFound
 	}
-	state := "failed"
-	if delivered {
-		state = "delivered"
+	switch outcome {
+	case "delivered", "failed", "unconfirmed":
+	default:
+		return SwarmRequest{}, fmt.Errorf("%w: unknown delivery outcome %q", ErrSwarmRequestInvalid, outcome)
 	}
-	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_requests SET delivery=? WHERE swarm_id=? AND id=? AND origin='actor' AND state='answered' AND delivery IN ('pending','failed')`, state, swarmID, id)
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_requests SET delivery=CASE WHEN delivery='unconfirmed' AND ?='failed' THEN 'unconfirmed' ELSE ? END WHERE swarm_id=? AND id=? AND origin='actor' AND state='answered' AND delivery IN ('pending','failed','unconfirmed')`, outcome, outcome, swarmID, id)
 	if err != nil {
 		return SwarmRequest{}, err
 	}

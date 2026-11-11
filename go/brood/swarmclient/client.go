@@ -88,7 +88,7 @@ func requestTimeout(request Request) time.Duration {
 	if wait < 0 || wait > 300 {
 		wait = 0
 	}
-	return time.Duration(wait)*time.Second + 15*time.Second
+	return command.CallTimeout(wait)
 }
 
 type responseEnvelope struct {

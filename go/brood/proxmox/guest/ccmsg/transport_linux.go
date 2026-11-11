@@ -34,6 +34,11 @@ func (notSentError) Is(target error) bool { return target == ErrNotSent }
 
 func notSent(text string) error { return notSentError{errors.New(text)} }
 
+// WriteTimeout bounds what Exchange spends before its wait begins: the inbox
+// dial and the message write. Exchange returns within the wait plus
+// WriteTimeout.
+const WriteTimeout = 5 * time.Second
+
 // Delivery distinguishes a written user frame from a confirmed delivery.
 // Idle only confirms the separate idle subscription, never the user message.
 type Delivery struct {
@@ -46,12 +51,15 @@ type Delivery struct {
 // are untrusted; this function refuses root before opening any socket. The
 // envelope asserts bypass: managed Claude runs with --dangerously-skip-permissions,
 // and a mode that differs from the receiver's is held as mode-mismatch.
-// waitSec requests an authenticated idle notice; zero waits briefly for status.
+// waitSec requests an authenticated idle notice and bounds the whole wait;
+// zero waits only for the delivery receipt, up to receiptWait, and returns
+// as soon as the receipt or a refusal arrives (#260). Claude Code sends the
+// receipt once the session accepts the message, not with the write.
 // A successful write without a matching receipt is unconfirmed. It does not
 // prove even queue acceptance, and must not be presented as delivered.
 // Every failure before the write, including a refused inbox dial, is
 // ErrNotSent; a failed or interrupted write is not.
-func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec int) (Delivery, error) {
+func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec int, receiptWait time.Duration) (Delivery, error) {
 	// Всё до записи в inbox — ErrNotSent: сессия сообщения не получила.
 	if os.Getuid() == 0 || os.Geteuid() == 0 {
 		return Delivery{}, notSent("session messaging must not run as root")
@@ -59,7 +67,7 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	if err := ctx.Err(); err != nil {
 		return Delivery{}, notSentError{err}
 	}
-	if waitSec < 0 || waitSec > 300 || len(body) >= MaxExchangeBytes || token == "" || len(token) > MaxPeerTokenBytes {
+	if waitSec < 0 || waitSec > 300 || receiptWait <= 0 || receiptWait > 300*time.Second || len(body) >= MaxExchangeBytes || token == "" || len(token) > MaxPeerTokenBytes {
 		return Delivery{}, notSent("invalid session message input")
 	}
 	if !filepath.IsAbs(socketPath) || strings.ContainsAny(socketPath, "\x00\r\n") {
@@ -89,20 +97,23 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 		return Delivery{}, notSent("session callback unavailable")
 	}
 	defer listener.Close()
-	timeout := 250 * time.Millisecond
+	// Ожидание квитанции отдельно от ожидания простоя: без простоя
+	// Exchange ждёт только квитанцию, с ним — простой до waitSec, и
+	// квитанция приходит в том же окне.
+	timeout := receiptWait
 	if waitSec > 0 {
 		timeout = time.Duration(waitSec) * time.Second
 	}
-	exchangeCtx, cancel := context.WithTimeout(ctx, timeout+5*time.Second)
+	exchangeCtx, cancel := context.WithTimeout(ctx, timeout+WriteTimeout)
 	defer cancel()
 	stop := context.AfterFunc(exchangeCtx, func() { listener.Close() })
 	defer stop()
-	c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(exchangeCtx, "unix", socketPath)
+	c, err := (&net.Dialer{Timeout: WriteTimeout}).DialContext(exchangeCtx, "unix", socketPath)
 	if err != nil {
 		return Delivery{}, notSent("session inbox unavailable")
 	}
 	stopWrite := context.AfterFunc(exchangeCtx, func() { c.Close() })
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(WriteTimeout)
 	if d, ok := exchangeCtx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
@@ -113,8 +124,10 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 	if err != nil {
 		return Delivery{}, errors.New("session message write failed")
 	}
+	// Окно квитанции не выходит за предел Exchange: запись, затянувшаяся
+	// до WriteTimeout, сокращает ожидание, а не удлиняет вызов.
 	deadline = time.Now().Add(timeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+	if d, ok := exchangeCtx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
 	_ = listener.SetDeadline(deadline)

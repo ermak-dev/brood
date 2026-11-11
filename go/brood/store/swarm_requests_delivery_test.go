@@ -45,7 +45,7 @@ func TestFailedDeliveryKeepsTheAnswerAndRetryDoesNotMoveTheGraph(t *testing.T) {
 	answered, err := s.GetSwarmRequest(ctx, "s", req.ID)
 	mustNil(t, err)
 
-	failed, err := s.RecordSwarmRequestDelivery(ctx, "s", req.ID, false)
+	failed, err := s.RecordSwarmRequestDelivery(ctx, "s", req.ID, "failed")
 	if err != nil || failed.Delivery != "failed" {
 		t.Fatalf("failed delivery: %+v %v", failed, err)
 	}
@@ -53,17 +53,17 @@ func TestFailedDeliveryKeepsTheAnswerAndRetryDoesNotMoveTheGraph(t *testing.T) {
 	if !reflect.DeepEqual(failed, answered) {
 		t.Fatalf("failed delivery changed the answer:\n got %+v\nwant %+v", failed, answered)
 	}
-	failed, err = s.RecordSwarmRequestDelivery(ctx, "s", req.ID, false)
+	failed, err = s.RecordSwarmRequestDelivery(ctx, "s", req.ID, "failed")
 	if err != nil || failed.Delivery != "failed" {
 		t.Fatalf("second failure: %+v %v", failed, err)
 	}
-	delivered, err := s.RecordSwarmRequestDelivery(ctx, "s", req.ID, true)
+	delivered, err := s.RecordSwarmRequestDelivery(ctx, "s", req.ID, "delivered")
 	if err != nil || delivered.Delivery != "delivered" || delivered.State != "answered" || *delivered.Response != "use sqlite" {
 		t.Fatalf("retried delivery: %+v %v", delivered, err)
 	}
-	for _, ok := range []bool{true, false} {
-		if _, err := s.RecordSwarmRequestDelivery(ctx, "s", req.ID, ok); !errors.Is(err, ErrPipelineVisitConflict) {
-			t.Fatalf("delivered answer re-recorded (%v): %v", ok, err)
+	for _, outcome := range []string{"delivered", "failed", "unconfirmed"} {
+		if _, err := s.RecordSwarmRequestDelivery(ctx, "s", req.ID, outcome); !errors.Is(err, ErrPipelineVisitConflict) {
+			t.Fatalf("delivered answer re-recorded (%s): %v", outcome, err)
 		}
 	}
 	if got := stepStates(t, s); !reflect.DeepEqual(got, steps) {
@@ -83,13 +83,13 @@ func TestDeliveryIsOnlyForAnsweredActorRequestsOfTheSwarm(t *testing.T) {
 	answered := actorRequest(t, s, "text", nil)
 	mustNil(t, answer(s, answered, "u", "", "yes"))
 	for name, id := range map[string]string{"open node": node.ID, "open actor": open.ID, "cancelled": cancelled.ID} {
-		if _, err := s.RecordSwarmRequestDelivery(ctx, "s", id, true); !errors.Is(err, ErrPipelineVisitConflict) {
+		if _, err := s.RecordSwarmRequestDelivery(ctx, "s", id, "delivered"); !errors.Is(err, ErrPipelineVisitConflict) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
 	mustNil(t, answer(s, node, "u", "success", "ship"))
 	steps := stepStates(t, s)
-	if _, err := s.RecordSwarmRequestDelivery(ctx, "s", node.ID, true); !errors.Is(err, ErrPipelineVisitConflict) {
+	if _, err := s.RecordSwarmRequestDelivery(ctx, "s", node.ID, "delivered"); !errors.Is(err, ErrPipelineVisitConflict) {
 		t.Fatalf("answered node request: %v", err)
 	}
 	if got := stepStates(t, s); !reflect.DeepEqual(got, steps) {
@@ -99,7 +99,7 @@ func TestDeliveryIsOnlyForAnsweredActorRequestsOfTheSwarm(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO swarms(id,project_id,owner_id,name,atespace_name,state,created_at,updated_at) VALUES ('other','p','u','other','other','active','now','now')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordSwarmRequestDelivery(ctx, "other", answered.ID, true); !errors.Is(err, ErrNotFound) {
+	if _, err := s.RecordSwarmRequestDelivery(ctx, "other", answered.ID, "delivered"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign swarm: %v", err)
 	}
 	if got, _ := s.GetSwarmRequest(ctx, "s", answered.ID); got.Delivery != "pending" {
@@ -121,6 +121,8 @@ func TestSchemaKeepsDeliveryApartFromTheAnswer(t *testing.T) {
 		"rewrite with delivery":   `UPDATE swarm_requests SET delivery='delivered',response='rewrite' WHERE id='` + req.ID + `'`,
 		"unknown state":           `UPDATE swarm_requests SET delivery='sent' WHERE id='` + req.ID + `'`,
 		"back to pending":         `UPDATE swarm_requests SET delivery='failed' WHERE id='` + req.ID + `'; UPDATE swarm_requests SET delivery='pending' WHERE id='` + req.ID + `'`,
+		"unconfirmed to pending":  `UPDATE swarm_requests SET delivery='unconfirmed' WHERE id='` + req.ID + `'; UPDATE swarm_requests SET delivery='pending' WHERE id='` + req.ID + `'`,
+		"unconfirmed to failed":   `UPDATE swarm_requests SET delivery='unconfirmed' WHERE id='` + req.ID + `'; UPDATE swarm_requests SET delivery='failed' WHERE id='` + req.ID + `'`,
 	} {
 		before := snapshotRequests(t, s)
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -134,10 +136,61 @@ func TestSchemaKeepsDeliveryApartFromTheAnswer(t *testing.T) {
 			t.Fatalf("%s: rollback left changes", name)
 		}
 	}
-	if _, err := s.db.Exec(`UPDATE swarm_requests SET delivery='delivered' WHERE id=?`, req.ID); err != nil {
-		t.Fatalf("delivery update refused: %v", err)
+	for _, state := range []string{"failed", "unconfirmed", "unconfirmed", "delivered"} {
+		if _, err := s.db.Exec(`UPDATE swarm_requests SET delivery=? WHERE id=?`, state, req.ID); err != nil {
+			t.Fatalf("delivery update to %s refused: %v", state, err)
+		}
 	}
 	if _, err := s.db.Exec(`UPDATE swarm_requests SET delivery='failed' WHERE id=?`, req.ID); err == nil {
 		t.Fatal("delivered answer was reopened")
+	}
+}
+
+// FEATURE: Неизвестный исход доставки ответа (#260).
+// SPEC: ответ ушёл в сессию актора, а квитанции нет — доставка unconfirmed,
+// не failed: ответ мог дойти. Повтор из unconfirmed разрешён и может
+// доставить ответ дважды. Повтор, заведомо не отправленный, неизвестности
+// не снимает: unconfirmed остаётся, failed поверх него не пишется. Исход —
+// только delivered, failed или unconfirmed.
+// IMPLEMENTATION: RecordSwarmRequestDelivery с исходом попытки, CHECK и
+// swarm_requests_fence.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestUnconfirmedDeliveryStaysUnknownUntilDelivered(t *testing.T) {
+	ctx := context.Background()
+	s, _ := requestStore(t)
+	req := actorRequest(t, s, "text", nil)
+	mustNil(t, answer(s, req, "u", "", "use sqlite"))
+	answered, err := s.GetSwarmRequest(ctx, "s", req.ID)
+	mustNil(t, err)
+	for _, step := range []struct{ outcome, want string }{
+		{"unconfirmed", "unconfirmed"},
+		{"failed", "unconfirmed"},
+		{"unconfirmed", "unconfirmed"},
+		{"delivered", "delivered"},
+	} {
+		got, err := s.RecordSwarmRequestDelivery(ctx, "s", req.ID, step.outcome)
+		if err != nil || got.Delivery != step.want {
+			t.Fatalf("%s attempt: %+v %v, want %s", step.outcome, got, err, step.want)
+		}
+		answered.Delivery = step.want
+		if !reflect.DeepEqual(got, answered) {
+			t.Fatalf("%s attempt changed the answer:\n got %+v\nwant %+v", step.outcome, got, answered)
+		}
+	}
+	retried := actorRequest(t, s, "text", nil)
+	mustNil(t, answer(s, retried, "u", "", "yes"))
+	for _, outcome := range []string{"failed", "unconfirmed"} {
+		if got, err := s.RecordSwarmRequestDelivery(ctx, "s", retried.ID, outcome); err != nil || got.Delivery != outcome {
+			t.Fatalf("%s after failed: %+v %v", outcome, got, err)
+		}
+	}
+	for _, outcome := range []string{"", "pending", "sent", "Delivered"} {
+		if _, err := s.RecordSwarmRequestDelivery(ctx, "s", retried.ID, outcome); !errors.Is(err, ErrSwarmRequestInvalid) {
+			t.Fatalf("outcome %q: %v", outcome, err)
+		}
+	}
+	if got, _ := s.GetSwarmRequest(ctx, "s", retried.ID); got.Delivery != "unconfirmed" {
+		t.Fatalf("invalid outcome wrote: %+v", got)
 	}
 }

@@ -63,6 +63,12 @@ func TestCanonicalWaitDeadline(t *testing.T) {
 	if got := requestTimeout(Request{Arguments: json.RawMessage(`{"wait":120}`)}); got != 135*time.Second {
 		t.Fatalf("deadline=%v", got)
 	}
+	// Без ожидания send ждёт квитанцию доставки адресата (#260).
+	for _, request := range []Request{{Tool: "send", To: "peer", Message: "hi"}, {Arguments: json.RawMessage(`{"wait":301}`)}} {
+		if got := requestTimeout(request); got != 30*time.Second {
+			t.Errorf("%+v: deadline=%v", request, got)
+		}
+	}
 }
 
 func TestExchangeRejectsOversizedAndPartialResponse(t *testing.T) {
