@@ -33,12 +33,14 @@ type projectRowJSON struct {
 	SwarmCount int64 `json:"swarmCount"`
 }
 
-// swarmRowJSON — строка списка роёв: рой, исполнение его графа и число
-// открытых запросов оператору, узловых и актора (#234).
+// swarmRowJSON — строка списка роёв: рой, исполнение его графа, число
+// открытых запросов оператору, узловых и актора (#234), и число ответов
+// актору с доставкой failed или unconfirmed (#266).
 type swarmRowJSON struct {
 	swarmJSON
-	Execution    string `json:"execution"`
-	OpenRequests int64  `json:"openRequests"`
+	Execution          string `json:"execution"`
+	OpenRequests       int64  `json:"openRequests"`
+	UndeliveredAnswers int64  `json:"undeliveredAnswers"`
 }
 
 // swarmJSON — публичная форма роя.
@@ -387,7 +389,7 @@ func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []ap
 		}
 		row := toSwarmJSON(sw, username)
 		row.Role = role
-		out = append(out, swarmRowJSON{swarmJSON: row, Execution: summary.Execution, OpenRequests: summary.OpenRequests})
+		out = append(out, swarmRowJSON{swarmJSON: row, Execution: summary.Execution, OpenRequests: summary.OpenRequests, UndeliveredAnswers: summary.UndeliveredAnswers})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

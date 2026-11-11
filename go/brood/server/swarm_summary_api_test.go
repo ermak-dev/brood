@@ -1,13 +1,15 @@
 package server
 
-// FEATURE: Строка списка роёв несёт исполнение и число открытых запросов,
-// строка списка проектов — число роёв (#234).
+// FEATURE: Строка списка роёв несёт исполнение, число открытых запросов и
+// недоставленных ответов актору, строка списка проектов — число роёв (#234,
+// #266).
 // SPEC: GET /api/projects/{id}/swarms отдаёт у каждой строки `execution`
-// (swarms.execution) и `openRequests` (открытые запросы роя, узловые и
-// актора); GET /api/projects — `swarmCount`, равный длине списка роёв
+// (swarms.execution), `openRequests` (открытые запросы роя, узловые и
+// актора) и `undeliveredAnswers` (ответы актору с доставкой failed или
+// unconfirmed); GET /api/projects — `swarmCount`, равный длине списка роёв
 // проекта у того же пользователя. Права — те же, что у списков: сводка не
-// показывает рой, которого вызывающий в списке не видит, и рой другого
-// проекта в список не попадает.
+// показывает рой, которого вызывающий в списке не видит, любая роль роя
+// видит всю строку, и рой другого проекта в список не попадает.
 // IMPLEMENTATION: writeSwarms и writeProjects берут сводку одной выборкой
 // хранилища (store.SwarmSummaries, store.ProjectSwarmCounts).
 // RESULT: IMPLEMENTED
@@ -18,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 )
 
@@ -52,17 +55,18 @@ func listRows(t *testing.T, ts *testServer, client *http.Client, path string) []
 	return rows
 }
 
-// summaryOf: исполнение и открытые запросы строки по ID роя; nil — строки нет.
+// summaryOf: исполнение, открытые запросы и недоставленные ответы строки по
+// ID роя; nil — строки нет.
 func summaryOf(rows []map[string]any, id string) []any {
 	for _, row := range rows {
 		if row["id"] == id {
-			return []any{row["execution"], row["openRequests"]}
+			return []any{row["execution"], row["openRequests"], row["undeliveredAnswers"]}
 		}
 	}
 	return nil
 }
 
-func TestSwarmListCarriesExecutionAndOpenRequests(t *testing.T) {
+func TestSwarmListCarriesExecutionAndRequestCounts(t *testing.T) {
 	ts := newTestServer(t)
 	ts.bootstrapAdmin("root", "root-password-1")
 	root, alice, bob := newClient(t), newClient(t), newClient(t)
@@ -91,14 +95,18 @@ func TestSwarmListCarriesExecutionAndOpenRequests(t *testing.T) {
 	doomed := create(alice, "/api/projects/"+project+"/swarms", map[string]any{"name": "doomed"})
 	r, b, _ := ts.do(alice, "DELETE", "/api/swarms/"+doomed, ts.csrf(alice), nil)
 	expectStatus(t, "delete doomed", r, b, http.StatusNoContent)
+	r, b, _ = ts.do(alice, "POST", "/api/swarms/"+alpha+"/members", ts.csrf(alice), map[string]string{"username": "bob", "role": "viewer"})
+	expectStatus(t, "bob views alpha", r, b, http.StatusNoContent)
 	aliceUser, err := ts.srv.store.GetUserByUsername(context.Background(), "alice")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// alpha ждёт оператора: узловой запрос и вопрос актора открыты, второй
-	// вопрос отвечен, третий отменён. beta идёт с одним вопросом актора,
-	// gamma другого проекта встал с тремя.
+	// вопрос отвечен, третий отменён; из ответов актору доставлен один, не
+	// доставлены два (failed, unconfirmed), один ещё идёт. beta идёт с одним
+	// вопросом актора и одним неподтверждённым ответом, gamma другого
+	// проекта встал с тремя вопросами и двумя неушедшими ответами.
 	for swarm, execution := range map[string]string{alpha: "waiting", beta: "running", gamma: "failed"} {
 		execFixture(t, ts, `UPDATE swarms SET execution=? WHERE id=?`, execution, swarm)
 	}
@@ -111,7 +119,14 @@ func TestSwarmListCarriesExecutionAndOpenRequests(t *testing.T) {
 	} {
 		execFixture(t, ts, `INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,state,created_at) VALUES (?,?,'actor','worker',1,'text','q',?,'now')`, row.id, row.swarm, row.state)
 	}
-	execFixture(t, ts, `INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,state,created_at,answered_at,answered_by,response,delivery) VALUES ('a-answered',?,'actor','worker',1,'text','q','answered','now','now',?,'ok','delivered')`, alpha, aliceUser.ID)
+	for _, row := range []struct{ id, swarm, delivery string }{
+		{"a-answered", alpha, "delivered"}, {"a-failed", alpha, "failed"},
+		{"a-unconfirmed", alpha, "unconfirmed"}, {"a-pending", alpha, "pending"},
+		{"b-unconfirmed", beta, "unconfirmed"},
+		{"g-failed-1", gamma, "failed"}, {"g-failed-2", gamma, "failed"},
+	} {
+		execFixture(t, ts, `INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,state,created_at,answered_at,answered_by,response,delivery) VALUES (?,?,'actor','worker',1,'text','q','answered','now','now',?,'ok',?)`, row.id, row.swarm, aliceUser.ID, row.delivery)
+	}
 
 	swarms := "/api/projects/" + project + "/swarms"
 	for _, tc := range []struct {
@@ -119,17 +134,17 @@ func TestSwarmListCarriesExecutionAndOpenRequests(t *testing.T) {
 		client *http.Client
 		want   map[string][]any
 	}{
-		{"root", root, map[string][]any{alpha: {"waiting", float64(2)}, beta: {"running", float64(1)}}},
-		{"alice", alice, map[string][]any{alpha: {"waiting", float64(2)}}},
-		{"bob", bob, map[string][]any{beta: {"running", float64(1)}}},
+		{"root", root, map[string][]any{alpha: {"waiting", float64(2), float64(2)}, beta: {"running", float64(1), float64(1)}}},
+		{"alice", alice, map[string][]any{alpha: {"waiting", float64(2), float64(2)}}},
+		{"bob", bob, map[string][]any{alpha: {"waiting", float64(2), float64(2)}, beta: {"running", float64(1), float64(1)}}},
 	} {
 		rows := listRows(t, ts, tc.client, swarms)
 		if len(rows) != len(tc.want) {
 			t.Fatalf("%s sees %d swarms, want %d: %v", tc.who, len(rows), len(tc.want), rows)
 		}
 		for id, want := range tc.want {
-			if got := summaryOf(rows, id); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-				t.Fatalf("%s row %s: execution, openRequests = %v, want %v", tc.who, id, got, want)
+			if got := summaryOf(rows, id); !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s row %s: execution, openRequests, undeliveredAnswers = %v, want %v", tc.who, id, got, want)
 			}
 		}
 		for _, hidden := range []string{gamma, doomed} {
@@ -137,6 +152,10 @@ func TestSwarmListCarriesExecutionAndOpenRequests(t *testing.T) {
 				t.Fatalf("%s lists swarm %s outside the project list: %v", tc.who, hidden, rows)
 			}
 		}
+	}
+	// Ответы gamma считаются в строке своего проекта.
+	if got, want := summaryOf(listRows(t, ts, root, "/api/projects/"+side+"/swarms"), gamma), []any{"failed", float64(3), float64(2)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("root row %s: %v, want %v", gamma, got, want)
 	}
 
 	// Число роёв проекта — длина его списка роёв у того же пользователя.
@@ -147,7 +166,7 @@ func TestSwarmListCarriesExecutionAndOpenRequests(t *testing.T) {
 	}{
 		{"root", root, map[string]float64{project: 2, side: 1}},
 		{"alice", alice, map[string]float64{project: 1}},
-		{"bob", bob, map[string]float64{project: 1}},
+		{"bob", bob, map[string]float64{project: 2}},
 	} {
 		projects := listRows(t, ts, tc.client, "/api/projects")
 		if len(projects) != len(tc.want) {

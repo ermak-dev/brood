@@ -1,9 +1,10 @@
 package store
 
-// Сводки для строк списков (#234): список роёв проекта несёт исполнение и
-// число открытых запросов каждого роя, список проектов — число роёв. Каждая
-// сводка — одна выборка на весь набор: запрос на рой или проект делал бы
-// список N+1, а именно так панель собирала сводку до #234 (#255).
+// Сводки для строк списков (#234): список роёв проекта несёт исполнение,
+// число открытых запросов и недоставленных ответов актору каждого роя
+// (#266), список проектов — число роёв. Каждая сводка — одна выборка на
+// весь набор: запрос на рой или проект делал бы список N+1, а именно так
+// панель собирала сводку до #234 (#255).
 // Набор ключей едет одним параметром JSON-массивом через json_each: число
 // роёв не упирается в предел параметров SQLite, и текст запроса не зависит
 // от размера набора.
@@ -14,11 +15,14 @@ import (
 	"fmt"
 )
 
-// SwarmSummary is the execution of a swarm graph and the number of its open
-// operator requests of either origin, node or actor.
+// SwarmSummary is the execution of a swarm graph, the number of its open
+// operator requests of either origin, node or actor, and the number of
+// operator answers to actor requests whose delivery is failed or
+// unconfirmed.
 type SwarmSummary struct {
-	Execution    string
-	OpenRequests int64
+	Execution          string
+	OpenRequests       int64
+	UndeliveredAnswers int64
 }
 
 // SwarmSummaries returns the summary of each named swarm in one query. A
@@ -29,7 +33,10 @@ func (s *Store) SwarmSummaries(ctx context.Context, ids []string) (map[string]Sw
 }
 
 // swarmSummaries — SwarmSummaries на данном executor: тест считает им
-// обращения к базе.
+// обращения к базе. Недоставленный ответ — тот, чью доставку панель
+// предлагает повторить (#261): отвеченный запрос актора, ответ которого
+// заведомо не ушёл (failed) или ушёл без квитанции (unconfirmed, #260);
+// идущая (pending) и доставленная доставка оператора не ждут.
 func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSummary, error) {
 	out := make(map[string]SwarmSummary, len(ids))
 	if len(ids) == 0 {
@@ -41,7 +48,9 @@ func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSu
 	}
 	rows, err := q.QueryContext(ctx, `
 		SELECT s.id, s.execution,
-			(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.state = 'open')
+			(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.state = 'open'),
+			(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.origin = 'actor'
+				AND r.state = 'answered' AND r.delivery IN ('failed', 'unconfirmed'))
 		FROM swarms s
 		WHERE s.id IN (SELECT value FROM json_each(?))`, string(set))
 	if err != nil {
@@ -51,7 +60,7 @@ func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSu
 	for rows.Next() {
 		var id string
 		var summary SwarmSummary
-		if err := rows.Scan(&id, &summary.Execution, &summary.OpenRequests); err != nil {
+		if err := rows.Scan(&id, &summary.Execution, &summary.OpenRequests, &summary.UndeliveredAnswers); err != nil {
 			return nil, fmt.Errorf("swarm summaries: %w", err)
 		}
 		out[id] = summary
