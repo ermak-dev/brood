@@ -1,7 +1,8 @@
 /**
  * Чистая логика запросов оператору на странице роя (#216): какую форму
- * показывает запрос, что уходит в ответ, порядок инбокса и что осталось
- * от ответа в истории. Компоненты только рисуют результат.
+ * показывает запрос, что уходит в ответ, порядок инбокса, что осталось
+ * от ответа в истории и как повторять его доставку. Компоненты только
+ * рисуют результат.
  */
 import type { AccessSwarm } from '@/services/brood/access';
 import type { RequestAnswer, SwarmRequest } from '@/services/brood/requests';
@@ -168,9 +169,20 @@ export function canAnswerRequests(swarm: AccessSwarm | null): boolean {
   );
 }
 
-/** Повтор доставки — только у неудавшейся доставки ответа актору. */
+/** Повтор доставки — у ответа актору, который заведомо не ушёл (`failed`)
+ * или ушёл без квитанции (`unconfirmed`, #260). Идущую и доставленную
+ * доставку не повторяют. */
 export function deliveryRetryable(request: SwarmRequest): boolean {
   return (
-    request.origin === 'actor' && request.state === 'answered' && request.delivery === 'failed'
+    request.origin === 'actor' &&
+    request.state === 'answered' &&
+    (request.delivery === 'failed' || request.delivery === 'unconfirmed')
   );
+}
+
+/** Повтор может доставить ответ дважды (#261): неподтверждённый ответ мог
+ * уже дойти до актора, поэтому перед повтором панель спрашивает. Повтор
+ * `failed` безопасен и идёт сразу. */
+export function retryMayDuplicate(request: SwarmRequest): boolean {
+  return deliveryRetryable(request) && request.delivery === 'unconfirmed';
 }

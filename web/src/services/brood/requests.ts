@@ -4,13 +4,25 @@
  * GET /api/swarms/{id}/requests?all=1 lists every request of the swarm, open
  * and closed, for any swarm role. POST .../requests/{request}/answer takes
  * exactly {outcome?, response?} from a swarm manager and returns the request
- * after the answer; POST .../requests/{request}/deliver retries a failed
- * delivery of the recorded answer to the asking actor. A node request routes
+ * after the answer; POST .../requests/{request}/deliver retries a failed or
+ * unconfirmed delivery of the recorded answer to the asking actor (#260). A
+ * delivery failure is not a refusal: the reply carries the delivery state
+ * and its public reason (deliveryError). A node request routes
  * the graph by the outcome of one of its options; an actor request never
  * carries an outcome. Refusals are fixed public messages ({"detail": ...}).
  */
 
 import { request } from './http';
+
+/** Delivery of an answer to the asking actor (#260): `failed` surely did not
+ * leave, so a retry is safe; `unconfirmed` left without a receipt and may
+ * have reached the actor, so a retry may deliver it twice. */
+export const DELIVERY_STATES = ['pending', 'delivered', 'failed', 'unconfirmed'] as const;
+
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
+
+export const isDeliveryState = (value: string): value is DeliveryState =>
+  (DELIVERY_STATES as readonly string[]).includes(value);
 
 export interface RequestOption {
   label: string;
@@ -48,9 +60,11 @@ export interface SwarmRequest {
   /** Label of the option whose outcome was chosen. */
   optionLabel?: string;
   response?: string;
-  /** Delivery of the answer to the asking actor: pending, delivered, failed. */
+  /** Delivery of the answer to the asking actor, one of DELIVERY_STATES; a
+   * newer server's state stays as sent and is shown as is. */
   delivery?: string;
-  /** Public reason of a failed delivery, only in an answer or retry reply. */
+  /** Public reason of a failed or unconfirmed delivery, only in an answer or
+   * retry reply. */
   deliveryError?: string;
 }
 

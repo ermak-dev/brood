@@ -119,7 +119,9 @@ test('role tones: unbound waits for a human, a broken binding is a problem', asy
 });
 
 // Запрос оператору: открытый ждёт человека; отвеченный и отменённый --
-// история. Доставка ответа актору: идёт -- работа, провал -- проблема.
+// история. Доставка ответа актору: идёт -- работа, провал -- проблема,
+// неподтверждённая (#261) ждёт решения человека: ответ мог дойти, и повтор
+// может доставить его дважды. Незнакомое состояние не выдаётся за работу.
 test('request and delivery tones', async () => {
   const { requestTone, deliveryTone } = await import('../src/features/access/state');
   expect(requestTone('open')).toBe('attention');
@@ -128,6 +130,8 @@ test('request and delivery tones', async () => {
   expect(deliveryTone('pending')).toBe('progress');
   expect(deliveryTone('delivered')).toBe('neutral');
   expect(deliveryTone('failed')).toBe('problem');
+  expect(deliveryTone('unconfirmed')).toBe('attention');
+  expect(deliveryTone('newer-state')).toBe('neutral');
 });
 
 // Актор и воркер Substrate: работающий и переходный -- работа, остановленный

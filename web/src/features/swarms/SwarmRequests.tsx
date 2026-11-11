@@ -6,6 +6,7 @@ import { prefersReducedMotion } from '@/hooks/motion';
 import type { SwarmRequest } from '@/services/brood/requests';
 import { deliveryTone, requestTone } from '@/features/access/state';
 import { LoadState, StatusBadge } from '@/features/access/shared';
+import { ConfirmDialog } from '@/features/substrate/components/ConfirmDialog';
 import { Section } from '@/features/substrate/components/form';
 import { DASH } from '@/features/substrate/format';
 import { formatDateTimeValue } from '@/utils/format';
@@ -16,6 +17,7 @@ import {
   emptyDraft,
   inboxSections,
   requestForm,
+  retryMayDuplicate,
 } from './requestState';
 import type { RequestInboxModel, RequestPlace } from './useSwarmRequests';
 import styles from '@/features/substrate/substrate.module.scss';
@@ -351,7 +353,6 @@ function AnswerDetails({
   retry?: (request: SwarmRequest) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation();
-  const [retrying, setRetrying] = useState(false);
   const summary = answerSummary(request) ?? {};
   const rows: Array<{ label: string; value: ReactNode; text?: boolean }> = [];
   if (summary.choice) rows.push({ label: t('swarm_requests.answer'), value: summary.choice });
@@ -381,7 +382,6 @@ function AnswerDetails({
       ),
     });
   }
-  const delivery = request.delivery;
   return (
     <dl className={local.answer}>
       {rows.map((row) => (
@@ -390,34 +390,92 @@ function AnswerDetails({
           <dd className={row.text ? local.text : local.chosen}>{row.value}</dd>
         </div>
       ))}
-      {delivery && (
+      {request.delivery && (
         <div>
           <dt>{t('swarm_requests.delivery')}</dt>
-          <dd className={local.delivery} aria-live="polite">
-            <StatusBadge tone={deliveryTone(delivery)}>
-              {t(`swarm_requests.delivery_states.${delivery}`, { defaultValue: delivery })}
-            </StatusBadge>
-            {deliveryError && <span>{deliveryError}</span>}
-            {retry && (
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={retrying}
-                onClick={async () => {
-                  setRetrying(true);
-                  try {
-                    await retry(request);
-                  } finally {
-                    setRetrying(false);
-                  }
-                }}
-              >
-                {t('swarm_requests.retry_delivery')}
-              </Button>
-            )}
-          </dd>
+          <Delivery request={request} reason={deliveryError} retry={retry} />
         </div>
       )}
     </dl>
+  );
+}
+
+/** Доставка ответа актору (#260): состояние, причина сервера из ответа на
+ * действие и повтор. Неподтверждённая (#261) говорит словами, что ответ мог
+ * дойти, и спрашивает перед повтором: он может доставить ответ дважды;
+ * повтор `failed` безопасен и идёт сразу. На время повтора кнопка
+ * заблокирована, а после доставки исчезает, поэтому фокус переходит к
+ * самой доставке: её новое состояние и причина — итог повтора. */
+function Delivery({
+  request,
+  reason,
+  retry,
+}: {
+  request: SwarmRequest;
+  reason?: string;
+  retry?: (request: SwarmRequest) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [retrying, setRetrying] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const outcomeRef = useRef<HTMLElement>(null);
+  const delivery = request.delivery ?? '';
+  const unconfirmed = delivery === 'unconfirmed';
+  const twice = Boolean(retry) && retryMayDuplicate(request);
+
+  const send = async () => {
+    if (!retry || retrying) return;
+    outcomeRef.current?.focus();
+    setRetrying(true);
+    try {
+      await retry(request);
+    } finally {
+      setRetrying(false);
+    }
+  };
+  const ask = () => {
+    if (twice) setAsking(true);
+    else void send();
+  };
+
+  return (
+    <dd ref={outcomeRef} tabIndex={-1} className={local.delivery} aria-live="polite">
+      <StatusBadge tone={deliveryTone(delivery)}>
+        {t(`swarm_requests.delivery_states.${delivery}`, { defaultValue: delivery })}
+      </StatusBadge>
+      {unconfirmed ? (
+        <span className={local.unconfirmed}>
+          <span>{t('swarm_requests.unconfirmed_note')}</span>
+          {reason && <span className={local.reason}>{reason}</span>}
+        </span>
+      ) : (
+        reason && <span>{reason}</span>
+      )}
+      {retry && (
+        <Button
+          variant="secondary"
+          size="sm"
+          loading={retrying}
+          aria-haspopup={twice ? 'dialog' : undefined}
+          onClick={ask}
+        >
+          {t('swarm_requests.retry_delivery')}
+        </Button>
+      )}
+      {twice && (
+        <ConfirmDialog
+          open={asking}
+          title={t('swarm_requests.retry_title')}
+          confirmText={t('swarm_requests.retry_delivery')}
+          onCancel={() => setAsking(false)}
+          onConfirm={() => {
+            setAsking(false);
+            void send();
+          }}
+        >
+          <p>{t('swarm_requests.retry_twice')}</p>
+        </ConfirmDialog>
+      )}
+    </dd>
   );
 }

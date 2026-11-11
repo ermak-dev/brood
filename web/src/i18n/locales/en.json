@@ -3298,9 +3298,13 @@
     "delivery_states": {
       "pending": "Pending",
       "delivered": "Delivered",
-      "failed": "Failed"
+      "failed": "Failed",
+      "unconfirmed": "Not confirmed"
     },
     "retry_delivery": "Retry delivery",
+    "unconfirmed_note": "Delivery is not confirmed: the answer may have reached the actor.",
+    "retry_title": "Retry the delivery?",
+    "retry_twice": "A retry may deliver the answer twice. The earlier delivery got no receipt, so the actor may already have the answer.",
     "read_only": "Only owners and editors of an active swarm can answer.",
     "cancelled_hint": "Closed without an answer.",
     "unknown_kind": "This panel version cannot answer this kind of request."
