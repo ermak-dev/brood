@@ -6,11 +6,13 @@ package guest
 // SPEC: ParseArtifactManifest accepts exactly one object with one artifacts
 // array of three entries (name/size/sha256, no unknown or duplicate keys,
 // closed name list, 0 < size <= 512 MiB, lowercase hex64 digest, no trailing
-// documents, 16 KiB read limit). FetchArtifacts GETs the manifest and each
-// artifact on the verified server route without proxy or redirects, checks
-// the ELF magic, streams through sha256 into the installer together with the
-// manifest size and digest and succeeds only when the installer consumed
-// exactly size bytes and the digest matches.
+// documents, 16 KiB read limit). FetchArtifacts GETs the manifest and hands
+// it to the release before any artifact request (#184); the release downloads
+// only the manifest artifacts it needs. Each download runs on the verified
+// server route without proxy or redirects, checks the ELF magic, streams
+// through sha256 into the installer together with the manifest size and
+// digest and succeeds only when the installer consumed exactly size bytes and
+// the digest matches. ReleaseID names the set by its canonical manifest text.
 // IMPLEMENTATION: httptest TLS server as Brood, recording installer.
 
 import (
@@ -151,6 +153,19 @@ func recordInstall(records *[]artifactInstall, fail bool) ArtifactInstaller {
 	}
 }
 
+// installEach: релиз, который качает каждый артефакт манифеста через install
+// в порядке манифеста, как прежний FetchArtifacts.
+func installEach(install ArtifactInstaller) ArtifactRelease {
+	return func(ctx context.Context, manifest ArtifactManifest, download ArtifactDownload) error {
+		for _, artifact := range manifest.Artifacts {
+			if err := download(ctx, artifact, install); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 // boundedArtifactError отвергает утечку токена и тел ответов в причине отказа.
 func boundedArtifactError(t *testing.T, err error) {
 	t.Helper()
@@ -228,7 +243,7 @@ func TestFetchArtifacts(t *testing.T) {
 	cfg := server.config()
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	var records []artifactInstall
-	if err := FetchArtifacts(context.Background(), cfg, nil, recordInstall(&records, false)); err != nil {
+	if err := FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&records, false))); err != nil {
 		t.Fatal(err)
 	}
 	if len(records) != 3 {
@@ -245,7 +260,7 @@ func TestFetchArtifacts(t *testing.T) {
 	}
 	// Повторная загрузка проходит: манифест и тела не менялись.
 	records = nil
-	if err := FetchArtifacts(context.Background(), cfg, nil, recordInstall(&records, false)); err != nil || len(records) != 3 {
+	if err := FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&records, false))); err != nil || len(records) != 3 {
 		t.Fatalf("second fetch: %v %+v", err, records)
 	}
 }
@@ -262,51 +277,51 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 		server.mu.Lock()
 		server.serve["bro"] = append(artifactBody("bro-payload"), 'X')
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("not elf", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["bro"] = []byte("#!/bin/sh\nprivate-token\n")
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("truncated stream", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["claude"] = files["claude"][:len(files["claude"])-2]
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("stream longer than size", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["bro"] = append(append([]byte{}, files["bro"]...), 'X')
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("empty stream", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["brood-guest"] = []byte{}
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("install refused", func(t *testing.T) {
 		_, cfg := newFixture(t)
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, true)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, true))))
 	})
 	t.Run("install did not consume", func(t *testing.T) {
 		_, cfg := newFixture(t)
 		skipping := func(context.Context, string, io.Reader, int64, string) error { return nil }
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, skipping))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(skipping)))
 	})
 	t.Run("artifact status", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.files["bro"] = nil
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	for name, manifest := range map[string]string{
 		"manifest status":  "",
@@ -320,7 +335,7 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 				}
 				return http.StatusOK
 			}())
-			boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+			boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 		})
 	}
 	t.Run("redirect denied", func(t *testing.T) {
@@ -331,7 +346,7 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 		server.mu.Lock()
 		server.redirect = sink.URL
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 		if redirected {
 			t.Fatal("redirect followed")
 		}
@@ -339,11 +354,122 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 	t.Run("untrusted certificate", func(t *testing.T) {
 		_, cfg := newFixture(t)
 		cfg.CAPEM = nil
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("invalid route", func(t *testing.T) {
 		_, cfg := newFixture(t)
 		cfg.Token = "short"
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, recordInstall(&[]artifactInstall{}, false)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+	})
+}
+
+// TestArtifactManifestReleaseID: id набора (#184) есть sha256 канонического
+// текста манифеста: не зависит от порядка записей, меняется с любым именем,
+// размером или digest; у манифеста вне закрытого списка id нет.
+func TestArtifactManifestReleaseID(t *testing.T) {
+	a, b, c := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	manifest := ArtifactManifest{Artifacts: []Artifact{{"bro", 10, a}, {"brood-guest", 20, b}, {"claude", 30, c}}}
+	// Независимый расчёт: printf 'brood guest release v1\nbro 10 a…\n
+	// brood-guest 20 b…\nclaude 30 c…\n' | sha256sum.
+	const want = "f9e92918e7eee8ea2afc3e83010634025f668241533ce140af9a3a7a662dd12f"
+	if id, err := manifest.ReleaseID(); err != nil || id != want {
+		t.Fatalf("release id %q %v, want %s", id, err, want)
+	}
+	reordered := ArtifactManifest{Artifacts: []Artifact{manifest.Artifacts[2], manifest.Artifacts[0], manifest.Artifacts[1]}}
+	if id, err := reordered.ReleaseID(); err != nil || id != want {
+		t.Fatalf("reordered manifest id %q %v", id, err)
+	}
+	with := func(i int, change func(*Artifact)) ArtifactManifest {
+		m := ArtifactManifest{Artifacts: append([]Artifact{}, manifest.Artifacts...)}
+		change(&m.Artifacts[i])
+		return m
+	}
+	changed := map[string]ArtifactManifest{
+		"size":    with(2, func(x *Artifact) { x.Size = 31 }),
+		"digest":  with(0, func(x *Artifact) { x.SHA256 = strings.Repeat("d", 64) }),
+		"swapped": {Artifacts: []Artifact{{"bro", 10, b}, {"brood-guest", 20, a}, {"claude", 30, c}}},
+	}
+	seen := map[string]string{want: "original"}
+	for name, m := range changed {
+		id, err := m.ReleaseID()
+		if err != nil || len(id) != 64 || !isLowerHex(id) {
+			t.Fatalf("%s: id %q %v", name, id, err)
+		}
+		if other, dup := seen[id]; dup {
+			t.Fatalf("%s: id equals %s", name, other)
+		}
+		seen[id] = name
+	}
+	invalid := map[string]ArtifactManifest{
+		"empty":            {},
+		"missing name":     {Artifacts: manifest.Artifacts[:2]},
+		"duplicate name":   {Artifacts: []Artifact{{"bro", 10, a}, {"bro", 10, a}, {"claude", 30, c}}},
+		"unknown name":     {Artifacts: []Artifact{{"bro", 10, a}, {"sh", 20, b}, {"claude", 30, c}}},
+		"extra entry":      {Artifacts: append(append([]Artifact{}, manifest.Artifacts...), Artifact{"bro", 10, a})},
+		"zero size":        with(1, func(x *Artifact) { x.Size = 0 }),
+		"oversize":         with(1, func(x *Artifact) { x.Size = 512<<20 + 1 }),
+		"uppercase digest": with(1, func(x *Artifact) { x.SHA256 = strings.Repeat("B", 64) }),
+		"short digest":     with(1, func(x *Artifact) { x.SHA256 = "bb" }),
+		"newline in name":  with(0, func(x *Artifact) { x.Name = "bro\nclaude 1 " + c }),
+	}
+	for name, m := range invalid {
+		if id, err := m.ReleaseID(); err == nil || id != "" {
+			t.Fatalf("%s: invalid manifest got id %q", name, id)
+		}
+	}
+}
+
+// TestFetchArtifactsHandsManifestToRelease: релиз получает разобранный
+// манифест до первого запроса артефакта и качает только то, что ему нужно;
+// чужой артефакт загрузчик не запрашивает (#184).
+func TestFetchArtifactsHandsManifestToRelease(t *testing.T) {
+	files := artifactFiles()
+	server := newArtifactServer(t, files)
+	server.set(artifactManifestJSON(files), http.StatusOK)
+	cfg := server.config()
+	want, err := ParseArtifactManifest([]byte(artifactManifestJSON(files)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestOnly := []string{"/api/proxmox/artifacts/actor-1/1"}
+	// Проверенный установленный набор: релиз не качает ничего.
+	reuse := func(_ context.Context, manifest ArtifactManifest, _ ArtifactDownload) error {
+		if !slices.Equal(manifest.Artifacts, want.Artifacts) {
+			t.Errorf("release manifest %+v, want %+v", manifest, want)
+		}
+		if got := server.requestsSnapshot(); !slices.Equal(got, manifestOnly) {
+			t.Errorf("artifacts requested before the release decided: %v", got)
+		}
+		return nil
+	}
+	if err := FetchArtifacts(context.Background(), cfg, nil, reuse); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.requestsSnapshot(); !slices.Equal(got, manifestOnly) {
+		t.Fatalf("reuse downloaded artifacts: %v", got)
+	}
+	// Загрузчик принимает только записи манифеста: чужое имя или чужой digest
+	// не уходят на сервер.
+	for name, foreign := range map[string]Artifact{
+		"other digest": {Name: "bro", Size: want.Artifacts[0].Size, SHA256: strings.Repeat("0", 64)},
+		"other size":   {Name: "bro", Size: want.Artifacts[0].Size + 1, SHA256: want.Artifacts[0].SHA256},
+		"other name":   {Name: "sh", Size: want.Artifacts[0].Size, SHA256: want.Artifacts[0].SHA256},
+	} {
+		t.Run(name, func(t *testing.T) {
+			before := len(server.requestsSnapshot())
+			release := func(ctx context.Context, _ ArtifactManifest, download ArtifactDownload) error {
+				return download(ctx, foreign, recordInstall(&[]artifactInstall{}, false))
+			}
+			boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, release))
+			if got := server.requestsSnapshot()[before:]; !slices.Equal(got, manifestOnly) {
+				t.Fatalf("foreign artifact requested: %v", got)
+			}
+		})
+	}
+	t.Run("release refused", func(t *testing.T) {
+		refuse := func(context.Context, ArtifactManifest, ArtifactDownload) error {
+			return fmt.Errorf("private-token payload")
+		}
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, refuse))
 	})
 }

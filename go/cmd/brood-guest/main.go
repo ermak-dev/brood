@@ -6,18 +6,14 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,10 +65,10 @@ type dependencies struct {
 	model   func(context.Context, relay.ClientConfig) (service, error)
 	git     func(context.Context, relay.ClientConfig) (service, error)
 	origin  func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error)
-	// artifacts ставит три бинарных артефакта сервера (#155); reexec
-	// подменяет процесс на установленную runtime-стадию.
-	artifacts func(context.Context, relay.ClientConfig, []string, guest.ArtifactInstaller) error
-	reexec    func(env []string) error
+	// artifacts читает манифест сервера и отдаёт его установщику набора
+	// (#155, #184); reexec подменяет процесс на runtime-стадию набора.
+	artifacts func(context.Context, relay.ClientConfig, []string, guest.ArtifactRelease) error
+	reexec    func(executable string, env []string) error
 	// boot — UID 1000 цель --brood-guest-autostart; autorun — root-цикл,
 	// который её запускает до появления сессии Claude.
 	boot    func(context.Context) error
@@ -222,8 +218,9 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		boundedClose(network)
 		return err
 	}
-	// Артефакты runtime-стадии уже в /opt/brood/bin: bro и claude видны
-	// хелперам через PATH, не через копирование в /usr/local/bin.
+	// Артефакты runtime-стадии уже в /opt/brood/bin (ссылка на проверенный
+	// набор, #184): bro и claude видны хелперам через PATH, не через
+	// копирование в /usr/local/bin.
 	if current := os.Getenv("PATH"); current == "" {
 		os.Setenv("PATH", "/opt/brood/bin")
 	} else {
@@ -333,24 +330,41 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	return errors.New("guest DHCP, actor service or relay stopped unexpectedly")
 }
 
-// artifactRoot — корень артефактов Bootstrap (#155); переназначается тестами.
+// artifactRoot: корень наборов артефактов Bootstrap (#155, #184);
+// переназначается тестами.
 var artifactRoot = "/opt/brood"
 
-// bootstrapArtifacts ставит проверенные артефакты сервера и переходит
-// в runtime-стадию. Причины отказов статичны и ограничены: bootstrap
-// не стартует сервисы без проверенных бинарников (fail closed).
+// bootstrapArtifacts ставит проверенный набор артефактов сервера, переключает
+// на него /opt/brood/bin (#184) и переходит в runtime-стадию этого набора.
+// Причины отказов статичны и ограничены: bootstrap не стартует сервисы без
+// проверенного серверного манифеста и набора (fail closed).
 func bootstrapArtifacts(ctx context.Context, c config, d dependencies, network service) error {
 	if d.artifacts == nil || d.reexec == nil {
 		return errors.New("guest bootstrap unavailable")
 	}
-	if err := d.artifacts(ctx, c.relay, c.hosts, installArtifact); err != nil {
+	var executable string
+	var releaseErr error
+	release := func(ctx context.Context, manifest guest.ArtifactManifest, download guest.ArtifactDownload) error {
+		executable, releaseErr = installRelease(ctx, artifactRoot, manifest, download, warnBootstrap)
+		return releaseErr
+	}
+	if err := d.artifacts(ctx, c.relay, c.hosts, release); err != nil || executable == "" {
+		if releaseErr != nil {
+			return errors.New("guest bootstrap failed: " + releaseErr.Error())
+		}
 		return errors.New("guest bootstrap failed: artifacts not delivered")
 	}
 	boundedClose(network)
-	if err := d.reexec(runtimeEnv(c)); err != nil {
+	if err := d.reexec(executable, runtimeEnv(c)); err != nil {
 		return errors.New("guest bootstrap failed: runtime stage not started")
 	}
 	return nil
+}
+
+// warnBootstrap печатает в консоль CT то, что не остановило старт: текст
+// статичный, как у отказов bootstrap.
+func warnBootstrap(err error) {
+	fmt.Fprintln(os.Stderr, "guest bootstrap warning: "+err.Error())
 }
 
 // runtimeEnv — окружение runtime-стадии: служебные PATH/HOME/LANG, исходные
@@ -360,125 +374,13 @@ func runtimeEnv(c config) []string {
 	return append(env, "BROOD_GUEST_STAGE=runtime")
 }
 
-// installArtifact ставит один артефакт атомарно: спул в tmp, сверка его
-// sha256 с digest манифеста, 0755, fsync файла и каталога, rename в bin.
-// Повторная установка идентичного бинарника допустима, когда и он, и поток
-// совпадают с манифестом; существующий другой контент или не-файл — отказ.
-func installArtifact(_ context.Context, name string, stream io.Reader, size int64, digest string) error {
-	// Имена закрыты списком манифеста; повторная проверка отсекает
-	// произвольные пути из ошибочной доставки.
-	if name != "brood-guest" && name != "bro" && name != "claude" {
-		return errors.New("guest artifact name rejected")
-	}
-	dir := filepath.Join(artifactRoot, "bin")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return errors.New("guest artifact directory unavailable")
-	}
-	if err := os.MkdirAll(filepath.Join(artifactRoot, "tmp"), 0755); err != nil {
-		return errors.New("guest artifact staging unavailable")
-	}
-	destination := filepath.Join(dir, name)
-	if existing, err := os.Lstat(destination); err == nil {
-		if !existing.Mode().IsRegular() {
-			return errors.New("guest artifact destination not a regular file")
-		}
-		sum, err := fileDigest(destination)
-		if err != nil {
-			return errors.New("guest artifact destination unreadable")
-		}
-		received, err := digestOf(stream, size)
-		if err != nil {
-			return errors.New("guest artifact stream invalid")
-		}
-		if hex.EncodeToString(received) != digest {
-			return errors.New("guest artifact digest mismatch")
-		}
-		// Установленный файл сверяется с манифестом, а не только с потоком:
-		// совпадение с неверной доставкой не делает его верным (#265).
-		if hex.EncodeToString(sum) != digest {
-			return errors.New("guest artifact differs from the installed binary")
-		}
-		return nil
-	}
-	// Спул и rename дают атомарную публикацию; PID гасит гонки процессов.
-	spool, err := os.CreateTemp(filepath.Join(artifactRoot, "tmp"), name+"."+strconv.Itoa(os.Getpid())+".")
-	if err != nil {
-		return errors.New("guest artifact staging unavailable")
-	}
-	defer os.Remove(spool.Name())
-	spooled := sha256.New()
-	written, err := io.Copy(io.MultiWriter(spool, spooled), io.LimitReader(stream, size))
-	if err != nil || written != size {
-		spool.Close()
-		return errors.New("guest artifact stream invalid")
-	}
-	// Digest спула сверяется до rename: неверный поток не попадает в bin и не
-	// блокирует следующую доставку верного артефакта (#265).
-	if hex.EncodeToString(spooled.Sum(nil)) != digest {
-		spool.Close()
-		return errors.New("guest artifact digest mismatch")
-	}
-	if err := spool.Chmod(0755); err != nil {
-		spool.Close()
-		return errors.New("guest artifact permissions unavailable")
-	}
-	if err := spool.Sync(); err != nil {
-		spool.Close()
-		return errors.New("guest artifact sync failed")
-	}
-	if err := spool.Close(); err != nil {
-		return errors.New("guest artifact close failed")
-	}
-	if err := os.Rename(spool.Name(), destination); err != nil {
-		return errors.New("guest artifact publish failed")
-	}
-	return syncDir(dir)
+// reexecRuntime подменяет процесс на brood-guest проверенного набора
+// (releases/<id>/brood-guest, на него же указывает /opt/brood/bin): argv
+// сохраняется, stdio наследуется, окружение собрано runtimeEnv.
+func reexecRuntime(executable string, env []string) error {
+	return syscall.Exec(executable, os.Args, env)
 }
 
-// reexecRuntime подменяет процесс на установленный brood-guest runtime-стадии:
-// argv сохраняется, stdio наследуется, окружение — собранное runtimeEnv.
-func reexecRuntime(env []string) error {
-	return syscall.Exec("/opt/brood/bin/brood-guest", os.Args, env)
-}
-
-func fileDigest(path string) ([]byte, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256(data)
-	return sum[:], nil
-}
-
-func digestOf(stream io.Reader, size int64) ([]byte, error) {
-	if size <= 0 || size > 512<<20 {
-		return nil, errors.New("invalid artifact size")
-	}
-	digest := sha256.New()
-	written, err := io.Copy(digest, io.LimitReader(stream, size+1))
-	if err != nil {
-		return nil, err
-	}
-	if written != size {
-		return nil, errors.New("stream shorter than size")
-	}
-	if extra, _ := io.Copy(io.Discard, stream); extra != 0 {
-		return nil, errors.New("stream longer than size")
-	}
-	return digest.Sum(nil), nil
-}
-
-func syncDir(dir string) error {
-	handle, err := os.Open(dir)
-	if err != nil {
-		return errors.New("guest artifact directory unavailable")
-	}
-	defer handle.Close()
-	if err := handle.Sync(); err != nil {
-		return errors.New("guest artifact directory sync failed")
-	}
-	return nil
-}
 func boundedClose(services ...service) error {
 	done := make(chan error, 1)
 	go func() {
