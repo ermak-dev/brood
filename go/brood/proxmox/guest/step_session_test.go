@@ -5,12 +5,12 @@ package guest
 // FEATURE: Step session policy (#224).
 // SPEC: After a successful workspace_attest root starts the next Claude
 // session in the step mode: Claude Code managed settings allow only managed
-// hooks, user and local settings are not loaded, MCP is brood alone, the Git
-// global configuration is a root file with the identity only, and the bash
-// startup files of the actor home are put aside in the quiet window, as in the
-// image, which has none. No global Claude configuration of the home brings env
-// into the step session. A free session (operator restart, CT start) keeps the
-// launch it had before #224.
+// hooks and carry the autonomous profile (#164), user and local settings are
+// not loaded, MCP is brood alone, the Git global configuration is a root file
+// with the identity only, and the bash startup files of the actor home are put
+// aside in the quiet window, as in the image, which has none. No global Claude
+// configuration of the home brings env into the step session. A free session
+// (operator restart, CT start) keeps the launch it had before #224.
 
 import (
 	"bytes"
@@ -81,10 +81,14 @@ func TestStepPolicyManagedSettingsAreRootOnly(t *testing.T) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatalf("managed settings are not a JSON object: %q", data)
 	}
-	// Только управляемые hooks; согласие на bypass переезжает сюда, потому что
-	// ~/.claude/settings.json в сессии шага не читается.
-	if want := map[string]any{"allowManagedHooksOnly": true, "skipDangerousModePermissionPrompt": true}; !reflect.DeepEqual(settings, want) {
-		t.Fatalf("managed settings %v", settings)
+	// Только управляемые hooks; согласие на bypass и автономный профиль #164
+	// переезжают сюда, потому что ~/.claude/settings.json в сессии шага не
+	// читается. Ни hooks, ни env, ни MCP, ни plugins, ни statusLine здесь нет.
+	want := map[string]any{"allowManagedHooksOnly": true, "skipDangerousModePermissionPrompt": true,
+		"crossSessionInbound": "accept", "feedbackDrafts": "off",
+		"permissions": map[string]any{"deny": []any{"SendMessage", "ListAgents", "AskUserQuestion", "EnterWorktree", "ExitWorktree", "SendFeedback"}}}
+	if !reflect.DeepEqual(settings, want) {
+		t.Fatalf("managed settings %v, want %v", settings, want)
 	}
 	// Владелец root, запись только ему: UID 1000 не правит, не подменяет и не
 	// удаляет политику. Claude читает её как other.

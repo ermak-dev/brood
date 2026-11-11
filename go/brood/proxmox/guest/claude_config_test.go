@@ -5,10 +5,11 @@ package guest
 // FEATURE: Unattended Claude start (#148).
 // SPEC: Claude starts with --dangerously-skip-permissions and the brood MCP
 // config. Before exec the UID 1000 wrapper merges onboarding, theme, resume and
-// project trust into ~/.claude.json and skipDangerousModePermissionPrompt into
-// ~/.claude/settings.json, preserving unknown keys. Writes are atomic, never
-// through a symlink or hard link, limited to 1 MiB; a malformed file becomes a
-// minimal valid object, never an empty file (mop edit_json lesson).
+// project trust into ~/.claude.json and skipDangerousModePermissionPrompt and
+// the autonomous profile (#164) into ~/.claude/settings.json, preserving
+// unknown keys. Writes are atomic, never through a symlink or hard link,
+// limited to 1 MiB; a malformed file becomes a minimal valid object, never an
+// empty file (mop edit_json lesson).
 
 import (
 	"bytes"
@@ -55,6 +56,7 @@ func assertUnattended(t *testing.T, home string) (map[string]any, map[string]any
 	if settings["skipDangerousModePermissionPrompt"] != true {
 		t.Fatalf("bypass prompt left enabled: %v", settings)
 	}
+	assertAutonomousProfile(t, settings)
 	for _, path := range []string{filepath.Join(home, ".claude.json"), filepath.Join(home, ".claude", "settings.json")} {
 		if info, err := os.Lstat(path); err != nil || info.Mode().Perm() != 0600 || !info.Mode().IsRegular() {
 			t.Fatalf("%s mode: %v %v", path, info, err)

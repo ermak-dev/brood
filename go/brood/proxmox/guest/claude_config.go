@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -16,9 +17,61 @@ const claudeConfigLimit = 1 << 20
 
 var jsonTrue = json.RawMessage("true")
 
+// autonomousDeny перечисляет встроенные инструменты Claude Code, которые
+// автономному актору не нужны или вредны (профиль mop, #164). Правило deny
+// убирает инструмент из списка модели, а не только отказывает при вызове, и
+// под --dangerously-skip-permissions тоже (запуск закреплённой 2.1.310 без
+// сети):
+//   - SendMessage и ListAgents видят только сессии этого CT; сообщения роя
+//     идут через MCP-сервер brood;
+//   - AskUserQuestion паркует сессию: человека у терминала нет;
+//   - EnterWorktree и ExitWorktree уводят работу из /workspace/project, а
+//     файлы .claude/worktrees откажут следующему подтверждению шага;
+//   - SendFeedback копит черновики отзыва, показывать их некому.
+var autonomousDeny = []string{"SendMessage", "ListAgents", "AskUserQuestion", "EnterWorktree", "ExitWorktree", "SendFeedback"}
+
+// autonomousSettings сливает в настройки Claude согласие на bypass и
+// автономный профиль (#164): crossSessionInbound "accept" принимает сообщения
+// других сессий без диалога Deliver/Deny, даже когда Claude не сверяет режим
+// из конверта или сессия ещё стартует; feedbackDrafts "off" выключает
+// черновики отзыва. Эти ключи принадлежат brood и ставятся при каждом старте;
+// deny только дописывается, прочие ключи и записи актора остаются.
+func autonomousSettings(o map[string]json.RawMessage) bool {
+	changed := setJSON(o, "skipDangerousModePermissionPrompt", jsonTrue)
+	changed = setJSON(o, "crossSessionInbound", json.RawMessage(`"accept"`)) || changed
+	changed = setJSON(o, "feedbackDrafts", json.RawMessage(`"off"`)) || changed
+	return denyTools(o, autonomousDeny) || changed
+}
+
+// denyTools дописывает в permissions.deny недостающие имена после записей
+// актора; остальные члены permissions не меняются. permissions не-объектом или
+// deny не-массивом Claude Code не прочитал бы: они заменяются.
+func denyTools(o map[string]json.RawMessage, names []string) bool {
+	permissions, valid := jsonObject(o["permissions"])
+	var deny []json.RawMessage
+	raw := bytes.TrimSpace(permissions["deny"])
+	listed := len(raw) > 0 && raw[0] == '[' && json.Unmarshal(raw, &deny) == nil
+	changed := !valid || !listed
+	for _, name := range names {
+		if !slices.ContainsFunc(deny, func(entry json.RawMessage) bool {
+			var denied string
+			return json.Unmarshal(entry, &denied) == nil && denied == name
+		}) {
+			quoted, _ := json.Marshal(name)
+			deny, changed = append(deny, quoted), true
+		}
+	}
+	if changed {
+		permissions["deny"], _ = json.Marshal(deny)
+		o["permissions"], _ = json.Marshal(permissions)
+	}
+	return changed
+}
+
 // prepareClaudeConfig keeps an unattended Claude off its onboarding (theme and
-// security notes), long-resume, project-trust and bypass-mode dialogs. Unknown
-// user keys survive; both files are attempted even if one is refused.
+// security notes), long-resume, project-trust and bypass-mode dialogs and
+// merges the autonomous profile into the user settings. Unknown user keys
+// survive; both files are attempted even if one is refused.
 func prepareClaudeConfig(home, project string) error {
 	homeFD, err := openSecretDirectory(home, false)
 	if err != nil {
@@ -41,9 +94,7 @@ func prepareClaudeConfig(home, project string) error {
 		reasons = append(reasons, "~/.claude is not a private directory; settings left unchanged")
 	} else {
 		defer unix.Close(settings)
-		if err := mergeClaudeJSON(settings, "settings.json", func(o map[string]json.RawMessage) bool {
-			return setJSON(o, "skipDangerousModePermissionPrompt", jsonTrue)
-		}); err != nil {
+		if err := mergeClaudeJSON(settings, "settings.json", autonomousSettings); err != nil {
 			reasons = append(reasons, err.Error())
 		}
 	}
