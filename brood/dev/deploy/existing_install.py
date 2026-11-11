@@ -17,6 +17,12 @@ from brood.dev.deploy.go_server import OWNER
 from brood.dev.substrate import local
 
 
+class RetentionRefused(RuntimeError):
+    """Отказ самого helper prune (#247): pod завершился Failed или ответ нечестен.
+    Только он - предупреждение после прошедшей выкладки; сбой жизненного цикла helper
+    (identity, удаление по UID, API) - отказ выкладки, как у inspect."""
+
+
 class ExistingInstall:
     def __init__(self, deployment, clock=time.monotonic, sleep=time.sleep, wall=time.time, fenced=None,
                  lock_path=None):
@@ -200,15 +206,15 @@ class ExistingInstall:
             raise RuntimeError("existing deployment identity changed after recovery rollout")
         self.state = state
 
-    def manifests(self, image, state, operation, name, destination, sha256=None):
+    def manifests(self, image, state, operation, name, destination, sha256=None, keep=None):
         if not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
             raise RuntimeError("database helper requires the newly built digest-pinned Go image")
-        if operation not in {"snapshot", "inspect", "verify"}:
+        if operation not in {"snapshot", "inspect", "verify", "prune"}:
             raise RuntimeError("unsupported database helper operation")
         labels = {**OWNER, "brood.dev/database-helper": name}
         metadata = {"name": name, "namespace": "brood", "labels": labels}
         args = ["--path", state["path"]]
-        if operation in {"snapshot", "verify"}:
+        if operation in {"snapshot", "verify", "prune"}:
             if not destination or not re.fullmatch(r"/data/\.brood-snapshot-[a-z0-9-]+\.db", destination):
                 raise RuntimeError("invalid private database snapshot destination")
         if operation == "snapshot":
@@ -218,6 +224,11 @@ class ExistingInstall:
                 raise RuntimeError("verify helper requires the snapshot sha256 hash")
             # Проверяется verified snapshot, а не живая БД: источник подменён.
             args = ["--path", destination, "--sha256", sha256]
+        if operation == "prune":
+            # Хранение снимков (#247): снимок этой выкладки helper не удаляет никогда.
+            if type(keep) is not int or keep < 1:
+                raise RuntimeError("snapshot retention must keep at least one snapshot")
+            args = ["--current", destination, "--keep", str(keep)]
         pod = {"apiVersion": "v1", "kind": "Pod", "metadata": metadata, "spec": {
             "restartPolicy": "Never", "activeDeadlineSeconds": 180, "terminationGracePeriodSeconds": 10,
             "automountServiceAccountToken": False, "enableServiceLinks": False,
@@ -231,7 +242,8 @@ class ExistingInstall:
                     "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}},
                 "resources": {"requests": {"cpu": "100m", "memory": "64Mi"},
                               "limits": {"cpu": "1", "memory": "256Mi"}},
-                "volumeMounts": [{"name": "data", "mountPath": "/data", "readOnly": operation != "snapshot"}]}],
+                "volumeMounts": [{"name": "data", "mountPath": "/data",
+                                  "readOnly": operation not in {"snapshot", "prune"}}]}],
             "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": "brood-go-data"}}]}}
         policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": metadata,
                   "spec": {"podSelector": {"matchLabels": {"brood.dev/database-helper": name}},
@@ -255,6 +267,20 @@ class ExistingInstall:
             return data
         except (ValueError, TypeError, KeyError):
             raise RuntimeError("database helper returned invalid metadata or no enabled administrator") from None
+
+    def retention(self, raw, keep):
+        """Ответ prune: сохранён именно снимок этой выкладки, не больше keep снимков."""
+        try:
+            data = json.loads(raw)
+            if (not isinstance(data, dict) or set(data) != {"current", "kept", "removed"}
+                    or data["current"] != Path(self.snapshot_path).name
+                    or type(data["kept"]) is not int or not 1 <= data["kept"] <= keep
+                    or type(data["removed"]) is not int or data["removed"] < 0):
+                raise ValueError
+            return data
+        except (ValueError, TypeError):
+            raise RetentionRefused("snapshot retention helper returned an invalid result or did not keep "
+                                   "this deploy's snapshot") from None
 
     @staticmethod
     def verification(raw):
@@ -314,14 +340,14 @@ class ExistingInstall:
                 or (spec.get("nodeName") and spec["nodeName"] != self.state["node"])):
             raise RuntimeError("unsafe database helper runtime configuration")
 
-    def execute(self, image, operation):
+    def execute(self, image, operation, keep=None):
         self.require_owner()
         state = self.guard()
         name = "brood-db-" + uuid.uuid4().hex
         if operation == "snapshot":
             self.snapshot_path = "/data/.brood-snapshot-" + uuid.uuid4().hex + ".db"
         sha256 = self.before["sha256"] if operation == "verify" and self.before else None
-        pod, policy = self.manifests(image, state, operation, name, self.snapshot_path, sha256=sha256)
+        pod, policy = self.manifests(image, state, operation, name, self.snapshot_path, sha256=sha256, keep=keep)
         created = []
         with tempfile.TemporaryDirectory(prefix="brood-database-helper-") as directory:
             path = Path(directory) / "helper.json"
@@ -344,6 +370,8 @@ class ExistingInstall:
                 raw = self.command("logs", name, "-c", "database", "--limit-bytes=4096")
                 if operation == "verify":
                     return self.verification(raw)
+                if operation == "prune":
+                    return self.retention(raw, keep)
                 return self.metadata(raw, snapshot=operation == "snapshot")
             finally:
                 for obj, uid in reversed(created):
@@ -367,7 +395,10 @@ class ExistingInstall:
                         r"|missing (table|index|trigger|view) \w+|found \d+, want \d+"
                         r"|swarm primary owner has no owner grant|workflow revision counters differ from definitions)")
     FAILURES = re.compile(SCHEMA.pattern + r"|snapshot sha256 does not match the verified snapshot"
-                          r"|snapshot is too large to verify in memory")
+                          r"|snapshot is too large to verify in memory"
+                          # Отказы prune (store.PruneSnapshots): без имён файлов.
+                          r"|cannot remove an old snapshot|cannot list the snapshot directory"
+                          r"|current snapshot (must exist as a regular file|disappeared during pruning)")
 
     def await_helper(self, operation, name, expected, uid, timeout=190, interval=2):
         """Ждёт любой терминальный статус helper; Failed - сразу, а не по таймауту."""
@@ -380,7 +411,8 @@ class ExistingInstall:
             if phase == "Succeeded":
                 return
             if phase == "Failed":
-                raise RuntimeError(self.failure(operation, name, actual))
+                refusal = RetentionRefused if operation == "prune" else RuntimeError
+                raise refusal(self.failure(operation, name, actual))
             if self.clock() >= deadline:
                 raise RuntimeError(f"owned database helper {operation} did not finish within {timeout}s "
                                    f"(phase={phase if phase in {'Pending', 'Running'} else 'unknown'}); "
@@ -1011,6 +1043,22 @@ class ExistingInstall:
                                + self.RELEASE_PROCEDURE + "; no automatic database restore is attempted") from None
         if not (self.handed_off or self.ambiguous):
             self.drop_lease()
+
+    def retain(self, image, keep):
+        """Хранение снимков (#247): после успешной выкладки, ещё под Lease, helper нового
+        образа тем же путём, что snapshot, оставляет снимок этой выкладки и keep-1 самых
+        новых прочих .brood-snapshot-<hex>.db на PVC. Отказ самого prune - данные, не
+        отказ: выкладка прошла, лишь часть старых снимков могла остаться. Иной сбой
+        (identity, удаление helper по UID, API, ОС) пробрасывается: helper с записываемым
+        томом мог остаться, и это решает оператор, как после inspect. keep None - ничего."""
+        if keep is None:
+            return {"enabled": False}
+        if not self.snapshot_path or not self.before:
+            return {"enabled": True, "keep": keep, "error": "this deploy made no verified snapshot to keep"}
+        try:
+            return {"enabled": True, "keep": keep, **self.execute(image, "prune", keep=keep)}
+        except RetentionRefused as error:
+            return {"enabled": True, "keep": keep, "error": str(error)}
 
     def finish(self):
         """Все эффекты завершены (apply, inspect, edge, probe): только теперь Lease снимается."""

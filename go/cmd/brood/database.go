@@ -12,8 +12,8 @@ import (
 )
 
 func cmdDatabase(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "inspect" && args[0] != "snapshot" && args[0] != "verify") {
-		fmt.Fprintln(stderr, "brood database: expected inspect, snapshot or verify")
+	if len(args) == 0 || (args[0] != "inspect" && args[0] != "snapshot" && args[0] != "verify" && args[0] != "prune") {
+		fmt.Fprintln(stderr, "brood database: expected inspect, snapshot, verify or prune")
 		return 1
 	}
 	action := args[0]
@@ -30,15 +30,27 @@ func cmdDatabase(args []string, stdout, stderr io.Writer) int {
 	if action == "verify" {
 		flags.StringVar(&wantSHA, "sha256", "", "expected SHA-256 of the snapshot")
 	}
+	// Хранение снимков выкладки (#247): --current никогда не удаляется.
+	var current string
+	var keep int
+	if action == "prune" {
+		flags.StringVar(&current, "current", "", "snapshot of this deployment, always kept")
+		flags.IntVar(&keep, "keep", 0, "snapshots to keep, including --current")
+	}
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "brood database: invalid arguments; use --path, --timeout, and --output for snapshot")
+		fmt.Fprintln(stderr, "brood database: invalid arguments; use --path and --timeout, --output for snapshot, "+
+			"--sha256 for verify, --current and --keep for prune")
+		return 1
+	}
+	if action == "prune" && (*path != "" || current == "" || keep < 1) {
+		fmt.Fprintln(stderr, "brood database: prune requires --current and --keep of at least 1, without --path")
 		return 1
 	}
 	if action == "verify" && wantSHA == "" {
 		fmt.Fprintln(stderr, "brood database: verify requires --path and --sha256")
 		return 1
 	}
-	if *path == "" || (action == "snapshot" && output == "") {
+	if action != "prune" && (*path == "" || (action == "snapshot" && output == "")) {
 		fmt.Fprintln(stderr, "brood database: --path is required; snapshot also requires --output")
 		return 1
 	}
@@ -55,6 +67,8 @@ func cmdDatabase(args []string, stdout, stderr io.Writer) int {
 		metadata, err = store.InspectDatabase(ctx, *path)
 	case "verify":
 		metadata, err = store.VerifyDatabaseSchema(ctx, *path, wantSHA)
+	case "prune":
+		metadata, err = store.PruneSnapshots(ctx, current, keep)
 	default:
 		metadata, err = store.SnapshotDatabase(ctx, *path, output)
 	}

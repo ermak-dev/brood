@@ -8,7 +8,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from brood.common import config
-from brood.dev.deploy import edge
+from brood.dev.deploy import disk, edge
 from brood.dev.deploy.existing_install import ExistingInstall
 from brood.dev.deploy.go_server import GIT_REMOTES, Deploy as GoDeploy, actor_model_environment, git_remote_hosts
 from brood.dev.deploy.infrastructure import Infrastructure
@@ -55,6 +55,7 @@ def settings(get):
     values.update(actor_model_environment(get))
     # Только форма, без DNS: отказ до сборки edge; значение берёт Go-выкладка.
     git_remote_hosts(get(GIT_REMOTES))
+    disk.settings(get)
     return values
 
 
@@ -87,6 +88,8 @@ def identity(obj, kind, name):
 class Deployment:
     def __init__(self, cluster, get=config.get, project=config.PROJECT, runner=subprocess.run):
         self.cluster, self.get, self.project, self.runner = cluster, get, Path(project), runner
+        # Тег edge этой выкладки: уборка Docker (#247) его не удаляет.
+        self.edge_tag = None
 
     def get_object(self, kind, name):
         code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "-n", "brood",
@@ -127,7 +130,7 @@ class Deployment:
     def build_edge(self):
         with tempfile.TemporaryDirectory(prefix="brood-edge-build-") as directory:
             metadata = Path(directory) / "metadata.json"
-            tag = "localhost:5002/brood-go-edge:build-" + uuid.uuid4().hex
+            tag = self.edge_tag = "localhost:5002/brood-go-edge:build-" + uuid.uuid4().hex
             code, _, _ = self.cluster.shell.output("docker", "buildx", "build", "--push", "--platform", "linux/amd64",
                 "--metadata-file", str(metadata), "-t", tag, "-f",
                 str(self.project / "brood/dev/deploy/edge/Dockerfile"), str(self.project))
@@ -230,17 +233,25 @@ class Deployment:
             if code:
                 raise RuntimeError(f"cannot remove obsolete {kind}/{name}")
 
+    def space(self):
+        """Preflight места на разделе Docker (#247); без настройки - {"checked": False}."""
+        return disk.space(self.cluster.shell, self.get)
+
     def run_existing(self, existing):
         """Единый вход записи: flock и Lease берутся до первого действия, в том числе сборки."""
+        keep = disk.whole(self.get, disk.KEEP_SNAPSHOTS, 1)
         try:
             existing.claim()
             values, before = self.check(existing)
             image = self.build_edge()
             existing.state = existing.check()
-            server = GoDeploy(self.cluster, get=self.get, project=self.project).run(before_apply=existing.snapshot)
+            go = GoDeploy(self.cluster, get=self.get, project=self.project)
+            server = go.run(before_apply=existing.snapshot)
             existing.inspect(server)
             self.apply_edge(image, before)
             self.probe(values, login=False)
+            # Отказ самого prune - предупреждение; сбой helper - как у inspect: Lease остаётся.
+            snapshots = existing.retain(server, keep)
         except BaseException:
             # Отказ до before_apply откатывает scale; после - Lease остаётся (неоднозначный исход).
             existing.release()
@@ -248,21 +259,29 @@ class Deployment:
         existing.finish()
         result = {"image": server, "edge": image, "host": values["BROOD_PUBLIC_HOST"],
                   "admin_created": False, "snapshot": existing.snapshot_path,
-                  "acceptance": "operator-authenticated acceptance pending"}
+                  "acceptance": "operator-authenticated acceptance pending", "snapshots": snapshots,
+                  "tags": (go.tag, self.edge_tag)}
         if existing.recovered:
             result["recovered"] = "crashloop"
         return result
 
     def run(self):
+        # Место - до Lease, сборки и любой записи: на полном диске падает и запись Lease (#247).
+        space = self.space()
         existing = ExistingInstall(self) if (self.get("BROOD_DEPLOY_MODE") or "initial") == "existing" else None
-        if existing:
-            return self.run_existing(existing)
+        result = self.run_existing(existing) if existing else self.run_initial()
+        # Уборка только после успеха и вне Lease: она трогает локальный Docker, не кластер.
+        result.update(space=space, docker=disk.tidy(self.cluster.shell, self.get, result.pop("tags")))
+        return result
+
+    def run_initial(self):
         values, before = self.check()
         image = self.build_edge()
-        server = GoDeploy(self.cluster, get=self.get, project=self.project).run()
+        go = GoDeploy(self.cluster, get=self.get, project=self.project)
+        server = go.run()
         created = self.bootstrap(values)
         self.apply_edge(image, before)
         self.probe(values, login=True)
         self.cleanup(before)
         return {"image": server, "edge": image, "host": values["BROOD_PUBLIC_HOST"],
-                "admin": values["BROOD_ADMIN_USERNAME"], "admin_created": created}
+                "admin": values["BROOD_ADMIN_USERNAME"], "admin_created": created, "tags": (go.tag, self.edge_tag)}

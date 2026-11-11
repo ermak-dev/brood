@@ -590,6 +590,28 @@ class GoDeploymentTests(unittest.TestCase):
                 if raw != valid:
                     deploy.resolver.assert_not_called()
 
+    # FEATURE: Docker cleanup keeps the image of this deploy (#247).
+    def test_run_records_the_tag_it_built(self):
+        deploy = self.deploy()
+        built = []
+
+        def output(*args):
+            if "build" in args:
+                built.append(args[args.index("-t") + 1])
+                Path(args[args.index("--metadata-file") + 1]).write_text(
+                    json.dumps({"containerimage.digest": "sha256:" + "a" * 64}))
+            return 0, "", ""
+
+        deploy.cluster.shell.output.side_effect = output
+        self.assertIsNone(deploy.tag)
+        with patch.object(go_server, "Infrastructure") as infrastructure, \
+                patch.object(deploy, "_registry_access", return_value=None):
+            infrastructure.return_value._tls.return_value = {}
+            infrastructure.return_value._api_egress.return_value = []
+            deploy.run()
+        self.assertEqual([deploy.tag], built)
+        self.assertRegex(deploy.tag, r"^localhost:5002/brood-go:build-[0-9a-f]{32}$")
+
     def capture_release(self, settings, resolver=None, forbidden=()):
         deploy = self.deploy(settings)
         if resolver is not None:
