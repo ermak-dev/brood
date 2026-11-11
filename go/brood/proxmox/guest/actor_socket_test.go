@@ -11,7 +11,8 @@ import (
 )
 
 // FEATURE: Only the root supervisor publishes the actor PTY listener (#162).
-// SPEC: Existing paths and symlink parents are never adopted or removed; an
+// SPEC: Existing paths (except the supervisor's own socket left without a
+// listener by a hard stop, #271) and symlink parents are never adopted or removed; an
 // inherited descriptor remains a listener and cleanup removes only its own inode.
 func TestActorPTYSocketOwnershipAndDescriptor(t *testing.T) {
 	path := filepath.Join(privateTemp(t), "pty.sock")
@@ -80,6 +81,53 @@ func TestActorPTYSocketRefusesExistingPathAndSymlink(t *testing.T) {
 	if entries, _ := os.ReadDir(real); len(entries) != 0 {
 		t.Fatal("symlink target modified")
 	}
+}
+
+// FEATURE: A PTY socket left by a hard stop does not block the next start (#271).
+// SPEC: /run survives a PVE stop, and a hard stop never runs Close, so the
+// supervisor's own socket stays without a listener. Such a leftover (a socket
+// owned by the supervisor that nobody answers on) is replaced; a live
+// listener, another owner and any non-socket are still refused unchanged.
+func TestActorPTYSocketReplacesLeftoverOfHardStop(t *testing.T) {
+	root := privateTemp(t)
+	path := filepath.Join(root, "pty.sock")
+	leftover, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftover.SetUnlinkOnClose(false)
+	leftover.Close()
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("fixture: leftover socket missing: %v", err)
+	}
+	socket, err := createActorSocket(path, os.Getuid(), os.Getgid())
+	if err != nil {
+		t.Fatalf("leftover of a hard stop blocked the PTY socket: %v", err)
+	}
+	defer socket.Close()
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatalf("new PTY socket does not accept: %v", err)
+	}
+	conn.Close()
+}
+
+func TestActorPTYSocketRefusesLiveListener(t *testing.T) {
+	path := filepath.Join(privateTemp(t), "pty.sock")
+	live, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	if socket, err := createActorSocket(path, os.Getuid(), os.Getgid()); err == nil {
+		socket.Close()
+		t.Fatal("live PTY listener replaced")
+	}
+	conn, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatalf("live listener lost its pathname: %v", err)
+	}
+	conn.Close()
 }
 
 func TestInheritedActorListenerRejectsWrongDescriptorAndPath(t *testing.T) {
