@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -36,6 +37,10 @@ func (c ManagedConnection) String() string { return "ManagedConnection{redacted}
 
 // GoString redacts connection input in Go-syntax diagnostics.
 func (c ManagedConnection) GoString() string { return c.String() }
+
+// Format serves every verb: String and GoString cover only some, and the rest
+// would print the fields. %p bypasses Format and prints an address only.
+func (c ManagedConnection) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, c.String()) }
 
 // CreateManagedConnection persists a uniquely named connection without echoing its token.
 func (s *Store) CreateManagedConnection(ctx context.Context, c ManagedConnection) (ManagedConnection, error) {
