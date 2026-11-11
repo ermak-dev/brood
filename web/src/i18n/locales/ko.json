@@ -175,7 +175,6 @@
     },
     "open_requests": "미답변 질문",
     "swarm_count": "스웜 수",
-    "activity_limited": "처음 {{count}}개의 활성 스웜만 실행 상태를 읽습니다. 나머지는 서버 요약이 도착할 때까지 대시로 표시됩니다.",
     "failed_swarms": "스웜: {{names}}"
   },
   "common": {

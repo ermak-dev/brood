@@ -301,16 +301,15 @@ export function MainLayout() {
   const fetchConfig = useConfigStore((state) => state.fetchConfig);
   const clearCache = useConfigStore((state) => state.clearCache);
 
-  // brood: сводка роёв выбранного проекта -- имя группы меню и число ждущих
-  // ответа у «Swarms» (#255); страница роёв делит с ней один опрос.
+  // brood: список роёв выбранного проекта -- имя группы меню и число ждущих
+  // ответа у «Swarms» (#255); исполнение несёт строка списка (#234), а
+  // страница роёв отдаёт сюда свой список.
   const project = useProjectStore((state) => state.project);
   const loadActivity = useSwarmActivityStore((state) => state.load);
   const activityProject = useSwarmActivityStore((state) => state.project);
   const projectName = useSwarmActivityStore((state) => state.name);
   const activitySwarms = useSwarmActivityStore((state) => state.swarms);
-  const activities = useSwarmActivityStore((state) => state.activities);
-  const waitingSwarms =
-    activityProject === project ? waitingCount(activitySwarms, activities) : 0;
+  const waitingSwarms = activityProject === project ? waitingCount(activitySwarms) : 0;
 
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);

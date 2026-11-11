@@ -175,7 +175,6 @@
     },
     "open_requests": "待答问题",
     "swarm_count": "蜂群数",
-    "activity_limited": "仅读取前 {{count}} 个活跃蜂群的执行状态；其余显示破折号，直到服务器提供汇总。",
     "failed_swarms": "蜂群：{{names}}"
   },
   "common": {

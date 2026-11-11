@@ -26,6 +26,21 @@ type projectJSON struct {
 	Name string `json:"name"`
 }
 
+// projectRowJSON — строка списка проектов: проект и число роёв, которые
+// вызывающий видит в его списке роёв (#234).
+type projectRowJSON struct {
+	projectJSON
+	SwarmCount int64 `json:"swarmCount"`
+}
+
+// swarmRowJSON — строка списка роёв: рой, исполнение его графа и число
+// открытых запросов оператору, узловых и актора (#234).
+type swarmRowJSON struct {
+	swarmJSON
+	Execution    string `json:"execution"`
+	OpenRequests int64  `json:"openRequests"`
+}
+
 // swarmJSON — публичная форма роя.
 type swarmJSON struct {
 	ID            string `json:"id"`
@@ -152,7 +167,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 				apiError(w, r, err)
 				return
 			}
-			s.writeProjects(w, projects)
+			s.writeProjects(w, r, user.ID, projects)
 			return
 		}
 		projects, err := s.app.ListProjectsFor(user.ID)
@@ -160,7 +175,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
-		s.writeProjects(w, projects)
+		s.writeProjects(w, r, user.ID, projects)
 	case http.MethodPost:
 		var body struct {
 			Name string `json:"name"`
@@ -181,11 +196,22 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeProjects пишет список проектов; пустой список — [].
-func (s *Server) writeProjects(w http.ResponseWriter, projects []app.Project) {
-	out := make([]projectJSON, 0, len(projects))
+// writeProjects пишет список проектов с числом роёв каждого; пустой список
+// — []. Число роёв — одна выборка на весь список по правилу списка роёв
+// проекта, а не запрос на проект.
+func (s *Server) writeProjects(w http.ResponseWriter, r *http.Request, userID string, projects []app.Project) {
+	ids := make([]string, 0, len(projects))
 	for _, p := range projects {
-		out = append(out, projectJSON{ID: p.ID, Name: p.Name})
+		ids = append(ids, p.ID)
+	}
+	counts, err := s.store.ProjectSwarmCounts(r.Context(), userID, ids)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	out := make([]projectRowJSON, 0, len(projects))
+	for _, p := range projects {
+		out = append(out, projectRowJSON{projectJSON: projectJSON{ID: p.ID, Name: p.Name}, SwarmCount: counts[p.ID]})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -323,11 +349,27 @@ func (s *Server) handleProjectSwarms(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeSwarms пишет список роёв; пустой список — [].
+// writeSwarms пишет список роёв со сводкой исполнения каждого; пустой
+// список — []. Сводка — одна выборка на весь список и только по роям,
+// которые список уже показывает вызывающему. Рой без сводки исчез из базы
+// между чтениями: его больше нет, и в список он не попадает.
 func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []app.Swarm) {
-	out := make([]swarmJSON, 0, len(swarms))
+	ids := make([]string, 0, len(swarms))
+	for _, sw := range swarms {
+		ids = append(ids, sw.ID)
+	}
+	summaries, err := s.store.SwarmSummaries(r.Context(), ids)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	out := make([]swarmRowJSON, 0, len(swarms))
 	owners := make(map[string]string)
 	for _, sw := range swarms {
+		summary, ok := summaries[sw.ID]
+		if !ok {
+			continue
+		}
 		username, ok := owners[sw.OwnerID]
 		if !ok {
 			owner, err := s.store.GetUser(r.Context(), sw.OwnerID)
@@ -345,7 +387,7 @@ func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []ap
 		}
 		row := toSwarmJSON(sw, username)
 		row.Role = role
-		out = append(out, row)
+		out = append(out, swarmRowJSON{swarmJSON: row, Execution: summary.Execution, OpenRequests: summary.OpenRequests})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

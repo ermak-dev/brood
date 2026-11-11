@@ -175,7 +175,6 @@
     },
     "open_requests": "待答問題",
     "swarm_count": "蜂群數",
-    "activity_limited": "僅讀取前 {{count}} 個活躍蜂群的執行狀態；其餘顯示破折號，直到伺服器提供彙總。",
     "failed_swarms": "蜂群：{{names}}"
   },
   "common": {
