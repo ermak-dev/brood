@@ -175,7 +175,6 @@
     },
     "open_requests": "Open questions",
     "swarm_count": "Swarms",
-    "activity_limited": "Execution is read for the first {{count}} active swarms; the rest show a dash until the server summary arrives.",
     "failed_swarms": "Swarms: {{names}}"
   },
   "common": {

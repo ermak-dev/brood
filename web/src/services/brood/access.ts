@@ -3,6 +3,9 @@ import { request } from './http';
 export interface AccessProject {
   id: string;
   name: string;
+  /** Число роёв проекта в списке роёв вызывающего (#234): его несёт только
+   * строка `GET /api/projects`, у созданного проекта поля нет. */
+  swarmCount?: number;
 }
 
 export type SwarmRole = 'owner' | 'editor' | 'viewer';
@@ -49,8 +52,8 @@ export interface AccessSwarm {
   state: string;
   created_at: string;
   updated_at: string;
-  /** Сводка исполнения в строке списка (#234): пока сервер её не отдаёт,
-   * панель собирает её сама (features/access/swarmActivity.ts). */
+  /** Сводка исполнения в строке списка (#234): её несёт только строка
+   * `GET /api/projects/{id}/swarms`, у одного роя и созданного полей нет. */
   execution?: string;
   openRequests?: number;
 }

@@ -182,7 +182,7 @@ test('the swarm list keeps its hints for the empty state and names every state',
   expect(swarms).not.toContain("<p className={styles.sectionHint}>{t('access.swarm_access_hint')}</p>");
   expect(swarms).toContain('<EmptyState');
   expect(swarms).toContain("description={t('access.swarm_access_hint')}");
-  expect(swarms).toContain('swarmOrder(');
+  expect(swarms).toContain('.sort(swarmOrder)');
   expect(swarms).toContain('useSwarmActivityStore');
   for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW', 'ko', 'vi']) {
     const access = JSON.parse(source(`i18n/locales/${locale}.json`)).access;
@@ -196,11 +196,13 @@ test('the swarm list keeps its hints for the empty state and names every state',
         'string',
       ]);
     }
-    for (const key of ['execution', 'open_requests', 'swarm_count', 'activity_limited']) {
+    for (const key of ['execution', 'open_requests', 'swarm_count']) {
       expect([locale, key, typeof access[key]]).toEqual([locale, key, 'string']);
     }
-    expect(access.activity_limited).toContain('{{count}}');
+    // Сводку несёт строка списка (#234): подписи о пределе опроса нет.
+    expect([locale, access.activity_limited]).toEqual([locale, undefined]);
   }
+  expect(swarms).not.toContain('activity_limited');
 });
 
 // Группы акторов и шаблонов сворачиваются; отказ загрузки собирается в одну

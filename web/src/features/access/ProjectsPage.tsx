@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
@@ -18,45 +18,23 @@ import {
   useAdministrator,
 } from './shared';
 import { retainedRow } from './state';
-import { ACTIVITY_LIMIT, loadSwarmCounts } from './swarmActivity';
 import { useProjectStore } from '@/stores';
 import styles from '@/features/substrate/substrate.module.scss';
 
 const sameProject = (row: AccessProject, open: AccessProject) => row.id === open.id;
 
-/** Число роёв: ещё не прочитано -- «…», отказ -- прочерк. */
-type Counts = Record<string, number | null | undefined>;
-
-/** Число роёв первых ACTIVITY_LIMIT проектов (#255): по запросу на проект,
- * ответ прежнего списка не ложится поверх нового. */
-function useSwarmCounts(projects: AccessProject[] | null): Counts {
-  const [counts, setCounts] = useState<Counts>({});
-  const latest = useRef(0);
-  useEffect(() => {
-    const request = ++latest.current;
-    setCounts({});
-    if (!projects) return;
-    void loadSwarmCounts(projects, accessApi.swarms).then((loaded) => {
-      if (request === latest.current) setCounts(loaded);
-    });
-  }, [projects]);
-  return counts;
-}
-
-/** Каталог проектов: число роёв и отметка выбранного (#255). */
+/** Каталог проектов: число роёв и отметка выбранного (#255). Число несёт
+ * строка списка проектов (#234); без него -- прочерк, а не ноль. */
 export function ProjectsTable({
   projects,
-  counts,
   selected,
   onOpen,
 }: {
   projects: AccessProject[];
-  counts: Counts;
   selected: string;
   onOpen: (project: AccessProject) => void;
 }) {
   const { t } = useTranslation();
-  const counted = new Set(projects.slice(0, ACTIVITY_LIMIT).map((project) => project.id));
   const columns: Column<AccessProject>[] = [
     {
       key: 'name',
@@ -74,12 +52,8 @@ export function ProjectsTable({
     {
       key: 'swarms',
       label: t('access.swarm_count'),
-      render: (project) => {
-        if (!counted.has(project.id)) return DASH;
-        const count = counts[project.id];
-        if (count === undefined) return '…';
-        return count === null ? DASH : String(count);
-      },
+      render: (project) =>
+        Number.isSafeInteger(project.swarmCount) ? String(project.swarmCount) : DASH,
     },
     { key: 'id', label: t('access.id'), mono: true, hideOnMobile: true, render: (p) => p.id },
   ];
@@ -107,7 +81,6 @@ export function AccessProjectsPage() {
     navigate('/swarms');
   };
   const resource = useAccessResource(accessApi.projects);
-  const counts = useSwarmCounts(resource.data);
   const { run, confirm, busy } = useAccessActions(resource.refresh);
   const [creating, setCreating] = useState(false);
   const [opened, setOpened] = useState<AccessProject | null>(null);
@@ -159,12 +132,7 @@ export function AccessProjectsPage() {
         {t(admin ? 'access.admin_policy' : 'access.member_policy')}
       </p>
       <LoadState {...resource} retry={resource.refresh}>
-        <ProjectsTable
-          projects={resource.data ?? []}
-          counts={counts}
-          selected={selected}
-          onOpen={setOpened}
-        />
+        <ProjectsTable projects={resource.data ?? []} selected={selected} onOpen={setOpened} />
         {resource.data?.length === 0 && <p>{t('access.no_projects')}</p>}
       </LoadState>
       <EntityPanel

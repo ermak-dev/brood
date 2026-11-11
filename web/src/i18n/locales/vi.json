@@ -175,7 +175,6 @@
     },
     "open_requests": "Câu hỏi đang mở",
     "swarm_count": "Số bầy",
-    "activity_limited": "Chỉ đọc trạng thái thực thi của {{count}} bầy đang hoạt động đầu tiên; các bầy còn lại hiển thị gạch ngang cho đến khi máy chủ gửi bản tóm tắt.",
     "failed_swarms": "Bầy: {{names}}"
   },
   "common": {

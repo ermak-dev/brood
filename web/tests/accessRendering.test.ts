@@ -18,13 +18,10 @@ import { MemoryRouter } from 'react-router-dom';
 import * as header from '@/hooks/useHeaderRefresh';
 import { LoadState, useAccessResource } from '@/features/access/shared';
 import {
-  ACTIVITY_LIMIT,
-  activityTargets,
   executionActivityTone,
-  loadSwarmActivities,
   swarmActivityOf,
   swarmOrder,
-  type SwarmActivity,
+  waitingCount,
 } from '@/features/access/swarmActivity';
 import { SwarmsTable } from '@/features/access/SwarmsPage';
 import { ProjectsTable } from '@/features/access/ProjectsPage';
@@ -103,39 +100,29 @@ const swarm = (id: string, over: Partial<AccessSwarm> = {}): AccessSwarm => ({
   ...over,
 });
 
-const activity = (execution: string, openRequests = 0): SwarmActivity => ({
+// Сводка исполнения (#234) -- поля строки списка роёв.
+const summary = (execution: string, openRequests = 0): Partial<AccessSwarm> => ({
   execution,
   openRequests,
 });
 
 // Ждущие ответа -- сверху, среди них дольше всех ждёт тот, у кого вопросов
-// больше; затем вставшие, идущие, остальные; неизвестное -- в конце; при
+// больше; затем вставшие, идущие, остальные; без сводки -- в конце; при
 // равенстве порядок сервера сохраняется.
 test('swarmOrder puts waiting swarms first and keeps the server order on ties', () => {
   const rows = [
-    swarm('done'),
-    swarm('stuck'),
-    swarm('one-question'),
-    swarm('busy'),
-    swarm('idle'),
+    swarm('done', summary('succeeded')),
+    swarm('stuck', summary('failed')),
+    swarm('one-question', summary('waiting', 1)),
+    swarm('busy', summary('running')),
+    swarm('idle', summary('idle')),
     swarm('unknown'),
-    swarm('two-questions'),
-    swarm('stopped'),
-    swarm('busy-2'),
+    swarm('two-questions', summary('waiting', 2)),
+    swarm('stopped', summary('stopped')),
+    swarm('busy-2', summary('running')),
     swarm('broken', { state: 'error' }),
   ];
-  const activities: Record<string, SwarmActivity | null> = {
-    done: activity('succeeded'),
-    stuck: activity('failed'),
-    'one-question': activity('waiting', 1),
-    busy: activity('running'),
-    idle: activity('idle'),
-    unknown: null,
-    'two-questions': activity('waiting', 2),
-    stopped: activity('stopped'),
-    'busy-2': activity('running'),
-  };
-  const ordered = [...rows].sort(swarmOrder(activities)).map((row) => row.id);
+  const ordered = [...rows].sort(swarmOrder).map((row) => row.id);
   expect(ordered).toEqual([
     'two-questions',
     'one-question',
@@ -150,50 +137,33 @@ test('swarmOrder puts waiting swarms first and keeps the server order on ties', 
   ]);
 });
 
-// Пока сводки #234 нет, панель собирает исполнение сама и только для
-// активных роёв, не больше предела; рой со сводкой сервера в опрос не идёт.
-test('activityTargets takes active swarms without a server summary, up to the limit', () => {
-  const rows = [
-    swarm('a'),
-    swarm('b', { state: 'provisioning' }),
-    swarm('c', { execution: 'waiting', openRequests: 1 }),
-    ...Array.from({ length: ACTIVITY_LIMIT + 3 }, (_, index) => swarm(`active-${index}`)),
-  ];
-  const targets = activityTargets(rows).map((row) => row.id);
-  expect(targets.length).toBe(ACTIVITY_LIMIT);
-  expect(targets[0]).toBe('a');
-  expect(targets).not.toContain('b');
-  expect(targets).not.toContain('c');
-  expect(ACTIVITY_LIMIT).toBe(20);
-  expect(swarmActivityOf(rows[2])).toEqual({ execution: 'waiting', openRequests: 1 });
-  expect(swarmActivityOf(rows[0])).toBeUndefined();
+// Сводка берётся только из строки сервера: без полей или с браком --
+// «неизвестно», а не ноль вопросов и не «не запущен».
+test('swarmActivityOf reads the row summary and refuses a malformed one', () => {
+  expect(swarmActivityOf(swarm('asks', summary('waiting', 1)))).toEqual({
+    execution: 'waiting',
+    openRequests: 1,
+  });
+  expect(swarmActivityOf(swarm('fresh', summary('idle')))).toEqual({
+    execution: 'idle',
+    openRequests: 0,
+  });
+  expect(swarmActivityOf(swarm('bare'))).toBeUndefined();
+  expect(swarmActivityOf(swarm('half', { execution: 'running' }))).toBeUndefined();
+  expect(
+    swarmActivityOf(swarm('fraction', { execution: 'running', openRequests: 1.5 }))
+  ).toBeUndefined();
 });
 
-// Сбор по старым маршрутам: исполнение -- из прогона (404 -- не запущен),
-// вопросы -- открытые запросы; отказ одного роя не роняет остальные.
-test('loadSwarmActivities aggregates the run and the open requests per swarm', async () => {
-  const calls: string[] = [];
-  const result = await loadSwarmActivities([swarm('waits'), swarm('fresh'), swarm('down')], {
-    run: async (id) => {
-      calls.push(`run:${id}`);
-      if (id === 'down') throw new Error('unavailable');
-      return id === 'waits' ? { status: 'waiting_human' } : null;
-    },
-    requests: async (id) => {
-      calls.push(`requests:${id}`);
-      return id === 'waits'
-        ? [{ state: 'open' }, { state: 'answered' }, { state: 'open' }]
-        : [];
-    },
-  });
-  expect(result).toEqual({
-    waits: { execution: 'waiting', openRequests: 2 },
-    fresh: { execution: 'idle', openRequests: 0 },
-    down: null,
-  });
-  expect(calls.sort()).toEqual(
-    ['run:waits', 'run:fresh', 'run:down', 'requests:waits', 'requests:fresh', 'requests:down'].sort()
-  );
+test('waitingCount counts the rows waiting for an answer', () => {
+  const rows = [
+    swarm('a', summary('waiting', 2)),
+    swarm('b', summary('running', 1)),
+    swarm('c', summary('waiting')),
+    swarm('d'),
+  ];
+  expect(waitingCount(rows)).toBe(2);
+  expect(waitingCount(null)).toBe(0);
 });
 
 // Тон исполнения — сразу тон бейджа из словаря #254 (access/state.ts).
@@ -211,31 +181,24 @@ test('execution tones name attention for waiting and problem for a failed pass',
 
 test('the swarm list shows execution and open questions, waiting swarms first', () => {
   const rows = [
-    swarm('quiet', { state: 'active' }),
-    swarm('asks', { state: 'active', owner_username: 'bob' }),
+    swarm('quiet', { state: 'active', ...summary('running') }),
+    swarm('asks', { state: 'active', owner_username: 'bob', ...summary('waiting', 3) }),
     swarm('halted', { state: 'stopped' }),
-    swarm('pending-row', { state: 'active' }),
+    swarm('fresh', { state: 'provisioning', ...summary('idle') }),
   ];
-  const markup = render(
-    createElement(SwarmsTable, {
-      swarms: rows,
-      activities: {
-        quiet: activity('running'),
-        asks: activity('waiting', 3),
-        halted: null,
-      },
-    })
-  );
+  const markup = render(createElement(SwarmsTable, { swarms: rows }));
   const cells = (label: string) =>
     [...markup.matchAll(new RegExp(`data-label="${label}"[^>]*>(.*?)</td>`, 'g'))].map((m) =>
       m[1].replace(/<[^>]+>/g, '')
     );
   expect(markup).toContain('>Execution<');
   expect(markup).toContain('>Open questions<');
-  // Без сводки (остановленный рой, ещё не опрошенный) -- в конце, в порядке сервера.
-  expect(cells('Name')).toEqual(['asks', 'quiet', 'halted', 'pending-row']);
-  expect(cells('Execution')).toEqual(['Waiting for answer', 'Running', '—', '…']);
-  expect(cells('Open questions')).toEqual(['3', '0', '—', '…']);
+  // Сводка у каждого роя, не только у активного; строка без сводки --
+  // прочерк и в конце, в порядке сервера.
+  expect(cells('Name')).toEqual(['asks', 'quiet', 'fresh', 'halted']);
+  expect(cells('Execution')).toEqual(['Waiting for answer', 'Running', 'Not started', '—']);
+  expect(cells('Open questions')).toEqual(['3', '0', '0', '—']);
+  expect(markup).not.toContain('…');
   // Инфраструктурное состояние stopped переведено, а не показано ключом.
   expect(cells('State')).toContain('Stopped');
   expect(markup).not.toContain('access.states.stopped');
@@ -247,14 +210,13 @@ test('the swarm list shows execution and open questions, waiting swarms first', 
 
 test('the project list counts swarms and marks the selected project', () => {
   const projects: AccessProject[] = [
-    { id: 'p-1', name: 'Alpha' },
-    { id: 'p-2', name: 'Beta' },
+    { id: 'p-1', name: 'Alpha', swarmCount: 4 },
+    { id: 'p-2', name: 'Beta', swarmCount: 0 },
     { id: 'p-3', name: 'Gamma' },
   ];
   const markup = render(
     createElement(ProjectsTable, {
       projects,
-      counts: { 'p-1': 4, 'p-2': null },
       selected: 'p-2',
       onOpen: () => {},
     })
@@ -264,7 +226,8 @@ test('the project list counts swarms and marks the selected project', () => {
       m[1].replace(/<[^>]+>/g, '')
     );
   expect(markup).toContain('>Swarms<');
-  expect(cells('Swarms')).toEqual(['4', '—', '…']);
+  // Число -- из строки сервера (#234); без него -- прочерк, не ноль.
+  expect(cells('Swarms')).toEqual(['4', '0', '—']);
   expect(cells('Name')[1]).toContain('Beta');
   expect(cells('Name')[1]).toContain('Active project');
   expect(cells('Name')[0]).not.toContain('Active project');
