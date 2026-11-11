@@ -96,8 +96,8 @@ func (f startAPIFixture) startRaw(t *testing.T, body any) (*http.Response, map[s
 // (info/refs?service=git-upload-pack) через Git-доступ шлюза — проектный
 // credential или remote BROOD_GIT_REMOTES — до транзакции записи. Снимок
 // источника — канонический repository и commit; credential нет ни в ответе,
-// ни в журнале, ни в снимке. Повторный запуск идёт на закреплённом источнике
-// и ничего не разрешает, даже когда ветка ушла вперёд.
+// ни в журнале, ни в снимке. Повторный запуск без commit разрешает HEAD
+// заново (#229): проход идёт на свежем commit, прошлый проход хранит свой.
 // IMPLEMENTATION: git http-backend по TLS за транспортом шлюза.
 // RESULT: IMPLEMENTED
 // STATUS: DONE
@@ -157,18 +157,23 @@ func TestSwarmStartResolvesProjectBranch(t *testing.T) {
 				t.Fatalf("upstream request headers: %v", header.Get("User-Agent"))
 			}
 
-			// Ветка ушла вперёд; повторный запуск держит закреплённый commit и никого не спрашивает.
+			// Ветка ушла вперёд; повторный запуск идёт на новом HEAD, прошлый
+			// проход хранит свой commit.
 			moved := strings.TrimSpace(mustGit(t, home, bare, "commit-tree", "-p", trunk, "-m", "moved", tree))
 			mustGit(t, home, bare, "update-ref", "refs/heads/trunk", moved)
 			r, b = f.stop(f.alice)
 			expectStatus(t, "stop", r, b, http.StatusOK)
 			r, b, raw = f.startRaw(t, map[string]any{"goal": startAPIGoal, "definition": "release"})
 			expectStatus(t, "restart", r, b, http.StatusOK)
-			if b["source"].(map[string]any)["commit"] != trunk || b["step"].(map[string]any)["sequence"] != float64(2) {
+			if b["source"].(map[string]any)["commit"] != moved || b["step"].(map[string]any)["sequence"] != float64(2) {
 				t.Fatalf("restart response: %s", raw)
 			}
-			if len(upstream.seen()) != 1 {
-				t.Fatalf("restart resolved the branch: %d upstream requests", len(upstream.seen()))
+			if len(upstream.seen()) != 2 {
+				t.Fatalf("restart did not resolve the branch: %d upstream requests", len(upstream.seen()))
+			}
+			steps, err := f.ts.srv.store.SwarmSteps(context.Background(), f.swarm)
+			if err != nil || len(steps) != 2 || steps[0].SourceCommit != trunk || steps[1].SourceCommit != moved {
+				t.Fatalf("pass commits: %+v %v", steps, err)
 			}
 			for _, secret := range []string{gitTokenSentinel, "brood-bot"} {
 				if strings.Contains(raw, secret) || strings.Contains(f.pinnedSource(t), secret) || strings.Contains(logs.String(), secret) {

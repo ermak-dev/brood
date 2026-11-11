@@ -98,7 +98,7 @@ func TestOpenIdempotentOnReopen(t *testing.T) {
 // обновляется, а отвергается. Отказ обязан назвать обе версии и не
 // тронуть файл: сравниваем снимок sqlite_master и user_version.
 func TestOpenRejectsForeignSchemaVersion(t *testing.T) {
-	for _, version := range []int{0, 7, 15, 16, 17, 18, 19, 20, 21, 22, 23, schemaVersion + 1, 99} {
+	for _, version := range []int{0, 7, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, schemaVersion + 1, 99} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "db.sqlite3")
@@ -277,7 +277,7 @@ func TestOpenRejectsDamagedTriggers(t *testing.T) {
 	for name, change := range map[string]string{
 		"missing trigger":                     `DROP TRIGGER pipeline_sources_immutable`,
 		"missing step report fence":           `DROP TRIGGER swarm_steps_report_fence`,
-		"missing pass goal fence":             `DROP TRIGGER swarm_steps_goal_fence`,
+		"missing pass fence":                  `DROP TRIGGER swarm_steps_pass_fence`,
 		"different trigger":                   `DROP TRIGGER swarm_graph_immutable; CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms BEGIN SELECT RAISE(ABORT, 'other'); END`,
 		"missing index":                       `DROP INDEX swarms_live_name`,
 		"missing live name index for managed": `DROP INDEX managed_pools_live_name`,

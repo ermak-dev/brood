@@ -18,15 +18,16 @@ func sourceTestStore(t *testing.T) *Store {
 	return s
 }
 
-// FEATURE: Привязка снимка графа к рою со снимком источника (#206).
-// SPEC: AttachSwarmGraph валидирует граф и личность определения, источник
+// FEATURE: Привязка снимка графа к рою с origin источника (#206).
+// SPEC: AttachSwarmGraph валидирует граф и личность определения, origin
 // обязателен, привязка атомарна и одинока: второй граф не принимается.
-// RESULT: IMPLEMENTED — снимок и источник живут на рое.
+// Commit закрепляет проход, а не привязка (#229).
+// RESULT: IMPLEMENTED — снимок и origin живут на рое.
 // STATUS: DONE
 func TestAttachSwarmGraph(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
-	source := &PipelineSource{Origin: "https://git.example.org/team/repo.git", Commit: strings.Repeat("a", 40)}
+	const source = "https://git.example.org/team/repo.git"
 	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 3, "cafebabedeadbeefcafebabedeadbeef", source); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,8 @@ func TestAttachSwarmGraph(t *testing.T) {
 	if got.DefinitionName != "release" || got.DefinitionVersion != 3 || got.DefinitionRevision != "cafebabedeadbeefcafebabedeadbeef" {
 		t.Fatalf("definition identity: %q %d %q", got.DefinitionName, got.DefinitionVersion, got.DefinitionRevision)
 	}
-	if got.Source == nil || got.Source.Origin != source.Origin || got.Source.Commit != source.Commit {
+	// Проход ещё не открыт: commit у роя нет.
+	if got.Source == nil || *got.Source != (PipelineSource{Origin: source}) {
 		t.Fatalf("source snapshot: %+v", got.Source)
 	}
 	// Повторная привязка, в том числе с другим источником — отказ.
@@ -52,11 +54,11 @@ func TestAttachSwarmGraph(t *testing.T) {
 		defName string
 		defVer  int64
 		defRev  string
-		source  *PipelineSource
+		source  string
 	}{
 		{"empty definition name", "", 1, "rev", source},
 		{"zero version", "release", 0, "rev", source},
-		{"nil source", "release", 1, "rev", nil},
+		{"no origin", "release", 1, "rev", ""},
 	} {
 		if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), tc.defName, tc.defVer, tc.defRev, tc.source); err == nil {
 			t.Errorf("%s accepted", tc.name)
@@ -69,7 +71,7 @@ func TestAttachSwarmGraph(t *testing.T) {
 func TestSwarmGraphImmutable(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
-	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err != nil {
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", "https://git.example.org/repo"); err != nil {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
@@ -89,18 +91,16 @@ func TestSwarmGraphImmutable(t *testing.T) {
 	}
 }
 
-// TestPipelineSourceSnapshot: снимок источника неизменяем на новом ключе роя,
+// TestPipelineSourceSnapshot: origin источника неизменяем на ключе роя,
 // включая удаление роя — оно запрещено, пока снимок жив (#206).
 func TestPipelineSourceSnapshot(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
-	source := &PipelineSource{Origin: "https://git.example.org/team/repo.git", Commit: strings.Repeat("a", 40)}
-	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", source); err != nil {
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", "https://git.example.org/team/repo.git"); err != nil {
 		t.Fatal(err)
 	}
-	source.Origin = "https://other.example.org/repo"
 	got, err := s.GetSwarm(ctx, "s")
-	if err != nil || got.Source == nil || got.Source.Origin != "https://git.example.org/team/repo.git" || got.Source.Commit != strings.Repeat("a", 40) {
+	if err != nil || got.Source == nil || got.Source.Origin != "https://git.example.org/team/repo.git" {
 		t.Fatalf("snapshot: %+v %v", got.Source, err)
 	}
 	for _, recursive := range []int{0, 1} {
@@ -110,7 +110,7 @@ func TestPipelineSourceSnapshot(t *testing.T) {
 		for _, statement := range []string{
 			`UPDATE pipeline_sources SET origin='https://changed.example.org/repo' WHERE swarm_id='s'`,
 			`DELETE FROM pipeline_sources WHERE swarm_id='s'`,
-			`INSERT OR REPLACE INTO pipeline_sources(swarm_id,origin,commit_sha) VALUES ('s','https://changed.example.org/repo','0000000000000000000000000000000000000000')`,
+			`INSERT OR REPLACE INTO pipeline_sources(swarm_id,origin) VALUES ('s','https://changed.example.org/repo')`,
 			`INSERT OR REPLACE INTO swarms(id,project_id,owner_id,name,atespace_name,created_at,updated_at,graph) VALUES ('s','p','u','swarm','space','now','now',x'00')`,
 		} {
 			if _, err := s.db.Exec(statement); err == nil {
@@ -138,7 +138,7 @@ func TestSwarmGraphSurvivesDefinitionDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Пока рой несёт снимок — удаление определения запрещено.
-	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err != nil {
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", "https://git.example.org/repo"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteWorkflowDefinition(ctx, "p", "admin", "release", yes); err == nil {
@@ -164,7 +164,7 @@ func TestPipelineSourceInsertRollback(t *testing.T) {
 	if _, err := s.db.Exec(`CREATE TRIGGER reject_pipeline_source BEFORE INSERT ON pipeline_sources BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)})
+	err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", "https://git.example.org/repo")
 	if err == nil {
 		t.Fatal("source insert unexpectedly succeeded")
 	}
@@ -181,7 +181,7 @@ func TestPipelineSourceNestedInsertRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
-		err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)})
+		err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", "https://git.example.org/repo")
 		if err == nil {
 			return errors.New("source insert unexpectedly succeeded")
 		}
@@ -199,14 +199,12 @@ func TestPipelineSourceNestedInsertRollback(t *testing.T) {
 func TestPipelineSourceValidationAndNoPartialAttach(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
-	for i, source := range []PipelineSource{
-		{Origin: "https://git.example.org/repo", Commit: ""},
-		{Origin: "", Commit: strings.Repeat("a", 40)},
-		{Origin: "https://user:secret@git.example.org/repo", Commit: strings.Repeat("a", 40)},
-		{Origin: "https://git.example.org/repo", Commit: strings.Repeat("A", 40)},
-		{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 39)},
+	for i, origin := range []string{
+		"",
+		"https://user:secret@git.example.org/repo",
+		"not a URL",
 	} {
-		if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &source); err == nil || strings.Contains(err.Error(), "secret") {
+		if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", origin); err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatalf("case %d: %v", i, err)
 		}
 		got, err := s.GetSwarm(ctx, "s")
@@ -219,7 +217,7 @@ func TestPipelineSourceValidationAndNoPartialAttach(t *testing.T) {
 func TestBoundSwarmRefusesActorEffects(t *testing.T) {
 	ctx := context.Background()
 	s := sourceTestStore(t)
-	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err != nil {
+	if err := s.AttachSwarmGraph(ctx, "s", []byte(actorStartGraph), "release", 1, "rev", "https://git.example.org/repo"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SetSwarmExecution(ctx, "s", "running"); err != nil {

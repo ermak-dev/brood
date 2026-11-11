@@ -24,6 +24,7 @@ type swarmDefinitionJSON struct {
 	Revision string `json:"revision"`
 }
 
+// swarmSourceJSON — origin роя и commit его текущего прохода (#229).
 type swarmSourceJSON struct {
 	Origin string `json:"origin"`
 	Commit string `json:"commit"`
@@ -76,8 +77,8 @@ func (s *Server) visibleSwarmUser(w http.ResponseWriter, r *http.Request) (store
 }
 
 // handleSwarmStart: POST /api/swarms/{id}/start {definition, goal, commit?}.
-// Без commit первый запуск пиннит HEAD repository проекта, разрешённый
-// сервером. Задача прохода проверяется до этого: недопустимая задача не
+// Без commit проход пиннит HEAD repository проекта, разрешённый сервером, —
+// и первый, и повторный (#229). Задача прохода проверяется до этого: недопустимая задача не
 // стоит запроса к upstream с credential проекта (#242).
 func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.visibleSwarmUser(w, r)

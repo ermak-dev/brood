@@ -20,22 +20,24 @@ import (
 // причина refused или unconfirmed шага (#212), Report — отчёт актора о
 // завершённом шаге (#233). Pass — номер первого шага прохода шага, Goal —
 // задача прохода у его первого шага (#242): текст не повторяется на каждом
-// шаге прохода.
+// шаге прохода. SourceCommit — commit источника прохода у его первого шага
+// (#229), по той же причине.
 type pipelineNodeJSON struct {
-	ID         string  `json:"id"`
-	Sequence   int64   `json:"sequence"`
-	Kind       string  `json:"kind"`
-	Status     string  `json:"status"`
-	Label      string  `json:"label"`
-	Outcome    string  `json:"outcome,omitempty"`
-	ActorName  string  `json:"actorName,omitempty"`
-	StartedAt  *string `json:"startedAt,omitempty"`
-	FinishedAt *string `json:"finishedAt,omitempty"`
-	Commit     string  `json:"commit,omitempty"`
-	Detail     string  `json:"detail,omitempty"`
-	Report     string  `json:"report,omitempty"`
-	Pass       int64   `json:"pass,omitempty"`
-	Goal       string  `json:"goal,omitempty"`
+	ID           string  `json:"id"`
+	Sequence     int64   `json:"sequence"`
+	Kind         string  `json:"kind"`
+	Status       string  `json:"status"`
+	Label        string  `json:"label"`
+	Outcome      string  `json:"outcome,omitempty"`
+	ActorName    string  `json:"actorName,omitempty"`
+	StartedAt    *string `json:"startedAt,omitempty"`
+	FinishedAt   *string `json:"finishedAt,omitempty"`
+	Commit       string  `json:"commit,omitempty"`
+	Detail       string  `json:"detail,omitempty"`
+	Report       string  `json:"report,omitempty"`
+	Pass         int64   `json:"pass,omitempty"`
+	Goal         string  `json:"goal,omitempty"`
+	SourceCommit string  `json:"sourceCommit,omitempty"`
 }
 
 // pipelineGraphNodeJSON — узел графа роя с тем, что граф ему поручает:
@@ -233,7 +235,7 @@ func (s *Server) pipelineView(ctx context.Context, sw store.Swarm, steps []store
 	result.Goal = currentPassGoal(steps)
 	for _, v := range steps {
 		n := d.Nodes[v.NodeID]
-		row := pipelineNodeJSON{ID: v.NodeID, Sequence: v.Sequence, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName, StartedAt: v.StartedAt, FinishedAt: v.FinishedAt, Commit: v.AttestedCommit, Detail: v.Detail, Report: v.Report, Pass: v.Pass, Goal: v.Goal}
+		row := pipelineNodeJSON{ID: v.NodeID, Sequence: v.Sequence, Kind: n.Type, Label: v.NodeID, Status: v.State, ActorName: v.ActorName, StartedAt: v.StartedAt, FinishedAt: v.FinishedAt, Commit: v.AttestedCommit, Detail: v.Detail, Report: v.Report, Pass: v.Pass, Goal: v.Goal, SourceCommit: v.SourceCommit}
 		switch v.State {
 		case "waiting", "inflight", "attesting", "delivering":
 			row.Status = "active"

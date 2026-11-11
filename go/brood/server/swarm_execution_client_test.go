@@ -76,9 +76,9 @@ func TestSwarmStartThroughClient(t *testing.T) {
 	}
 	_, err = alice.StopSwarm(ctx, f.swarm)
 	expectReason(t, "repeated stop", err, "swarm state conflict: execution is stopped; stop requires running or waiting")
-	_, err = alice.StartSwarm(ctx, f.swarm, clientapi.SwarmStart{Definition: "approve", Goal: startAPIGoal})
+	_, err = alice.StartSwarm(ctx, f.swarm, clientapi.SwarmStart{Definition: "approve", Goal: startAPIGoal, Commit: startAPICommit})
 	expectReasonPrefix(t, "another definition", err, `swarm graph is pinned: the swarm runs workflow "release"`)
-	again, err := alice.StartSwarm(ctx, f.swarm, clientapi.SwarmStart{Definition: "release", Goal: "Second pass."})
+	again, err := alice.StartSwarm(ctx, f.swarm, clientapi.SwarmStart{Definition: "release", Goal: "Second pass.", Commit: startAPICommit})
 	if err != nil || again.Goal != "Second pass." || again.Step == nil || again.Step.Sequence != 2 {
 		t.Fatalf("restart: %+v %v", again, err)
 	}

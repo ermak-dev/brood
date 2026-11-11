@@ -1055,13 +1055,13 @@ func TestServerStartRecoversActorSteps(t *testing.T) {
 		statements = append(statements,
 			`INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,atespace_uid,state,created_at,updated_at,graph,execution,definition_name,definition_version,definition_revision) VALUES ('`+id+`','p','u','`+id+`','space-`+id+`','native-`+id+`','active','now','now',CAST('`+strings.ReplaceAll(dispatchGraph, "'", "''")+`' AS BLOB),'running','deliver',1,'rev')`,
 			`INSERT INTO swarm_members VALUES ('`+id+`','u','owner')`,
-			`INSERT INTO pipeline_sources VALUES ('`+id+`','`+dispatchOrigin+`','`+dispatchCommit+`')`)
+			`INSERT INTO pipeline_sources VALUES ('`+id+`','`+dispatchOrigin+`')`)
 	}
 	statements = append(statements,
-		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id) VALUES ('s1',1,'build','attesting','actor',1,'request')`,
-		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES ('s2',1,'build','pending')`,
-		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id,attested_commit) VALUES ('s3',1,'build','delivering','actor',1,'request','`+dispatchCommit+`')`,
-		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id,attested_commit) VALUES ('s4',1,'build','inflight','actor',1,'request','`+dispatchCommit+`')`)
+		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id,goal,source_commit) VALUES ('s1',1,'build','attesting','actor',1,'request','goal','`+dispatchCommit+`')`,
+		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal,source_commit) VALUES ('s2',1,'build','pending','goal','`+dispatchCommit+`')`,
+		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id,attested_commit,goal,source_commit) VALUES ('s3',1,'build','delivering','actor',1,'request','`+dispatchCommit+`','goal','`+dispatchCommit+`')`,
+		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id,attested_commit,goal,source_commit) VALUES ('s4',1,'build','inflight','actor',1,'request','`+dispatchCommit+`','goal','`+dispatchCommit+`')`)
 	for _, stmt := range statements {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)

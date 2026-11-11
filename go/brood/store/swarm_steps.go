@@ -46,6 +46,9 @@ type PipelineVisit struct {
 	// Goal is the goal of the pass this step opened (#242): only the first
 	// step of a pass has one.
 	Goal string
+	// SourceCommit is the source commit of the pass this step opened (#229):
+	// only the first step of a pass has one, together with Goal.
+	SourceCommit string
 	// Pass is the sequence of the first step of the step's pass; 0 for a
 	// step outside a pass opened by StartSwarm.
 	Pass int64
@@ -92,27 +95,26 @@ func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit
 	return result, rows.Err()
 }
 
-// passGoal — первый шаг и задача прохода, которому принадлежит шаг
-// sequence: последний шаг роя с задачей не дальше него, как в SwarmSteps.
-// Шаг вне прохода, открытого запуском, — 0 и пустая задача.
-func (s *Store) passGoal(ctx context.Context, swarmID string, sequence int64) (int64, string, error) {
-	var pass int64
-	var goal string
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT sequence,goal FROM swarm_steps WHERE swarm_id=? AND sequence<=? AND goal IS NOT NULL ORDER BY sequence DESC LIMIT 1`, swarmID, sequence).Scan(&pass, &goal)
+// stepPass — первый шаг, задача и commit прохода, которому принадлежит шаг
+// sequence: последний шаг роя с задачей не дальше него, как в SwarmSteps и
+// в триггерах swarm_steps_attested. Шаг вне прохода, открытого запуском, —
+// 0 и пустые задача и commit.
+func (s *Store) stepPass(ctx context.Context, swarmID string, sequence int64) (pass int64, goal, commit string, err error) {
+	err = s.conn(ctx).QueryRowContext(ctx, `SELECT sequence,goal,source_commit FROM swarm_steps WHERE swarm_id=? AND sequence<=? AND goal IS NOT NULL ORDER BY sequence DESC LIMIT 1`, swarmID, sequence).Scan(&pass, &goal, &commit)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, "", nil
+		return 0, "", "", nil
 	}
-	return pass, goal, err
+	return pass, goal, commit, err
 }
 
 // swarmStepSelect resolves managed names by UID within the step's own swarm,
 // including deleted actors whose names may since have been reused (#206:
 // join к запуску исчез — шаг принадлежит рою напрямую).
-const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.attested_commit,''),COALESCE(s.detail,''),COALESCE(s.report,''),COALESCE(s.goal,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
+const swarmStepSelect = `SELECT s.sequence,s.node_id,s.state,s.started_at,s.finished_at,(SELECT q.outcome FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='answered'),s.outcome,COALESCE(s.actor_uid,''),COALESCE(s.actor_incarnation,0),COALESCE(s.request_id,''),COALESCE(s.attested_commit,''),COALESCE(s.detail,''),COALESCE(s.report,''),COALESCE(s.goal,''),COALESCE(s.source_commit,''),COALESCE(m.name,'') FROM swarm_steps s LEFT JOIN managed_actors m ON m.uid=s.actor_uid AND m.swarm_id=s.swarm_id`
 
 func scanSwarmStep(row interface{ Scan(...any) error }) (PipelineVisit, error) {
 	var v PipelineVisit
-	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.AttestedCommit, &v.Detail, &v.Report, &v.Goal, &v.ActorName)
+	err := row.Scan(&v.Sequence, &v.NodeID, &v.State, &v.StartedAt, &v.FinishedAt, &v.Answer, &v.Outcome, &v.ActorUID, &v.ActorIncarnation, &v.RequestID, &v.AttestedCommit, &v.Detail, &v.Report, &v.Goal, &v.SourceCommit, &v.ActorName)
 	return v, err
 }
 
@@ -296,8 +298,16 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 		if request != requestID || actor != actorUID || inc != incarnation {
 			return ErrPipelineVisitConflict
 		}
-		if w.Source != nil && attested != w.Source.Commit {
-			return ErrPipelineSourceUnverified
+		if w.Source != nil {
+			// Commit прохода шага, а не роя (#229): поздний исход шага
+			// прошлого прохода сверяется со своим commit.
+			_, _, commit, err := s.stepPass(ctx, swarmID, sequence)
+			if err != nil {
+				return err
+			}
+			if commit == "" || attested != commit {
+				return ErrPipelineSourceUnverified
+			}
 		}
 		if state == "completed" && prior.Valid && prior.String == outcome && recorded == report {
 			return nil

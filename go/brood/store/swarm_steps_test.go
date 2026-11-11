@@ -48,7 +48,7 @@ func attachTestGraph(ctx context.Context, s *Store, swarmID, graph string) error
 }
 
 func bindTestSource(ctx context.Context, s *Store, swarmID string) error {
-	_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_sources(swarm_id,origin,commit_sha) VALUES (?,?,?)`, swarmID, "https://git.example.org/repo", strings.Repeat("a", 40))
+	_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO pipeline_sources(swarm_id,origin) VALUES (?,?)`, swarmID, "https://git.example.org/repo")
 	return err
 }
 
@@ -237,7 +237,7 @@ func TestPipelineRejectsLegacyActorSources(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := swarmTestStore(t, "s")
-			err := s.AttachSwarmGraph(ctx, "s", []byte(tc.graph), "test", 1, "rev", &PipelineSource{Origin: "https://example.com/group/repo.git", Commit: strings.Repeat("a", 40)})
+			err := s.AttachSwarmGraph(ctx, "s", []byte(tc.graph), "test", 1, "rev", "https://example.com/group/repo.git")
 			if err == nil || !strings.Contains(err.Error(), "role") {
 				t.Errorf("legacy actor source accepted or refused without naming the role: %v", err)
 			}
@@ -288,7 +288,7 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 		s2 := swarmTestStore(t, "s")
 		graph := strings.Replace(runGraph, "- {label: yes, outcome: success}", "- {label: yes, outcome: success}\n      - {label: no, outcome: fail}", 1)
 		graph = strings.Replace(graph, "- {from: ask, to: actor}", "- {from: ask, to: actor, label: no}", 1)
-		if err := s2.AttachSwarmGraph(ctx, "s", []byte(graph), "test", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err == nil {
+		if err := s2.AttachSwarmGraph(ctx, "s", []byte(graph), "test", 1, "rev", "https://git.example.org/repo"); err == nil {
 			t.Error("accepted human option with no matching route")
 		}
 	})
@@ -316,7 +316,7 @@ func TestPipelineFailClosedRouting(t *testing.T) {
 		s2 := swarmTestStore(t, "s")
 		graph := strings.Replace(actorStartGraph, "  done: {type: exit}", "  done: {type: exit}\n  other: {type: exit}", 1)
 		graph = strings.Replace(graph, "from: actor, to: done}", "from: actor, to: other}", 1)
-		if err := s2.AttachSwarmGraph(ctx, "s", []byte(graph), "test", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err == nil {
+		if err := s2.AttachSwarmGraph(ctx, "s", []byte(graph), "test", 1, "rev", "https://git.example.org/repo"); err == nil {
 			t.Error("accepted non-designated exit")
 		}
 	})
@@ -650,7 +650,7 @@ func TestSwarmStepsOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, graph := range []string{"", "garbage", strings.Repeat("x", MaxPipelineGraphBytes+1), strings.Replace(runGraph, "exit: done", "exit: missing", 1)} {
-		if err := s.AttachSwarmGraph(ctx, "s", []byte(graph), "test", 1, "rev", &PipelineSource{Origin: "https://git.example.org/repo", Commit: strings.Repeat("a", 40)}); err == nil {
+		if err := s.AttachSwarmGraph(ctx, "s", []byte(graph), "test", 1, "rev", "https://git.example.org/repo"); err == nil {
 			t.Fatal("invalid graph accepted")
 		}
 	}

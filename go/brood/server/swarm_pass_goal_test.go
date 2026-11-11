@@ -71,7 +71,7 @@ func TestSwarmStartPassGoalWire(t *testing.T) {
 		t.Fatalf("stop response goal: %v", b)
 	}
 
-	r, b = f.start(f.alice, map[string]any{"definition": "release", "goal": second})
+	r, b = f.start(f.alice, map[string]any{"definition": "release", "goal": second, "commit": startAPICommit})
 	expectStatus(t, "restart", r, b, http.StatusOK)
 	if b["goal"] != second || b["step"].(map[string]any)["sequence"] != float64(3) {
 		t.Fatalf("restart response: %v", b)

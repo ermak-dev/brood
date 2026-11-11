@@ -8,7 +8,8 @@ import (
 	"brood.dev/go/brood/gitorigin"
 )
 
-// PipelineSource identifies the immutable source snapshot required by a run.
+// PipelineSource identifies the source of a pass: the swarm's origin, pinned by
+// the first start, and the commit pinned by the pass (#229).
 type PipelineSource struct {
 	Origin string
 	Commit string
@@ -19,8 +20,7 @@ var ErrPipelineSourceUnverified = errors.New("pipeline source checkout is not in
 
 const pipelineSourceSchema = `CREATE TABLE pipeline_sources (
     swarm_id TEXT NOT NULL PRIMARY KEY REFERENCES swarms(id) ON DELETE CASCADE,
-    origin TEXT NOT NULL,
-    commit_sha TEXT NOT NULL
+    origin TEXT NOT NULL
 )`
 
 const pipelineSourceImmutable = `CREATE TRIGGER pipeline_sources_immutable BEFORE UPDATE ON pipeline_sources BEGIN SELECT RAISE(ABORT, 'pipeline source is immutable'); END`
@@ -31,7 +31,10 @@ const pipelineSourceNoDelete = `CREATE TRIGGER pipeline_sources_no_delete BEFORE
 // перевешан с запуска на рой без изменения смысла (#206): снимок
 // источника остаётся fail-closed. Идентичность
 // запуска (бывший pipeline_runs_no_replace) защищает неизменность
-// снимка графа роя: swarmGraphNoReplace в registry.go.
+// снимка графа роя: swarmGraphNoReplace в registry.go. Commit ушёл из
+// таблицы на проход (#229): swarm_steps.source_commit первого шага прохода.
+// Origin остаётся на рой: акторы роя привязаны к нему bootstrap'ом, и гость
+// сверяет с ним origin каждого подтверждения workspace.
 
 func canonicalPipelineSource(source *PipelineSource) (*PipelineSource, error) {
 	if source == nil {

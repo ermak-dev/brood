@@ -62,7 +62,8 @@ type ActorStepAttempt struct {
 	// ID workspace-lease.
 	RequestID string
 	// Actor — привязанный к роли узла актор на момент резерва.
-	Actor  ManagedActor
+	Actor ManagedActor
+	// Source — origin роя и commit прохода этого шага (#229).
 	Source PipelineSource
 	Graph  *pipeline.Document
 	// Pass and Goal — первый шаг прохода этого шага и задача прохода (#242),
@@ -101,12 +102,13 @@ type PreviousStep struct {
 // current incarnation, the actor's workspace is reserved for the attestation
 // (AcquireActorOperation, operation workspace_attest, ID requestID) and the
 // step becomes attesting with that actor and request ID. Nothing to reserve
-// is ErrNoActorStep without a write. A role that does not resolve to a live
-// bound actor or a busy workspace closes the step as refused with the reason
-// in the same transaction and answers ErrActorStepRefused. The attempt
-// carries the goal of the step's pass, the sequence of its first step and,
-// read in the same transaction, the step right before it in that pass
-// (Previous, #248): nil for the first step of a pass.
+// is ErrNoActorStep without a write. A step whose pass has no source commit,
+// a role that does not resolve to a live bound actor or a busy workspace
+// closes the step as refused with the reason in the same transaction and
+// answers ErrActorStepRefused. The attempt carries the source commit (#229)
+// and the goal of the step's pass, the sequence of its first step and, read
+// in the same transaction, the step right before it in that pass (Previous,
+// #248): nil for the first step of a pass.
 func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller string) (ActorStepAttempt, error) {
 	if !validPipelineField(swarmID) || !validPipelineField(requestID) || caller == "" {
 		return ActorStepAttempt{}, errors.New("invalid actor step reservation")
@@ -117,6 +119,15 @@ func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller
 		w, sequence, node, d, err := s.awaitingActorStep(ctx, swarmID)
 		if err != nil {
 			return err
+		}
+		pass, goal, commit, err := s.stepPass(ctx, swarmID, sequence)
+		if err != nil {
+			return err
+		}
+		// Шаг без commit прохода (только мимо запуска) подтвердить нечем.
+		if commit == "" {
+			refusal = "the step's pass has no source commit to attest"
+			return s.refusePendingStep(ctx, swarmID, sequence, refusal)
 		}
 		n := d.Nodes[node]
 		b, err := s.stepRoleBinding(ctx, swarmID, n.Role)
@@ -139,15 +150,11 @@ func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller
 		if err := s.markStepAttesting(ctx, swarmID, sequence, actor, requestID); err != nil {
 			return err
 		}
-		pass, goal, err := s.passGoal(ctx, swarmID, sequence)
-		if err != nil {
-			return err
-		}
 		previous, err := s.previousStep(ctx, d, swarmID, pass, sequence)
 		if err != nil {
 			return err
 		}
-		attempt = ActorStepAttempt{SwarmID: w.ID, SwarmName: w.Name, Sequence: sequence, NodeID: node, RequestID: requestID, Actor: actor, Source: *w.Source, Graph: d, Pass: pass, Goal: goal, Previous: previous, Lease: lease}
+		attempt = ActorStepAttempt{SwarmID: w.ID, SwarmName: w.Name, Sequence: sequence, NodeID: node, RequestID: requestID, Actor: actor, Source: PipelineSource{Origin: w.Source.Origin, Commit: commit}, Graph: d, Pass: pass, Goal: goal, Previous: previous, Lease: lease}
 		return nil
 	})
 	if err != nil {
@@ -255,9 +262,10 @@ func (s *Store) refusePendingStep(ctx context.Context, swarmID string, sequence 
 // RecordActorStepAttestation records the verified workspace attestation of
 // the attempt: origin and commit are those of the consumed claim. In one
 // transaction it checks that the swarm is active and its graph running, that
-// the claim names the swarm's source snapshot, that the step is still
-// attesting for this request, actor and incarnation, and that the node's role
-// is still bound to that actor at that incarnation. Only then the step becomes
+// the claim names the swarm's origin and the commit of the step's pass
+// (#229), that the step is still attesting for this request, actor and
+// incarnation, and that the node's role is still bound to that actor at that
+// incarnation. Only then the step becomes
 // delivering with attested_commit. A stopped swarm or another attempt is
 // ErrPipelineVisitConflict; another source is ErrPipelineSourceUnverified; a
 // moved or stale role binding is its binding error. Nothing is written on
@@ -268,7 +276,13 @@ func (s *Store) RecordActorStepAttestation(ctx context.Context, a ActorStepAttem
 		if err != nil {
 			return err
 		}
-		if w.Source == nil || w.Source.Origin != origin || w.Source.Commit != commit {
+		if w.Source == nil || w.Source.Origin != origin {
+			return ErrPipelineSourceUnverified
+		}
+		// Commit прохода шага, а не роя (#229).
+		if _, _, pinned, err := s.stepPass(ctx, a.SwarmID, a.Sequence); err != nil {
+			return err
+		} else if pinned == "" || pinned != commit {
 			return ErrPipelineSourceUnverified
 		}
 		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='delivering',attested_commit=? WHERE swarm_id=? AND sequence=? AND request_id=? AND state='attesting'`, commit, a.SwarmID, a.Sequence, a.RequestID)

@@ -514,7 +514,8 @@ func stepRows(t *testing.T, s *Store, through int64) string {
 // TestRestartIsNewPass — повторный запуск начинает новый проход на снимке
 // первого: шаги прошлых проходов и снимок не меняются, нумерация
 // продолжается, новая версия в каталоге снимок роя не подменяет. Сменить
-// определение или commit повторным запуском нельзя.
+// определение повторным запуском нельзя; commit — свой у каждого прохода
+// (#229, swarm_pass_source_test.go).
 func TestRestartIsNewPass(t *testing.T) {
 	ctx := context.Background()
 	s := startStore(t)
@@ -534,8 +535,7 @@ func TestRestartIsNewPass(t *testing.T) {
 		in   SwarmStart
 		text string
 	}{
-		{"another definition", SwarmStart{Definition: "approve"}, `"release"`},
-		{"another commit", SwarmStart{Definition: "release", Commit: strings.Repeat("f", 40)}, startCommit},
+		{"another definition", SwarmStart{Definition: "approve", Commit: startCommit}, `"release"`},
 	} {
 		before := dumpTables(t, s, executionTables...)
 		in := tc.in
@@ -548,9 +548,8 @@ func TestRestartIsNewPass(t *testing.T) {
 		}
 	}
 
-	// Повторный запуск без commit идёт на записанном источнике; с тем же
-	// commit — тоже.
-	again, err := s.StartSwarm(ctx, SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Goal: startGoal}, allow)
+	// Повторный запуск с тем же commit — новый проход на том же источнике.
+	again, err := s.StartSwarm(ctx, SwarmStart{SwarmID: "one", UserID: "u", Definition: "release", Commit: startCommit, Goal: startGoal}, allow)
 	mustNil(t, err)
 	if string(again.Graph) != string(first.Graph) || again.DefinitionVersion != first.DefinitionVersion || again.DefinitionRevision != first.DefinitionRevision || *again.Source != *first.Source {
 		t.Fatalf("restart replaced the snapshot: %+v, was %+v", again, first)
