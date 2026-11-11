@@ -94,9 +94,10 @@ func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, orig
 }
 
 // authorizeCommandTarget is shared with session command adapters. Workers may
-// read only themselves. Peer targeting and all lifecycle mutations require a
-// currently approved master, including self-mutations.
-// Callers must retain the returned UID/generation and recheck before side effects.
+// read only themselves. Peer targeting requires a currently approved master,
+// and a mutation additionally requires that the master added the target
+// (masterOwns). Callers must retain the returned UID/generation and recheck
+// before side effects.
 func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original store.ManagedActor, name string, mutate bool) (store.ManagedActor, error) {
 	from, _, err := m.authorizeCommandActor(ctx, original)
 	if err != nil {
@@ -114,7 +115,67 @@ func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original s
 	if target.AtespaceUID != from.AtespaceUID || target.Phase == "deleted" {
 		return store.ManagedActor{}, app.ErrNotAllowed
 	}
+	if mutate {
+		if err := m.masterOwns(ctx, from, target); err != nil {
+			return store.ManagedActor{}, err
+		}
+	}
 	return target, nil
+}
+
+// ownershipError is a master's refusal for an actor it did not add. It unwraps
+// to app.ErrNotAllowed; its text names whose actor the target is.
+type ownershipError struct{ reason string }
+
+func (e *ownershipError) Error() string { return e.reason }
+func (e *ownershipError) Unwrap() error { return app.ErrNotAllowed }
+
+// masterOwns is the single ownership check behind every guest command that
+// changes an actor: lifecycle, workspace and session control (#152).
+func (m *managedProvider) masterOwns(ctx context.Context, from, target store.ManagedActor) error {
+	owner := ""
+	if target.ParentUID != "" && target.ParentUID != from.UID {
+		// Имя владельца подсказывает, кого спросить; без имени отказ
+		// остаётся отказом.
+		if parent, err := m.server.store.GetManagedActor(ctx, target.ParentUID); err == nil && parent.SwarmID == from.SwarmID {
+			owner = parent.Name
+		}
+	}
+	if reason := ownershipRefusal(from, target, owner); reason != "" {
+		return &ownershipError{reason: reason}
+	}
+	return nil
+}
+
+// ownershipRefusal returns why master from may not change target, or "" when
+// from added target through add. owner names the master that added target, if
+// known.
+func ownershipRefusal(from, target store.ManagedActor, owner string) string {
+	// Master управляет только workers, добавленными им через add, как mop
+	// отказывает мастеру в чужом папете. ParentUID неизменен с резервирования,
+	// а ревизию цели и делегацию перепроверяет сама операция.
+	if from.UID != "" && target.ParentUID == from.UID {
+		return ""
+	}
+	const scope = "a master manages only the workers it added"
+	switch {
+	case target.UID == from.UID:
+		// Себя master не останавливает, не удаляет, не перезапускает и не
+		// очищает. В mop master не папет, а stop остаётся командой
+		// оператора; диспетчер шагов перезапускает сессии актора сам, без
+		// гостевых команд. Остановивший себя master не может ни доложить, ни подняться:
+		// start себя ему не доступен, и рой остаётся без координатора до
+		// решения оператора.
+		return fmt.Sprintf("actor command not authorized: master %q does not manage itself; the swarm operator does", from.Name)
+	case target.Role == "master":
+		return fmt.Sprintf("actor command not authorized: %q is another master; %s", target.Name, scope)
+	case target.ParentUID == "":
+		return fmt.Sprintf("actor command not authorized: %q was created by the swarm operator, not added by master %q; %s", target.Name, from.Name, scope)
+	case owner != "":
+		return fmt.Sprintf("actor command not authorized: %q is a worker of master %q; %s", target.Name, owner, scope)
+	default:
+		return fmt.Sprintf("actor command not authorized: %q is a worker of another master; %s", target.Name, scope)
+	}
 }
 
 // executeLifecycleCommand executes only the explicitly supported managed intents.
@@ -146,12 +207,6 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	target, err := m.authorizeCommandTarget(ctx, from, args.Name, true)
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
-	}
-	// start/reset master выполняет только для своих workers, как mop update
-	// отказывает в чужом папете. ParentUID неизменен с резервирования, а
-	// ревизия цели и делегация перепроверяются в самой операции.
-	if (inv.Name == "start" || inv.Name == "reset") && target.ParentUID != from.UID {
-		return command.Result{}, actorCommandError(app.ErrNotAllowed)
 	}
 	return m.server.applyActorCommand(ctx, from.DelegatorID, sw, target, inv.Name, &from)
 }
@@ -213,7 +268,10 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 }
 
 func actorCommandError(err error) error {
+	var ownership *ownershipError
 	switch {
+	case errors.As(err, &ownership):
+		return err
 	case errors.Is(err, app.ErrNotAllowed):
 		return fmt.Errorf("%w: actor command delegation or swarm access is not authorized", app.ErrNotAllowed)
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, app.ErrNotFound):
