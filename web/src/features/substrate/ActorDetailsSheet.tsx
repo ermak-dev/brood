@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { actorsApi, type Actor } from '@/services/brood/substrate';
 import { managedActionGroups, type ManagedActionId } from './actorActions';
@@ -70,7 +70,8 @@ function ActorTabs({
 }
 
 /** Сведения и операции разделены; ошибки и неизвестные исходы видны на обеих
- * вкладках. Viewer получает только сведения, без изменяющих действий. */
+ * вкладках. Viewer получает только сведения, без изменяющих действий. Связи
+ * актора (#195) -- в обзоре, под сведениями. */
 export function ActorDetailsSheet({
   open,
   onClose,
@@ -85,6 +86,7 @@ export function ActorDetailsSheet({
   onAction,
   onClearFailure,
   onDismissUnknown,
+  relations,
 }: {
   open: boolean;
   onClose: () => void;
@@ -99,6 +101,7 @@ export function ActorDetailsSheet({
   onAction: (id: ManagedActionId) => void;
   onClearFailure: () => void;
   onDismissUnknown: (item: UnknownOutcome) => void;
+  relations?: ReactNode;
 }) {
   const { t } = useTranslation();
   const base = useId();
@@ -163,7 +166,10 @@ export function ActorDetailsSheet({
         aria-labelledby={canManage ? ids('overview').tab : undefined}
         hidden={canManage && tab !== 'overview'}
       >
-        <ActorOverview actor={actor} />
+        <div className={styles.panel}>
+          <ActorOverview actor={actor} />
+          {relations}
+        </div>
       </div>
       {canManage && (
         <div

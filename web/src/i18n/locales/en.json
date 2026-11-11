@@ -2663,7 +2663,7 @@
     "conflict": "The policy was changed while you edited it. Your draft is kept; Save replaces the other change, Revert shows it.",
     "delete": "Delete project policy",
     "delete_title": "Delete policy",
-    "delete_message": "Delete the policy of project {{project}}? Only global roles will apply there.",
+    "delete_message": "Delete the policy of swarm {{project}}? Only global roles will apply there.",
     "deleted": "Policy deleted"
   },
   "substrate": {
@@ -3264,7 +3264,13 @@
     "steps_empty": "No steps yet.",
     "pass_steps": "Steps: {{count}}",
     "management": "Access and lifecycle",
-    "management_hint": "Who can use this swarm, its ownership and its deletion."
+    "management_hint": "Who can use this swarm, its ownership and its deletion.",
+    "objects": {
+      "label": "Swarm objects",
+      "actors": "Actors",
+      "templates": "Templates",
+      "access": "Access"
+    }
   },
   "swarm_requests": {
     "title": "Operator requests",
@@ -3375,5 +3381,17 @@
       "where": "Bind roles in the Roles section of the swarm page; it shows the roles of the definition chosen here.",
       "failed": "The roles could not be checked: {{reason}}"
     }
+  },
+  "relations": {
+    "title": "Related",
+    "swarm": "Swarm",
+    "actors": "Actors",
+    "no_actors": "No actor was created from it",
+    "actors_failed": "Actors of the swarm could not be read: {{reason}}",
+    "actor_pools": "Pools of its actors",
+    "worker_pool": "Worker pool",
+    "workers": "Workers",
+    "no_workers": "The pool has no workers",
+    "workers_failed": "Workers could not be read: {{reason}}"
   }
 }

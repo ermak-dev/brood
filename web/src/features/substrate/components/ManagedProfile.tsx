@@ -1,10 +1,14 @@
 import { useTranslation } from 'react-i18next';
 import type { Actor, ActorTemplate } from '@/services/brood/substrate';
+import { useAdministrator } from '@/features/access/shared';
+import { RelatedLink } from '@/features/objects/ObjectLink';
+import { actorPool } from '@/features/objects/relations';
 import { DASH } from '../format';
 import styles from '../substrate.module.scss';
 
 export function ManagedProfile({ entity }: { entity: Actor | ActorTemplate }) {
   const { t } = useTranslation();
+  const administrator = useAdministrator();
   if (entity.provider !== 'proxmox') return null;
   const actor = 'generation' in entity ? (entity as Actor) : undefined;
   return (
@@ -21,7 +25,10 @@ export function ManagedProfile({ entity }: { entity: Actor | ActorTemplate }) {
             <dt>{t('actors.node')}</dt>
             <dd>{actor.placement?.node || DASH}</dd>
             <dt>{t('actors.pool')}</dt>
-            <dd>{actor.placement?.pool || DASH}</dd>
+            {/* Пул Proxmox актора (#195): администратору -- ссылкой на его панель. */}
+            <dd>
+              <RelatedLink related={actorPool(actor, administrator)} />
+            </dd>
           </>
         )}
       </dl>

@@ -2689,7 +2689,7 @@
     "conflict": "編輯期間策略已被他人修改。草稿已保留；「保存」將覆蓋對方的修改，「撤銷修改」將显示它。",
     "delete": "刪除項目策略",
     "delete_title": "刪除策略",
-    "delete_message": "刪除項目 {{project}} 的策略？該項目將只適用全局角色。",
+    "delete_message": "刪除群組 {{project}} 的策略？該群組將只適用全局角色。",
     "deleted": "策略已刪除"
   },
   "substrate": {
@@ -3289,7 +3289,13 @@
     "steps_empty": "尚無步驟。",
     "pass_steps": "步驟：{{count}}",
     "management": "存取與生命週期",
-    "management_hint": "誰可以使用此群組、其擁有權與刪除。"
+    "management_hint": "誰可以使用此群組、其擁有權與刪除。",
+    "objects": {
+      "label": "群組物件",
+      "actors": "執行者",
+      "templates": "模板",
+      "access": "存取權限"
+    }
   },
   "swarm_requests": {
     "title": "操作員請求",
@@ -3400,5 +3406,17 @@
       "where": "請在蜂群頁面的「角色」部分綁定角色；它顯示此處所選定義的角色。",
       "failed": "無法檢查角色：{{reason}}"
     }
+  },
+  "relations": {
+    "title": "關聯",
+    "swarm": "群組",
+    "actors": "執行者",
+    "no_actors": "尚無由此模板建立的執行者",
+    "actors_failed": "無法讀取群組的執行者：{{reason}}",
+    "actor_pools": "其執行者所在的池",
+    "worker_pool": "工作節點池",
+    "workers": "工作節點",
+    "no_workers": "此池暫無工作節點",
+    "workers_failed": "無法讀取工作節點：{{reason}}"
   }
 }

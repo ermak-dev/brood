@@ -2663,7 +2663,7 @@
     "conflict": "편집하는 동안 정책이 변경되었습니다. 초안은 유지됩니다; 저장하면 다른 변경을 덮어쓰고, 변경 취소는 그 변경을 보여줍니다.",
     "delete": "프로젝트 정책 삭제",
     "delete_title": "정책 삭제",
-    "delete_message": "프로젝트 {{project}}의 정책을 삭제할까요? 전역 역할만 적용됩니다.",
+    "delete_message": "스웜 {{project}}의 정책을 삭제할까요? 전역 역할만 적용됩니다.",
     "deleted": "정책 삭제됨"
   },
   "substrate": {
@@ -3264,7 +3264,13 @@
     "steps_empty": "아직 단계가 없습니다.",
     "pass_steps": "단계 {{count}}개",
     "management": "접근 및 수명 주기",
-    "management_hint": "이 스웜을 사용할 수 있는 사람, 소유권, 삭제."
+    "management_hint": "이 스웜을 사용할 수 있는 사람, 소유권, 삭제.",
+    "objects": {
+      "label": "스웜 객체",
+      "actors": "액터",
+      "templates": "템플릿",
+      "access": "접근 권한"
+    }
   },
   "swarm_requests": {
     "title": "운영자 요청",
@@ -3375,5 +3381,17 @@
       "where": "스웜 페이지의 역할 섹션에서 역할을 바인딩하세요. 그 섹션은 여기에서 선택한 정의의 역할을 보여 줍니다.",
       "failed": "역할을 확인할 수 없습니다: {{reason}}"
     }
+  },
+  "relations": {
+    "title": "연관 항목",
+    "swarm": "스웜",
+    "actors": "액터",
+    "no_actors": "이 템플릿으로 만든 액터가 없습니다",
+    "actors_failed": "스웜의 액터를 읽지 못했습니다: {{reason}}",
+    "actor_pools": "액터가 실행 중인 풀",
+    "worker_pool": "워커 풀",
+    "workers": "워커",
+    "no_workers": "이 풀에 워커가 없습니다",
+    "workers_failed": "워커를 읽지 못했습니다: {{reason}}"
   }
 }

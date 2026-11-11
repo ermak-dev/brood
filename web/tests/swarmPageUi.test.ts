@@ -133,6 +133,13 @@ describe('identity', () => {
     expect(html).toContain(`href="/projects/${swarm.project_id}"`);
   });
 
+  test('the actor of a step opens its panel in this swarm (#195)', () => {
+    const html = render({ selected: 'architecture' });
+    const actor = `href="/actors?project=${swarm.project_id}&amp;swarm=${swarm.id}&amp;actor=architect"`;
+    // The selected node and its step in the history both name it.
+    expect(html.split(actor).length - 1).toBe(2);
+  });
+
   test('the full swarm ID is a separate copy element, not the title', () => {
     const html = render();
     const text = visibleText(html);

@@ -25,7 +25,10 @@ import {
 import styles from './substrate.module.scss';
 
 interface TemplateEditorProps {
+  /** ID роя: в него уходит создание. */
   project: string;
+  /** Имя роя в заголовке листа (#195). */
+  swarmName?: string;
   /** The template to copy; null -- start from a blank one. */
   source: ActorTemplate | null;
   open: boolean;
@@ -37,7 +40,14 @@ interface TemplateEditorProps {
  * update for templates. The form edits the protojson object in place, the JSON
  * tab shows all of it: fields the form does not cover (wakeup probe, security
  * context, external volumes, golden snapshots) survive either way. */
-export function TemplateEditor({ project, source, open, onClose, onSubmit }: TemplateEditorProps) {
+export function TemplateEditor({
+  project,
+  swarmName,
+  source,
+  open,
+  onClose,
+  onSubmit,
+}: TemplateEditorProps) {
   const { t } = useTranslation();
   const [initial] = useState(() => (source ? copyOf(source) : blankTemplate()));
   const [draft, setDraft] = useState(initial);
@@ -110,7 +120,7 @@ export function TemplateEditor({ project, source, open, onClose, onSubmit }: Tem
       open={open}
       onClose={onClose}
       size="xl"
-      eyebrow={project}
+      eyebrow={swarmName ?? project}
       title={source ? t('templates.copy_title', { name: source.metadata.name }) : t('templates.create_title')}
       description={t('templates.immutable_hint')}
       onSave={() => void save()}

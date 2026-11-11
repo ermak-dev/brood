@@ -2669,7 +2669,7 @@
     "conflict": "Chính sách đã bị sửa trong lúc bạn chỉnh. Bản nháp vẫn giữ; Lưu sẽ ghi đè thay đổi kia, Hoàn tác sẽ hiện nó.",
     "delete": "Xóa chính sách dự án",
     "delete_title": "Xóa chính sách",
-    "delete_message": "Xóa chính sách của dự án {{project}}? Chỉ còn vai trò toàn cục áp dụng.",
+    "delete_message": "Xóa chính sách của bầy {{project}}? Chỉ còn vai trò toàn cục áp dụng.",
     "deleted": "Đã xóa chính sách"
   },
   "substrate": {
@@ -3270,7 +3270,13 @@
     "steps_empty": "Chưa có bước nào.",
     "pass_steps": "Số bước: {{count}}",
     "management": "Quyền truy cập và vòng đời",
-    "management_hint": "Ai có thể dùng bầy này, quyền sở hữu và việc xóa bầy."
+    "management_hint": "Ai có thể dùng bầy này, quyền sở hữu và việc xóa bầy.",
+    "objects": {
+      "label": "Đối tượng của bầy",
+      "actors": "Tác nhân",
+      "templates": "Mẫu",
+      "access": "Quyền truy cập"
+    }
   },
   "swarm_requests": {
     "title": "Yêu cầu tới người vận hành",
@@ -3381,5 +3387,17 @@
       "where": "Gắn vai trò trong phần Vai trò của trang bầy; phần đó hiển thị vai trò của định nghĩa được chọn ở đây.",
       "failed": "Không kiểm tra được các vai trò: {{reason}}"
     }
+  },
+  "relations": {
+    "title": "Liên quan",
+    "swarm": "Bầy",
+    "actors": "Tác nhân",
+    "no_actors": "Chưa có tác nhân nào được tạo từ mẫu này",
+    "actors_failed": "Không đọc được tác nhân của bầy: {{reason}}",
+    "actor_pools": "Pool của các tác nhân",
+    "worker_pool": "Nhóm worker",
+    "workers": "Worker",
+    "no_workers": "Nhóm này chưa có worker",
+    "workers_failed": "Không đọc được worker: {{reason}}"
   }
 }

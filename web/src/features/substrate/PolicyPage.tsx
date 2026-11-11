@@ -58,6 +58,8 @@ export function PolicyPage() {
   const [requestedSwarm, setRequestedSwarm] = useState('');
   const project =
     swarms.data?.find((swarm) => swarm.id === requestedSwarm && swarm.state === 'active')?.id ?? '';
+  // Подписи называют рой именем (#195): ID уходит только в запросы.
+  const swarmName = swarms.data?.find((swarm) => swarm.id === project)?.name ?? '';
   const [scope, setScope] = useState<Scope>('global');
   const target = scope === 'project' ? project : '';
 
@@ -133,14 +135,16 @@ export function PolicyPage() {
   const remove = () =>
     confirm({
       title: t('policy.delete_title'),
-      message: t('policy.delete_message', { project }),
+      message: t('policy.delete_message', { project: swarmName }),
       confirmText: t('substrate.delete'),
       success: t('policy.deleted'),
       run: () => policyApi.remove(project),
     });
 
   const scopeLabel =
-    scope === 'project' ? t('policy.scope_project', { project }) : t('policy.scope_global');
+    scope === 'project'
+      ? t('policy.scope_project', { project: swarmName })
+      : t('policy.scope_global');
 
   return (
     <div className={styles.page}>
@@ -187,7 +191,7 @@ export function PolicyPage() {
             {
               value: 'project',
               label: project
-                ? t('policy.scope_project', { project })
+                ? t('policy.scope_project', { project: swarmName })
                 : t('policy.scope_project_none'),
               disabled: !project,
             },

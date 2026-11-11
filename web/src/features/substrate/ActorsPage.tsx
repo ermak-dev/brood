@@ -11,6 +11,7 @@ import { useObjectSelection, usePanel } from '@/features/objects/useObjectSelect
 import { ActorDetailsSheet } from './ActorDetailsSheet';
 import { ActorEditor } from './ActorEditor';
 import { ActorActionFailure } from './components/ActorActionFailure';
+import { ActorRelations } from './components/ActorRelations';
 import { ActorOutcomeNotices } from './components/ActorOutcomeNotices';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { EntityTable, type Column } from './components/EntityTable';
@@ -146,6 +147,15 @@ function Actors({
     panelActor && panelActor.provider !== 'proxmox' && openable(panelActor) ? panelActor : null;
   const selectedActor = selected ? data?.find((a) => a.metadata.name === selected) : undefined;
   const unavailable = Boolean(selected && data && !(selectedActor && openable(selectedActor)));
+  // Связи открытого актора (#195): рой и шаблон из того же чтения, что список.
+  const relations = (actor: Actor) => (
+    <ActorRelations
+      actor={actor}
+      scope={{ project: projectId, swarm: project }}
+      swarmName={name}
+      templates={loaded?.templates ?? null}
+    />
+  );
 
   // Native-действия: прежний поток, отказ — в той же плашке. Идущее действие
   // помнится по актору: его кнопка в панели ждёт исхода, повтор не уходит.
@@ -259,6 +269,7 @@ function Actors({
         <ActorEditor
           key={`create-${creating.session}`}
           project={project}
+          swarmName={name}
           projectId={projectId}
           actor={null}
           templates={loaded?.templates ?? null}
@@ -278,8 +289,10 @@ function Actors({
         <ActorEditor
           key={`editor-${panel.session}`}
           project={project}
+          swarmName={name}
           projectId={projectId}
           actor={editorActor}
+          relations={relations(editorActor)}
           templates={loaded?.templates ?? null}
           open={panel.open}
           onClose={closePanel}
@@ -327,6 +340,7 @@ function Actors({
           onAction={(id) => request(detailsActor, id)}
           onClearFailure={ops.clearFailure}
           onDismissUnknown={ops.dismissUnknown}
+          relations={relations(detailsActor)}
         />
       )}
 

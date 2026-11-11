@@ -50,7 +50,15 @@ export interface ManagedProfileFields {
 export interface ActorStatus {
   state?: string;
   assignedNode?: string;
-  workerAssignment?: { worker?: ObjectRef; workerPod?: string; nodeName?: string };
+  /** Воркер, на котором актор сейчас; нет у suspended и crashed. worker --
+   * ссылка на запись Worker, workerPool -- его WorkerPool. */
+  workerAssignment?: {
+    worker?: ObjectRef;
+    workerNamespace?: string;
+    workerPool?: string;
+    workerPod?: string;
+    nodeName?: string;
+  };
   crash?: Record<string, unknown>;
   snapshots?: unknown[];
   errorMessage?: string;

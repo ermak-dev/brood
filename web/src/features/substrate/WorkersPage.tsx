@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { workersApi, type Worker, type WorkerResources } from '@/services/brood/substrate';
+import { RelatedLink } from '@/features/objects/ObjectLink';
+import { workerPool } from '@/features/objects/relations';
 import { useObjectSelection, usePanel } from '@/features/objects/useObjectSelection';
 import { EntityPanel, type PanelActionGroup } from './components/EntityPanel';
 import { EntityTable, type Column } from './components/EntityTable';
@@ -156,6 +158,11 @@ export function WorkersPage() {
           <div className={styles.form}>
             <Section title={t('workers.placement')}>
               <dl className={styles.details}>
+                {/* Пул воркера ссылкой на его панель (#195). */}
+                <dt>{t('workers.pool')}</dt>
+                <dd className={styles.mono}>
+                  <RelatedLink related={workerPool(viewing)} />
+                </dd>
                 <dt>{t('workers.node')}</dt>
                 <dd>{viewing.nodeName || DASH}</dd>
                 <dt>{t('workers.pod')}</dt>
