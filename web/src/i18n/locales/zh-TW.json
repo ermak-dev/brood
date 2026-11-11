@@ -3148,6 +3148,19 @@
         "skipped": "已停止或略過",
         "unconfirmed": "結果未知"
       }
+    },
+    "catalog": {
+      "title": "工作流程定義",
+      "hint": "由 bro build 從專案的 Broodfile 發布。群組首次啟動會固定其中一個；新版本不會改變已經啟動的群組。",
+      "choose": "要顯示的定義",
+      "version": "版本 {{version}}",
+      "revision": "修訂號 {{revision}}",
+      "published": "發布於 {{time}}",
+      "published_unknown": "發布時間未知",
+      "graph": "{{name}} 的圖，版本 {{version}}",
+      "copy_revision": "複製修訂號",
+      "empty": "沒有已發布的定義",
+      "empty_hint": "在專案的 Broodfile 中描述 workflows 並執行 bro build：它會在這裡發布定義，群組首次啟動時從中選擇一個。"
     }
   },
   "swarm_page": {
