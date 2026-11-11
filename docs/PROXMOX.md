@@ -325,8 +325,10 @@ holder фиксированной командой `brood-guest --brood-guest-ap
 от него не падает. Проектные секреты читает только app wrapper, а не holder
 или browser attach.
 
-Wrapper запускает `claude --dangerously-skip-permissions --mcp-config ...`,
-как mop. Перед exec он сливает в `~/.claude.json`
+В свободной сессии wrapper запускает
+`claude --dangerously-skip-permissions --mcp-config ...`, как mop: brood
+добавляется к MCP-серверам и настройкам актора. Сессию после подтверждения
+workspace он запускает строже («Сессия шага»). Перед exec он сливает в `~/.claude.json`
 `hasCompletedOnboarding=true`, `theme` (если не задан, `dark`),
 `resumeReturnDismissed=true` и
 `projects["/workspace/project"].hasTrustDialogAccepted=true`, а в
@@ -537,13 +539,134 @@ recycle и dispatch к актору. Перед вызовом сервер за
 (`notSent`, «Приём сообщений в госте»), сервер повторяет сам (#244).
 Порядок и состояния — [MODEL.md](MODEL.md), «Шаг актора».
 
-Подтверждение утверждает состояние в окне тишины, не позже. Новая сессия
-исполняет код, сохранённый актором в `/workspace/home` (hooks Claude,
-MCP-серверы `~/.claude.json`, shell rc), и он может изменить workspace после
-подписи; это открытая задача #224. Файлы, скрытые правилами ignore (артефакты сборки, файловые секреты
-проекта), в утверждение не входят. Операция рвёт терминалы и перезапускает
-сессию, как restart. Нужен новый brood-guest; прежний отвечает `unsupported`,
-и шаг не доставляется.
+Подтверждение утверждает состояние в окне тишины, не позже. Файлы, скрытые
+правилами ignore (артефакты сборки, файловые секреты проекта), в
+утверждение не входят, кроме путей настройки Claude Code (ниже, «Сессия
+шага»). Операция рвёт терминалы и перезапускает сессию, как restart. Нужен
+новый brood-guest; прежний отвечает `unsupported`, и шаг не доставляется.
+
+### Сессия шага
+
+Сессия, которую запускает подтверждение, — сессия шага (#224, решение
+оператора 2026-11-11): код, сохранённый актором в `/workspace/home`, с ней
+не стартует, ни до доставки инструкции, ни во время шага. После
+проверенного checkout, ещё в окне тишины, root:
+
+- пишет `/run/brood/step-gitconfig` (root:1000, 0440) — всю глобальную
+  конфигурацию Git сессии: `user.name` и `user.email` идентичности #249, без
+  `core.fsmonitor`, `core.hooksPath`, фильтров и include; без идентичности
+  файл пуст;
+- пишет drop-in управляемых настроек Claude Code
+  `/etc/claude-code/managed-settings.d/brood-swarm-step.json` (root 0644 в
+  каталогах root 0755) с `allowManagedHooksOnly: true` и
+  `skipDangerousModePermissionPrompt: true`; базовый `managed-settings.json`
+  не трогается. Путь в закреплённой 2.1.310 фиксирован: переопределение
+  `CLAUDE_CODE_MANAGED_SETTINGS_PATH` из публичной сборки вырезано;
+- переименовывает `~/.bash_profile`, `~/.bash_login`, `~/.profile`,
+  `~/.bashrc` и `~/.bash_logout` в `<имя>.brood-<время UTC>` рядом, с
+  номером, если копия того же момента уже есть. Так они приводятся к образу,
+  где их нет: актор создан с `--no-create-home`, и bash читает только
+  `/etc/profile` и `/etc/bash.bashrc`. Rename не читает содержимое, не идёт по
+  symlink и ничего не теряет;
+- последней пишет отметку `/run/brood/step-session.json` (root:1000, 0440).
+
+Отказ любого пункта снимает уже записанное, подписи нет. Отказ проверки
+(локальные изменения, другой commit) запускает свободную сессию. Режим лежит
+в `/run/brood`, а не в home: это решение root, UID 1000 там ничего не создаёт
+и не удаляет.
+
+App wrapper читает отметку перед запуском Claude: нет отметки — свободная
+сессия, отметка не того владельца, режима или содержимого — отказ запуска. В
+сессии шага он сначала переименовывает `~/.claude/.config.json` и
+`~/.claude/remote-settings.json` в `<имя>.brood-<время UTC>` рядом, как
+rc-файлы. Claude Code 2.1.310 применяет `env` обоих при любом
+`--setting-sources`: `.config.json` — устаревшее место глобальной
+конфигурации, и непустой обычный файл (в том числе по ссылке) Claude читает
+вместо `~/.claude.json`; `remote-settings.json` — кэш управляемых настроек с
+сервера, который Claude ставит вместо drop-in brood, когда сессия для них
+подходит. С `ANTHROPIC_BASE_URL` brood она не подходит, но признак зависит и
+от входа, сохранённого в home. После переноса глобальная конфигурация —
+только `~/.claude.json`; член `env` из него уходит в
+`~/.claude.json.env.brood-<время UTC>` (ссылка или не-объект — отказ
+запуска, `~/.claude` ссылкой или чужим каталогом — тоже). Выбор файла и
+применение `env` проверены запуском закреплённого бинарника без сети против
+локального фальшивого API. Затем wrapper запускает
+`claude --dangerously-skip-permissions --setting-sources project
+--strict-mcp-config --mcp-config ...` с `GIT_CONFIG_GLOBAL` на файл root и
+`SHELL=/bin/bash` поверх окружения свободной сессии. Имена ключей и флагов
+сверены с документацией Claude Code и строками закреплённого бинарника.
+Закрыто:
+
+- hooks пользователя, проекта, локальных настроек, plugins и frontmatter
+  агентов, monitors plugins; `statusLine`, `subagentStatusLine` и
+  `fileSuggestion` берутся только из управляемых настроек
+  (`allowManagedHooksOnly`), а управляемых hooks brood не ставит;
+- `~/.claude/settings.json` и `.claude/settings.local.json` не читаются
+  (`--setting-sources project`): их `env` (`PATH`, `GIT_CONFIG_*`,
+  `LD_PRELOAD`, `BASH_ENV`), `apiKeyHelper`, `enabledPlugins` иначе обошли бы
+  остальные пункты. Пользовательские skills, agents и `~/.claude/CLAUDE.md`
+  в сессии шага не загружаются;
+- настройка проекта приходит из подтверждённого commit. С
+  `--setting-sources project` Claude читает `.claude/settings.json`
+  (`env`, `enabledPlugins`, permissions), `CLAUDE.md`, `.claude/CLAUDE.md`,
+  `.claude/rules`, agents, skills и commands, вложенные — когда модель
+  заходит глубже, и правила ignore ему безразличны. Поэтому checkout
+  подтверждения считает локальным изменением ignored-файл на путях
+  настройки Claude на любой глубине: каталоги `.claude`, `.claude-plugin`,
+  `.mcpb-cache` и файлы `CLAUDE.md`, `AGENTS.md`, `.mcp.json`,
+  `.claude.json`, `.lsp.json`, `.worktreeinclude` (собственный список путей
+  настройки закреплённого Claude). Каким правилом файл скрыт — `.gitignore`,
+  `.git/info/exclude` или блоком `claude-code-runtime`, который Claude сам
+  дописывает туда для своего состояния, — не важно; отказ ничего не трогает,
+  файл остаётся у актора. Файловый секрет проекта — тоже ignored-файл:
+  на этих путях он отказывает подтверждению, а `.claude`, `.mcp.json` и
+  `CLAUDE.md` projectsecret и так не принимает. Вне утверждения остаются
+  `.claude/settings.local.json` и `CLAUDE.local.md`: сессия шага их не
+  читает. Commit со ссылкой на этих путях (например, `.claude` в home)
+  checkout отвергает до перемещения HEAD. Что Claude читает, а что нет,
+  проверено запуском закреплённого бинарника без сети;
+- MCP — только brood (`--strict-mcp-config`): серверы `~/.claude.json`,
+  `.mcp.json` и frontmatter агентов не стартуют;
+- глобальная конфигурация Git Claude и его команд — файл root
+  (`GIT_CONFIG_GLOBAL`): `~/.gitconfig` и `~/.config/git/config` не
+  читаются, пока `env` проектного `.claude/settings.json` подтверждённого
+  commit не задаст `GIT_CONFIG_*` сам (это видно в commit). `.git/config`
+  клона checkout уже проверил по allowlist;
+- снимок shell (`$SHELL -c -l` с `source ~/.bashrc`) читает только файлы
+  образа; `SHELL` закрепляет bash, даже если в образе появится zsh.
+
+Режим держится до перезапуска вне шага. Restart и recycle снимают отметку,
+drop-in и файл Git до остановки старой сессии; отказ снятия — «session
+unchanged». Отметка снимается первой; если она не снялась, drop-in и файл
+Git остаются на месте, так что отметка без `allowManagedHooksOnly` не
+бывает. Старт runtime снимает их до запуска актора: `/etc` переживает
+перезапуск CT. `/etc/claude-code` или его `managed-settings.d` ссылкой, не
+root или с записью для группы и прочих — отказ старта с путём и причиной,
+даже если шагов ещё не было, как на `/workspace`, который пишут другие: кто
+пишет этот каталог, задаёт управляемые hooks и `env`, которые сессия шага
+сохраняет. Нужны каталоги root с режимом 0755; отсутствующий каталог —
+не отказ. Сессия, которую holder поднимает заново внутри шага
+(`ensure`), остаётся сессией шага. Перенесённые rc-файлы, файлы `~/.claude`
+и `env` назад не возвращаются: актор берёт их из копий сам. Свободная сессия
+запускается как до #224: hooks, MCP, настройки, `~/.gitconfig` и rc актора
+работают.
+
+Остаётся открытым:
+
+- модель сама меняет дерево и home: это её работа, видимая в транскрипте.
+  Она может вернуть rc-файлы, вызвать код из home командой или выполнить
+  `git commit` с hooks `.git/hooks` клона; следующий шаг проверит дерево
+  заново;
+- проектные настройки и CLAUDE.md подтверждённого commit сами могут
+  сослаться за его пределы: `@`-импорт CLAUDE.md подгружает указанный файл
+  как инструкцию, `env` может задать `GIT_CONFIG_*` или `BASH_ENV`. Это
+  содержимое commit, видимое в его diff;
+- plugins, которые включают проектные настройки, могут загрузить из
+  `~/.claude/plugins` skills и LSP-серверы; hooks и monitors не загружаются;
+- restart или recycle посреди шага, в том числе гостевой `restart` самой
+  модели, возвращает свободную сессию до следующего подтверждения;
+- повторной проверки дерева непосредственно перед доставкой (вариант 3
+  разбора #224) нет.
 
 ## Приём сообщений в госте
 

@@ -2,10 +2,12 @@
 
 package guest
 
-// FEATURE: Root-signed workspace attestation (#183).
+// FEATURE: Root-signed workspace attestation (#183) and its step session (#224).
 // SPEC: Sign only after a quiet checkout and a restored session; identity comes
 // from the root bootstrap, not the request; any refusal carries no signature;
-// the internal checkout operation is unreachable from the relay.
+// the internal checkout operation is unreachable from the relay. The step
+// policy is applied in the quiet window after a verified checkout; a refused
+// check, an operator restart or recycle starts a free session.
 
 import (
 	"bytes"
@@ -35,6 +37,7 @@ var (
 type attestRecorder struct {
 	events   []string
 	checkout sessionctl.CheckoutRequest
+	identity gitidentity.Identity
 	fail     map[string]error
 	facts    *sessionctl.CheckoutFacts
 }
@@ -61,6 +64,15 @@ func (r *attestRecorder) attestor() *WorkspaceAttestor {
 		Ensure: func(context.Context) error {
 			r.events = append(r.events, "ensure")
 			return r.fail["ensure"]
+		},
+		Step: func(identity gitidentity.Identity) error {
+			r.events = append(r.events, "step")
+			r.identity = identity
+			return r.fail["step"]
+		},
+		Free: func() error {
+			r.events = append(r.events, "free")
+			return r.fail["free"]
 		}}
 }
 
@@ -87,7 +99,8 @@ func TestWorkspaceAttestSignsAfterQuietCheckoutAndSession(t *testing.T) {
 	if !r.OK || r.Outcome != "complete" {
 		t.Fatalf("%+v", r)
 	}
-	if want := []string{"quiesce", "checkout", "relaunch", "ensure"}; !reflect.DeepEqual(rec.events, want) {
+	// Режим шага ставится в окне тишины: после проверки, до перезапуска актора.
+	if want := []string{"quiesce", "checkout", "step", "relaunch", "ensure"}; !reflect.DeepEqual(rec.events, want) {
 		t.Fatalf("events %v", rec.events)
 	}
 	if rec.checkout != (sessionctl.CheckoutRequest{Commit: attestCommit, Origin: attestOrigin, Mode: "gateway"}) {
@@ -96,8 +109,8 @@ func TestWorkspaceAttestSignsAfterQuietCheckoutAndSession(t *testing.T) {
 	// Идентичность bootstrap (#249) едет в helper с тем же запросом.
 	identified := rec.attestor()
 	identified.Origin.GitIdentity = attestIdentity
-	if r := attestCall(identified, attestArgs(nil)); !r.OK || rec.checkout.GitIdentity != attestIdentity {
-		t.Fatalf("identity not passed to checkout: %+v %+v", r, rec.checkout)
+	if r := attestCall(identified, attestArgs(nil)); !r.OK || rec.checkout.GitIdentity != attestIdentity || rec.identity != attestIdentity {
+		t.Fatalf("identity not passed to checkout and step Git configuration: %+v %+v %+v", r, rec.checkout, rec.identity)
 	}
 	if strings.Contains(r.Text, attestToken) {
 		t.Fatal("relay token in the response")
@@ -153,11 +166,14 @@ func TestWorkspaceAttestRefusalsCarryNoSignature(t *testing.T) {
 		reason string
 		events []string
 	}{
-		"dirty":            {&attestRecorder{fail: map[string]error{"checkout": errors.New("workspace has local changes (1 untracked); commit or remove them, nothing changed")}}, "1 untracked", []string{"quiesce", "checkout", "relaunch", "ensure"}},
-		"unproven stop":    {&attestRecorder{fail: map[string]error{"quiesce": errors.New("actor processes could not be proven stopped")}}, "proven stopped", []string{"quiesce"}},
-		"session":          {&attestRecorder{fail: map[string]error{"ensure": errors.New("no session")}}, "session", []string{"quiesce", "checkout", "relaunch", "ensure"}},
-		"other commit":     {&attestRecorder{facts: &other}, "commit", []string{"quiesce", "checkout", "relaunch", "ensure"}},
-		"dirty no session": {&attestRecorder{fail: map[string]error{"checkout": errors.New("workspace has local changes"), "ensure": errors.New("no session")}}, "session did not start", []string{"quiesce", "checkout", "relaunch", "ensure"}},
+		"dirty":                {&attestRecorder{fail: map[string]error{"checkout": errors.New("workspace has local changes (1 untracked); commit or remove them, nothing changed")}}, "1 untracked", []string{"quiesce", "checkout", "free", "relaunch", "ensure"}},
+		"unproven stop":        {&attestRecorder{fail: map[string]error{"quiesce": errors.New("actor processes could not be proven stopped")}}, "proven stopped", []string{"quiesce"}},
+		"session":              {&attestRecorder{fail: map[string]error{"ensure": errors.New("no session")}}, "session", []string{"quiesce", "checkout", "step", "relaunch", "ensure"}},
+		"other commit":         {&attestRecorder{facts: &other}, "commit", []string{"quiesce", "checkout", "free", "relaunch", "ensure"}},
+		"dirty no session":     {&attestRecorder{fail: map[string]error{"checkout": errors.New("workspace has local changes"), "ensure": errors.New("no session")}}, "session did not start", []string{"quiesce", "checkout", "free", "relaunch", "ensure"}},
+		"step policy":          {&attestRecorder{fail: map[string]error{"step": errors.New("managed settings directory is unsafe")}}, "step session policy", []string{"quiesce", "checkout", "step", "relaunch", "ensure"}},
+		"dirty no free":        {&attestRecorder{fail: map[string]error{"checkout": errors.New("workspace has local changes"), "free": errors.New("unlink failed")}}, "step session policy", []string{"quiesce", "checkout", "free", "relaunch", "ensure"}},
+		"other commit no free": {&attestRecorder{facts: &other, fail: map[string]error{"free": errors.New("unlink failed")}}, "another commit; no attestation; the step session policy of the previous step was not cleared", []string{"quiesce", "checkout", "free", "relaunch", "ensure"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := attestCall(c.rec.attestor(), attestArgs(nil))
@@ -250,11 +266,42 @@ func TestWorkspaceAttestFinishesEffectsAfterDisconnect(t *testing.T) {
 		return ensure(ctx)
 	}
 	a.Attest(ctx, relay.SessionRequest{Operation: relay.WorkspaceAttestOperation, Arguments: attestArgs(nil), Caller: "server"})
-	if len(canceled) != 0 || len(rec.events) != 4 {
+	if len(canceled) != 0 || len(rec.events) != 5 {
 		t.Fatalf("effects canceled by the request: %v, events %v", canceled, rec.events)
 	}
 	rec = &attestRecorder{}
 	if r := rec.attestor().Attest(ctx, relay.SessionRequest{Operation: relay.WorkspaceAttestOperation, Arguments: attestArgs(nil), Caller: "server"}); r.OK || len(rec.events) != 0 {
 		t.Fatalf("canceled request started effects: %+v %v", r, rec.events)
+	}
+}
+
+// A restart or recycle outside a step returns the actor to the free session
+// before the helper stops the old one; without that proof nothing is stopped.
+func TestRestartOutsideStepStartsFreeSession(t *testing.T) {
+	for _, op := range []string{"restart", "recycle"} {
+		rec := &attestRecorder{}
+		run := func(context.Context, relay.SessionRequest) relay.SessionResponse {
+			rec.events = append(rec.events, "helper")
+			return relay.SessionResponse{OK: true, Outcome: "complete"}
+		}
+		handler := newSessionHandler(context.Background(), nil, rec.attestor(), run)
+		req := relay.SessionRequest{Operation: op, Arguments: json.RawMessage(`{"confirm":true}`), Caller: "server"}
+		if r := handler(context.Background(), req); !r.OK || !reflect.DeepEqual(rec.events, []string{"free", "helper"}) {
+			t.Fatalf("%s: %+v events %v", op, r, rec.events)
+		}
+		rec.events, rec.fail = nil, map[string]error{"free": errors.New("unlink failed")}
+		if r := handler(context.Background(), req); r.OK || !strings.Contains(r.Text, "session unchanged") || !reflect.DeepEqual(rec.events, []string{"free"}) {
+			t.Fatalf("%s with an uncleared step policy: %+v events %v", op, r, rec.events)
+		}
+	}
+	for _, op := range []string{"slash", "wipe"} {
+		rec := &attestRecorder{}
+		handler := newSessionHandler(context.Background(), nil, rec.attestor(), func(context.Context, relay.SessionRequest) relay.SessionResponse {
+			return relay.SessionResponse{OK: true, Outcome: "complete"}
+		})
+		handler(context.Background(), relay.SessionRequest{Operation: op, Arguments: json.RawMessage(`{"confirm":true}`), Caller: "server"})
+		if len(rec.events) != 0 {
+			t.Fatalf("%s changed the session mode: %v", op, rec.events)
+		}
 	}
 }

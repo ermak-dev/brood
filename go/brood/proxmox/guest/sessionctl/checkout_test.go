@@ -298,6 +298,164 @@ func TestCheckoutKeepsIgnoredFilesOutsideTheClaim(t *testing.T) {
 	}
 }
 
+// FEATURE: The step session loads no Claude Code configuration from outside
+// the attested commit (#224).
+// SPEC: With --setting-sources project, Claude Code 2.1.310 reads
+// .claude/settings.json, CLAUDE.md and .claude/CLAUDE.md, .claude/rules,
+// agents, skills and commands of the workspace, nested ones as the model
+// reads deeper, whether Git ignores them or not. Any ignored file on a Claude
+// Code configuration path refuses the attestation before any effect, like an
+// untracked file, whatever rule ignores it; local files that the step session
+// does not read (.claude/settings.local.json, CLAUDE.local.md) and other
+// ignored files stay outside the claim.
+func TestCheckoutRefusesIgnoredClaudeConfiguration(t *testing.T) {
+	exclude := func(t *testing.T, f *checkoutFixture, patterns string) {
+		writeFile(t, filepath.Join(f.root, ".git", "info", "exclude"), patterns)
+	}
+	for name, c := range map[string]struct {
+		ignore string
+		plant  func(t *testing.T, f *checkoutFixture) string
+	}{
+		"settings by info/exclude": {"", func(t *testing.T, f *checkoutFixture) string {
+			exclude(t, f, ".claude/settings.json\n")
+			writeFile(t, filepath.Join(f.root, ".claude", "settings.json"), `{"env":{"BASH_ENV":"/workspace/home/payload.sh"}}`)
+			return ".claude/settings.json"
+		}},
+		"settings by .gitignore": {".claude/\n", func(t *testing.T, f *checkoutFixture) string {
+			writeFile(t, filepath.Join(f.root, ".claude", "settings.json"), `{"enabledPlugins":{"x@y":true}}`)
+			return ".claude/settings.json"
+		}},
+		"agent": {".claude/\n", func(t *testing.T, f *checkoutFixture) string {
+			writeFile(t, filepath.Join(f.root, ".claude", "agents", "a.md"), "---\nname: a\n---\n")
+			return ".claude/agents/a.md"
+		}},
+		"skill": {"", func(t *testing.T, f *checkoutFixture) string {
+			exclude(t, f, "SKILL.md\n")
+			writeFile(t, filepath.Join(f.root, ".claude", "skills", "s", "SKILL.md"), "---\nname: s\n---\n")
+			return ".claude/skills/s/SKILL.md"
+		}},
+		"command": {"*.md\n", func(t *testing.T, f *checkoutFixture) string {
+			writeFile(t, filepath.Join(f.root, ".claude", "commands", "c.md"), "run\n")
+			return ".claude/commands/c.md"
+		}},
+		"rule": {"rules/\n", func(t *testing.T, f *checkoutFixture) string {
+			writeFile(t, filepath.Join(f.root, ".claude", "rules", "r.md"), "rule\n")
+			return ".claude/rules/r.md"
+		}},
+		"memory": {"", func(t *testing.T, f *checkoutFixture) string {
+			exclude(t, f, "/CLAUDE.md\n")
+			writeFile(t, filepath.Join(f.root, "CLAUDE.md"), "instructions\n")
+			return "CLAUDE.md"
+		}},
+		"nested memory": {"CLAUDE.md\n", func(t *testing.T, f *checkoutFixture) string {
+			writeFile(t, filepath.Join(f.root, "dir", "deep", "CLAUDE.md"), "instructions\n")
+			return "dir/deep/CLAUDE.md"
+		}},
+		"nested skill": {"", func(t *testing.T, f *checkoutFixture) string {
+			exclude(t, f, ".claude\n")
+			writeFile(t, filepath.Join(f.root, "dir", ".claude", "skills", "s", "SKILL.md"), "skill\n")
+			return "dir/.claude/skills/s/SKILL.md"
+		}},
+		"lsp config": {".lsp.json\n", func(t *testing.T, f *checkoutFixture) string {
+			writeFile(t, filepath.Join(f.root, ".lsp.json"), "{}\n")
+			return ".lsp.json"
+		}},
+		"plugin manifest": {".claude-plugin/\n", func(t *testing.T, f *checkoutFixture) string {
+			writeFile(t, filepath.Join(f.root, ".claude-plugin", "plugin.json"), "{}\n")
+			return ".claude-plugin/plugin.json"
+		}},
+		// Состояние, которое Claude сам прячет блоком claude-code-runtime в
+		// .git/info/exclude, тоже ведёт сессию (задачи по расписанию).
+		"runtime state": {"", func(t *testing.T, f *checkoutFixture) string {
+			exclude(t, f, "# claude-code-runtime\n**/.claude/scheduled_tasks.json\n")
+			writeFile(t, filepath.Join(f.root, ".claude", "scheduled_tasks.json"), "[]\n")
+			return ".claude/scheduled_tasks.json"
+		}},
+		"linked directory": {"", func(t *testing.T, f *checkoutFixture) string {
+			exclude(t, f, ".claude\n")
+			if err := os.Symlink(f.home, filepath.Join(f.root, ".claude")); err != nil {
+				t.Fatal(err)
+			}
+			return ".claude"
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := map[string]string{}
+			if c.ignore != "" {
+				files[".gitignore"] = "*.log\n" + c.ignore
+			}
+			f := newCheckoutFixtureWith(t, files)
+			path := c.plant(t, f)
+			before, _ := os.Readlink(filepath.Join(f.root, path))
+			if before == "" {
+				before = readFile(t, filepath.Join(f.root, path))
+			}
+			_, err := f.engine.run(context.Background(), f.second)
+			if err == nil || !strings.Contains(err.Error(), "Claude Code configuration") || !strings.Contains(err.Error(), "nothing changed") {
+				t.Fatalf("ignored %s accepted: %v", path, err)
+			}
+			if f.head(t) != "ref: refs/heads/main\n" || f.has(t, f.second) {
+				t.Fatal("refusal changed HEAD or fetched")
+			}
+			after, _ := os.Readlink(filepath.Join(f.root, path))
+			if after == "" {
+				after = readFile(t, filepath.Join(f.root, path))
+			}
+			if after != before {
+				t.Fatal("ignored configuration was not preserved")
+			}
+		})
+	}
+	t.Run("not read by the step session", func(t *testing.T) {
+		f := newCheckoutFixtureWith(t, map[string]string{".gitignore": "*.log\n.claude/settings.local.json\nCLAUDE.local.md\nclaude-notes/\n"})
+		for _, path := range []string{".claude/settings.local.json", "CLAUDE.local.md", "dir/CLAUDE.local.md", "claude-notes/CLAUDE.txt", "build.log"} {
+			writeFile(t, filepath.Join(f.root, path), "local\n")
+		}
+		if _, err := f.engine.run(context.Background(), f.second); err != nil {
+			t.Fatalf("ignored files outside Claude Code configuration refused: %v", err)
+		}
+	})
+}
+
+// SPEC: A symbolic link on a Claude Code configuration path of the commit
+// would make the step session read configuration from outside the commit,
+// for example from the actor home; the checkout refuses such a commit before
+// moving HEAD. Other links of the commit are its content.
+func TestCheckoutRefusesLinkedClaudeConfiguration(t *testing.T) {
+	commitLink := func(t *testing.T, f *checkoutFixture, path, target string) string {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(f.upstream, path)), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(f.upstream, path)); err != nil {
+			t.Fatal(err)
+		}
+		fixtureGit(t, f.upstream, "add", "--", path)
+		fixtureGit(t, f.upstream, "commit", "--quiet", "-m", "link "+path)
+		return fixtureGit(t, f.upstream, "rev-parse", "HEAD")
+	}
+	for _, path := range []string{".claude", ".claude/settings.json", ".claude/skills/s", "CLAUDE.md", "dir/CLAUDE.md", "dir/.claude"} {
+		t.Run(path, func(t *testing.T) {
+			f := newCheckoutFixture(t)
+			commit := commitLink(t, f, path, "/workspace/home/planted")
+			_, err := f.engine.run(context.Background(), commit)
+			if err == nil || !strings.Contains(err.Error(), "Claude Code configuration") || !strings.Contains(err.Error(), "HEAD and files unchanged") {
+				t.Fatalf("linked %s accepted: %v", path, err)
+			}
+			if f.head(t) != "ref: refs/heads/main\n" {
+				t.Fatal("HEAD moved to a commit with linked Claude Code configuration")
+			}
+		})
+	}
+	t.Run("other link", func(t *testing.T) {
+		f := newCheckoutFixture(t)
+		commit := commitLink(t, f, "bin/tool", "/usr/bin/true")
+		if _, err := f.engine.run(context.Background(), commit); err != nil {
+			t.Fatalf("link outside Claude Code configuration refused: %v", err)
+		}
+	})
+}
+
 func TestCheckoutNeverOverwritesIgnoredFiles(t *testing.T) {
 	f := newCheckoutFixture(t)
 	writeFile(t, filepath.Join(f.upstream, "out.log"), "tracked\n")
