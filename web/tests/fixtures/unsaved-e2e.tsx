@@ -1,7 +1,8 @@
 // Real-browser regression for #202: unsaved edits survive every history transition.
 // Each page load runs one scenario (?run=<name>) with the Navigation API on or off (?nav=off).
 // An outcome is either "prompted" (the editor stays, its URL and edit intact) or "restored"
-// (the transition could not be cancelled, and reopening the editor offers the edit back).
+// (the transition could not be cancelled, and reopening the editor offers the edit back);
+// an editor without edits is simply "left".
 // Browser Back/Forward and typing into the address bar come from tests/history.browser.ts
 // over DevTools, so they are user-initiated as in a real browser.
 import { StrictMode } from 'react';
@@ -252,9 +253,23 @@ async function expectNoLoss(scenario: Scenario): Promise<'prompted' | 'restored'
   return 'restored';
 }
 
+// An editor without edits has nothing to protect: a typed address leaves it at once (#258).
+async function expectLeave(): Promise<'left'> {
+  await router.navigate(EDITOR);
+  await waitForPath(EDITOR, 'editor did not open');
+  await waitForBaseline('editor did not open with its baseline');
+  await typeAddress('/other');
+  await waitForPath('/other', 'typed address did not leave the editor');
+  await settle();
+  if (dialogTitle()) throw new Error(`editor without edits asked to confirm: ${dialogTitle()}`);
+  return 'left';
+}
+
 async function run() {
   const scenario = scenarios[scenarioName];
-  if (!scenario) throw new Error(`unknown scenario ${scenarioName}`);
+  if (!scenario && scenarioName !== 'typed-hash-clean') {
+    throw new Error(`unknown scenario ${scenarioName}`);
+  }
   if (loads > 1) throw new Error('page reloaded');
   // Until the document is completely loaded a hash change replaces the entry instead of adding one.
   if (document.readyState !== 'complete') {
@@ -262,7 +277,7 @@ async function run() {
   }
   await settle();
   await waitForPath('/', 'home did not render');
-  return expectNoLoss(scenario);
+  return scenario ? expectNoLoss(scenario) : expectLeave();
 }
 
 const label = `${scenarioName} nav=${navigationApi ? 'on' : 'off'}`;

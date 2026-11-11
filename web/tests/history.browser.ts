@@ -17,6 +17,14 @@ const cases = [
     unsaved(run, 'on', run === 'script-back' ? 'restored' : 'prompted'),
     unsaved(run, 'off', routerCancellable.includes(run) ? 'prompted' : 'restored'),
   ]),
+  // Without edits there is nothing to confirm: a typed address leaves the editor at once.
+  unsaved('typed-hash-clean', 'on', 'left'),
+  unsaved('typed-hash-clean', 'off', 'left'),
+  // #258: a typed address opens its page, also while the reloaded panel restores its session.
+  ...['signed-in', 'restoring', 'restored'].map((run) => ({
+    page: `address-e2e.html?run=${run}#/swarms/s-docs`,
+    expected: `PASS ${run}: opened`,
+  })),
 ];
 
 // bun run test:browser <substring> runs only the matching pages.
