@@ -3137,6 +3137,7 @@
     "your_role": "Vai trò của bạn",
     "id": "ID bầy",
     "copy_id": "Sao chép ID bầy",
+    "details": "Chi tiết",
     "control": {
       "start": "Khởi chạy",
       "restart": "Khởi chạy lại",
@@ -3171,9 +3172,9 @@
       "started": "Đã khởi chạy bầy {{name}}",
       "stopped": "Đã dừng bầy {{name}}"
     },
-    "infrastructure": "Hạ tầng",
-    "atespace": "Atespace",
-    "execution": "Thực thi",
+    "space": "Không gian Substrate",
+    "infrastructure_label": "Hạ tầng",
+    "infrastructure_alert": "Hạ tầng của bầy này đang {{state}}, chưa hoạt động: đồ thị và các tác nhân không thể làm việc cho đến khi nó hoạt động. Các thao tác vòng đời ở cuối trang.",
     "execution_states": {
       "idle": "Chưa bắt đầu",
       "running": "Đang chạy",
@@ -3191,19 +3192,19 @@
       "failed": "Đồ thị kết thúc ở một bước thất bại.",
       "stopped": "Đồ thị đã dừng và không tiến triển."
     },
-    "current_node": "Nút hiện tại",
+    "now_label": "Hiện tại",
+    "now_node": "nút",
     "pass_goal": {
-      "label": "Nhiệm vụ của lượt",
+      "current": "Lượt hiện tại",
       "pass": "Lượt {{number}}, từ bước #{{step}}"
     },
     "graph": "Đồ thị",
-    "graph_hint": "Ảnh chụp của định nghĩa {{name}}. Chọn một nút để xem chỉ dẫn, kết quả và actor của nút.",
     "graph_label": "Đồ thị của bầy {{name}}",
     "snapshot": {
       "label": "Ảnh chụp",
       "definition": "Định nghĩa",
-      "version": "Phiên bản",
-      "revision": "Bản sửa đổi",
+      "version_short": "v{{version}}",
+      "copy_revision": "Sao chép bản sửa đổi của ảnh chụp",
       "hint": "Được ghi lại ở lần khởi chạy đầu tiên. Phiên bản mới hơn trong danh mục không thay đổi bầy này."
     },
     "node": "Nút đã chọn",
@@ -3214,7 +3215,14 @@
     "outcome": "Kết quả",
     "started": "Bắt đầu",
     "finished": "Kết thúc",
-    "visits": "Số lần ghé",
+    "duration_label": "Mất",
+    "duration": {
+      "s": "{{count}} giây",
+      "min": "{{count}} phút",
+      "h": "{{count}} giờ",
+      "d": "{{count}} ngày"
+    },
+    "entered": "Đã vào {{count}} lần; hiển thị lần gần nhất.",
     "reason": "Lý do",
     "commit": "Commit đã xác nhận",
     "copy_commit": "Sao chép commit",
@@ -3239,20 +3247,21 @@
     "step_guidance": {
       "refused": "Bước đã đóng mà không có tác dụng, và đồ thị sẽ không tự tiến triển. Hãy khắc phục lý do (gắn vai trò, commit hoặc hoàn tác thay đổi trong workspace của actor, kết nối actor), dừng bầy nếu nó vẫn đang chạy, rồi bắt đầu một lượt mới trên cùng ảnh chụp.",
       "unconfirmed": "Máy chủ không biết bước kết thúc ra sao, nên không thử lại và không cho đồ thị tiến triển. Quyết định là của bạn: tìm hiểu chuyện gì đã xảy ra ở actor, dừng bầy nếu nó vẫn đang chạy, rồi bắt đầu một lượt mới.",
+      "release_title": "Nếu workspace vẫn bị giữ",
       "release": "Nếu lý do nêu một thao tác workspace đang được giữ, quản trị viên kiểm tra workspace và giải phóng nó theo ID của thao tác đó; nếu không, lượt mới sẽ bị từ chối vì workspace đang bận:"
     },
     "steps": "Lịch sử bước",
     "steps_hint": "Mỗi lần ghé một nút của đồ thị, từ cũ đến mới. Tên nút hiển thị nút đó trên đồ thị.",
     "steps_empty": "Chưa có bước nào.",
+    "pass_steps": "Số bước: {{count}}",
     "management": "Quyền truy cập và vòng đời",
     "management_hint": "Ai có thể dùng bầy này, quyền sở hữu và việc xóa bầy."
   },
   "swarm_requests": {
     "title": "Yêu cầu tới người vận hành",
-    "hint": "Câu hỏi từ các nút đồ thị và actor của bầy này. Yêu cầu đang mở ở trên; yêu cầu đã trả lời ở dưới làm lịch sử.",
     "open_count": "{{count}} đang mở",
     "none_open": "Không có yêu cầu đang mở.",
-    "history": "Lịch sử",
+    "history_count": "{{count}} đã trả lời",
     "states": {
       "open": "Đang mở",
       "answered": "Đã trả lời",
@@ -3292,6 +3301,8 @@
   "swarm_roles": {
     "title": "Vai trò",
     "hint": "Mỗi nút tác nhân của đồ thị đặt tên một vai trò. Để khởi chạy, mọi vai trò của đồ thị phải được gắn với một tác nhân managed đang chạy của bầy này.",
+    "fold_ready": "{{count}} sẵn sàng",
+    "fold_unready": "{{count}} chưa sẵn sàng",
     "graph_pinned": "Vai trò của bản chụp {{name}}, phiên bản {{version}}.",
     "graph_definition": "Vai trò của {{name}}, phiên bản {{version}}, được chọn trong hộp thoại khởi chạy. Lần khởi chạy đầu tiên sẽ ghim định nghĩa này.",
     "graph_none": "Chưa có đồ thị. Vai trò của một định nghĩa sẽ hiện ở đây khi nó được chọn trong hộp thoại khởi chạy.",
@@ -3317,7 +3328,7 @@
       "unbound": "Chưa có tác nhân nào giữ vai trò này; khởi chạy sẽ bị từ chối cho đến khi có.",
       "stale": "Tác nhân đã được tạo lại sau khi gắn. Hãy gắn lại vai trò để nhận phiên bản mới của nó.",
       "inactive": "Tác nhân không chạy hoặc không được định chạy. Hãy khởi động nó hoặc gắn tác nhân khác.",
-      "foreign": "Tác nhân đã rời bầy này hoặc atespace của nó. Hãy gắn một tác nhân của bầy này.",
+      "foreign": "Tác nhân đã rời bầy này hoặc không gian Substrate của nó. Hãy gắn một tác nhân của bầy này.",
       "missing": "Tác nhân được gắn không còn tồn tại. Hãy gắn tác nhân khác."
     },
     "phases": {

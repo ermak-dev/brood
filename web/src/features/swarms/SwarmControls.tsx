@@ -23,6 +23,7 @@ import {
   type WorkflowDefinition,
 } from '@/services/brood/pipelines';
 import { LoadState } from '@/features/access/shared';
+import { CopyButton } from '@/features/oauth/components/CopyButton';
 import { RunGraph } from '@/features/pipelines/RunGraph';
 import { useResource } from '@/features/substrate/hooks';
 import { formatDateTimeValue } from '@/utils/format';
@@ -36,41 +37,35 @@ import {
   type ExecutionAction,
   type GoalProblem,
 } from './swarmControl';
-import { passGoal } from './swarmState';
+import { passGoal, shortCommit } from './swarmState';
 import { StartRolesNote } from './SwarmRoles';
 import styles from '@/features/substrate/substrate.module.scss';
 import page from './SwarmPage.module.scss';
 import local from './SwarmControls.module.scss';
 
-/** Личность снимка роя (#218): определение, версия и ревизия, которые
- * записал первый запуск. Это не текущее определение каталога: расхождение
- * с каталогом видно по версии и ревизии, а не угадывается по имени. */
+/** Личность снимка роя (#218) одной строкой-подписью к графу (#253):
+ * определение, версия и ревизия, которые записал первый запуск. Ревизия
+ * короткая на экране, полная — в подсказке и копировании. Это не текущее
+ * определение каталога: расхождение с каталогом видно по версии и ревизии,
+ * а не угадывается по имени; пояснение — в подсказке подписи. */
 export function SnapshotFacts({ identity }: { identity: SnapshotIdentity }) {
   const { t } = useTranslation();
-  const labelId = useId();
   return (
-    <section className={local.snapshot} aria-labelledby={labelId}>
-      <p id={labelId} className={local.snapshotLabel}>
-        {t('swarm_page.snapshot.label')}
-      </p>
-      <dl className={local.snapshotFacts}>
-        <div>
-          <dt>{t('swarm_page.snapshot.definition')}</dt>
-          <dd>{identity.name}</dd>
-        </div>
-        <div>
-          <dt>{t('swarm_page.snapshot.version')}</dt>
-          <dd>{identity.version}</dd>
-        </div>
-        <div>
-          <dt>{t('swarm_page.snapshot.revision')}</dt>
-          <dd>
-            <code className={local.revision}>{identity.revision}</code>
-          </dd>
-        </div>
-      </dl>
-      <p className={local.snapshotHint}>{t('swarm_page.snapshot.hint')}</p>
-    </section>
+    <p className={local.snapshot} title={t('swarm_page.snapshot.hint')} data-snapshot="">
+      <span className={local.snapshotLabel}>{t('swarm_page.snapshot.label')}</span>
+      <span className={local.snapshotName}>{identity.name}</span>
+      <span className={local.snapshotDot} aria-hidden="true">
+        ·
+      </span>
+      <span>{t('swarm_page.snapshot.version_short', { version: identity.version })}</span>
+      <span className={local.snapshotDot} aria-hidden="true">
+        ·
+      </span>
+      <code className={local.revision} title={identity.revision}>
+        {shortCommit(identity.revision)}
+      </code>
+      <CopyButton value={identity.revision} label={t('swarm_page.snapshot.copy_revision')} />
+    </p>
   );
 }
 
@@ -522,7 +517,7 @@ function PreviousGoal({ goal }: { goal: string }) {
   const labelId = useId();
   return (
     <section className={local.previousGoal} aria-labelledby={labelId} data-previous-goal="">
-      <p id={labelId} className={local.snapshotLabel}>
+      <p id={labelId} className={styles.fieldLabel}>
         {t('swarm_page.control.previous_goal')}
       </p>
       <Markdown className={page.goalText} data-goal-text="" text={goal} collapsible />

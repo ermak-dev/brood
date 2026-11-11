@@ -6,7 +6,10 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  // clip, не hidden: hidden делает обёртку scroll container, и position:
+  // sticky внутри страницы (панель узла, #253) липнет к ней, а не к
+  // прокрутке .content. Слои анимации обрезаются так же.
+  overflow: clip;
 
   &__layer {
     display: flex;

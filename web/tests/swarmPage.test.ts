@@ -10,16 +10,20 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import type { AccessProject, AccessSwarm } from '@/services/brood/access';
-import type { NodeStatus, PipelineRun, RunGraph } from '@/services/brood/pipelines';
+import type { NodeStatus, PipelineRun, RunGraph, RunNode } from '@/services/brood/pipelines';
 import {
+  durationParts,
+  executionNow,
   executionTone,
   hasStepTimes,
   nodeView,
   passGoal,
   releaseCommand,
+  rolesUnfolded,
   runIsLive,
   selectedNodeId,
   shortCommit,
+  stepDuration,
   stepMark,
   stepPasses,
   swarmExecution,
@@ -363,6 +367,122 @@ describe('passes', () => {
   });
 });
 
+// #253: the first screen answers "what now" in one line: the execution, the
+// node it stands on and the state of that step when the word adds something.
+describe('what now (#253)', () => {
+  const step = (id: string, status: string, sequence: number, over: Partial<RunNode> = {}) =>
+    ({ id, kind: 'actor', label: id, status: status as NodeStatus, sequence, ...over }) as RunNode;
+
+  test('a swarm without a graph is not started and stands nowhere', () => {
+    expect(executionNow(null)).toEqual({ execution: 'idle' });
+  });
+
+  test('a stuck step is named with its state, its guidance and its actor', () => {
+    const stuck = run({
+      status: 'running',
+      currentNode: 'verify',
+      nodes: [
+        step('implement', 'done', 7),
+        step('verify', 'unconfirmed', 8, { actorName: 'reviewer' }),
+      ],
+    });
+    expect(executionNow(stuck)).toEqual({
+      execution: 'running',
+      node: 'verify',
+      step: 'unconfirmed',
+      guidance: 'unconfirmed',
+      actorName: 'reviewer',
+    });
+    const refused = run({ status: 'running', currentNode: 'verify', nodes: [step('verify', 'refused', 1)] });
+    expect(executionNow(refused)).toMatchObject({ step: 'refused', guidance: 'refused' });
+  });
+
+  test('a step phase that says more than the execution is shown; a repeat is not', () => {
+    const at = (status: string, execution: PipelineRun['status'] = 'running') =>
+      executionNow(run({ status: execution, currentNode: 'verify', nodes: [step('verify', status, 1)] }));
+    for (const phase of ['attesting', 'delivering', 'inflight']) {
+      expect({ phase, step: at(phase).step }).toEqual({ phase, step: phase });
+    }
+    // "Running · verify · Active" and "Waiting · decision · Waiting" say nothing twice.
+    expect(at('active').step).toBeUndefined();
+    expect(at('waiting', 'waiting_human').step).toBeUndefined();
+    expect(at('active', 'waiting_human').step).toBeUndefined();
+    expect(at('done', 'succeeded').step).toBeUndefined();
+    expect(at('stopped', 'stopped').step).toBeUndefined();
+    expect(at('failed', 'failed').step).toBeUndefined();
+    expect(at('pending').guidance).toBeUndefined();
+  });
+
+  test('the step of another node than the current one is not the step now', () => {
+    const moved = run({
+      status: 'running',
+      currentNode: 'decision',
+      nodes: [step('verify', 'refused', 1)],
+    });
+    expect(executionNow(moved)).toEqual({ execution: 'running', node: 'decision' });
+  });
+
+  test('the step duration comes from the recorded moments, else nothing', () => {
+    expect(
+      stepDuration({ startedAt: '2026-11-03T09:00:00Z', finishedAt: '2026-11-03T09:10:30Z' })
+    ).toBe(630_000);
+    expect(stepDuration({ startedAt: '2026-11-03T09:00:00Z' })).toBeUndefined();
+    expect(stepDuration({ finishedAt: '2026-11-03T09:00:00Z' })).toBeUndefined();
+    expect(stepDuration({ startedAt: 'yesterday', finishedAt: '2026-11-03T09:00:00Z' })).toBeUndefined();
+    // A step that ended before it started reads as no time, not a negative one.
+    expect(
+      stepDuration({ startedAt: '2026-11-03T09:10:00Z', finishedAt: '2026-11-03T09:00:00Z' })
+    ).toBe(0);
+  });
+
+  test('a duration reads in the largest unit, with the next one only when it matters', () => {
+    expect(durationParts(0)).toEqual([{ unit: 's', value: 0 }]);
+    expect(durationParts(4_400)).toEqual([{ unit: 's', value: 4 }]);
+    expect(durationParts(59_900)).toEqual([{ unit: 's', value: 59 }]);
+    expect(durationParts(60_000)).toEqual([{ unit: 'min', value: 1 }]);
+    expect(durationParts(630_000)).toEqual([{ unit: 'min', value: 10 }]);
+    expect(durationParts(3_600_000)).toEqual([{ unit: 'h', value: 1 }]);
+    expect(durationParts(3_600_000 + 5 * 60_000)).toEqual([
+      { unit: 'h', value: 1 },
+      { unit: 'min', value: 5 },
+    ]);
+    expect(durationParts(26 * 3_600_000)).toEqual([
+      { unit: 'd', value: 1 },
+      { unit: 'h', value: 2 },
+    ]);
+    expect(durationParts(48 * 3_600_000)).toEqual([{ unit: 'd', value: 2 }]);
+  });
+
+  test('roles unfold when a role needs a hand or the swarm stands; they fold while it works', () => {
+    const roles = (execution: string, states: string[]) => ({
+      swarmId: 'swarm-1',
+      execution,
+      graph: null,
+      roles: states.map((state, index) => ({ role: `r${index}`, inGraph: true, state })),
+    });
+    expect(rolesUnfolded(roles('running', ['ready', 'ready']))).toBe(false);
+    expect(rolesUnfolded(roles('waiting', ['ready']))).toBe(false);
+    expect(rolesUnfolded(roles('running', ['ready', 'unbound']))).toBe(true);
+    expect(rolesUnfolded(roles('waiting', ['stale']))).toBe(true);
+    for (const execution of ['idle', 'stopped', 'succeeded', 'failed']) {
+      expect({ execution, open: rolesUnfolded(roles(execution, ['ready'])) }).toEqual({
+        execution,
+        open: true,
+      });
+    }
+    // A binding outside the graph does not block a start: it does not unfold the block.
+    expect(
+      rolesUnfolded({
+        swarmId: 'swarm-1',
+        execution: 'running',
+        graph: null,
+        roles: [{ role: 'old', inGraph: false, state: 'missing' }],
+      })
+    ).toBe(false);
+    expect(rolesUnfolded(null)).toBe(false);
+  });
+});
+
 describe('names instead of IDs', () => {
   const projects: AccessProject[] = [{ id: 'project-0123456789', name: 'brood' }];
 
@@ -479,6 +599,23 @@ describe('locales', () => {
       expect(english[`swarm_page.execution_states.${state}`]).toBeTruthy();
       expect(english[`swarm_page.execution_hints.${state}`]).toBeTruthy();
     }
+    for (const unit of ['s', 'min', 'h', 'd']) {
+      expect(english[`swarm_page.duration.${unit}`]).toContain('{{count}}');
+    }
+    // #253: the operator reads words, not the wire: no "Atespace", no "Visits".
+    for (const locale of locales) {
+      const translated = flatten(read(locale));
+      const words = Object.keys(translated)
+        .filter(owned)
+        .map((key) => translated[key]);
+      expect({ locale, atespace: words.some((w) => /atespace/i.test(w)) }).toEqual({
+        locale,
+        atespace: false,
+      });
+    }
+    expect(english['swarm_page.visits']).toBeUndefined();
+    expect(english['swarm_page.infrastructure']).toBeUndefined();
+    expect(english['swarm_page.execution']).toBeUndefined();
     // Every state a step can be in reads in words, stopped included (#238).
     for (const state of ['unvisited', ...STEP_STATES, ...VIEW_STATES]) {
       expect({ state, word: Boolean(english[`swarm_page.node_states.${state}`]) }).toEqual({

@@ -16,6 +16,7 @@ import {
   useRef,
   useState,
   type AnchorHTMLAttributes,
+  type CSSProperties,
   type HTMLAttributes,
   type ReactNode,
 } from 'react';
@@ -26,12 +27,12 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { Button } from './Button';
 import styles from './Markdown.module.scss';
 
-/** Высота свёрнутого текста; измеряется после монтирования. */
+/** Высота свёрнутого текста по умолчанию; измеряется после монтирования. */
 const COLLAPSED_HEIGHT = 600;
-/** Оценка «длинный» до измерения (серверный рендер, первый кадр):
- * ~30 строк по 13px/1.5 или столько же текста при 72ch. */
-const LONG_LINES = 28;
-const LONG_CHARS = 2200;
+/** Оценка «длинный» до измерения (серверный рендер, первый кадр): строка
+ * ~21px при 13px/1.55, ~80 знаков текста на строку при 72ch. */
+const LINE_HEIGHT = 21;
+const LINE_CHARS = 80;
 
 interface HastNode {
   type: string;
@@ -109,31 +110,51 @@ const components: Components = {
   img: Image,
 };
 
-function looksLong(text: string): boolean {
-  return text.length > LONG_CHARS || text.split('\n').length > LONG_LINES;
+function looksLong(text: string, height: number): boolean {
+  const lines = height / LINE_HEIGHT;
+  return text.length > lines * LINE_CHARS || text.split('\n').length > lines;
 }
 
 export interface MarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   /** Текст в GFM, как прислан. */
   text: string;
-  /** Сворачивать длинный текст до COLLAPSED_HEIGHT с кнопкой раскрытия. */
+  /** Сворачивать длинный текст до collapsedHeight с кнопкой раскрытия. */
   collapsible?: boolean;
+  /** Высота свёрнутого текста в px; по умолчанию ~30 строк. Задача прохода
+   * на странице роя (#253) сворачивается до двух строк. */
+  collapsedHeight?: number;
 }
 
-export function Markdown({ text, collapsible = false, className, ...rest }: MarkdownProps) {
+export function Markdown({
+  text,
+  collapsible = false,
+  collapsedHeight = COLLAPSED_HEIGHT,
+  className,
+  ...rest
+}: MarkdownProps) {
   const { t } = useTranslation();
   const bodyId = useId();
   const body = useRef<HTMLDivElement>(null);
-  const [tall, setTall] = useState(() => collapsible && looksLong(text));
+  const [tall, setTall] = useState(() => collapsible && looksLong(text, collapsedHeight));
   const [expanded, setExpanded] = useState(false);
 
   // Оценка до измерения — текстом; после монтирования — реальной высотой.
+  // Запас — меньше строки: текст на полстроки длиннее не прячется за кнопкой.
   useEffect(() => {
     if (!collapsible || !body.current) return;
-    setTall(body.current.scrollHeight > COLLAPSED_HEIGHT + 40);
-  }, [collapsible, text]);
+    setTall(body.current.scrollHeight > collapsedHeight + Math.min(40, LINE_HEIGHT / 2));
+  }, [collapsible, collapsedHeight, text]);
 
   const collapsed = tall && !expanded;
+  // Короткий свёрток (несколько строк) режется по строкам, не по пикселям,
+  // без затухания и с текстовой кнопкой: затухание и крупная кнопка съели
+  // бы его целиком, а обрез по высоте оставлял бы половину строки.
+  const short = collapsedHeight < 120;
+  const style = !collapsed
+    ? undefined
+    : short
+      ? ({ '--md-lines': Math.max(1, Math.round(collapsedHeight / LINE_HEIGHT)) } as CSSProperties)
+      : { maxHeight: collapsedHeight };
   return (
     <div className={[styles.root, className].filter(Boolean).join(' ')} {...rest}>
       <div
@@ -141,6 +162,8 @@ export function Markdown({ text, collapsible = false, className, ...rest }: Mark
         ref={body}
         className={styles.body}
         data-collapsed={collapsed ? '' : undefined}
+        data-short={short ? '' : undefined}
+        style={style}
       >
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
@@ -155,7 +178,7 @@ export function Markdown({ text, collapsible = false, className, ...rest }: Mark
           type="button"
           variant="ghost"
           size="sm"
-          className={styles.toggle}
+          className={short ? styles.toggleShort : styles.toggle}
           aria-expanded={expanded}
           aria-controls={bodyId}
           onClick={() => setExpanded((value) => !value)}

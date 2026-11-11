@@ -843,7 +843,9 @@
   display: flex;
   flex-direction: column;
   gap: $spacing-lg;
-  overflow-x: hidden;
+  // clip, не hidden: hidden по одной оси делает блок scroll container и
+  // отнимает у position: sticky внутри страниц (#253) прокрутку .content.
+  overflow-x: clip;
 
   &.main-content-logs {
     flex: 1 1 auto;

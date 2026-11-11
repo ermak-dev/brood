@@ -21,8 +21,10 @@ import styles from '@/features/substrate/substrate.module.scss';
 import page from './SwarmPage.module.scss';
 import local from './SwarmRequests.module.scss';
 
-/** Инбокс роя: открытые запросы сверху, ниже отвеченные и закрытые —
- * историей. Узел запроса — кнопкой, она выбирает его на графе. */
+/** Инбокс роя: открытые запросы сверху и целиком, ниже отвеченные и
+ * закрытые — историей, свёрнутой в счётчик (#253). Узел запроса — кнопкой,
+ * она выбирает его на графе. Пояснения у секции нет: карточка сама говорит,
+ * кто спрашивает, а место на первом экране нужно вопросу и графу. */
 export function RequestInbox({
   model,
   onSelectNode,
@@ -40,7 +42,6 @@ export function RequestInbox({
   return (
     <Section
       title={t('swarm_requests.title')}
-      hint={t('swarm_requests.hint')}
       action={
         open.length > 0 ? (
           <StatusBadge tone="attention">
@@ -65,10 +66,12 @@ export function RequestInbox({
           <ol className={local.list}>{open.map(card)}</ol>
         )}
         {history.length > 0 && (
-          <>
-            <h3 className={local.historyTitle}>{t('swarm_requests.history')}</h3>
+          <details className={local.history}>
+            <summary className={local.historySummary}>
+              {t('swarm_requests.history_count', { count: history.length })}
+            </summary>
             <ol className={local.list}>{history.map(card)}</ol>
-          </>
+          </details>
         )}
       </LoadState>
     </Section>
@@ -77,7 +80,11 @@ export function RequestInbox({
 
 /** Один запрос: кто и когда спросил, вопрос и материал, затем форма
  * ответа или то, чем он закрыт. Тот же компонент стоит у выбранного узла
- * графа (variant="node"): там вопрос уже показан узлом и не повторяется. */
+ * графа (variant="node"): там вопрос уже показан узлом и не повторяется.
+ * Материал свёрнут под своей подписью (#253): спрашивает вопрос, материал
+ * читают по желанию. В широком инбоксе открытый запрос встаёт в две
+ * колонки — вопрос слева, ответ справа, — чтобы граф остался на первом
+ * экране. */
 export function RequestCard({
   model,
   request,
@@ -124,24 +131,33 @@ export function RequestCard({
           </time>
         </span>
       </div>
-      {!atNode && <Markdown id={questionId} className={local.question} text={request.question} />}
-      {request.context && (
-        <div className={local.context}>
-          <p className={local.label}>{t('swarm_requests.context')}</p>
-          <Markdown className={local.text} text={request.context} collapsible />
+      {(!atNode || request.context) && (
+        <div className={local.ask}>
+          {!atNode && (
+            <Markdown id={questionId} className={local.question} text={request.question} />
+          )}
+          {request.context && (
+            <details className={local.context}>
+              <summary className={local.contextSummary}>{t('swarm_requests.context')}</summary>
+              <Markdown className={local.text} text={request.context} collapsible />
+            </details>
+          )}
         </div>
       )}
-      {request.state === 'open' &&
-        (model.canAnswer ? (
-          <AnswerForm
-            request={request}
-            place={variant}
-            labelledBy={atNode ? undefined : questionId}
-            answer={model.answer}
-          />
-        ) : (
-          <p className={page.hint}>{t('swarm_requests.read_only')}</p>
-        ))}
+      {request.state === 'open' && (
+        <div className={local.reply}>
+          {model.canAnswer ? (
+            <AnswerForm
+              request={request}
+              place={variant}
+              labelledBy={atNode ? undefined : questionId}
+              answer={model.answer}
+            />
+          ) : (
+            <p className={page.hint}>{t('swarm_requests.read_only')}</p>
+          )}
+        </div>
+      )}
       {request.state === 'answered' && (
         <AnswerDetails
           request={request}

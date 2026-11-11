@@ -3156,6 +3156,7 @@
     "your_role": "你的角色",
     "id": "群組 ID",
     "copy_id": "複製群組 ID",
+    "details": "詳情",
     "control": {
       "start": "啟動",
       "restart": "再次啟動",
@@ -3190,9 +3191,9 @@
       "started": "群組 {{name}} 已啟動",
       "stopped": "群組 {{name}} 已停止"
     },
-    "infrastructure": "基礎設施",
-    "atespace": "Atespace",
-    "execution": "執行",
+    "space": "Substrate 空間",
+    "infrastructure_label": "基礎設施",
+    "infrastructure_alert": "該群組的基礎設施處於{{state}}狀態，尚未啟用：在啟用之前，圖和執行者無法工作。生命週期操作在頁面末尾。",
     "execution_states": {
       "idle": "未開始",
       "running": "執行中",
@@ -3210,19 +3211,19 @@
       "failed": "圖在失敗的步驟上結束。",
       "stopped": "圖已停止，不會推進。"
     },
-    "current_node": "目前節點",
+    "now_label": "目前狀態",
+    "now_node": "節點",
     "pass_goal": {
-      "label": "本輪任務",
+      "current": "目前輪次",
       "pass": "第 {{number}} 輪，從步驟 #{{step}} 開始"
     },
     "graph": "圖",
-    "graph_hint": "定義 {{name}} 的快照。選擇節點以查看其指令、結果與 Actor。",
     "graph_label": "群組 {{name}} 的圖",
     "snapshot": {
       "label": "快照",
       "definition": "定義",
-      "version": "版本",
-      "revision": "修訂",
+      "version_short": "v{{version}}",
+      "copy_revision": "複製快照修訂號",
       "hint": "於首次啟動時記錄。目錄中的新版本不會改變此群組。"
     },
     "node": "所選節點",
@@ -3233,7 +3234,14 @@
     "outcome": "結果",
     "started": "開始",
     "finished": "結束",
-    "visits": "造訪次數",
+    "duration_label": "耗時",
+    "duration": {
+      "s": "{{count}} 秒",
+      "min": "{{count}} 分鐘",
+      "h": "{{count}} 小時",
+      "d": "{{count}} 天"
+    },
+    "entered": "進入過 {{count}} 次，顯示最近一次。",
     "reason": "原因",
     "commit": "已確認的提交",
     "copy_commit": "複製提交",
@@ -3258,20 +3266,21 @@
     "step_guidance": {
       "refused": "此步驟已關閉且未產生效果，圖不會自行推進。請排除原因（綁定角色、提交或還原 actor 工作區中的變更、連接 actor），若群組仍在執行則先停止，然後在同一快照上開始新一輪。",
       "unconfirmed": "伺服器不知道此步驟如何結束，因此既不重試也不推進圖。由你決定：先查明 actor 端發生了什麼，若群組仍在執行則停止它，然後開始新一輪。",
+      "release_title": "如果工作區仍被保留",
       "release": "如果原因中提到被保留的工作區操作，請由管理員檢查工作區並依該操作 ID 釋放它，否則新一輪會因工作區被占用而遭拒："
     },
     "steps": "步驟歷程",
     "steps_hint": "圖節點的每次造訪，依時間由早到晚排列。點選節點名稱可在圖上顯示該節點。",
     "steps_empty": "尚無步驟。",
+    "pass_steps": "步驟：{{count}}",
     "management": "存取與生命週期",
     "management_hint": "誰可以使用此群組、其擁有權與刪除。"
   },
   "swarm_requests": {
     "title": "操作員請求",
-    "hint": "此群組中圖節點和 Actor 提出的問題。待處理的請求排在前面；已回答的留在下方作為歷程。",
     "open_count": "{{count}} 個待處理",
     "none_open": "沒有待處理的請求。",
-    "history": "歷程",
+    "history_count": "已回答 {{count}} 個",
     "states": {
       "open": "待處理",
       "answered": "已回答",
@@ -3311,6 +3320,8 @@
   "swarm_roles": {
     "title": "角色",
     "hint": "圖中每個執行者節點都指定一個角色。啟動要求圖中的每個角色都綁定到此蜂群中正在執行的託管執行者。",
+    "fold_ready": "{{count}} 個就緒",
+    "fold_unready": "{{count}} 個未就緒",
     "graph_pinned": "快照 {{name}}（版本 {{version}}）的角色。",
     "graph_definition": "在啟動對話框中選擇的 {{name}}（版本 {{version}}）的角色。首次啟動會固定此定義。",
     "graph_none": "尚無圖。在啟動對話框中選擇定義後，其角色會顯示在這裡。",
@@ -3336,7 +3347,7 @@
       "unbound": "沒有執行者擔任此角色；在綁定之前啟動會被拒絕。",
       "stale": "綁定後執行者已被重新建立。請重新綁定角色以使用其新實例。",
       "inactive": "執行者未執行或不應執行。請啟動它，或綁定其他執行者。",
-      "foreign": "執行者已離開此蜂群或其 atespace。請綁定此蜂群的執行者。",
+      "foreign": "執行者已離開此蜂群或其 Substrate 空間。請綁定此蜂群的執行者。",
       "missing": "綁定的執行者已不存在。請綁定其他執行者。"
     },
     "phases": {

@@ -4,12 +4,16 @@
 
 import { useState, useEffect } from 'react';
 
+/** Без matchMedia (серверный рендер, тестовый DOM) запрос не совпадает. */
+const canMatch = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function';
+
 export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => {
-    return window.matchMedia(query).matches;
+    return canMatch() && window.matchMedia(query).matches;
   });
 
   useEffect(() => {
+    if (!canMatch()) return undefined;
     const media = window.matchMedia(query);
 
     const listener = (event: MediaQueryListEvent) => {

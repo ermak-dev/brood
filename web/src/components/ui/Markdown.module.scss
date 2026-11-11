@@ -208,16 +208,49 @@
   font-style: italic;
 }
 
-/* Свёрнутый длинный текст: обрез по высоте и затухание у края, чтобы край
- * читался как «продолжение есть», а не как конец текста. */
+/* Свёрнутый длинный текст: обрез по высоте (компонент задаёт её inline) и
+ * затухание у края, чтобы край читался как «продолжение есть», а не как
+ * конец текста. У короткого свёртка (две строки, #253) затухает только
+ * последняя строка, не обе. */
 .body[data-collapsed] {
   max-height: 600px;
   overflow: hidden;
   mask-image: linear-gradient(to bottom, #000 calc(100% - 72px), transparent);
 }
 
+/* Короткий свёрток (две строки, #253): обрез по строкам через line-clamp,
+ * считая строки сквозь абзацы и списки, без затухания. */
+.body[data-collapsed][data-short] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--md-lines, 2);
+  max-height: none;
+  mask-image: none;
+}
+
 .toggle {
   margin-top: 4px;
+}
+
+/* Кнопка короткого свёртка — текстом, в размер подписи рядом. Селектор
+ * с родителем перевешивает глобальные .btn и .btn-sm (их отступы и высота
+ * иначе берут верх: правила компонентов идут позже модуля). */
+.root > .toggleShort {
+  min-height: 0;
+  height: auto;
+  margin-top: 2px;
+  padding: 0;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  font-weight: 500;
+  color: var(--primary-color);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: none;
+
+  &:hover {
+    background: none;
+  }
 }
 
 /* ID операции в причине шага: моноширинно, как commit рядом. */

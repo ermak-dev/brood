@@ -3131,6 +3131,7 @@
     "your_role": "Your role",
     "id": "Swarm ID",
     "copy_id": "Copy swarm ID",
+    "details": "Details",
     "control": {
       "start": "Start",
       "restart": "Start again",
@@ -3165,9 +3166,9 @@
       "started": "Swarm {{name}} started",
       "stopped": "Swarm {{name}} stopped"
     },
-    "infrastructure": "Infrastructure",
-    "atespace": "Atespace",
-    "execution": "Execution",
+    "space": "Substrate space",
+    "infrastructure_label": "Infrastructure",
+    "infrastructure_alert": "The infrastructure of this swarm is {{state}}, not active: the graph and its actors cannot work until it is. Lifecycle actions are at the end of the page.",
     "execution_states": {
       "idle": "Not started",
       "running": "Running",
@@ -3185,19 +3186,19 @@
       "failed": "The graph ended on a failed step.",
       "stopped": "The graph is stopped and does not advance."
     },
-    "current_node": "Current node",
+    "now_label": "What now",
+    "now_node": "node",
     "pass_goal": {
-      "label": "Pass goal",
+      "current": "Current pass",
       "pass": "Pass {{number}}, from step #{{step}}"
     },
     "graph": "Graph",
-    "graph_hint": "Snapshot of the {{name}} definition. Select a node to see its instruction, outcome and actor.",
     "graph_label": "Graph of swarm {{name}}",
     "snapshot": {
       "label": "Snapshot",
       "definition": "Definition",
-      "version": "Version",
-      "revision": "Revision",
+      "version_short": "v{{version}}",
+      "copy_revision": "Copy snapshot revision",
       "hint": "Recorded at the first start. A newer version in the catalog does not change this swarm."
     },
     "node": "Selected node",
@@ -3208,7 +3209,14 @@
     "outcome": "Outcome",
     "started": "Started",
     "finished": "Finished",
-    "visits": "Visits",
+    "duration_label": "Took",
+    "duration": {
+      "s": "{{count}} s",
+      "min": "{{count}} min",
+      "h": "{{count}} h",
+      "d": "{{count}} d"
+    },
+    "entered": "Entered {{count}} times; the latest visit is shown.",
     "reason": "Reason",
     "commit": "Confirmed commit",
     "copy_commit": "Copy commit",
@@ -3220,7 +3228,7 @@
       "done": "Done",
       "failed": "Failed",
       "skipped": "Skipped",
-      "unconfirmed": "Outcome unknown",
+      "unconfirmed": "Result unknown",
       "attesting": "Checking workspace",
       "delivering": "Delivering instruction",
       "inflight": "In progress",
@@ -3233,20 +3241,21 @@
     "step_guidance": {
       "refused": "The step closed without effect, and the graph does not advance on its own. Fix the reason (bind the role, commit or revert changes in the actor's workspace, connect the actor), stop the swarm if it is still running, then start a new pass on the same snapshot.",
       "unconfirmed": "The server does not know how the step ended, so it neither retries it nor advances the graph. The decision is yours: find out what happened at the actor, stop the swarm if it is still running, then start a new pass.",
+      "release_title": "If the workspace stays reserved",
       "release": "If the reason names a reserved workspace operation, an administrator checks the workspace and releases it by that operation ID; otherwise the new pass is refused because the workspace is busy:"
     },
     "steps": "Step history",
     "steps_hint": "Every visit of a graph node, oldest first. A node name shows that node on the graph.",
     "steps_empty": "No steps yet.",
+    "pass_steps": "Steps: {{count}}",
     "management": "Access and lifecycle",
     "management_hint": "Who can use this swarm, its ownership and its deletion."
   },
   "swarm_requests": {
     "title": "Operator requests",
-    "hint": "Questions from graph nodes and actors of this swarm. Open requests come first; answered ones stay below as history.",
     "open_count": "{{count}} open",
     "none_open": "No open requests.",
-    "history": "History",
+    "history_count": "{{count}} answered",
     "states": {
       "open": "Open",
       "answered": "Answered",
@@ -3286,6 +3295,8 @@
   "swarm_roles": {
     "title": "Roles",
     "hint": "Each actor node of the graph names a role. A start needs every role of the graph bound to a running managed actor of this swarm.",
+    "fold_ready": "{{count}} ready",
+    "fold_unready": "{{count}} not ready",
     "graph_pinned": "Roles of the snapshot {{name}}, version {{version}}.",
     "graph_definition": "Roles of {{name}}, version {{version}}, chosen in the start dialog. The first start pins this definition.",
     "graph_none": "No graph yet. The roles of a definition show here once it is chosen in the start dialog.",
@@ -3311,7 +3322,7 @@
       "unbound": "No actor holds this role; a start is refused until one does.",
       "stale": "The actor was recreated after the binding. Bind the role again to take its new incarnation.",
       "inactive": "The actor is not running or is not meant to run. Start it, or bind another actor.",
-      "foreign": "The actor left this swarm or its atespace. Bind an actor of this swarm.",
+      "foreign": "The actor left this swarm or its Substrate space. Bind an actor of this swarm.",
       "missing": "The bound actor no longer exists. Bind another actor."
     },
     "phases": {

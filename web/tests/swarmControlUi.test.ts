@@ -151,9 +151,11 @@ async function openPage(id = 'swarm-1') {
   return container;
 }
 
-const header = (container: HTMLElement) => container.querySelector('header') as HTMLElement;
+/** Действие исполнения стоит рядом со строкой состояния (#253), не в шапке. */
+const header = (container: HTMLElement) =>
+  container.querySelector('[data-swarm-action]') as HTMLElement;
 const headerButtons = (container: HTMLElement) =>
-  Array.from(header(container).querySelectorAll('button')).map((b) => b.textContent);
+  Array.from(header(container)?.querySelectorAll('button') ?? []).map((b) => b.textContent);
 const dialog = () => document.querySelector('[role="dialog"]') as HTMLElement | null;
 
 async function click(element: Element | null | undefined) {
@@ -245,24 +247,33 @@ describe('header', () => {
       )
     );
 
-  test('the execution action sits in the page header', () => {
+  test('the execution action sits beside the execution state, under the header', () => {
     const html = view(createElement('button', { 'data-action': 'yes' }, 'act'));
     const head = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
-    expect(head).toContain('data-action="yes"');
+    expect(head).not.toContain('data-action="yes"');
+    const line = html.slice(html.indexOf('data-swarm-now'), html.indexOf(`>${en.swarm_page.graph}<`));
+    expect(line).toContain('data-swarm-action');
+    expect(line).toContain('data-action="yes"');
   });
 
+  // #253: the identity is one caption line under the graph title, the
+  // revision short on screen and whole in its title and its copy button.
   test('the snapshot identity the swarm recorded stands next to its graph', () => {
     const html = view(null);
     const graphSection = html.slice(html.indexOf(`>${en.swarm_page.graph}<`));
     const identity = graphSection.slice(0, graphSection.indexOf('role="group"'));
+    expect(identity).toContain('data-snapshot');
     expect(identity).toContain(snapshot.label);
     expect(identity).toContain('release');
-    expect(identity).toContain(`>1<`);
-    expect(identity).toContain(pinned);
+    expect(identity).toContain(snapshot.version_short.replace('{{version}}', '1'));
+    expect(identity).toContain(`title="${pinned}"`);
+    expect(identity).toContain(`>${pinned.slice(0, 8)}<`);
+    expect(identity).toContain(`aria-label="${snapshot.copy_revision}"`);
+    expect(identity.replace(/<[^>]*>/g, ' ')).not.toContain(pinned);
   });
 
   test('a run without a recorded identity shows no made-up one', () => {
-    expect(view(null, { definition: undefined })).not.toContain(snapshot.revision);
+    expect(view(null, { definition: undefined })).not.toContain('data-snapshot');
   });
 });
 
@@ -271,8 +282,9 @@ describe('snapshot, not catalog', () => {
     const calls = api(pageRoutes(() => run()));
     const container = await openPage();
     const text = container.textContent ?? '';
-    expect(text).toContain(pinned);
-    expect(text).not.toContain(newer);
+    expect(text).toContain(pinned.slice(0, 8));
+    expect(text).not.toContain(newer.slice(0, 8));
+    expect(container.querySelector(`[title="${pinned}"]`)).not.toBeNull();
     expect(container.querySelector('[data-node-id="ask"]')).not.toBeNull();
     // The page draws the swarm's own graph and never reads the catalog for it.
     expect(calls.map((c) => c.url)).toContain('/api/pipeline-runs/swarm-1/graph');
@@ -501,7 +513,8 @@ describe('restart', () => {
     const container = await openPage();
     await click(header(container).querySelector('button'));
     expect(dialog()?.textContent).toContain(control.restart_text);
-    expect(dialog()?.textContent).toContain(pinned);
+    expect(dialog()?.textContent).toContain(pinned.slice(0, 8));
+    expect(dialog()?.querySelector(`[title="${pinned}"]`)).not.toBeNull();
     expect(dialog()?.querySelector('input[type="radio"]')).toBeNull();
     expect(dialog()?.querySelector('input[name="commit"]')).toBeNull();
     await typeText(goalField(), 'Fix issue #13');
