@@ -3298,9 +3298,13 @@
     "delivery_states": {
       "pending": "대기 중",
       "delivered": "전달됨",
-      "failed": "전달 실패"
+      "failed": "전달 실패",
+      "unconfirmed": "확인 안 됨"
     },
     "retry_delivery": "다시 전달",
+    "unconfirmed_note": "전달이 확인되지 않음: 답변이 액터에게 도달했을 수 있습니다.",
+    "retry_title": "다시 전달할까요?",
+    "retry_twice": "다시 전달하면 답변이 두 번 전달될 수 있습니다. 이전 전달은 수신 확인을 받지 못해 액터가 이미 답변을 받았을 수 있습니다.",
     "read_only": "활성 스웜의 소유자와 편집자만 답변할 수 있습니다.",
     "cancelled_hint": "답변 없이 닫혔습니다.",
     "unknown_kind": "이 패널 버전은 이런 종류의 요청에 답할 수 없습니다."

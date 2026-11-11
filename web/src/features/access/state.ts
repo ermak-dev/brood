@@ -1,4 +1,5 @@
 import type { AccessUser } from '@/services/brood/access';
+import { isDeliveryState, type DeliveryState } from '@/services/brood/requests';
 
 /** Подпись пользователя в списке выбора: username решает, отображаемое имя
  * лишь помогает узнать человека. */
@@ -111,11 +112,18 @@ export function requestTone(state: string): BadgeTone {
   return state === 'open' ? 'attention' : 'neutral';
 }
 
-/** Доставка ответа актору: идёт -- работа, провал -- проблема. */
+const deliveryTones: Record<DeliveryState, BadgeTone> = {
+  pending: 'progress',
+  delivered: 'neutral',
+  failed: 'problem',
+  unconfirmed: 'attention',
+};
+
+/** Доставка ответа актору (#260): идёт -- работа, провал -- проблема.
+ * Неподтверждённая ждёт человека (#261): ответ мог дойти, и решить, повторять
+ * ли, может только он. Незнакомое состояние не выдаётся за работу. */
 export function deliveryTone(delivery: string): BadgeTone {
-  if (delivery === 'delivered') return 'neutral';
-  if (delivery === 'failed') return 'problem';
-  return 'progress';
+  return isDeliveryState(delivery) ? deliveryTones[delivery] : 'neutral';
 }
 
 const substrateTones: Record<string, BadgeTone> = {

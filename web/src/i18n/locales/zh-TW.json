@@ -3323,9 +3323,13 @@
     "delivery_states": {
       "pending": "等待中",
       "delivered": "已送達",
-      "failed": "送達失敗"
+      "failed": "送達失敗",
+      "unconfirmed": "未確認"
     },
     "retry_delivery": "重試送達",
+    "unconfirmed_note": "送達未確認：回答可能已到達 Actor。",
+    "retry_title": "重試送達？",
+    "retry_twice": "重試可能會讓回答送達兩次。上一次送達沒有收到回執，Actor 可能已經收到回答。",
     "read_only": "只有作用中群組的擁有者和編輯者可以回答。",
     "cancelled_hint": "未回答即已關閉。",
     "unknown_kind": "此版本的面板無法回答這類請求。"

@@ -5,7 +5,9 @@
 // a colour) with an optional comment; an actor request offers no route
 // choice. After sending, a visible confirmation stays with the request and
 // the history shows the chosen label. A failed delivery shows its reason and
-// a retry; a refusal shows the server reason. The node request also opens at
+// a retry; an unconfirmed one (#261) says the answer may have reached the
+// actor and asks before a retry that may deliver it twice; after a retry
+// the card shows the new state and reason. A refusal shows the server reason. The node request also opens at
 // its node on the graph through the same card, and the page answers through
 // the swarm request API instead of the old pipeline-run route. The form is
 // one, in the inbox (#259): the card at the node leads to it and, once
@@ -23,7 +25,7 @@ import type { AccessSwarm } from '@/services/brood/access';
 import type { PipelineRun, RunGraph } from '@/services/brood/pipelines';
 import type { RequestAnswer, SwarmRequest } from '@/services/brood/requests';
 import { RequestCard, RequestInbox } from '@/features/swarms/SwarmRequests';
-import type { RequestInboxModel } from '@/features/swarms/useSwarmRequests';
+import { useSwarmRequests, type RequestInboxModel } from '@/features/swarms/useSwarmRequests';
 import { SwarmView } from '@/features/swarms/SwarmPage';
 import { installTestDOM } from './helpers/dom';
 import en from '@/i18n/locales/en.json';
@@ -128,6 +130,20 @@ async function mount(node: ReactNode): Promise<{ container: HTMLElement; root: R
 async function unmount({ container, root }: { container: HTMLElement; root: Root }) {
   await act(async () => root.unmount());
   container.remove();
+}
+
+const settle = (ms = 0) => act(async () => new Promise((resolve) => setTimeout(resolve, ms)));
+const dialog = () => document.querySelector('[role="dialog"]') as HTMLElement | null;
+const buttonNamed = (scope: ParentNode | null | undefined, name: string) =>
+  [...(scope?.querySelectorAll('button') ?? [])].find((button) => button.textContent === name);
+/** Подтверждение в диалоге — отправка его формы, как Enter или клик в браузере. */
+async function confirmDialog() {
+  const form = dialog()?.querySelector('form');
+  if (!form) throw new Error('no dialog form');
+  await act(async () => {
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  });
+  await settle();
 }
 
 const radios = (container: HTMLElement) =>
@@ -578,8 +594,11 @@ describe('delivery to the actor', () => {
     response: 'Postgres',
     delivery: 'failed',
   });
+  const unconfirmed: SwarmRequest = { ...failed, delivery: 'unconfirmed' };
+  const unconfirmedReason =
+    'delivery is unconfirmed: the answer may have reached the actor, and a retry may deliver it twice';
 
-  test('a failed delivery shows its state, the reason and a retry', async () => {
+  test('a failed delivery shows its state, the reason and retries without a warning', async () => {
     const recorded = recorder();
     const view = await mount(
       createElement(RequestCard, {
@@ -594,11 +613,64 @@ describe('delivery to the actor', () => {
       const text = view.container.textContent ?? '';
       expect(text).toContain(t.delivery_states.failed);
       expect(text).toContain('recipient is not connected');
-      const retry = [...view.container.querySelectorAll('button')].find(
-        (button) => button.textContent === t.retry_delivery
-      );
-      await click(retry);
+      expect(text).not.toContain(t.unconfirmed_note);
+      await click(buttonNamed(view.container, t.retry_delivery));
+      await settle();
       expect(recorded.deliveries).toEqual([failed.id]);
+      expect(dialog()).toBeNull();
+    } finally {
+      await unmount(view);
+    }
+  });
+
+  test('an unconfirmed delivery says the answer may have reached the actor, with the reason', () => {
+    const html = markup(
+      createElement(RequestCard, {
+        model: model({ notices: { [unconfirmed.id]: { deliveryError: unconfirmedReason } } }),
+        request: unconfirmed,
+      })
+    );
+    const text = visibleText(html);
+    expect(html).toMatch(
+      new RegExp(`data-tone="attention"[^>]*>${t.delivery_states.unconfirmed}<`)
+    );
+    expect(text).toContain(t.unconfirmed_note);
+    expect(text).toContain(unconfirmedReason);
+    expect(html).toContain(`>${t.retry_delivery}<`);
+    // Without a reason from the server (a reload) the words still say it.
+    const reloaded = visibleText(
+      markup(createElement(RequestCard, { model: model(), request: unconfirmed }))
+    );
+    expect(reloaded).toContain(t.unconfirmed_note);
+    expect(reloaded).not.toContain(unconfirmedReason);
+  });
+
+  test('a retry of an unconfirmed delivery asks first: cancel sends nothing', async () => {
+    const recorded = recorder();
+    const view = await mount(
+      createElement(RequestCard, { model: model({}, recorded), request: unconfirmed })
+    );
+    try {
+      const retry = buttonNamed(view.container, t.retry_delivery);
+      expect(retry?.getAttribute('aria-haspopup')).toBe('dialog');
+      await click(retry);
+      await settle();
+      const asked = dialog();
+      expect(asked?.textContent).toContain(t.retry_title);
+      expect(asked?.textContent).toContain(t.retry_twice);
+      expect(recorded.deliveries).toEqual([]);
+      await click(buttonNamed(asked, en.common.cancel));
+      await settle(400);
+      expect(dialog()).toBeNull();
+      expect(recorded.deliveries).toEqual([]);
+
+      await click(buttonNamed(view.container, t.retry_delivery));
+      await settle();
+      expect(dialog()?.querySelector('button[type="submit"]')?.textContent).toBe(t.retry_delivery);
+      await confirmDialog();
+      await settle(400);
+      expect(recorded.deliveries).toEqual([unconfirmed.id]);
+      expect(dialog()).toBeNull();
     } finally {
       await unmount(view);
     }
@@ -610,6 +682,106 @@ describe('delivery to the actor', () => {
     );
     expect(visibleText(html)).toContain(t.delivery_states.delivered);
     expect(html).not.toContain(t.retry_delivery);
+    expect(visibleText(html)).not.toContain(t.unconfirmed_note);
+  });
+});
+
+// The retry goes through the page state of the requests: the reply of the
+// server is the new state of the delivery and its reason.
+describe('retry through the swarm request API', () => {
+  const swarm: AccessSwarm = {
+    id: 'swarm-7f3a',
+    project_id: 'project-4b8c',
+    owner_id: 'user-9a8b',
+    owner_username: 'alice',
+    role: 'owner',
+    name: 'release-crew',
+    atespace_name: 'brood-7f3a',
+    state: 'active',
+    created_at: '2026-11-01T09:00:00Z',
+    updated_at: '2026-11-02T09:00:00Z',
+  };
+  const asked = actorAsk({
+    state: 'answered',
+    answeredAt: '2026-11-10T08:30:00Z',
+    answeredBy: 'alice',
+    response: 'Postgres',
+    delivery: 'unconfirmed',
+  });
+  const originalFetch = globalThis.fetch;
+
+  /** Сервер запросов роя: список и повтор доставки, вызовы записаны. */
+  function serve(retried: Partial<SwarmRequest>) {
+    let current = asked;
+    const calls: string[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${url}`);
+      if (method === 'GET' && url === '/api/swarms/swarm-7f3a/requests?all=1') {
+        return Response.json({ results: [current] });
+      }
+      if (method === 'POST' && url === `/api/swarms/swarm-7f3a/requests/${asked.id}/deliver`) {
+        current = { ...asked, ...retried, deliveryError: undefined };
+        return Response.json({ ...asked, ...retried });
+      }
+      return Response.json({ detail: 'not found' }, { status: 404 });
+    }) as typeof fetch;
+    return calls;
+  }
+
+  function LiveInbox() {
+    return createElement(RequestInbox, { model: useSwarmRequests(swarm.id, swarm) });
+  }
+
+  async function retryConfirmed() {
+    const view = await mount(createElement(LiveInbox));
+    await settle();
+    const history = view.container.querySelector('details');
+    if (history) history.open = true;
+    await click(buttonNamed(view.container, t.retry_delivery));
+    await settle();
+    await confirmDialog();
+    await settle(400);
+    return view;
+  }
+
+  test('a retry that did not leave keeps it unconfirmed and shows the new reason', async () => {
+    const reason =
+      'the answer was not sent: the actor session did not receive it; an earlier delivery ' +
+      'is unconfirmed: the answer may have reached the actor, and a retry may deliver it twice';
+    const calls = serve({ delivery: 'unconfirmed', deliveryError: reason });
+    const view = await retryConfirmed();
+    try {
+      expect(calls.filter((call) => call.startsWith('POST'))).toEqual([
+        `POST /api/swarms/swarm-7f3a/requests/${asked.id}/deliver`,
+      ]);
+      const text = view.container.textContent ?? '';
+      expect(text).toContain(t.delivery_states.unconfirmed);
+      expect(text).toContain(reason);
+      expect(buttonNamed(view.container, t.retry_delivery)).toBeDefined();
+    } finally {
+      await unmount(view);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('a delivered retry shows the new state, drops the retry and keeps the focus there', async () => {
+    serve({ delivery: 'delivered' });
+    const view = await retryConfirmed();
+    try {
+      const text = view.container.textContent ?? '';
+      expect(text).toContain(t.delivery_states.delivered);
+      expect(text).not.toContain(t.unconfirmed_note);
+      expect(buttonNamed(view.container, t.retry_delivery)).toBeUndefined();
+      // The retry button is gone with its focus: the focus is on the new state.
+      const focused = document.activeElement;
+      expect(focused?.tagName).toBe('DD');
+      expect(view.container.contains(focused)).toBe(true);
+      expect(focused?.textContent).toContain(t.delivery_states.delivered);
+    } finally {
+      await unmount(view);
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
@@ -619,7 +791,16 @@ describe('readers', () => {
       createElement(RequestInbox, {
         model: model({
           canAnswer: false,
-          requests: [nodeAsk(), actorAsk({ state: 'answered', delivery: 'failed', response: 'x' })],
+          requests: [
+            nodeAsk(),
+            actorAsk({ state: 'answered', delivery: 'failed', response: 'x' }),
+            actorAsk({
+              id: 'req-actor-2',
+              state: 'answered',
+              delivery: 'unconfirmed',
+              response: 'y',
+            }),
+          ],
         }),
       })
     );

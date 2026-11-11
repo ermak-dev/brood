@@ -3295,9 +3295,13 @@
     "delivery_states": {
       "pending": "等待中",
       "delivered": "已送达",
-      "failed": "送达失败"
+      "failed": "送达失败",
+      "unconfirmed": "未确认"
     },
     "retry_delivery": "重试送达",
+    "unconfirmed_note": "送达未确认：回答可能已到达 Actor。",
+    "retry_title": "重试送达？",
+    "retry_twice": "重试可能会让回答送达两次。上一次送达没有收到回执，Actor 可能已经收到回答。",
     "read_only": "只有活动群组的所有者和编辑者可以回答。",
     "cancelled_hint": "未回答即已关闭。",
     "unknown_kind": "此版本的面板无法回答这类请求。"

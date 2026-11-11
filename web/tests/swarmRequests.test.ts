@@ -4,12 +4,13 @@
 // confirmation is the answer text. Open requests come first, answered ones
 // stay as history with the label that was chosen; a request answered on the
 // page keeps its place among the open ones (#259). Only managers of an
-// active swarm answer; a failed delivery to an actor can be retried. Every
-// key of the request inbox exists in all six locales.
+// active swarm answer; a failed or unconfirmed delivery to an actor can be
+// retried, and only the unconfirmed one may deliver the answer twice (#261).
+// Every key of the request inbox exists in all six locales.
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import type { AccessSwarm } from '@/services/brood/access';
-import { requestsApi, type SwarmRequest } from '@/services/brood/requests';
+import { DELIVERY_STATES, requestsApi, type SwarmRequest } from '@/services/brood/requests';
 import {
   answerBody,
   answerSummary,
@@ -19,6 +20,7 @@ import {
   inboxSections,
   nodeRequest,
   requestForm,
+  retryMayDuplicate,
 } from '@/features/swarms/requestState';
 
 const nodeAsk = (over: Partial<SwarmRequest> = {}): SwarmRequest => ({
@@ -274,12 +276,26 @@ describe('who answers', () => {
     expect(canAnswerRequests(null)).toBe(false);
   });
 
-  test('only a failed delivery of an answered actor request is retried', () => {
+  test('a failed or unconfirmed delivery of an answered actor request is retried', () => {
     const answered = actorAsk({ state: 'answered', response: 'Postgres' });
     expect(deliveryRetryable({ ...answered, delivery: 'failed' })).toBe(true);
+    expect(deliveryRetryable({ ...answered, delivery: 'unconfirmed' })).toBe(true);
     expect(deliveryRetryable({ ...answered, delivery: 'delivered' })).toBe(false);
     expect(deliveryRetryable({ ...answered, delivery: 'pending' })).toBe(false);
+    expect(deliveryRetryable({ ...answered, delivery: 'newer-state' })).toBe(false);
     expect(deliveryRetryable(nodeAsk({ state: 'answered', delivery: 'failed' }))).toBe(false);
+    expect(deliveryRetryable(nodeAsk({ state: 'answered', delivery: 'unconfirmed' }))).toBe(false);
+  });
+
+  // #260: failed did not leave, a retry is safe; unconfirmed left without a
+  // receipt and may have reached the actor, so its retry may deliver twice.
+  test('only a retry of an unconfirmed delivery may deliver the answer twice', () => {
+    const answered = actorAsk({ state: 'answered', response: 'Postgres' });
+    expect(retryMayDuplicate({ ...answered, delivery: 'unconfirmed' })).toBe(true);
+    expect(retryMayDuplicate({ ...answered, delivery: 'failed' })).toBe(false);
+    expect(retryMayDuplicate({ ...answered, delivery: 'delivered' })).toBe(false);
+    expect(retryMayDuplicate({ ...answered, delivery: 'pending' })).toBe(false);
+    expect(retryMayDuplicate(nodeAsk({ state: 'answered', delivery: 'unconfirmed' }))).toBe(false);
   });
 });
 
@@ -355,6 +371,23 @@ describe('API', () => {
     ]);
   });
 
+  test('an unconfirmed delivery keeps its state and the server reason', async () => {
+    csrf();
+    const reason =
+      'the answer was not sent: the actor session did not receive it; an earlier delivery ' +
+      'is unconfirmed: the answer may have reached the actor, and a retry may deliver it twice';
+    reply({
+      ...actorAsk(),
+      state: 'answered',
+      response: 'Postgres',
+      delivery: 'unconfirmed',
+      deliveryError: reason,
+    });
+    const retried = await requestsApi.deliver('s', 'r');
+    expect(retried).toMatchObject({ delivery: 'unconfirmed', deliveryError: reason });
+    expect(DELIVERY_STATES).toEqual(['pending', 'delivered', 'failed', 'unconfirmed']);
+  });
+
   test('a refusal carries the server reason', async () => {
     csrf();
     reply({ detail: 'swarm request is no longer open' }, 409);
@@ -420,7 +453,7 @@ describe('locales', () => {
     for (const state of ['open', 'answered', 'cancelled']) {
       expect(english[`swarm_requests.states.${state}`]).toBeTruthy();
     }
-    for (const state of ['pending', 'delivered', 'failed']) {
+    for (const state of DELIVERY_STATES) {
       expect(english[`swarm_requests.delivery_states.${state}`]).toBeTruthy();
     }
     for (const value of ['yes', 'no'])

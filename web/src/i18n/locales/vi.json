@@ -3304,9 +3304,13 @@
     "delivery_states": {
       "pending": "Đang chờ",
       "delivered": "Đã gửi tới",
-      "failed": "Gửi thất bại"
+      "failed": "Gửi thất bại",
+      "unconfirmed": "Chưa xác nhận"
     },
     "retry_delivery": "Gửi lại",
+    "unconfirmed_note": "Việc gửi chưa được xác nhận: câu trả lời có thể đã đến actor.",
+    "retry_title": "Gửi lại câu trả lời?",
+    "retry_twice": "Gửi lại có thể khiến actor nhận câu trả lời hai lần. Lần gửi trước không có xác nhận đã nhận, nên actor có thể đã có câu trả lời.",
     "read_only": "Chỉ chủ sở hữu và người chỉnh sửa của bầy đang hoạt động mới có thể trả lời.",
     "cancelled_hint": "Đã đóng mà không có câu trả lời.",
     "unknown_kind": "Phiên bản bảng điều khiển này không thể trả lời loại yêu cầu này."
