@@ -29,8 +29,9 @@ func lifecycleInvocation(name, arguments string) command.Invocation {
 
 func TestActorCommandStopDurableAndDeleteConfirmed(t *testing.T) {
 	ts, _, master, pve := masterSetup(t)
+	worker := lifecycleWorker(t, ts, master, pve)
 	ctx := context.Background()
-	result, err := ts.srv.managed.executeLifecycleCommand(ctx, master, lifecycleInvocation("stop", `{"name":"master"}`))
+	result, err := ts.srv.managed.executeLifecycleCommand(ctx, master, lifecycleInvocation("stop", `{"name":"worker"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,45 +39,43 @@ func TestActorCommandStopDurableAndDeleteConfirmed(t *testing.T) {
 		t.Fatalf("completion overstated: %+v", result)
 	}
 	var data map[string]any
-	if err := json.Unmarshal(result.Data, &data); err != nil || data["uid"] != master.UID {
+	if err := json.Unmarshal(result.Data, &data); err != nil || data["uid"] != worker.UID {
 		t.Fatalf("result identity: %s %v", result.Data, err)
 	}
-	stopped, err := ts.srv.store.GetManagedActor(ctx, master.UID)
+	stopped, err := ts.srv.store.GetManagedActor(ctx, worker.UID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stopped.Operation != "stop" || stopped.Desired != "stopped" || stopped.OperationID == master.OperationID || stopped.Stage != "stop" || stopped.UPID == "" || stopped.CTID != master.CTID || stopped.OwnerNonce != master.OwnerNonce || stopped.Incarnation != master.Incarnation || stopped.Resources != master.Resources || pve.stops != 1 || pve.deletes != 0 {
+	if stopped.Operation != "stop" || stopped.Desired != "stopped" || stopped.OperationID == worker.OperationID || stopped.Stage != "stop" || stopped.UPID == "" || stopped.CTID != worker.CTID || stopped.OwnerNonce != worker.OwnerNonce || stopped.Incarnation != worker.Incarnation || stopped.Resources != worker.Resources || pve.stops != 1 || pve.deletes != 0 {
 		t.Fatalf("stop lost durable allocation: %+v", stopped)
 	}
-	for range 2 {
-		ts.srv.managed.reconcileOnce(ctx)
-	}
-	stopped, _ = ts.srv.store.GetManagedActor(ctx, master.UID)
-	if stopped.Phase != "stopped" {
-		t.Fatalf("stop not reconciled: %+v", stopped)
-	}
+	stopped = settleActor(t, ts, worker.UID, actorStopped)
 	sw, err := ts.srv.store.GetSwarm(ctx, master.SwarmID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reservations, err := ts.srv.shardReservations(ctx, []app.Swarm{toAppSwarm(sw)})
-	if err != nil || len(reservations) != 1 || reservations[0].CPUMillicores != master.Resources.CPUMillicores || reservations[0].MemoryBytes != master.Resources.MemoryBytes {
+	retained := false
+	for _, r := range reservations {
+		retained = retained || (r.Name == "worker" && r.CPUMillicores == worker.Resources.CPUMillicores && r.MemoryBytes == worker.Resources.MemoryBytes)
+	}
+	if err != nil || len(reservations) != 2 || !retained {
 		t.Fatalf("stopped quota lost: %+v %v", reservations, err)
 	}
-	// Оператор может удалить остановленного master без гостевого полномочия.
+	// Оператор может удалить остановленного worker без гостевого полномочия.
 	before := stopped
-	if _, err := ts.srv.executeActorCommand(ctx, master.DelegatorID, master.SwarmID, lifecycleInvocation("delete", `{"name":"master"}`)); err == nil {
+	if _, err := ts.srv.executeActorCommand(ctx, master.DelegatorID, master.SwarmID, lifecycleInvocation("delete", `{"name":"worker"}`)); err == nil {
 		t.Fatal("unconfirmed disk deletion accepted")
 	}
-	after, _ := ts.srv.store.GetManagedActor(ctx, master.UID)
+	after, _ := ts.srv.store.GetManagedActor(ctx, worker.UID)
 	if after.Revision != before.Revision {
 		t.Fatal("unconfirmed deletion mutated intent")
 	}
-	result, err = ts.srv.executeActorCommand(ctx, master.DelegatorID, master.SwarmID, lifecycleInvocation("delete", `{"name":"master","confirm":true}`))
+	result, err = ts.srv.executeActorCommand(ctx, master.DelegatorID, master.SwarmID, lifecycleInvocation("delete", `{"name":"worker","confirm":true}`))
 	if err != nil || string(result.Outcome) != "accepted" {
 		t.Fatalf("delete: %+v %v", result, err)
 	}
-	after, _ = ts.srv.store.GetManagedActor(ctx, master.UID)
+	after, _ = ts.srv.store.GetManagedActor(ctx, worker.UID)
 	if after.Desired != "deleted" || after.Operation != "delete" || after.OperationID == before.OperationID {
 		t.Fatalf("delete not durable: %+v", after)
 	}
@@ -138,7 +137,14 @@ func TestActorCommandAuthorizationBoundaries(t *testing.T) {
 			ts, _, master, pve := masterSetup(t)
 			ctx := context.Background()
 			original := master
-			target := "master"
+			// Цель: worker, добавленный master, чтобы отказ давал сценарий, а
+			// не владение (#152). В пуле два места, поэтому в сценарии чужого
+			// роя цель: актор того роя с ParentUID этого master.
+			var victim store.ManagedActor
+			if scenario != "cross-swarm-target" {
+				victim = lifecycleWorker(t, ts, master, pve)
+			}
+			target := "worker"
 			var err error
 			switch scenario {
 			case "stale-generation":
@@ -155,7 +161,7 @@ func TestActorCommandAuthorizationBoundaries(t *testing.T) {
 				ts.fake.atespaces[sw.AtespaceName].Metadata.Uid = "replacement"
 				ts.fake.mu.Unlock()
 			case "worker-peer":
-				original = lifecycleWorker(t, ts, master, pve)
+				original, target = victim, "master"
 			case "cross-swarm-target":
 				target = "foreign"
 				sw, e := ts.srv.store.GetSwarm(ctx, master.SwarmID)
@@ -168,7 +174,7 @@ func TestActorCommandAuthorizationBoundaries(t *testing.T) {
 				if e = ts.srv.store.CreateSwarm(ctx, sw); e != nil {
 					t.Fatal(e)
 				}
-				_, err = ts.srv.store.ReserveManagedActor(ctx, store.ManagedActor{UID: store.NewID(), Name: target, SwarmID: sw.ID, AtespaceUID: foreignUID, PoolUID: master.PoolUID, CTID: 106, Resources: master.Resources, OwnerNonce: store.NewID(), OperationID: store.NewID()})
+				victim, err = ts.srv.store.ReserveManagedActor(ctx, store.ManagedActor{UID: store.NewID(), Name: target, SwarmID: sw.ID, AtespaceUID: foreignUID, PoolUID: master.PoolUID, CTID: 106, Resources: master.Resources, OwnerNonce: store.NewID(), OperationID: store.NewID(), ParentUID: master.UID})
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -177,9 +183,10 @@ func TestActorCommandAuthorizationBoundaries(t *testing.T) {
 			if err == nil {
 				t.Fatal("unauthorized mutation accepted")
 			}
-			after, _ := ts.srv.store.GetManagedActor(ctx, master.UID)
-			if after.Revision != master.Revision || pve.stops != 0 {
-				t.Fatalf("refusal changed target: %+v", after)
+			for _, a := range []store.ManagedActor{master, victim} {
+				if after, _ := ts.srv.store.GetManagedActor(ctx, a.UID); after.Revision != a.Revision || pve.stops != 0 {
+					t.Fatalf("refusal changed target: %+v", after)
+				}
 			}
 		})
 	}
@@ -196,6 +203,7 @@ func (p lifecycleInspect) InspectOwned(ctx context.Context, ref proxmox.OwnedCT)
 
 func TestActorCommandRechecksApprovalAfterInspection(t *testing.T) {
 	ts, _, master, pve := masterSetup(t)
+	worker := lifecycleWorker(t, ts, master, pve)
 	ts.srv.managed.clients = map[string]proxmoxAPI{}
 	ts.srv.managed.newClient = func(proxmox.Config) (proxmoxAPI, error) {
 		return lifecycleInspect{proxmoxAPI: pve, inspect: func(ctx context.Context, ref proxmox.OwnedCT) (proxmox.CTConfig, error) {
@@ -206,12 +214,12 @@ func TestActorCommandRechecksApprovalAfterInspection(t *testing.T) {
 			return config, err
 		}}, nil
 	}
-	_, err := ts.srv.managed.executeLifecycleCommand(context.Background(), master, lifecycleInvocation("stop", `{"name":"master"}`))
+	_, err := ts.srv.managed.executeLifecycleCommand(context.Background(), master, lifecycleInvocation("stop", `{"name":"worker"}`))
 	if err == nil {
 		t.Fatal("revoked during inspection accepted")
 	}
-	after, _ := ts.srv.store.GetManagedActor(context.Background(), master.UID)
-	if after.Revision != master.Revision || pve.stops != 0 {
+	after, _ := ts.srv.store.GetManagedActor(context.Background(), worker.UID)
+	if after.Revision != worker.Revision || pve.stops != 0 {
 		t.Fatalf("revocation did not fence durable intent: %+v", after)
 	}
 }

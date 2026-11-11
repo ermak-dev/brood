@@ -24,11 +24,12 @@ func (h commandSessionHub) CallSession(ctx context.Context, uid string, g int64,
 // FEATURE: Session commands share actor authorization and incarnation fencing.
 // SPEC: The server supplies caller identity and suppresses private results after revocation.
 func TestGuestSessionCommandRechecksDelegation(t *testing.T) {
-	ts, _, master, _ := masterSetup(t)
+	ts, _, master, pve := masterSetup(t)
+	worker := lifecycleWorker(t, ts, master, pve)
 	called := false
 	ts.srv.managed.hub = commandSessionHub{guestRelay: ts.srv.managed.hub, call: func(ctx context.Context, uid string, g int64, r relay.SessionRequest) (relay.SessionResponse, error) {
 		called = true
-		if uid != master.UID || g != master.Incarnation || !strings.HasPrefix(r.Caller, "actor:") {
+		if uid != worker.UID || g != worker.Incarnation || !strings.HasPrefix(r.Caller, "actor:") {
 			t.Fatalf("unbound request: %s %d %+v", uid, g, r)
 		}
 		if err := ts.srv.store.SetUserDisabled(ctx, master.DelegatorID, true); err != nil {
@@ -36,7 +37,7 @@ func TestGuestSessionCommandRechecksDelegation(t *testing.T) {
 		}
 		return relay.SessionResponse{OK: true, Text: "private-session-sentinel", Outcome: "complete"}, nil
 	}}
-	got := ts.srv.managed.handleSwarmRequest(context.Background(), master.UID, master.Incarnation, relay.SwarmRequest{Tool: "slash", Arguments: json.RawMessage(`{"name":"master","command":"/status"}`)})
+	got := ts.srv.managed.handleSwarmRequest(context.Background(), master.UID, master.Incarnation, relay.SwarmRequest{Tool: "slash", Arguments: json.RawMessage(`{"name":"worker","command":"/status"}`)})
 	if !called {
 		t.Fatal("session service was not called")
 	}
@@ -46,7 +47,7 @@ func TestGuestSessionCommandRechecksDelegation(t *testing.T) {
 }
 
 func TestWorkspaceMutationRequiresDispatchRelease(t *testing.T) {
-	ts, master, _ := coordinationServerSetup(t)
+	ts, master, _ := ownedWorkerSetup(t)
 	ctx := context.Background()
 	ts.srv.managed.deliverMessage = func(context.Context, string, int64, relay.MessageRequest) (relay.MessageResponse, error) {
 		return relay.MessageResponse{OK: true}, nil
@@ -66,7 +67,7 @@ func TestWorkspaceMutationRequiresDispatchRelease(t *testing.T) {
 }
 
 func TestUnknownWorkspaceOperationRetainsExactRecovery(t *testing.T) {
-	ts, master, worker := coordinationServerSetup(t)
+	ts, master, worker := ownedWorkerSetup(t)
 	ctx := context.Background()
 	ts.srv.managed.hub = commandSessionHub{guestRelay: ts.srv.managed.hub, call: func(context.Context, string, int64, relay.SessionRequest) (relay.SessionResponse, error) {
 		return relay.SessionResponse{Text: "partial effect", Outcome: "unknown"}, nil

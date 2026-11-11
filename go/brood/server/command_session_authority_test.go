@@ -62,7 +62,7 @@ func TestControlLeaseRecheckedAfterConnectivity(t *testing.T) {
 }
 
 func TestWorkspaceReservationBlocksDispatchBeforeRPC(t *testing.T) {
-	ts, master, worker := coordinationServerSetup(t)
+	ts, master, worker := ownedWorkerSetup(t)
 	ctx := context.Background()
 	sw, _ := ts.srv.store.GetSwarm(ctx, master.SwarmID)
 	targetClaim := coordinationClaim(master, sw, "racing-task")
