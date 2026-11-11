@@ -3274,6 +3274,9 @@
     "open_count": "{{count}} đang mở",
     "none_open": "Không có yêu cầu đang mở.",
     "history_count": "{{count}} đã trả lời",
+    "undelivered_count": "{{count}} chưa gửi tới",
+    "attention_title": "Việc gửi cần chú ý",
+    "attention_hint": "Actor chưa nhận được các câu trả lời này, hoặc việc gửi chưa được xác nhận. Chúng ở lại đây cho đến khi gửi thành công.",
     "states": {
       "open": "Đang mở",
       "answered": "Đã trả lời",

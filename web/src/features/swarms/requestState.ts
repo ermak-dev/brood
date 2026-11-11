@@ -86,32 +86,55 @@ export function answerBody(request: SwarmRequest, draft: RequestDraft): RequestA
 
 const byTime = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
 
+const byAsked = (left: SwarmRequest, right: SwarmRequest) =>
+  byTime(left.createdAt, right.createdAt);
+
 /** Инбокс: открытые сверху, дольше ждущий первым; ниже история, свежий
  * ответ первым. Запрос, на который отвечали на этой странице (handledHere:
  * ответ принят или отклонён), остаётся на своём месте среди открытых
  * (#259): подтверждение или отказ не уходят в свёрнутую историю, а open
- * считает только ждущие ответа. */
+ * считает только ждущие ответа.
+ *
+ * Ответ, которого актор не получил (`failed`) или получил без квитанции
+ * (`unconfirmed`), не история (#264): оператор должен его видеть, пока
+ * доставка не удалась. Такие запросы стоят своей группой под открытыми,
+ * дольше ждущий актор первым. Повтор доставки на этой странице
+ * (retriedHere) оставляет карточку в группе и после удачи, до ухода со
+ * страницы: новое состояние и есть итог повтора, на нём фокус. Счёт
+ * недоставленных (undelivered) берёт каждый такой ответ, где бы ни стояла
+ * его карточка, в том числе отвеченный здесь. */
 export function inboxSections(
   requests: SwarmRequest[] | null,
-  handledHere: readonly string[] = []
+  handledHere: readonly string[] = [],
+  retriedHere: readonly string[] = []
 ): {
   open: SwarmRequest[];
   /** Карточки над историей: открытые и те, на которые отвечали здесь, по
    * моменту вопроса. */
   current: SwarmRequest[];
+  /** Группа «Доставка требует внимания»: недоставленные ответы не из
+   * current и повторённые здесь, по моменту вопроса. */
+  attention: SwarmRequest[];
+  /** Все недоставленные ответы, по моменту вопроса: их число стоит в шапке. */
+  undelivered: SwarmRequest[];
   history: SwarmRequest[];
 } {
   const all = requests ?? [];
-  const here = new Set(handledHere);
-  const stays = (request: SwarmRequest) => request.state === 'open' || here.has(request.id);
-  const current = all.filter(stays).sort((left, right) => byTime(left.createdAt, right.createdAt));
+  const answeredHere = new Set(handledHere);
+  const retried = new Set(retriedHere);
+  const stays = (request: SwarmRequest) => request.state === 'open' || answeredHere.has(request.id);
+  const waitsDelivery = (request: SwarmRequest) =>
+    !stays(request) && (deliveryRetryable(request) || retried.has(request.id));
+  const current = all.filter(stays).sort(byAsked);
   const open = current.filter((request) => request.state === 'open');
+  const attention = all.filter(waitsDelivery).sort(byAsked);
+  const undelivered = all.filter(deliveryRetryable).sort(byAsked);
   const history = all
-    .filter((request) => !stays(request))
+    .filter((request) => !stays(request) && !waitsDelivery(request))
     .sort((left, right) =>
       byTime(right.answeredAt ?? right.createdAt, left.answeredAt ?? left.createdAt)
     );
-  return { open, current, history };
+  return { open, current, attention, undelivered, history };
 }
 
 /** Что осталось от ответа: подпись нажатого варианта, а не машинный
@@ -171,7 +194,8 @@ export function canAnswerRequests(swarm: AccessSwarm | null): boolean {
 
 /** Повтор доставки — у ответа актору, который заведомо не ушёл (`failed`)
  * или ушёл без квитанции (`unconfirmed`, #260). Идущую и доставленную
- * доставку не повторяют. */
+ * доставку не повторяют. Тот же ответ инбокс держит на виду и считает
+ * недоставленным (#264): то, что можно повторить, ждёт решения оператора. */
 export function deliveryRetryable(request: SwarmRequest): boolean {
   return (
     request.origin === 'actor' &&

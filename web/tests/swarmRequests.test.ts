@@ -3,7 +3,9 @@
 // with an optional comment; an actor request never routes: its choice or
 // confirmation is the answer text. Open requests come first, answered ones
 // stay as history with the label that was chosen; a request answered on the
-// page keeps its place among the open ones (#259). Only managers of an
+// page keeps its place among the open ones (#259). An answer the actor did
+// not get (failed or unconfirmed delivery) stays out of the history in its
+// own group and is counted until a delivery succeeds (#264). Only managers of an
 // active swarm answer; a failed or unconfirmed delivery to an actor can be
 // retried, and only the unconfirmed one may deliver the answer twice (#261).
 // Every key of the request inbox exists in all six locales.
@@ -70,6 +72,8 @@ const swarm = (over: Partial<AccessSwarm> = {}): AccessSwarm => ({
 });
 
 const draft = (choice: string | null, text = '') => ({ ...emptyDraft(), choice, text });
+
+const ids = (list: SwarmRequest[]) => list.map((request) => request.id);
 
 describe('node request answer', () => {
   test('a node request is never sent without a chosen option', () => {
@@ -190,7 +194,13 @@ describe('inbox order', () => {
       'cancelled',
       'answered-old',
     ]);
-    expect(inboxSections(null)).toEqual({ open: [], current: [], history: [] });
+    expect(inboxSections(null)).toEqual({
+      open: [],
+      current: [],
+      attention: [],
+      undelivered: [],
+      history: [],
+    });
   });
 
   // #259: the inbox is the one place to answer. A request answered on this
@@ -208,11 +218,116 @@ describe('inbox order', () => {
       actorAsk({ id: 'open-old', createdAt: '2026-11-10T08:00:00Z' }),
       nodeAsk({ id: 'answered-old', state: 'answered', answeredAt: '2026-11-09T10:00:00Z' }),
     ];
-    const ids = (list: SwarmRequest[]) => list.map((request) => request.id);
     const sections = inboxSections(requests, ['answered-here']);
     expect(ids(sections.open)).toEqual(['open-old', 'open-new']);
     expect(ids(sections.current)).toEqual(['open-old', 'answered-here', 'open-new']);
     expect(ids(sections.history)).toEqual(['answered-old']);
+  });
+
+  // #264: an answer the actor surely did not get (failed) or got without a
+  // receipt (unconfirmed) is not history: the operator must see it until a
+  // delivery succeeds. It stands in its own group below the open requests,
+  // the longest waiting actor first. A delivered, pending or unknown delivery
+  // and every node answer remain history; the open count stays the open ones.
+  test('an undelivered answer stays out of the history in its own group', () => {
+    const answered = { state: 'answered', answeredBy: 'alice', response: 'Postgres' } as const;
+    const requests = [
+      actorAsk({
+        ...answered,
+        id: 'delivered',
+        delivery: 'delivered',
+        answeredAt: '2026-11-10T09:00:00Z',
+      }),
+      actorAsk({
+        ...answered,
+        id: 'unconfirmed',
+        delivery: 'unconfirmed',
+        createdAt: '2026-11-10T08:10:00Z',
+        answeredAt: '2026-11-10T08:50:00Z',
+      }),
+      actorAsk({
+        ...answered,
+        id: 'pending',
+        delivery: 'pending',
+        answeredAt: '2026-11-10T09:20:00Z',
+      }),
+      actorAsk({
+        ...answered,
+        id: 'failed',
+        delivery: 'failed',
+        createdAt: '2026-11-10T07:50:00Z',
+        answeredAt: '2026-11-10T09:30:00Z',
+      }),
+      actorAsk({
+        ...answered,
+        id: 'newer',
+        delivery: 'newer-state',
+        answeredAt: '2026-11-10T09:10:00Z',
+      }),
+      nodeAsk({
+        id: 'node',
+        state: 'answered',
+        outcome: 'success',
+        delivery: 'failed',
+        answeredAt: '2026-11-10T08:00:00Z',
+      }),
+      actorAsk({ id: 'open', createdAt: '2026-11-10T09:40:00Z' }),
+    ];
+    const sections = inboxSections(requests);
+    expect(ids(sections.open)).toEqual(['open']);
+    expect(ids(sections.current)).toEqual(['open']);
+    expect(ids(sections.history)).toEqual(['pending', 'newer', 'delivered', 'node']);
+    expect(ids(sections.attention)).toEqual(['failed', 'unconfirmed']);
+    expect(ids(sections.undelivered)).toEqual(['failed', 'unconfirmed']);
+  });
+
+  // The count of undelivered answers takes each of them wherever its card
+  // stands: one answered on this page keeps its place among the open ones
+  // (#259) and is not shown twice, but it is still undelivered.
+  test('the undelivered count takes an answer given here, shown once in its place', () => {
+    const requests = [
+      actorAsk({ id: 'open', createdAt: '2026-11-10T09:00:00Z' }),
+      actorAsk({
+        id: 'answered-here',
+        state: 'answered',
+        response: 'Postgres',
+        delivery: 'failed',
+        createdAt: '2026-11-10T08:30:00Z',
+      }),
+      actorAsk({
+        id: 'answered-before',
+        state: 'answered',
+        response: 'SQLite',
+        delivery: 'unconfirmed',
+        createdAt: '2026-11-10T08:00:00Z',
+      }),
+    ];
+    const sections = inboxSections(requests, ['answered-here']);
+    expect(ids(sections.open)).toEqual(['open']);
+    expect(ids(sections.current)).toEqual(['answered-here', 'open']);
+    expect(ids(sections.history)).toEqual([]);
+    expect(ids(sections.attention)).toEqual(['answered-before']);
+    expect(ids(sections.undelivered)).toEqual(['answered-before', 'answered-here']);
+  });
+
+  // A delivery retried on this page keeps its card in the group after it
+  // succeeds, until the page is left: the new state is the outcome of the
+  // retry, and the focus is on it. It is no longer counted as undelivered.
+  // Delivered without a retry here (another manager retried) it is history.
+  test('a delivery retried here keeps its place once delivered, out of the count', () => {
+    const answered = { state: 'answered', response: 'Postgres', delivery: 'delivered' } as const;
+    const requests = [
+      actorAsk({ ...answered, id: 'retried-here', answeredAt: '2026-11-10T08:30:00Z' }),
+      actorAsk({ ...answered, id: 'retried-elsewhere', answeredAt: '2026-11-10T08:40:00Z' }),
+    ];
+    const sections = inboxSections(requests, [], ['retried-here']);
+    expect(ids(sections.history)).toEqual(['retried-elsewhere']);
+    expect(ids(sections.attention)).toEqual(['retried-here']);
+    expect(ids(sections.undelivered)).toEqual([]);
+    // Answered and then retried here: the answer keeps its place among the open.
+    const both = inboxSections(requests, ['retried-here'], ['retried-here']);
+    expect(ids(both.current)).toEqual(['retried-here']);
+    expect(ids(both.attention)).toEqual([]);
   });
 });
 

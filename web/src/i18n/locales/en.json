@@ -3268,6 +3268,9 @@
     "open_count": "{{count}} open",
     "none_open": "No open requests.",
     "history_count": "{{count}} answered",
+    "undelivered_count": "{{count}} undelivered",
+    "attention_title": "Delivery needs attention",
+    "attention_hint": "The actor did not get these answers, or their delivery is not confirmed. They stay here until a delivery succeeds.",
     "states": {
       "open": "Open",
       "answered": "Answered",
