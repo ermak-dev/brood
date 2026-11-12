@@ -76,13 +76,14 @@ func TestSchemaMigrationsFormChainToCurrentVersion(t *testing.T) {
 
 // TestMigrateV26DatabaseToCurrent: база версии 26, записанная кодом той же
 // версии, открывается текущим кодом, получает индекс swarm_requests(swarm_id)
-// и совпадает со свежей базой объект в объект; строки не меняются, внешние
-// ключи, триггеры и WAL работают после миграции.
+// и совпадает со свежей базой объект в объект; строки не меняются, кроме
+// колонки execution_at роя, которую дописывает шаг 27→28; внешние ключи,
+// триггеры и WAL работают после миграции.
 func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	ctx := context.Background()
 	path := loadSchemaFixture(t, 26)
 	raw := rawDatabase(t, path)
-	before := databaseRows(t, raw)
+	before, ids := databaseRows(t, raw), swarmIDs(t, raw)
 	raw.Close()
 
 	s, err := Open(ctx, path)
@@ -91,8 +92,8 @@ func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 27 {
-		t.Fatalf("migrated version = %d, %v; want 27", version, err)
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("migrated version = %d, %v; want %d", version, err, schemaVersion)
 	}
 	fresh := newTestStore(t)
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
@@ -101,6 +102,9 @@ func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	if !strings.Contains(strings.Join(schemaObjects(t, s.db), "\n"), "CREATE INDEX swarm_requests_swarm ON swarm_requests(swarm_id)") {
 		t.Fatal("migration did not create swarm_requests_swarm")
 	}
+	// Шаг 27→28 дописывает рою execution_at; точного момента у роёв базы 26
+	// нет: s идёт шагом вне прохода запуска, one и two не запускались.
+	before["swarms"] = withExecutionAt(before["swarms"], ids, nil)
 	if after := databaseRows(t, s.db); !reflect.DeepEqual(after, before) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, before)
 	}
@@ -122,6 +126,163 @@ func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	// Мигрированная база рабочая: сводка списка роёв читает те же строки.
 	summaries, err := s.SwarmSummaries(ctx, []string{"s"})
 	if err != nil || summaries["s"].OpenRequests != 1 || summaries["s"].UndeliveredAnswers != 1 {
+		t.Fatalf("summary over migrated rows = %+v, %v", summaries, err)
+	}
+}
+
+// executionHistoryV27: рои базы версии 27 на каждом исполнении, которое
+// встречает шаг 27→28. done прошёл два прохода: первый остановлен, второй
+// кончен ответом, ведущим в выход, в ту же секунду, что остановка первого
+// (текстом «…00Z» позже «…00.25Z», временем раньше). broke кончился
+// терминальным отказом актора. halted остановлен на ждущем шаге, cut
+// посреди доставки (шаг unconfirmed без finished_at), refused после отказа
+// шага, который остановка не закрывает. gate ждёт оператора на первом шаге
+// прохода, again идёт вторым проходом, начатым узловым шагом, run идёт с
+// шага актора. updated_at у всех позже любого исполнения: его двигали
+// записи вне исполнения.
+const executionHistoryV27 = `
+INSERT INTO swarms (id,project_id,owner_id,name,atespace_name,state,created_at,updated_at,execution) VALUES
+	('done','p','u','done','space-done','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','succeeded'),
+	('broke','p','u','broke','space-broke','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','failed'),
+	('halted','p','u','halted','space-halted','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','stopped'),
+	('cut','p','u','cut','space-cut','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','stopped'),
+	('refused','p','u','refused','space-refused','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','stopped'),
+	('gate','p','u','gate','space-gate','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','waiting'),
+	('again','p','u','again','space-again','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','running'),
+	('run','p','u','run','space-run','active','2026-11-01T00:00:00Z','2026-11-10T00:00:00Z','running');
+INSERT INTO swarm_members VALUES ('done','u','owner'), ('broke','u','owner'), ('halted','u','owner'), ('cut','u','owner'),
+	('refused','u','owner'), ('gate','u','owner'), ('again','u','owner'), ('run','u','owner');
+INSERT INTO swarm_steps (swarm_id,sequence,node_id,state,started_at,finished_at,outcome,goal,source_commit) VALUES
+	('done',1,'ask','stopped',NULL,'2026-11-03T10:00:00Z',NULL,'first','0123456789abcdef0123456789abcdef01234567'),
+	('done',2,'ask','answered',NULL,'2026-11-03T10:00:00.25Z',NULL,'second','0123456789abcdef0123456789abcdef01234567'),
+	('done',3,'done','completed',NULL,NULL,NULL,NULL,NULL),
+	('broke',1,'build','completed','2026-11-04T09:00:00Z','2026-11-04T10:00:00.5Z','fail','goal','0123456789abcdef0123456789abcdef01234567'),
+	('halted',1,'ask','answered',NULL,'2026-11-05T09:00:00Z',NULL,'goal','0123456789abcdef0123456789abcdef01234567'),
+	('halted',2,'build','stopped',NULL,'2026-11-05T10:00:00Z',NULL,NULL,NULL),
+	('cut',1,'ask','answered',NULL,'2026-11-06T09:00:00Z',NULL,'goal','0123456789abcdef0123456789abcdef01234567'),
+	('cut',2,'build','unconfirmed','2026-11-06T09:30:00Z',NULL,NULL,NULL,NULL),
+	('refused',1,'build','refused','2026-11-06T11:00:00Z','2026-11-06T11:00:01Z',NULL,'goal','0123456789abcdef0123456789abcdef01234567'),
+	('gate',1,'ask','waiting',NULL,NULL,NULL,'goal','0123456789abcdef0123456789abcdef01234567'),
+	('again',1,'ask','stopped',NULL,'2026-11-07T09:00:00Z',NULL,'first','0123456789abcdef0123456789abcdef01234567'),
+	('again',2,'ask','answered',NULL,'2026-11-08T09:00:01Z',NULL,'second','0123456789abcdef0123456789abcdef01234567'),
+	('again',3,'build','pending',NULL,NULL,NULL,NULL,NULL),
+	('run',1,'build','pending',NULL,NULL,NULL,'goal','0123456789abcdef0123456789abcdef01234567');
+INSERT INTO swarm_requests (id,swarm_id,sequence,origin,kind,question,options,state,created_at,answered_at,answered_by,outcome) VALUES
+	('done-1','done',1,'node','choice','Ship?',x'5b5d','cancelled','2026-11-03T09:00:00Z',NULL,NULL,NULL),
+	('done-2','done',2,'node','choice','Ship?',x'5b5d','answered','2026-11-03T10:00:00.125Z','2026-11-03T10:00:00.25Z','u','success'),
+	('halted-1','halted',1,'node','choice','Ship?',x'5b5d','answered','2026-11-05T08:00:00Z','2026-11-05T09:00:00Z','u','success'),
+	('cut-1','cut',1,'node','choice','Ship?',x'5b5d','answered','2026-11-06T08:00:00Z','2026-11-06T09:00:00Z','u','success'),
+	('gate-1','gate',1,'node','choice','Ship?',x'5b5d','open','2026-11-07T12:00:00.125Z',NULL,NULL,NULL),
+	('again-1','again',1,'node','choice','Ship?',x'5b5d','cancelled','2026-11-07T08:00:00Z',NULL,NULL,NULL),
+	('again-2','again',2,'node','choice','Ship?',x'5b5d','answered','2026-11-08T09:00:00Z','2026-11-08T09:00:01Z','u','success')`
+
+// executionAtV27: момент, который шаг 27→28 восстанавливает роям
+// executionHistoryV27 и фикстуры. Конец прохода succeeded или failed:
+// finished_at последнего шага с ним; остановка: finished_at последнего
+// шага, если его закрыла остановка; начало идущего прохода: created_at
+// узлового запроса его первого шага. Пусто: точного момента нет, s идёт
+// шагом вне прохода запуска, one и two не запускались, cut и refused
+// остановлены на шаге, который остановка не закрыла, run начат шагом актора.
+var executionAtV27 = map[string]string{
+	"s": "", "one": "", "two": "",
+	"done":    "2026-11-03T10:00:00.25Z",
+	"broke":   "2026-11-04T10:00:00.5Z",
+	"halted":  "2026-11-05T10:00:00Z",
+	"cut":     "",
+	"refused": "",
+	"gate":    "2026-11-07T12:00:00.125Z",
+	"again":   "2026-11-08T09:00:00Z",
+	"run":     "",
+}
+
+// swarmIDs: ID роёв в порядке rowid, в порядке строк tableRows.
+func swarmIDs(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT id FROM swarms ORDER BY rowid`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return ids
+}
+
+// withExecutionAt: строки swarms после шага 27→28: прежние колонки и
+// execution_at в конце, момент из at или NULL.
+func withExecutionAt(rows, ids []string, at map[string]string) []string {
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		value := "NULL"
+		if moment := at[ids[i]]; moment != "" {
+			value = "'" + moment + "'"
+		}
+		out[i] = row + "," + value
+	}
+	return out
+}
+
+// TestMigrateV27DatabaseToCurrent: шаг 27→28 добавляет swarms.execution_at и
+// заполняет его там, где база 27 знает момент точно (executionAtV27), а
+// остальным оставляет NULL. Итог совпадает со свежей базой объект в объект,
+// прочие строки не меняются, сводка списка роёв отдаёт восстановленный
+// момент.
+func TestMigrateV27DatabaseToCurrent(t *testing.T) {
+	ctx := context.Background()
+	path := loadSchemaFixture(t, 27)
+	raw := rawDatabase(t, path)
+	if _, err := raw.Exec(executionHistoryV27); err != nil {
+		t.Fatal(err)
+	}
+	requireIntact(t, raw)
+	before, ids := databaseRows(t, raw), swarmIDs(t, raw)
+	raw.Close()
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("v27 database refused: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("migrated version = %d, %v; want %d", version, err, schemaVersion)
+	}
+	fresh := newTestStore(t)
+	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
+	}
+	rows, err := s.db.Query(`SELECT id, COALESCE(execution_at, '') FROM swarms`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for rows.Next() {
+		var id, at string
+		if err := rows.Scan(&id, &at); err != nil {
+			t.Fatal(err)
+		}
+		got[id] = at
+	}
+	rows.Close()
+	if !reflect.DeepEqual(got, executionAtV27) {
+		t.Fatalf("backfilled execution_at:\n got %v\nwant %v", got, executionAtV27)
+	}
+	before["swarms"] = withExecutionAt(before["swarms"], ids, executionAtV27)
+	if after := databaseRows(t, s.db); !reflect.DeepEqual(after, before) {
+		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, before)
+	}
+	requireIntact(t, s.db)
+	summaries, err := s.SwarmSummaries(ctx, []string{"done", "cut"})
+	if err != nil || summaries["done"].ExecutionAt != executionAtV27["done"] || summaries["cut"].ExecutionAt != "" {
 		t.Fatalf("summary over migrated rows = %+v, %v", summaries, err)
 	}
 }
@@ -286,7 +447,9 @@ func TestMigrationRecordsTheVersionAfterEachStep(t *testing.T) {
 	if version != 27 || probes != 0 || indexes != 1 {
 		t.Fatalf("after a failed second step: version %d, probe %d, index %d; want 27, 0, 1", version, probes, indexes)
 	}
-	fixed := []schemaMigration{failing[0], {from: 27, sql: "CREATE TABLE migration_probe (x)"}}
+	// Исправленный второй шаг: настоящий шаг 27→28 и проба, потому что
+	// последний шаг сверяется с реестром текущей версии.
+	fixed := []schemaMigration{failing[0], {from: 27, sql: schemaMigrations[1].sql + "; CREATE TABLE migration_probe (x)"}}
 	if err := prepareSchema(ctx, conn, 28, fixed); err != nil {
 		t.Fatalf("resumed chain: %v", err)
 	}

@@ -92,28 +92,35 @@ func frozenSnapshot(t *testing.T, version int, change string) (string, DatabaseS
 	return output, meta
 }
 
+// Снимок версии 27 несёт рои на каждом исполнении: перенос момента
+// исполнения шага 27→28 (#268) переписывает строки swarms под триггерами и
+// в gate идёт с trusted_schema=OFF.
 func TestVerifyMigratesAnOlderSnapshotOnlyInMemory(t *testing.T) {
-	path, meta := frozenSnapshot(t, 26, "")
-	if meta.SchemaVersion != 26 {
-		t.Fatalf("snapshot version = %d", meta.SchemaVersion)
-	}
-	before := databaseBytes(t, path)
-	if err := os.Chmod(filepath.Dir(path), 0500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(filepath.Dir(path), 0700) })
-	got, err := VerifyDatabaseSchema(context.Background(), path, meta.SHA256)
-	if err != nil {
-		t.Fatalf("v26 snapshot refused by the v%d release: %v", schemaVersion, err)
-	}
-	if want := (DatabaseVerification{SchemaVersion: 26, TargetVersion: schemaVersion, Verified: true}); got != want {
-		t.Fatalf("verification = %+v, want %+v", got, want)
-	}
-	if string(before) != string(databaseBytes(t, path)) {
-		t.Fatal("verification modified the snapshot")
-	}
-	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
-		t.Fatalf("verification left files: %v", entries)
+	for version, change := range map[int]string{26: "", 27: executionHistoryV27} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			path, meta := frozenSnapshot(t, version, change)
+			if meta.SchemaVersion != int64(version) {
+				t.Fatalf("snapshot version = %d", meta.SchemaVersion)
+			}
+			before := databaseBytes(t, path)
+			if err := os.Chmod(filepath.Dir(path), 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(filepath.Dir(path), 0700) })
+			got, err := VerifyDatabaseSchema(context.Background(), path, meta.SHA256)
+			if err != nil {
+				t.Fatalf("v%d snapshot refused by the v%d release: %v", version, schemaVersion, err)
+			}
+			if want := (DatabaseVerification{SchemaVersion: int64(version), TargetVersion: schemaVersion, Verified: true}); got != want {
+				t.Fatalf("verification = %+v, want %+v", got, want)
+			}
+			if string(before) != string(databaseBytes(t, path)) {
+				t.Fatal("verification modified the snapshot")
+			}
+			if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+				t.Fatalf("verification left files: %v", entries)
+			}
+		})
 	}
 }
 

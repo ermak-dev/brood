@@ -47,7 +47,12 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // 'unconfirmed' в CHECK и swarm_requests_fence (#260).
 // 27: индекс swarm_requests_swarm для сводки списка роёв (#266); первая
 // версия с миграцией от предыдущей (#274).
-const schemaVersion = 27
+// 28: момент последнего исполнения роя swarms.execution_at (#268). Колонку
+// добавляет ALTER TABLE шага 27→28, поэтому её определение в schema.sql
+// записано так, как ALTER оставляет текст таблицы в sqlite_master: с новой
+// строки после последней колонки, перед закрывающей скобкой. Иначе свежая
+// база разошлась бы с мигрированной текстом таблицы.
+const schemaVersion = 28
 
 //go:embed schema.sql
 var currentSchema string

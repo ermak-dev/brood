@@ -35,7 +35,48 @@ type schemaMigration struct {
 var schemaMigrations = []schemaMigration{
 	// 27: индекс запросов роя для подсчётов сводки списка роёв (#266).
 	{from: 26, sql: swarmRequestSwarm},
+	// 28: момент последнего исполнения роя (#268).
+	{from: 27, sql: swarmExecutionAtColumn + ";" + swarmExecutionAtBackfill},
 }
+
+// swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).
+// ALTER, а не перестройка таблицы: на swarms ссылаются внешние ключи всех
+// таблиц роя и висят триггеры; schema.sql повторяет текст, который ALTER
+// оставляет в sqlite_master.
+const swarmExecutionAtColumn = `ALTER TABLE swarms ADD COLUMN execution_at TEXT`
+
+// swarmExecutionAtBackfill восстанавливает момент там, где база 27 знает его
+// точно, и оставляет NULL там, где не знает. updated_at роя не годится: его
+// двигают и записи вне исполнения (владелец, инфраструктура, atespace), а
+// окончание прохода не двигает.
+//   - succeeded, failed: finished_at последнего по номеру шага, у которого он
+//     есть, то есть шага, исход которого кончил проход: шаг выхода
+//     finished_at не получает. По номеру, а не MAX текста: RFC 3339 с
+//     долями секунды не сравнивается строкой («…00Z» больше «…00.25Z»).
+//   - stopped: finished_at последнего шага, если его закрыла остановка
+//     (state 'stopped': pending, waiting или attesting в момент остановки).
+//     Шаг, остановленный на доставке или после неё (unconfirmed, inflight),
+//     и шаг, отказанный до остановки (refused), момента остановки не несут.
+//   - running, waiting: created_at узлового запроса первого шага текущего
+//     прохода (последний шаг с goal), который открыла транзакция запуска.
+//     Проход, начатый шагом актора, момента начала не хранит: шаг вставлен
+//     без started_at, а started_at пишет позже резерв доставки.
+//   - idle: прохода не было.
+const swarmExecutionAtBackfill = `UPDATE swarms SET execution_at = CASE
+	WHEN execution IN ('succeeded', 'failed') THEN (
+		SELECT st.finished_at FROM swarm_steps st
+		WHERE st.swarm_id = swarms.id AND st.finished_at IS NOT NULL
+		ORDER BY st.sequence DESC LIMIT 1)
+	WHEN execution = 'stopped' THEN (
+		SELECT CASE WHEN st.state = 'stopped' THEN st.finished_at END FROM swarm_steps st
+		WHERE st.swarm_id = swarms.id
+		ORDER BY st.sequence DESC LIMIT 1)
+	WHEN execution IN ('running', 'waiting') THEN (
+		SELECT q.created_at FROM swarm_requests q
+		WHERE q.swarm_id = swarms.id AND q.origin = 'node' AND q.sequence = (
+			SELECT MAX(st.sequence) FROM swarm_steps st
+			WHERE st.swarm_id = swarms.id AND st.goal IS NOT NULL))
+END`
 
 // migrationPlan: шаги от found до want или отказ до любой записи: база
 // новее релиза (старый образ на новой базе), версия вне цепочки или разрыв

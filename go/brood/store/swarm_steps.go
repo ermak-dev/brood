@@ -376,16 +376,16 @@ func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Docum
 	// Исход актёра и ответ оператора — разные поля: без подстановки имени
 	// колонки строкой каждая ветка пишет своё поле явно. Ответ живёт
 	// в запросе роя (#209), а не в шаге.
+	now := nowRFC3339()
 	if state == "answered" {
-		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,finished_at=? WHERE swarm_id=? AND sequence=?`, state, nowRFC3339(), w.ID, sequence); err != nil {
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,finished_at=? WHERE swarm_id=? AND sequence=?`, state, now, w.ID, sequence); err != nil {
 			return err
 		}
-	} else if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,outcome=?,finished_at=?,report=NULLIF(?,'') WHERE swarm_id=? AND sequence=?`, state, value, nowRFC3339(), report, w.ID, sequence); err != nil {
+	} else if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,outcome=?,finished_at=?,report=NULLIF(?,'') WHERE swarm_id=? AND sequence=?`, state, value, now, report, w.ID, sequence); err != nil {
 		return err
 	}
 	if transition.Terminal {
-		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=? WHERE id=?`, executionOfTransition(transition.Execution), w.ID)
-		return err
+		return s.advanceExecution(ctx, w.ID, executionOfTransition(transition.Execution), now)
 	}
 	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES (?,?,?,?)`, w.ID, sequence+1, transition.Next, transition.NextState); err != nil {
 		return err
@@ -395,7 +395,20 @@ func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Docum
 			return err
 		}
 	}
-	_, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=? WHERE id=?`, executionOfTransition(transition.Execution), w.ID)
+	return s.advanceExecution(ctx, w.ID, executionOfTransition(transition.Execution), now)
+}
+
+// advanceExecution пишет исполнение роя после перехода. Переход, кончающий
+// проход (succeeded или failed: терминальный отказ или шаг выхода), тем же
+// UPDATE пишет момент окончания в execution_at (#268): finished_at шага,
+// исход которого кончил проход. Переход running ↔ waiting внутри прохода
+// момент не трогает: он остаётся началом прохода.
+func (s *Store) advanceExecution(ctx context.Context, swarmID, execution, finishedAt string) error {
+	if activeExecution(execution) {
+		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=? WHERE id=?`, execution, swarmID)
+		return err
+	}
+	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=?,execution_at=? WHERE id=?`, execution, finishedAt, swarmID)
 	return err
 }
 

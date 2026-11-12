@@ -193,7 +193,9 @@ func (s *Store) StopSwarm(ctx context.Context, swarmID, userID string, authorize
 			return fmt.Errorf("%w: execution is %s; stop requires running or waiting", ErrSwarmExecutionState, w.Execution)
 		}
 		now := nowRFC3339()
-		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution='stopped',updated_at=? WHERE id=?`, now, w.ID); err != nil {
+		// Момент остановки становится моментом исполнения роя (#268): шаг,
+		// остановленный на доставке или после неё, finished_at не получает.
+		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution='stopped',execution_at=?,updated_at=? WHERE id=?`, now, now, w.ID); err != nil {
 			return err
 		}
 		// Ждущий шаг закрывается здесь, а не при следующем запуске: запуск
@@ -334,7 +336,9 @@ func (s *Store) startSource(ctx context.Context, projectID string, in SwarmStart
 // открывает свой запрос в той же транзакции, как у преемника в
 // progressPipeline, но без материала: предыдущий шаг роя принадлежит
 // прошлому проходу, и его отчёт не то, что одобряют сейчас (#233). Условие
-// на исполнение повторяет проверку запуска в самой записи.
+// на исполнение повторяет проверку запуска в самой записи. Тот же UPDATE
+// пишет начало прохода в execution_at (#268): первый шаг вставлен без
+// started_at, по шагам момент запуска не восстановить.
 func (s *Store) beginPass(ctx context.Context, swarmID, goal string, plan passPlan) error {
 	var sequence int64
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0)+1 FROM swarm_steps WHERE swarm_id=?`, swarmID).Scan(&sequence); err != nil {
@@ -348,7 +352,8 @@ func (s *Store) beginPass(ctx context.Context, swarmID, goal string, plan passPl
 			return err
 		}
 	}
-	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=?,updated_at=? WHERE id=? AND execution NOT IN ('running','waiting')`, executionOfTransition(plan.entry.Execution), nowRFC3339(), swarmID)
+	now := nowRFC3339()
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarms SET execution=?,execution_at=?,updated_at=? WHERE id=? AND execution NOT IN ('running','waiting')`, executionOfTransition(plan.entry.Execution), now, now, swarmID)
 	if err != nil {
 		return err
 	}

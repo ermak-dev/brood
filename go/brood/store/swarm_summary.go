@@ -2,10 +2,10 @@ package store
 
 // Сводки для строк списков (#234): список роёв проекта несёт исполнение,
 // число открытых запросов и недоставленных ответов актору каждого роя
-// (#266), определение снимка и числа участников и managed-акторов (#268),
-// список проектов — число роёв. Каждая сводка — одна выборка на
-// весь набор: запрос на рой или проект делал бы список N+1, а именно так
-// панель собирала сводку до #234 (#255).
+// (#266), определение снимка, числа участников и managed-акторов и момент
+// последнего исполнения (#268), список проектов — число роёв. Каждая
+// сводка — одна выборка на весь набор: запрос на рой или проект делал бы
+// список N+1, а именно так панель собирала сводку до #234 (#255).
 // Набор ключей едет одним параметром JSON-массивом через json_each: число
 // роёв не упирается в предел параметров SQLite, и текст запроса не зависит
 // от размера набора.
@@ -25,7 +25,8 @@ const swarmSummaryQuery = `
 			AND r.state = 'answered' AND r.delivery IN ('failed', 'unconfirmed')),
 		COALESCE(s.definition_name, ''), COALESCE(s.definition_version, 0), COALESCE(s.definition_revision, ''),
 		(SELECT COUNT(*) FROM swarm_members m WHERE m.swarm_id = s.id),
-		(SELECT COUNT(*) FROM managed_actors a WHERE a.swarm_id = s.id AND a.phase <> 'deleted')
+		(SELECT COUNT(*) FROM managed_actors a WHERE a.swarm_id = s.id AND a.phase <> 'deleted'),
+		COALESCE(s.execution_at, '')
 	FROM swarms s
 	WHERE s.id IN (SELECT value FROM json_each(?))`
 
@@ -34,7 +35,7 @@ const swarmSummaryQuery = `
 // answers to actor requests whose delivery is failed or unconfirmed, the
 // identity of the workflow definition its graph snapshot was taken from, and
 // the numbers of its explicit members and of its managed actors that are not
-// deleted (#268).
+// deleted, and the moment of its latest execution (#268).
 type SwarmSummary struct {
 	Execution          string
 	OpenRequests       int64
@@ -51,6 +52,15 @@ type SwarmSummary struct {
 	// ManagedActorCount counts the swarm's managed actors whose phase is not
 	// deleted. Native actors live in Substrate and are not counted.
 	ManagedActorCount int64
+	// ExecutionAt is the moment of the latest execution change at a pass
+	// boundary, RFC 3339 UTC as stored: the start of the current pass, the
+	// moment it was stopped, or the end of the last pass, succeeded or
+	// failed (the finished_at of the step whose outcome ended it).
+	// Transitions between running and waiting inside a pass and writes
+	// outside the execution do not change it. Empty when the swarm never
+	// started a pass or the moment predates schema 28 and is not known
+	// exactly (#268).
+	ExecutionAt string
 }
 
 // SwarmSummaries returns the summary of each named swarm in one query. A
@@ -88,7 +98,7 @@ func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSu
 		var summary SwarmSummary
 		if err := rows.Scan(&id, &summary.Execution, &summary.OpenRequests, &summary.UndeliveredAnswers,
 			&summary.DefinitionName, &summary.DefinitionVersion, &summary.DefinitionRevision,
-			&summary.MemberCount, &summary.ManagedActorCount); err != nil {
+			&summary.MemberCount, &summary.ManagedActorCount, &summary.ExecutionAt); err != nil {
 			return nil, fmt.Errorf("swarm summaries: %w", err)
 		}
 		out[id] = summary

@@ -306,3 +306,50 @@ func TestSwarmListCarriesDefinitionAndStoreCounts(t *testing.T) {
 		t.Fatalf("root row %s: %v, want %v", gamma, got, want)
 	}
 }
+
+// FEATURE: Строка списка роёв несёт момент последнего исполнения (#268).
+// SPEC: у строки GET /api/projects/{id}/swarms есть `executionAt`
+// (swarms.execution_at как есть, RFC 3339 UTC) только у роя, у которого
+// момент записан; у роя без него поля нет. Права те же, что у списка.
+// IMPLEMENTATION: writeSwarms берёт его из той же выборки
+// store.SwarmSummaries.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+func TestSwarmListCarriesExecutionAt(t *testing.T) {
+	ts := newTestServer(t)
+	ts.bootstrapAdmin("root", "root-password-1")
+	root, alice := newClient(t), newClient(t)
+	ts.login(root, "root", "root-password-1")
+	create := func(client *http.Client, path string, body map[string]any) string {
+		t.Helper()
+		r, b, _ := ts.do(client, "POST", path, ts.csrf(client), body)
+		expectStatus(t, "POST "+path, r, b, http.StatusCreated)
+		id, _ := b["id"].(string)
+		return id
+	}
+	create(root, "/api/admin/users", map[string]any{"username": "alice", "password": "alice-password-1"})
+	project := create(root, "/api/projects", map[string]any{"name": "proj"})
+	r, b, _ := ts.do(root, "POST", "/api/projects/"+project+"/members", ts.csrf(root), map[string]string{"username": "alice"})
+	expectStatus(t, "member alice", r, b, http.StatusNoContent)
+	ts.login(alice, "alice", "alice-password-1")
+	done := create(alice, "/api/projects/"+project+"/swarms", map[string]any{"name": "done"})
+	fresh := create(alice, "/api/projects/"+project+"/swarms", map[string]any{"name": "fresh"})
+
+	// done кончил проход: момент записан; fresh не запускался, момента нет.
+	const moment = "2026-11-12T05:46:43.50113008Z"
+	execFixture(t, ts, `UPDATE swarms SET execution='succeeded', execution_at=? WHERE id=?`, moment, done)
+	for _, client := range []*http.Client{root, alice} {
+		rows := listRows(t, ts, client, "/api/projects/"+project+"/swarms")
+		got := map[string]any{}
+		for _, row := range rows {
+			at, ok := row["executionAt"]
+			if !ok {
+				at = "absent"
+			}
+			got[row["id"].(string)] = at
+		}
+		if want := map[string]any{done: moment, fresh: "absent"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("executionAt by swarm = %v, want %v", got, want)
+		}
+	}
+}
