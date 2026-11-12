@@ -346,7 +346,7 @@ func TestSwarmStepTimestamps(t *testing.T) {
 	}
 }
 
-// TestPipelineSourceForeignVersionRefused: миграций нет (#205); база
+// TestPipelineSourceForeignVersionRefused: цепочка миграций начинается с 26 (#274); база
 // версии 14 отвергается без изменения схемы и версии, триггеры
 // неизменности при этом не пересоздаются.
 func TestPipelineSourceForeignVersionRefused(t *testing.T) {

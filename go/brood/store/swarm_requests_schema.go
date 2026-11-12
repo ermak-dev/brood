@@ -47,6 +47,10 @@ const swarmRequestOpenNode = `CREATE UNIQUE INDEX swarm_requests_open_node ON sw
 // swarmRequestStep: у посещения узла один запрос.
 const swarmRequestStep = `CREATE UNIQUE INDEX swarm_requests_step ON swarm_requests(swarm_id, sequence) WHERE origin = 'node'`
 
+// swarmRequestSwarm: запросы роя для подсчётов сводки списка роёв (#266);
+// частичные индексы выше узловые и подсчёт запросов актора не обслуживают.
+const swarmRequestSwarm = `CREATE INDEX swarm_requests_swarm ON swarm_requests(swarm_id)`
+
 // swarmRequestFence: после ответа или отмены строка не меняется, а у
 // открытой не меняется личность: ответ нельзя переписать и перенести.
 // Исключение — состояние доставки ответа актору (#210): оно пишется после
@@ -81,7 +85,7 @@ const swarmGateStop = `CREATE TRIGGER swarms_gate_stop AFTER UPDATE OF execution
 const swarmGateResume = `CREATE TRIGGER swarms_gate_resume BEFORE UPDATE OF execution ON swarms WHEN NEW.execution IN ('running', 'waiting') AND OLD.execution NOT IN ('running', 'waiting') AND EXISTS (SELECT 1 FROM swarm_steps s WHERE s.swarm_id=OLD.id AND s.state='waiting' AND NOT EXISTS (SELECT 1 FROM swarm_requests q WHERE q.swarm_id=s.swarm_id AND q.sequence=s.sequence AND q.origin='node' AND q.state='open')) BEGIN SELECT RAISE(ABORT, 'graph waits on a cancelled gate'); END`
 
 func swarmRequestsFullSchema() string {
-	return swarmRequestsSchema + ";" + swarmRequestOpenNode + ";" + swarmRequestStep + ";" + swarmRequestFence +
+	return swarmRequestsSchema + ";" + swarmRequestOpenNode + ";" + swarmRequestStep + ";" + swarmRequestSwarm + ";" + swarmRequestFence +
 		";" + swarmRequestNoDelete + ";" + swarmRequestNoReplace + ";" + swarmRequestCancelGuard +
 		";" + swarmGateStop + ";" + swarmGateResume
 }

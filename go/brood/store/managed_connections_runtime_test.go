@@ -29,7 +29,7 @@ func TestManagedConnectionRedaction(t *testing.T) {
 	}
 }
 
-// TestManagedConnectionForeignVersionRefused: миграций нет (#205); база
+// TestManagedConnectionForeignVersionRefused: цепочка миграций начинается с 26 (#274); база
 // версии 5 не обновляется, а отвергается без изменения схемы, версии
 // и данных подключений.
 func TestManagedConnectionForeignVersionRefused(t *testing.T) {

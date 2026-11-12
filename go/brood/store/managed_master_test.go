@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-// TestManagedMasterForeignVersionRefused: миграций нет (#205); база
+// TestManagedMasterForeignVersionRefused: цепочка миграций начинается с 26 (#274); база
 // версии 6 не обновляется, а отвергается без изменения схемы и версии.
 func TestManagedMasterForeignVersionRefused(t *testing.T) {
 	ctx := context.Background()

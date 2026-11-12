@@ -252,13 +252,18 @@ class Deployment:
             self.probe(values, login=False)
             # Отказ самого prune - предупреждение; сбой helper - как у inspect: Lease остаётся.
             snapshots = existing.retain(server, keep)
-        except BaseException:
+        except BaseException as error:
             # Отказ до before_apply откатывает scale; после - Lease остаётся (неоднозначный исход).
             existing.release()
+            if isinstance(error, RuntimeError) and existing.handed_off and existing.before and existing.snapshot_path:
+                # Новый сервер мог уже мигрировать базу (#274): откат - прежний образ и
+                # ровно этот snapshot, а успешного вывода с его путём не будет.
+                raise RuntimeError(f"{error}; database snapshot taken before apply: {existing.snapshot_path}"
+                                   " (rollback after a migration: docs/DEPLOY.md)") from error
             raise
         existing.finish()
         result = {"image": server, "edge": image, "host": values["BROOD_PUBLIC_HOST"],
-                  "admin_created": False, "snapshot": existing.snapshot_path,
+                  "admin_created": False, "snapshot": existing.snapshot_path, "schema": existing.schema,
                   "acceptance": "operator-authenticated acceptance pending", "snapshots": snapshots,
                   "tags": (go.tag, self.edge_tag)}
         if existing.recovered:

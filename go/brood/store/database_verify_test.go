@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +56,7 @@ func TestVerifySnapshotSchemaAcceptsCurrentSchemaOnReadOnlyDirectory(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SchemaVersion != schemaVersion || !got.Verified {
+	if got.SchemaVersion != schemaVersion || got.TargetVersion != schemaVersion || !got.Verified {
 		t.Fatalf("verification = %+v", got)
 	}
 	if string(before) != string(databaseBytes(t, path)) {
@@ -64,6 +65,75 @@ func TestVerifySnapshotSchemaAcceptsCurrentSchemaOnReadOnlyDirectory(t *testing.
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	if len(entries) != 1 {
 		t.Fatalf("verification left files: %v", entries)
+	}
+}
+
+// FEATURE: Schema gate accepts a database the release migrates (#274).
+// SPEC: verify applies this binary's migration chain to the hashed snapshot
+// bytes in memory and checks the result like Open; the snapshot on disk is
+// not written. A newer database (an older image on a newer database), an
+// unknown version and a failing step are refused with the store's reason.
+// STATUS: DONE
+func frozenSnapshot(t *testing.T, version int, change string) (string, DatabaseSnapshotMetadata) {
+	t.Helper()
+	source := loadSchemaFixture(t, version)
+	if change != "" {
+		raw := rawDatabase(t, source)
+		if _, err := raw.Exec(change); err != nil {
+			t.Fatal(err)
+		}
+		raw.Close()
+	}
+	output := filepath.Join(t.TempDir(), "snapshot.db")
+	meta, err := SnapshotDatabase(context.Background(), source, output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output, meta
+}
+
+func TestVerifyMigratesAnOlderSnapshotOnlyInMemory(t *testing.T) {
+	path, meta := frozenSnapshot(t, 26, "")
+	if meta.SchemaVersion != 26 {
+		t.Fatalf("snapshot version = %d", meta.SchemaVersion)
+	}
+	before := databaseBytes(t, path)
+	if err := os.Chmod(filepath.Dir(path), 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Dir(path), 0700) })
+	got, err := VerifyDatabaseSchema(context.Background(), path, meta.SHA256)
+	if err != nil {
+		t.Fatalf("v26 snapshot refused by the v%d release: %v", schemaVersion, err)
+	}
+	if want := (DatabaseVerification{SchemaVersion: 26, TargetVersion: schemaVersion, Verified: true}); got != want {
+		t.Fatalf("verification = %+v, want %+v", got, want)
+	}
+	if string(before) != string(databaseBytes(t, path)) {
+		t.Fatal("verification modified the snapshot")
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Fatalf("verification left files: %v", entries)
+	}
+}
+
+func TestVerifyRefusesNewerUnknownAndFailingMigrations(t *testing.T) {
+	for name, tc := range map[string]struct{ change, want string }{
+		"newer":   {fmt.Sprintf("PRAGMA user_version=%d", schemaVersion+1), fmt.Sprintf("incompatible database schema: found %d, want %d; the database is newer than this release", schemaVersion+1, schemaVersion)},
+		"unknown": {"PRAGMA user_version=25", fmt.Sprintf("incompatible database schema: found 25, want %d; no migration from version 25", schemaVersion)},
+		"step":    {"CREATE INDEX swarm_requests_swarm ON swarm_requests(state)", "incompatible database schema: migration from version 26 to 27 failed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path, meta := frozenSnapshot(t, 26, tc.change)
+			before := databaseBytes(t, path)
+			got, err := VerifyDatabaseSchema(context.Background(), path, meta.SHA256)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || got.Verified {
+				t.Fatalf("verify = %+v, %v; want refusal %q", got, err, tc.want)
+			}
+			if string(before) != string(databaseBytes(t, path)) {
+				t.Fatal("refused verification modified the snapshot")
+			}
+		})
 	}
 }
 

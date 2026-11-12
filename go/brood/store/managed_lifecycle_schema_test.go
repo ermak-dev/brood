@@ -29,7 +29,7 @@ func lifecycleActor(ctx context.Context, t *testing.T, s *Store) ManagedActor {
 }
 
 // FEATURE: Единая версия схемы и полный список DDL (#205).
-// SPEC: Миграций нет: пустая база создаётся со всей схемой и версией
+// SPEC: Пустая база создаётся со всей схемой и версией
 // schemaVersion; повторное открытие сохраняет задачные доказательства
 // актора; повреждённая схема ловится при открытии без мутации файла.
 // IMPLEMENTATION: initializeSchema читает PRAGMA user_version один раз
