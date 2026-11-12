@@ -5,12 +5,16 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -100,6 +104,38 @@ func readGuestArtifacts(dir string) (guestArtifactManifest, bool) {
 	}
 	manifest.Artifacts = entries
 	return manifest, true
+}
+
+// guestReleaseIDDomain открывает канонический текст id набора (#184), как
+// у гостя.
+const guestReleaseIDDomain = "brood guest release v1\n"
+
+// guestReleaseID — id набора гостевых программ проверенного манифеста (#184):
+// sha256 строки "brood guest release v1" и строк "имя размер sha256" в
+// порядке закрытого списка. Этим id bootstrap называет releases/<id> в CT
+// (guest.ArtifactManifest.ReleaseID); серверу пакет гостя не нужен, а
+// совпадение формул держит TestGuestReleaseIDMatchesBootstrap.
+func guestReleaseID(manifest guestArtifactManifest) string {
+	digest := sha256.New()
+	io.WriteString(digest, guestReleaseIDDomain)
+	for _, a := range manifest.Artifacts {
+		io.WriteString(digest, a.Name+" "+strconv.FormatInt(a.Size, 10)+" "+a.SHA256+"\n")
+	}
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+// currentGuestRelease — id набора, который сервер раздаёт гостям сейчас
+// (#133), или false без настройки и проверенного манифеста: тогда bootstrap
+// #184 при старте CT отказывает fail closed.
+func (s *Server) currentGuestRelease() (string, bool) {
+	if s.artifactsDir == "" {
+		return "", false
+	}
+	manifest, ok := readGuestArtifacts(s.artifactsDir)
+	if !ok {
+		return "", false
+	}
+	return guestReleaseID(manifest), true
 }
 
 // serveGuestArtifacts отдаёт root supervisor гостя манифест и файлы

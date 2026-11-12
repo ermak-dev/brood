@@ -463,6 +463,9 @@ func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected
 // does not reconcile a task: use ConfirmManagedActorStage or the explicit terminal
 // failure API first. Stage=done permits a reconciled error to begin fresh work.
 // Reset is destructive and retains old ownership until confirmed old absence.
+// Update (#133) restarts a running actor in place: it is recorded as the start
+// operation of the same incarnation whose first stage is stop, and it is also
+// refused while the actor's swarm runs a pipeline pass (guardActorPipeline).
 func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expected int64, operationID, operation string) (ManagedActor, error) {
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -479,14 +482,28 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 		if a.Desired == "deleted" && operation != "delete" {
 			return fmt.Errorf("managed deletion intent cannot be canceled")
 		}
+		// Update хранится как start той же инкарнации: схема знает только
+		// операции create/start/stop/delete/reset, а перезапуск и есть start,
+		// перед которым стоит стадия stop.
+		stored := operation
+		if operation == "update" {
+			stored = "start"
+		}
 		if operationID == a.OperationID {
-			if operation != a.Operation {
+			if stored != a.Operation {
 				return fmt.Errorf("managed operation ID is already bound")
 			}
 			result = a
 			return nil
 		}
-		if operation == "start" || operation == "stop" || operation == "delete" || operation == "reset" {
+		if operation == "update" {
+			// Шаг и проход называем раньше аренды: прерывает их именно
+			// перезапуск.
+			if err := s.guardActorPipeline(ctx, a); err != nil {
+				return err
+			}
+		}
+		if operation == "start" || operation == "stop" || operation == "delete" || operation == "reset" || operation == "update" {
 			if err := s.guardActorCoordination(ctx, a); err != nil {
 				return err
 			}
@@ -515,15 +532,30 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 			desired = "stopped"
 		case "delete":
 			desired = "deleted"
+		case "update":
+			// Перезапуск ставит текущий гостевой набор (#184) только у
+			// работающего актора: остановленного поднимает start, а не
+			// update, и намерение stopped без явного start не меняется.
+			p, err := s.GetManagedPool(ctx, a.PoolUID)
+			if err != nil {
+				return err
+			}
+			if p.State != "enabled" {
+				return ErrPoolUnavailable
+			}
+			if a.Phase != "running" || a.Desired != "running" || a.Operation != "start" {
+				return fmt.Errorf("managed update requires a running actor")
+			}
+			desired = "running"
 		default:
 			return fmt.Errorf("invalid managed actor operation")
 		}
 		a.Stage = operation
-		if operation == "reset" || operation == "delete" {
+		if operation == "reset" || operation == "delete" || operation == "update" {
 			a.Stage = "stop"
 		}
 		a.OperationID = operationID
-		a.Operation = operation
+		a.Operation = stored
 		a.Desired = desired
 		a.UPID = ""
 		a.Error = ""
@@ -532,7 +564,7 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 		switch operation {
 		case "delete":
 			a.Phase = "deleting"
-		case "stop", "reset":
+		case "stop", "reset", "update":
 			a.Phase = "stopping"
 		case "start":
 			a.Phase = "provisioning"
@@ -603,6 +635,9 @@ func (s *Store) BindManagedActorTask(ctx context.Context, uid string, expected i
 // The caller must reconcile an unknown submission even when UPID is empty.
 // Cleanup stop advances to delete with a fresh task slot; normal work becomes
 // done without discarding its task evidence. Phase updates alone never do this.
+// The stop stage of an update (#133) advances to its start stage with a fresh
+// task slot and Phase=stopped: the CT is stopped and its start is not yet
+// requested, so the caller may submit it.
 func (s *Store) ConfirmManagedActorStage(ctx context.Context, uid string, expected int64, operationID, stage, observed string) (ManagedActor, error) {
 	return s.changeManagedStage(ctx, uid, expected, operationID, stage, func(a *ManagedActor) error {
 		if observed != "running" && observed != "stopped" && observed != "absent" {
@@ -617,6 +652,19 @@ func (s *Store) ConfirmManagedActorStage(ctx context.Context, uid string, expect
 		cleanup := (a.Operation == "delete" || a.Operation == "reset") && (stage == "stop" || stage == "reconcile")
 		if (stage == "stop" || (stage == "reconcile" && a.Operation == "stop")) && observed == "running" {
 			return fmt.Errorf("managed stop requires confirmed stopped or absent CT")
+		}
+		// Стадия stop операции start — первая половина update (#133): после
+		// подтверждённой остановки та же операция идёт в стадию start той же
+		// CT. Phase stopped без UPID значит «Start ещё не запрошен»: reconcile
+		// повторяет такой start после сбоя до записи в PVE и после остановки
+		// сервера, а перед отправкой Start ставит provisioning. Отсутствие CT
+		// ниже кончается ошибкой, а не новым стартом.
+		if a.Operation == "start" && stage == "stop" && observed == "stopped" {
+			a.Stage = "start"
+			a.UPID = ""
+			a.Phase = "stopped"
+			a.Error = ""
+			return nil
 		}
 		if cleanup {
 			if observed == "running" {

@@ -110,7 +110,7 @@ func TestActorCommandAddInheritsAndRetries(t *testing.T) {
 func TestActorCommandRejectsUnsupportedAndInvalidArguments(t *testing.T) {
 	ts, _, master, pve := masterSetup(t)
 	ctx := context.Background()
-	for _, name := range []string{"restart", "update", "recycle", "wipe"} {
+	for _, name := range []string{"restart", "recycle", "wipe"} {
 		args := `{"name":"master"}`
 		if name == "recycle" || name == "wipe" {
 			args = `{"name":"master","confirm":true}`

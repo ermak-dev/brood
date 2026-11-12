@@ -23,7 +23,7 @@ func TestCoordinationRefusesStoppedIntent(t *testing.T) {
 
 func TestCoordinationGuardsLifecycleIntent(t *testing.T) {
 	for _, uid := range []string{"source", "target"} {
-		for _, op := range []string{"stop", "delete", "reset"} {
+		for _, op := range []string{"stop", "delete", "reset", "update"} {
 			t.Run(uid+"-"+op, func(t *testing.T) {
 				s := newTestStore(t)
 				ctx := context.Background()

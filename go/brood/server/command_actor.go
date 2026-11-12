@@ -39,8 +39,6 @@ func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 	switch inv.Name {
 	case "restart":
 		return args, fmt.Errorf("restart is unsupported: managed actors have no durable workspace-preserving restart intent; reset destroys the disk and is not a substitute")
-	case "update":
-		return args, fmt.Errorf("update is unsupported: managed approved profiles are immutable; no in-place profile reconciliation capability is available")
 	case "recycle", "wipe":
 		return args, fmt.Errorf("%s is unsupported: managed reset does not implement this command's workspace and session semantics", inv.Name)
 	case "delete":
@@ -260,6 +258,9 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
+	if action == "update" {
+		return s.updateActor(ctx, userID, sw, pool, a, parent)
+	}
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: a.Name, action: action, actor: a, parent: parent}
 	err = s.admitWorkload(userID, sw.ID, op)
 	if err != nil && op.saved.UID == "" {
@@ -271,13 +272,19 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 func actorCommandError(err error) error {
 	var ownership *ownershipError
 	var held *store.CoordinationConflictError
+	var waiting *updateWaitingRefusal
 	switch {
-	case errors.As(err, &ownership):
+	case errors.As(err, &ownership), errors.As(err, &waiting):
 		return err
 	case errors.As(err, &held):
 		// Причина координации не выходит за рой актора и называет держателя
 		// аренды (#272): её отдаём как есть, а не общим отказом.
 		return fmt.Errorf("%w: managed lifecycle refused; %s", app.ErrConflict, held.Reason)
+	case errors.Is(err, store.ErrRevisionConflict):
+		// Проход reconcile (например, повтор отказавшего Start update, #133)
+		// или другая команда изменили актора между чтением и записью
+		// намерения: сверять нечего, повтор прочитает новое состояние.
+		return fmt.Errorf("%w: managed lifecycle refused; the actor changed while the command was checked (a reconcile pass or another lifecycle change); retry the command", app.ErrConflict)
 	case errors.Is(err, app.ErrNotAllowed):
 		return fmt.Errorf("%w: actor command delegation or swarm access is not authorized", app.ErrNotAllowed)
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, app.ErrNotFound):

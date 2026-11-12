@@ -28,6 +28,17 @@ type managedWorkloadOperation struct {
 	role         string
 	parent       *store.ManagedActor
 	origin       string
+	// operationID — ID нового намерения; "" — свежий ID при записи. Update
+	// (#133) задаёт его заранее, чтобы после сбоя отличить записанное
+	// намерение от отказа до него.
+	operationID string
+}
+
+func (o *managedWorkloadOperation) intentID() string {
+	if o.operationID == "" {
+		return store.NewID()
+	}
+	return o.operationID
 }
 
 func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
@@ -90,7 +101,9 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	if err := o.authorize(); err != nil {
 		return plan, err
 	}
-	if o.action == "stop" || o.action == "delete" || o.action == "reset" {
+	// Update перезапускает уже зарезервированного актора: ёмкость не
+	// меняется, доступность пула проверяют клиент и намерение.
+	if o.action == "stop" || o.action == "delete" || o.action == "reset" || o.action == "update" {
 		plan.TemplateOnly = true
 		return plan, nil
 	}
@@ -139,7 +152,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 	m := o.server.managed
 	m.lifecycle.Lock()
 	defer m.lifecycle.Unlock()
-	if o.action == "create" || o.action == "start" || o.action == "reset" {
+	if o.action == "create" || o.action == "start" || o.action == "reset" || o.action == "update" {
 		for key, value := range selector {
 			if o.pool.Labels[key] != value {
 				return fmt.Errorf("%w: managed pool does not match required worker selector", app.ErrInvalidWorkload)
@@ -193,9 +206,18 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			o.saved = a
 			return nil
 		}
+		// Start update, ещё не запрошенный (#133), задачи не держит: CT
+		// остановлена, и stop, delete и reset его отменяют. Start и update
+		// ничего бы не добавили к уже записанному start: отказ называет
+		// ожидание, а не неизвестный исход.
+		waiting := updateStartPending(a)
+		cancels := o.action == "stop" || o.action == "delete" || o.action == "reset"
+		if waiting && !cancels {
+			return newUpdateWaitingRefusal(o.action, a)
+		}
 		// Stop/start/reset require a reconciled task slot, not merely a terminal
 		// diagnostic phase. Delete may settle a known prior task before cleanup.
-		if a.Stage != "done" && (o.action != "delete" || a.UPID == "" || a.Stage == "delete" || a.Operation == "reset") {
+		if a.Stage != "done" && !waiting && (o.action != "delete" || a.UPID == "" || a.Stage == "delete" || a.Operation == "reset") {
 			return fmt.Errorf("%w: previous provider outcome is uncertain; allocation retained", app.ErrConflict)
 		}
 		if a.Stage != "done" && a.UPID != "" {
@@ -216,6 +238,10 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if o.action != "delete" && observed == "absent" {
 			return fmt.Errorf("%w: owned container is absent; delete the retained allocation before creating another", app.ErrConflict)
 		}
+		// Update перезапускает работающую CT; остановленную поднимает start.
+		if o.action == "update" && observed != "running" {
+			return fmt.Errorf("%w: owned container is %s; update restarts a running container", app.ErrConflict, observed)
+		}
 		// Пока провайдер отвечает, доступ человека или делегацию могут отозвать.
 		// Повторная проверка нужна перед записью намерения, не только до чтения.
 		if err := o.authorize(); err != nil {
@@ -226,6 +252,8 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		// before submitting the new provider write.
 		err = o.server.store.WithTx(o.context, func(ctx context.Context) error {
 			var err error
+			// Известная задача уже дождана выше; у незапрошенного start
+			// update задачи нет вовсе. Слот закрывает наблюдение CT.
 			if a.Stage != "done" {
 				a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 				if err != nil {
@@ -240,12 +268,14 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 					return err
 				}
 			}
-			a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, store.NewID(), o.action)
-			if err == nil && o.action == "delete" && observed == "stopped" {
+			a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
+			if err == nil && (o.action == "delete" || waiting) && observed == "stopped" {
 				// Эта stop-стадия создана в текущей транзакции и ещё не
 				// отправлена провайдеру. Владение и stopped уже проверены:
 				// фиксируем сразу delete, не повторяя vzstop. Для старой
 				// неизвестной отправки наблюдение stopped не доказывает исход.
+				// Отмена start update так же не шлёт vzstop: stop
+				// согласуется сразу, reset переходит к delete.
 				a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 			}
 			return err
@@ -262,7 +292,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			}
 			return fmt.Errorf("%w: managed task must be reconciled before changing intent", app.ErrConflict)
 		}
-		if o.action == "stop" || o.action == "delete" || o.action == "reset" {
+		if o.action == "stop" || o.action == "delete" || o.action == "reset" || o.action == "update" {
 			if m.hub != nil {
 				m.hub.Disconnect(a.UID, a.Incarnation)
 			}
@@ -278,6 +308,11 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			}
 			o.saved = a
 			return err
+		}
+		// Stop, отменивший start update, согласован без задачи.
+		if a.Stage == "done" {
+			o.saved = a
+			return nil
 		}
 	}
 	a, err = m.launch(o.context, client, a)

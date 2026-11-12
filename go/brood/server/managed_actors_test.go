@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -49,6 +50,35 @@ type managedFakePVE struct {
 	deletedWhileRunning             bool
 	// envs — bootstrap env каждого Create и ConfigureBootstrap по порядку.
 	envs []proxmox.BootstrapEnv
+	// uncertainStop — Stop без UPID с неизвестным исходом (#133).
+	uncertainStop bool
+	// bootstrapReadFailures и startReadFailures — сколько раз
+	// ConfigureBootstrap и Start откажут на чтении PVE (владение, digest,
+	// статус), до любой записи (#133).
+	bootstrapReadFailures, startReadFailures int
+	// stopWait — сколько длится ожидание задачи stop-task (#133).
+	stopWait time.Duration
+	// bootstrapBudgets — остаток срока прохода у каждого ConfigureBootstrap.
+	bootstrapBudgets []time.Duration
+	// afterStop и afterStart вызываются, когда PVE принял задачу, до ответа.
+	afterStop, afterStart func()
+	// beforeStart вызывается в начале Start, до чтений PVE; отменённый к
+	// тому времени контекст отказывает чтению, как у клиента (#133).
+	beforeStart func()
+	// startError — явный отказ Start до задачи (403, ErrOwnership): CT не
+	// стартует (#133).
+	startError error
+	// digest — версия конфигурации CT: растёт с каждой её записью (Create,
+	// bootstrap, правка мимо brood в тесте), InspectOwned отдаёт её
+	// digest-ом (#133).
+	digest int
+	// bootstrapUncertain — сколько следующих записей bootstrap PVE
+	// применяет, но отвечает неоднозначно (потерянный ответ, 5xx) (#133).
+	bootstrapUncertain int
+	// duringBootstrap вызывается после применённой записи bootstrap, до
+	// ответа; отменённый к тому времени контекст делает ответ
+	// неоднозначным, как у клиента (#133).
+	duringBootstrap func()
 }
 
 func (f *managedFakePVE) NextID(context.Context) (int, error) {
@@ -68,6 +98,7 @@ func (f *managedFakePVE) Create(ctx context.Context, s proxmox.CTSpec) (string, 
 	f.spec = s
 	f.envs = append(f.envs, s.Env)
 	f.exists = true
+	f.digest++
 	a, err := f.server.store.GetManagedActor(ctx, s.Owner.ActorUID)
 	if err != nil || a.CTID != s.VMID || a.Stage != "create" || (a.Operation != "create" && a.Operation != "reset") || a.UPID != "" || a.Incarnation != int64(s.Owner.Incarnation) || a.OwnerNonce != s.Owner.Nonce {
 		return "", errors.New("write before durable intent")
@@ -86,7 +117,7 @@ func (f *managedFakePVE) Config(context.Context, int) (proxmox.CTConfig, error) 
 	if !f.exists {
 		return proxmox.CTConfig{}, proxmox.ErrNotFound
 	}
-	return proxmox.CTConfig{Description: proxmox.OwnedDescription(f.spec.Owner), Unprivileged: 1}, nil
+	return proxmox.CTConfig{Description: proxmox.OwnedDescription(f.spec.Owner), Unprivileged: 1, Digest: fmt.Sprintf("%040x", f.digest)}, nil
 }
 func (f *managedFakePVE) InspectOwned(ctx context.Context, ref proxmox.OwnedCT) (proxmox.CTConfig, error) {
 	if f.inspectStarted != nil {
@@ -113,6 +144,12 @@ func (f *managedFakePVE) Status(context.Context, int) (proxmox.CTStatus, error) 
 }
 func (f *managedFakePVE) WaitTask(_ context.Context, upid string) error {
 	f.mu.Lock()
+	wait := f.stopWait
+	f.mu.Unlock()
+	if upid == "stop-task" {
+		time.Sleep(wait)
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.waited = append(f.waited, upid)
 	return f.taskErrors[upid]
@@ -130,29 +167,62 @@ func (f *managedFakePVE) ConfirmAbsent(_ context.Context, id int) error {
 	return nil
 }
 func (f *managedFakePVE) Start(ctx context.Context, r proxmox.OwnedCT) (string, error) {
+	f.mu.Lock()
+	before := f.beforeStart
+	f.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("PVE request canceled: %w", err)
+	}
 	if _, err := f.InspectOwned(ctx, r); err != nil {
 		return "", err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	if f.startReadFailures > 0 {
+		f.startReadFailures--
+		f.mu.Unlock()
+		return "", errors.New("PVE HTTPS request failed")
+	}
+	if f.startError != nil {
+		err := f.startError
+		f.mu.Unlock()
+		return "", err
+	}
 	f.starts++
 	f.running = true
-	if f.uncertainStart {
-		return "", proxmox.ErrUncertain
+	after := f.afterStart
+	upid := "start-task"
+	var err error
+	switch {
+	case f.uncertainStart:
+		upid, err = "", proxmox.ErrUncertain
+	case f.startUPID != "":
+		upid = f.startUPID
 	}
-	if f.startUPID != "" {
-		return f.startUPID, nil
+	f.mu.Unlock()
+	if after != nil {
+		after()
 	}
-	return "start-task", nil
+	return upid, err
 }
 func (f *managedFakePVE) Stop(ctx context.Context, r proxmox.OwnedCT) (string, error) {
 	if _, err := f.InspectOwned(ctx, r); err != nil {
 		return "", err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.stops++
 	f.running = false
+	after := f.afterStop
+	uncertain := f.uncertainStop
+	f.mu.Unlock()
+	if after != nil {
+		after()
+	}
+	if uncertain {
+		return "", proxmox.ErrUncertain
+	}
 	return "stop-task", nil
 }
 func (f *managedFakePVE) Delete(ctx context.Context, r proxmox.OwnedCT) (string, error) {
@@ -181,6 +251,14 @@ func (f *managedFakePVE) ConfigureBootstrap(ctx context.Context, ref proxmox.Own
 		return errors.New("bootstrap before durable start intent")
 	}
 	f.mu.Lock()
+	if deadline, ok := ctx.Deadline(); ok {
+		f.bootstrapBudgets = append(f.bootstrapBudgets, time.Until(deadline))
+	}
+	if f.bootstrapReadFailures > 0 {
+		f.bootstrapReadFailures--
+		f.mu.Unlock()
+		return errors.New("PVE HTTPS request failed")
+	}
 	if !f.exists || f.running {
 		f.mu.Unlock()
 		return errors.New("bootstrap must configure the created CT while stopped")
@@ -188,7 +266,22 @@ func (f *managedFakePVE) ConfigureBootstrap(ctx context.Context, ref proxmox.Own
 	f.bootstraps++
 	f.spec.Env = env
 	f.envs = append(f.envs, env)
+	f.digest++
+	uncertain := f.bootstrapUncertain > 0
+	if uncertain {
+		f.bootstrapUncertain--
+	}
+	during := f.duringBootstrap
 	f.mu.Unlock()
+	if during != nil {
+		during()
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: PVE request canceled: %w", proxmox.ErrUncertain, err)
+	}
+	if uncertain {
+		return fmt.Errorf("%w: PVE HTTP status 500", proxmox.ErrUncertain)
+	}
 	return f.bootstrapError
 }
 func (f *managedFakePVE) Close() {}

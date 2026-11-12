@@ -307,3 +307,37 @@ func TestDispatchDescribesOwnership(t *testing.T) {
 		t.Fatalf("dispatch description lacks the ownership rule: %q", s.Description)
 	}
 }
+
+// FEATURE: The update description states the controlled restart (#133).
+// SPEC: update restarts a running actor in its retained container onto the
+// server's current guest release; the profile's template and resources stay.
+// It is refused while the actor's swarm runs a pipeline pass, while the actor
+// has a dispatch lease or a landing token and when its guest does not report
+// its current release, is a no-op on the current release, leaves a stopped
+// actor to start, and a master updates only workers it added. The CLI
+// help and the MCP tool description come from this one spec, so the model
+// learns these rules before a refusal.
+func TestUpdateDescribesControlledRestart(t *testing.T) {
+	s, ok := command.Lookup("update")
+	if !ok {
+		t.Fatal("update is not declared")
+	}
+	for _, rule := range []string{
+		"Restart a running actor in its retained container",
+		"server's current guest release",
+		"template and resources do not change",
+		"while the actor's swarm runs a pipeline pass",
+		"a dispatch lease or a landing token",
+		"when its guest does not report its current release",
+		"already runs that release",
+		"stopped actor",
+		"only workers it added with add",
+	} {
+		if !strings.Contains(s.Description, rule) {
+			t.Errorf("update description lacks %q: %q", rule, s.Description)
+		}
+	}
+	if s.ReadOnly || s.Destructive || !s.Guest {
+		t.Fatalf("update annotations: read-only %v, destructive %v, guest %v", s.ReadOnly, s.Destructive, s.Guest)
+	}
+}

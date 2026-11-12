@@ -34,7 +34,7 @@ func TestForeignLeaseRefusalNamesHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `dispatch lease "before-267" on "theirs" is held by "master"; the holder or an administrator releases it with dispatch --action release --request-id "before-267"`
-	refusals := map[string]string{"stop": "", "delete": "", "reset": "", "restart": "release active coordination before restarting or cleaning this actor", "wipe": "release active coordination before restarting or cleaning this actor", "recycle": "release active coordination before restarting or cleaning this actor", "slash": "session control belongs to another dispatch owner", "session_terminal": "session control belongs to another dispatch owner"}
+	refusals := map[string]string{"stop": "", "delete": "", "reset": "", "update": "", "restart": "release active coordination before restarting or cleaning this actor", "wipe": "release active coordination before restarting or cleaning this actor", "recycle": "release active coordination before restarting or cleaning this actor", "slash": "session control belongs to another dispatch owner", "session_terminal": "session control belongs to another dispatch owner"}
 	for tool, reason := range refusals {
 		args, lifecycle := lifecycleTargetArguments[tool]
 		if !lifecycle {

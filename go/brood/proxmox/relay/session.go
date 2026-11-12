@@ -20,6 +20,21 @@ const MaxSessionBytes = 128 * 1024
 // bring the workspace to a commit and sign the result (#183).
 const WorkspaceAttestOperation = "workspace_attest"
 
+// GuestReleaseOperation asks the guest root which guest release (#184) its
+// /opt/brood/bin names (#133). The guest reads only its own artifact root and
+// answers a GuestRelease as JSON in the response text; a guest runtime that
+// predates the operation answers unsupported.
+const GuestReleaseOperation = "guest_release"
+
+// GuestRelease answers GuestReleaseOperation.
+type GuestRelease struct {
+	// Layout is "release" when bin links to releases/<id> and "plain" when bin
+	// is the plain directory of a bootstrap before #184.
+	Layout string `json:"layout"`
+	// Release is the <id> that bin links to; empty for a plain bin.
+	Release string `json:"release,omitempty"`
+}
+
 // sessionTimeout bounds one session call on both peers. Attestation fetches
 // and hashes a snapshot, which does not fit the interactive 20 s budget.
 func sessionTimeout(operation string) time.Duration {
