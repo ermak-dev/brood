@@ -37,7 +37,7 @@ CREATE TABLE swarms (
     definition_name     TEXT,
     definition_version  INTEGER,
     definition_revision TEXT
-);
+, execution_at TEXT);
 
 CREATE TABLE sessions (
     token_hash TEXT PRIMARY KEY,

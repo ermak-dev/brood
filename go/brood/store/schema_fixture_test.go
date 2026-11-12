@@ -54,7 +54,9 @@ func frozenSchemaVersions(t *testing.T) []int {
 // seedSchemaFixture: база текущего кода со строками в таблицах, которые
 // задевают миграции: пользователи, проект, рой с графом и шагами, отвеченный
 // и открытый запросы оператору, ответ актору с неизвестной доставкой,
-// managed-пул и актор.
+// managed-пул и актор. С версии 28 ещё рой one, прошедший проход запуска до
+// конца: каталог и repository проекта, источник роя, шаг с задачей и commit
+// прохода и момент последнего исполнения роя (#268).
 func seedSchemaFixture(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
@@ -66,6 +68,13 @@ func seedSchemaFixture(t *testing.T) *Store {
 	}
 	actorRequest(t, s, "confirm", nil)
 	mustNil(t, answer(s, node, "u", "success", "ship"))
+	seedUser(t, s, "root", "root")
+	mustNil(t, s.SetUserAdmin(ctx, "root", true))
+	mustNil(t, s.AddMember(ctx, "one", "u"))
+	mustNil(t, s.SetProjectRepository(ctx, "one", startOrigin))
+	publish(t, s, "one", map[string]string{"approve": startApprove})
+	mustStart(t, s, "approve")
+	mustNil(t, answer(s, openNodeRequestOf(t, s, 1), "u", "success", "approved"))
 	return s
 }
 
