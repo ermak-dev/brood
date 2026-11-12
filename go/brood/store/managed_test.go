@@ -223,7 +223,7 @@ func TestManagedConcurrentReservations(t *testing.T) {
 	}
 }
 
-// TestManagedSchemaContract: миграций нет (#205); база чужой версии
+// TestManagedSchemaContract: цепочка миграций начинается с 26 (#274); база чужой версии
 // отвергается без изменения схемы и данных, частичная схема с чужими
 // managed-объектами — тоже.
 func TestManagedSchemaContract(t *testing.T) {

@@ -106,6 +106,52 @@ INSERT INTO users VALUES ('private-synthetic-user', 'private-synthetic-hash', 1,
 			}
 		}
 	})
+	t.Run("verify migration", func(t *testing.T) {
+		// Schema gate with migrations (#274): a snapshot of the frozen schema 26
+		// database passes, and the JSON the deploy gate parses names the
+		// snapshot version and the version the release migrates it to.
+		fixture, err := os.ReadFile(filepath.Join("..", "..", "brood", "store", "testdata", "schema-26.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := filepath.Join(t.TempDir(), "v26.sqlite")
+		older, err := sql.Open("sqlite", "file:"+url.PathEscape(source)+"?_pragma=journal_mode(WAL)")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := older.Exec(string(fixture)); err != nil {
+			t.Fatal(err)
+		}
+		older.Close()
+		output := filepath.Join(t.TempDir(), "snapshot.sqlite")
+		out, stderr, err := invoke("snapshot", "--path", source, "--output", output)
+		if err != nil || stderr != "" {
+			t.Fatalf("snapshot: %v, %s", err, stderr)
+		}
+		var snapshot struct{ SHA256 string }
+		if err := json.Unmarshal([]byte(out), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, stderr, err = invoke("verify", "--path", output, "--sha256", snapshot.SHA256)
+		if err != nil || stderr != "" {
+			t.Fatalf("verify: %v, %s", err, stderr)
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatal(err)
+		}
+		target, _ := got["target_version"].(float64)
+		if len(got) != 3 || got["schema_version"] != float64(26) || target <= 26 || got["verified"] != true {
+			t.Fatalf("JSON = %s", out)
+		}
+		if after, err := os.ReadFile(output); err != nil || !bytes.Equal(after, before) {
+			t.Fatalf("verify changed the snapshot: %v", err)
+		}
+	})
 	t.Run("prune", func(t *testing.T) {
 		// Snapshot retention (#247): the current snapshot is kept, older ones go.
 		dir := t.TempDir()

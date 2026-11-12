@@ -367,7 +367,7 @@ func TestWorkflowVersionConcurrentSyncDelete(t *testing.T) {
 	}
 }
 
-// TestWorkflowSchemaForeignVersionRefused: миграций нет (#205); база
+// TestWorkflowSchemaForeignVersionRefused: цепочка миграций начинается с 26 (#274); база
 // версии 11 не обновляется, а отвергается без изменения файла.
 func TestWorkflowSchemaForeignVersionRefused(t *testing.T) {
 	ctx := context.Background()

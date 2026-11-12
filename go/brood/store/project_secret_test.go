@@ -220,7 +220,7 @@ func TestProjectSecretNestedBatchFailure(t *testing.T) {
 	}
 }
 
-// TestProjectSecretSchemaContract: миграций нет (#205); база чужой версии
+// TestProjectSecretSchemaContract: цепочка миграций начинается с 26 (#274); база чужой версии
 // отвергается без изменения схемы и версии, а повреждённая таблица секрeтов
 // ловится при открытии текущей версии.
 func TestProjectSecretSchemaContract(t *testing.T) {

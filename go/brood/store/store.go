@@ -22,8 +22,9 @@ var ErrNotFound = fmt.Errorf("record not found")
 // ошибки заворачиваются в неё, вызывающие проверяют errors.Is.
 var errIncompatibleSchema = errors.New("incompatible database schema")
 
-// schemaVersion — единственная версия схемы базы. Миграций нет: база
-// создаётся заново, любая другая версия отвергается (#205).
+// schemaVersion: единственная версия схемы базы (#205). С 27 база прежней
+// версии не пересоздаётся, а мигрирует по цепочке schemaMigrations (#274);
+// версии до 26 цепочки не имеют и отвергаются.
 // 17: swarm_role_bindings (#208).
 // 18: swarm_requests и их триггеры (#209), у swarm_steps нет колонки answer.
 // DDL несовместим с 17: база версии 17 открывается кодом 18 только после
@@ -44,7 +45,9 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // pipeline_sources без commit_sha, swarm_steps_attested сверяют commit прохода.
 // 26: неизвестный исход доставки ответа swarm_requests.delivery =
 // 'unconfirmed' в CHECK и swarm_requests_fence (#260).
-const schemaVersion = 26
+// 27: индекс swarm_requests_swarm для сводки списка роёв (#266); первая
+// версия с миграцией от предыдущей (#274).
+const schemaVersion = 27
 
 //go:embed schema.sql
 var currentSchema string
@@ -67,8 +70,9 @@ func dsn(path string) string {
 		"&_pragma=synchronous(NORMAL)"
 }
 
-// Open открывает текущую базу или создаёт новую по пути.
-// Несовместимая схема отвергается без изменения таблиц.
+// Open открывает текущую базу или создаёт новую по пути. База прежней
+// версии мигрирует до текущей (#274); несовместимая схема отвергается без
+// изменения таблиц.
 func Open(ctx context.Context, path string) (*Store, error) {
 	if path != ":memory:" {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
@@ -111,47 +115,20 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // initializeSchema применяет единую схему. Пустая база (версия 0 без
 // объектов) создаётся целиком и получает schemaVersion; совпадающая
-// версия проверяется; любая другая — отказ без мутации файла. Проверка
-// и создание держат BEGIN IMMEDIATE: конкурентные Open не видят частичную
+// версия проверяется; старая версия с цепочкой миграций доводится до
+// текущей (#274); новее релиза, вне цепочки или с упавшим шагом дают отказ, а
+// файл остаётся на последней зафиксированной версии. Проверка, создание и
+// каждый шаг держат BEGIN IMMEDIATE: конкурентные Open не видят частичную
 // схему. Модули схемы объявляют только свой DDL и проверку (#205).
 func (s *Store) initializeSchema(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Закреплённое соединение: прагма внешних ключей вокруг шага миграции
+	// действует на то соединение, в котором идёт шаг.
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("begin schema initialization: %w", err)
 	}
-	defer tx.Rollback()
-	var version int
-	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-		return fmt.Errorf("inspect schema version: %w", err)
-	}
-	var objects int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
-		return fmt.Errorf("inspect database schema: %w", err)
-	}
-	switch {
-	case version == 0 && objects == 0:
-		for _, module := range schemaModules {
-			if _, err := tx.ExecContext(ctx, module.create()); err != nil {
-				return fmt.Errorf("initialize database schema: %w", err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version=%d`, schemaVersion)); err != nil {
-			return fmt.Errorf("initialize schema version: %w", err)
-		}
-	case version == schemaVersion:
-		for _, module := range schemaModules {
-			if err := module.verify(ctx, tx); err != nil {
-				return err
-			}
-		}
-	default:
-		return fmt.Errorf("%w: found %d, want %d; recreate the database", errIncompatibleSchema, version, schemaVersion)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit schema initialization: %w", err)
-	}
-	return nil
+	defer conn.Close()
+	return prepareSchema(ctx, conn, schemaVersion, schemaMigrations)
 }
 
 // checkSchema сверяет определения таблиц, включая ограничения. Пробелы
@@ -167,13 +144,13 @@ func checkSchema(ctx context.Context, tx *sql.Tx, expected string) error {
 		err := tx.QueryRowContext(ctx,
 			`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&actual)
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("incompatible database schema: missing table %s; recreate the database", table)
+			return fmt.Errorf("%w: missing table %s", errIncompatibleSchema, table)
 		}
 		if err != nil {
 			return fmt.Errorf("inspect table %s: %w", table, err)
 		}
 		if normalizeSchemaSQL(actual) != normalizeSchemaSQL(statement) {
-			return fmt.Errorf("incompatible database schema: table %s differs from current schema; recreate the database", table)
+			return fmt.Errorf("%w: table %s differs from current schema", errIncompatibleSchema, table)
 		}
 	}
 	return nil

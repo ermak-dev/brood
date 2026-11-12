@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -175,8 +174,11 @@ func validateDatabaseSnapshot(ctx context.Context, path string) (DatabaseMetadat
 }
 
 // DatabaseVerification is the deployment-safe result of a schema check.
+// SchemaVersion is the version of the verified snapshot, TargetVersion the
+// version this binary's Open brings it to; they differ when Open migrates.
 type DatabaseVerification struct {
 	SchemaVersion int64 `json:"schema_version"`
+	TargetVersion int64 `json:"target_version"`
 	Verified      bool  `json:"verified"`
 }
 
@@ -186,13 +188,15 @@ type DatabaseVerification struct {
 var maxVerifyBytes int64 = 32 << 20
 
 // VerifyDatabaseSchema proves that the snapshot at path has SHA-256 wantSHA256
-// and that this binary's Open would accept exactly those bytes: same version and
-// module checks as initializeSchema. The file is opened once without following
-// symlinks, read into memory and hashed; SQLite then opens that same buffer as an
-// in-memory database. The path is never given to SQLite, so a file replaced
-// after the read, or unexpected -wal/-journal/-shm sidecars, cannot change the
-// verdict and nothing on disk is created or written. The error names the failing
-// table, never row data.
+// and that this binary's Open would accept exactly those bytes: the same
+// migration chain and module checks as initializeSchema. An older version is
+// migrated in memory, so a refused migration is refused here, before a rollout.
+// The file is opened once without following symlinks, read into memory and
+// hashed; SQLite then opens that same buffer as an in-memory database. The path
+// is never given to SQLite, so a file replaced after the read, or unexpected
+// -wal/-journal/-shm sidecars, cannot change the verdict and nothing on disk is
+// created or written. The error names the failing object or version, never
+// row data.
 func VerifyDatabaseSchema(ctx context.Context, path, wantSHA256 string) (DatabaseVerification, error) {
 	return verifyDatabaseSchema(ctx, path, wantSHA256, nil)
 }
@@ -235,24 +239,21 @@ func verifyDatabaseSchema(ctx context.Context, path, wantSHA256 string, afterRea
 	if err != nil {
 		return result, errors.New("snapshot bytes are not a loadable SQLite database")
 	}
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return result, errors.New("cannot start read-only schema verification")
-	}
-	defer tx.Rollback()
 	var version int64
-	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return result, errors.New("cannot read snapshot schema version")
 	}
-	if version != schemaVersion {
-		return result, fmt.Errorf("%w: found %d, want %d", errIncompatibleSchema, version, schemaVersion)
+	// План проверяется до prepareSchema: пустой snapshot (версия 0) Open
+	// создал бы заново, а gate обязан его отвергнуть.
+	if _, err := migrationPlan(int(version), schemaVersion, schemaMigrations); err != nil {
+		return result, err
 	}
-	for _, module := range schemaModules {
-		if err := module.verify(ctx, tx); err != nil {
-			return result, err
-		}
+	// Тот же путь, что у Open (#274): старая версия мигрирует по цепочке,
+	// итог сверяется с реестром. Пишется только копия байтов в памяти.
+	if err := prepareSchema(ctx, conn, schemaVersion, schemaMigrations); err != nil {
+		return result, err
 	}
-	return DatabaseVerification{SchemaVersion: version, Verified: true}, nil
+	return DatabaseVerification{SchemaVersion: version, TargetVersion: schemaVersion, Verified: true}, nil
 }
 
 // readSnapshot reads a regular, non-symlink file through one descriptor (opened

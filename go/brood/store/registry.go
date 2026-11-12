@@ -10,7 +10,7 @@ import (
 // schemaModule — вклад модуля в общую схему (#205): DDL создания (таблицы,
 // индексы, триггеры) и проверка того, что база текущей версии ему отвечает.
 // Модуль ничего не знает о версиях: единственная версия объявлена в
-// schemaVersion, читает её initializeSchema.
+// schemaVersion, путь от прежних версий задаёт schemaMigrations (#274).
 type schemaModule struct {
 	id     string
 	create func() string
@@ -34,6 +34,17 @@ var schemaModules = []schemaModule{
 	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},
 	{id: "pipeline-source", create: pipelineSourceFullSchema, verify: verifyPipelineSourcesSchema},
 	{id: "swarm-requests", create: swarmRequestsFullSchema, verify: verifySwarmRequestsSchema},
+}
+
+// verifySchemaModules сверяет базу с реестром: и при открытии текущей
+// версии, и в конце миграции, до фиксации последнего шага (#274).
+func verifySchemaModules(ctx context.Context, tx *sql.Tx) error {
+	for _, module := range schemaModules {
+		if err := module.verify(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // aclSchema — ACL роёв: члены с ролями и уникальность имён неудалённых
@@ -211,13 +222,13 @@ func checkObject(ctx context.Context, tx *sql.Tx, kind, name, expected string) e
 	err := tx.QueryRowContext(ctx,
 		`SELECT sql FROM sqlite_master WHERE type = ? AND name = ?`, kind, name).Scan(&actual)
 	if err == sql.ErrNoRows {
-		return fmt.Errorf("%w: missing %s %s; recreate the database", errIncompatibleSchema, kind, name)
+		return fmt.Errorf("%w: missing %s %s", errIncompatibleSchema, kind, name)
 	}
 	if err != nil {
 		return fmt.Errorf("inspect %s %s: %w", kind, name, err)
 	}
 	if normalizeSchemaSQL(actual) != normalizeSchemaSQL(expected) {
-		return fmt.Errorf("%w: %s %s differs from current schema; recreate the database", errIncompatibleSchema, kind, name)
+		return fmt.Errorf("%w: %s %s differs from current schema", errIncompatibleSchema, kind, name)
 	}
 	return nil
 }
@@ -231,6 +242,7 @@ func verifySwarmRequestsSchema(ctx context.Context, tx *sql.Tx) error {
 	for _, object := range []struct{ kind, name, sql string }{
 		{"index", "swarm_requests_open_node", swarmRequestOpenNode},
 		{"index", "swarm_requests_step", swarmRequestStep},
+		{"index", "swarm_requests_swarm", swarmRequestSwarm},
 		{"trigger", "swarm_requests_fence", swarmRequestFence},
 		{"trigger", "swarm_requests_no_delete", swarmRequestNoDelete},
 		{"trigger", "swarm_requests_no_replace", swarmRequestNoReplace},

@@ -36,6 +36,8 @@ class ExistingInstall:
         self.recovered = False
         self.state = None
         self.before = None
+        # Версии verify (#274): snapshot и та, до которой релиз доводит его при старте.
+        self.schema = None
         self.snapshot_path = None
         # Запись нашего scale-to-zero: uid, id записи и spec после подтверждённого чтением scale.
         self.quiesced = None
@@ -284,11 +286,13 @@ class ExistingInstall:
 
     @staticmethod
     def verification(raw):
+        """Ответ verify (#274): версия snapshot и версия, до которой Open релиза его
+        доводит; цель меньше версии snapshot - не миграция, а нечестный ответ."""
         try:
             data = json.loads(raw)
-            if (not isinstance(data, dict) or set(data) != {"schema_version", "verified"}
-                    or type(data["schema_version"]) is not int or data["schema_version"] < 1
-                    or data["verified"] is not True):
+            if (not isinstance(data, dict) or set(data) != {"schema_version", "target_version", "verified"}
+                    or any(type(data[k]) is not int or data[k] < 1 for k in ("schema_version", "target_version"))
+                    or data["target_version"] < data["schema_version"] or data["verified"] is not True):
                 raise ValueError
             return data
         except (ValueError, TypeError):
@@ -390,9 +394,12 @@ class ExistingInstall:
     # Закрытый словарь причин: ничего из pod или лога не попадает в отказ иначе.
     REASONS = {"Error", "OOMKilled", "DeadlineExceeded", "Evicted", "ContainerCannotRun", "StartError",
                "ImagePullBackOff", "ErrImagePull", "CreateContainerError"}
-    # Все отказы схемы store (registry.go, store.go): имена объектов схемы и версии, без строк.
+    # Все отказы схемы store (registry.go, store.go, migration.go): имена объектов схемы и
+    # версии, без строк. Причина упавшего шага миграции после "failed" не печатается.
     SCHEMA = re.compile(r"incompatible database schema: ((table|index|trigger|view) \w+ differs from current schema"
-                        r"|missing (table|index|trigger|view) \w+|found \d+, want \d+"
+                        r"|missing (table|index|trigger|view) \w+"
+                        r"|found \d+, want \d+(; the database is newer than this release|; no migration from version \d+)?"
+                        r"|migration from version \d+ to \d+ failed"
                         r"|swarm primary owner has no owner grant|workflow revision counters differ from definitions)")
     FAILURES = re.compile(SCHEMA.pattern + r"|snapshot sha256 does not match the verified snapshot"
                           r"|snapshot is too large to verify in memory"
@@ -435,9 +442,9 @@ class ExistingInstall:
             message += f": {detail}"
         if operation == "verify" and self.SCHEMA.fullmatch(detail):
             # Доказанная несовместимость: apply не начинался, сервер на прежнем образе.
-            return (message + "; the release image cannot open the current database, so the rollout is refused "
-                    "before apply and deployment/brood-go keeps its current image; recreating the database is a "
-                    "separate operator decision (docs/DEPLOY.md)")
+            return (message + "; the release image cannot open or migrate the current database, so the rollout is "
+                    "refused before apply and deployment/brood-go keeps its current image; a schema change ships "
+                    "with a migration from the deployed version (docs/DEPLOY.md)")
         return message + "; no automatic database restore is attempted"
 
     def diagnostic(self, name):
@@ -473,6 +480,9 @@ class ExistingInstall:
         verified = self.execute(image, "verify")
         if verified.get("verified") is not True or verified.get("schema_version") != self.before["schema_version"]:
             raise RuntimeError("verified schema version does not match the snapshot; refusing rollout before apply")
+        # Релиз со схемой новее snapshot мигрирует базу при старте сервера (#274); цель
+        # проверяется после rollout, точка отката - этот snapshot.
+        self.schema = {"from": verified["schema_version"], "to": verified["target_version"]}
         self.guard()
         self.recovered = recovery
 
@@ -1082,4 +1092,8 @@ class ExistingInstall:
         if (not self.before or after["users"] != self.before["users"]
                 or after["enabled_admins"] != self.before["enabled_admins"]):
             raise RuntimeError("database user/admin counts changed; operator review required, no automatic restore")
+        # Готовый сервер открыл базу: она обязана быть в версии, до которой verify довёл snapshot.
+        if not self.schema or after["schema_version"] != self.schema["to"]:
+            raise RuntimeError("database schema version after rollout differs from the verified target; "
+                               "operator review required, no automatic restore")
         return after

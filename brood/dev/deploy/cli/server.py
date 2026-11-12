@@ -1,8 +1,9 @@
 """brood deploy server: publish the Go server with TLS
 
 Initial mode bootstraps an administrator and verifies login. Explicit
-BROOD_DEPLOY_MODE=existing snapshots the owned database without credentials;
-operator-authenticated acceptance remains pending. --check is read-only.
+BROOD_DEPLOY_MODE=existing snapshots the owned database without credentials
+and has the new image verify that it opens or migrates the snapshot before
+apply; operator-authenticated acceptance remains pending. --check is read-only.
 Existing actor infrastructure and worker pools are preserved.
 
 Disk guard (docs/DEPLOY.md): BROOD_DEPLOY_MIN_FREE_GB refuses the deploy
@@ -46,6 +47,13 @@ def snapshot_line(snapshots):
             f"including this deploy's snapshot, removed {snapshots['removed']}")
 
 
+def schema_line(schema):
+    if schema["from"] == schema["to"]:
+        return f"Database schema {schema['to']}: no migration"
+    return (f"Database schema migrated from {schema['from']} to {schema['to']} on server start; "
+            "rollback restores the snapshot above with the previous image (docs/DEPLOY.md)")
+
+
 def main(argv):
     if argv not in ([], ["--check"]):
         raise RuntimeError("brood deploy server accepts only --check")
@@ -67,6 +75,8 @@ def main(argv):
             print("Recovered an interrupted rollout: crash-looping pod replaced after verified snapshot")
         print(f"Rollout passed; {result['acceptance']}")
         print(f"Private database snapshot retained on owned PVC: {result['snapshot']}")
+        if result.get("schema"):
+            print(schema_line(result["schema"]))
         if "snapshots" in result:
             print(snapshot_line(result["snapshots"]))
     else:

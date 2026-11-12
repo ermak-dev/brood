@@ -106,7 +106,7 @@ func TestProjectCapacityRejectsInvalidWithoutMutation(t *testing.T) {
 	}
 }
 
-// TestProjectCapacityLegacySchemaRefused: миграций нет (#205); базы
+// TestProjectCapacityLegacySchemaRefused: цепочка миграций начинается с 26 (#274); базы
 // версий 0 и 1 не расширяются, а отвергаются без изменения файла.
 func TestProjectCapacityLegacySchemaRefused(t *testing.T) {
 	for _, version := range []int{0, 1} {

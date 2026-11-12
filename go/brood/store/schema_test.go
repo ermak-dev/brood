@@ -13,11 +13,12 @@ import (
 
 // FEATURE: Инициализация полной схемы по единому списку модулей.
 // SPEC: Пустая база (версия 0 без объектов) создаётся со всеми модулями
-// и версией schemaVersion; совпадающая версия проверяется целиком; чужая
-// версия или база без версии отвергается без изменения файла.
-// IMPLEMENTATION: initializeSchema читает PRAGMA user_version один раз
-// и обходит schemaModules; модули схемы не знают о версиях.
-// RESULT: IMPLEMENTED — без migration ledger; определения проверяются.
+// и версией schemaVersion; совпадающая версия проверяется целиком; версия
+// вне цепочки миграций или база без версии отвергается без изменения файла
+// (путь от прежней версии проверяет migration_test.go, #274).
+// IMPLEMENTATION: initializeSchema читает PRAGMA user_version и обходит
+// schemaModules; модули схемы не знают о версиях.
+// RESULT: IMPLEMENTED, без migration ledger: версия хранится в PRAGMA user_version.
 // STATUS: DONE
 func TestOpenCurrentSchema(t *testing.T) {
 	s := newTestStore(t)
@@ -94,9 +95,10 @@ func TestOpenIdempotentOnReopen(t *testing.T) {
 	}
 }
 
-// TestOpenRejectsForeignSchemaVersion: миграций нет, старая база не
-// обновляется, а отвергается. Отказ обязан назвать обе версии и не
-// тронуть файл: сравниваем снимок sqlite_master и user_version.
+// TestOpenRejectsForeignSchemaVersion: версия без цепочки миграций (до 26,
+// #274) и версия новее релиза отвергаются, а не обновляются. Отказ обязан
+// назвать обе версии и не тронуть файл: сравниваем снимок sqlite_master и
+// user_version.
 func TestOpenRejectsForeignSchemaVersion(t *testing.T) {
 	for _, version := range []int{0, 7, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, schemaVersion + 1, 99} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {

@@ -182,11 +182,19 @@ class ExistingInstallTests(IsolatedTestCase):
             with self.subTest(changed=changed), self.assertRaises(RuntimeError):
                 helper.metadata(json.dumps(changed), snapshot=True)
         helper.before = before
+        helper.schema = {"from": 5, "to": 6}
         helper.execute = Mock(return_value={"schema_version": 6, "enabled_admins": 1, "users": 1})
         helper.inspect(IMAGE)
         helper.execute.return_value = {"schema_version": 6, "enabled_admins": 1, "users": 2}
         with self.assertRaisesRegex(RuntimeError, "user|admin"):
             helper.inspect(IMAGE)
+        # Сервер открыл базу в другой версии, чем та, до которой verify довёл snapshot (#274).
+        for after, schema in ((5, {"from": 5, "to": 6}), (6, None)):
+            with self.subTest(after=after, schema=schema):
+                helper.schema = schema
+                helper.execute.return_value = {"schema_version": after, "enabled_admins": 1, "users": 1}
+                with self.assertRaisesRegex(RuntimeError, "schema version after rollout"):
+                    helper.inspect(IMAGE)
 
     def test_helper_execution_validates_pod_before_logs_and_cleans_with_uid_precondition(self):
         helper, _ = self.helper()
@@ -560,6 +568,8 @@ class FakeKubernetes:
         self.lease_rv = 500
         self.lease_events = []
         self.prune_reply = None      # ответ helper хранения снимков (#247); None - честный
+        self.schema = (16, 16)       # версия snapshot и цель verify (#274)
+        self.after_version = None    # версия базы после rollout; None - цель verify
 
     def bump(self):
         self.resource_version += 1
@@ -729,12 +739,14 @@ class FakeKubernetes:
             if op in self.refuse:
                 return 0, self.refuse[op], ""
             if op == "verify":
-                return 0, json.dumps({"schema_version": 16, "verified": True}), ""
+                found, target = self.schema
+                return 0, json.dumps({"schema_version": found, "target_version": target, "verified": True}), ""
             if op == "prune":
                 args = self.created["pod"]["spec"]["containers"][0]["args"]
                 reply = self.prune_reply or {"current": Path(args[1]).name, "kept": int(args[3]), "removed": 2}
                 return 0, json.dumps(reply), ""
-            data = {"schema_version": 16, "enabled_admins": 1, "users": 2}
+            version = self.schema[0] if op == "snapshot" else self.after_version or self.schema[1]
+            data = {"schema_version": version, "enabled_admins": 1, "users": 2}
             if op == "snapshot":
                 data.update(sha256="a" * 64, bytes=4096)
             return 0, json.dumps(data), ""
@@ -885,10 +897,15 @@ class CrashLoopRecoveryTests(IsolatedTestCase):
 
     def test_verification_metadata_is_strict(self):
         helper, _ = self.helper()
-        good = {"schema_version": 16, "verified": True}
+        good = {"schema_version": 16, "target_version": 16, "verified": True}
         self.assertEqual(helper.verification(json.dumps(good)), good)
-        for bad in ({"schema_version": 16, "verified": False}, {"schema_version": 16},
-                    {"schema_version": "16", "verified": True}, {**good, "extra": 1}, [], 5):
+        # Миграция (#274): snapshot старше релиза, релиз доводит его до своей версии.
+        migrated = {"schema_version": 26, "target_version": 27, "verified": True}
+        self.assertEqual(helper.verification(json.dumps(migrated)), migrated)
+        for bad in ({"schema_version": 16, "target_version": 16, "verified": False}, {"schema_version": 16},
+                    {"schema_version": 16, "verified": True}, {"schema_version": 27, "target_version": 26, "verified": True},
+                    {"schema_version": 26, "target_version": "27", "verified": True},
+                    {"schema_version": "16", "target_version": 16, "verified": True}, {**good, "extra": 1}, [], 5):
             with self.subTest(bad=bad), self.assertRaises(RuntimeError):
                 helper.verification(json.dumps(bad))
         with self.assertRaises(RuntimeError):
@@ -910,7 +927,7 @@ class CrashLoopRecoveryTests(IsolatedTestCase):
             self.assertEqual(helper.before, before)
             if mutate_after:
                 mutate_after(objects)
-            return verified if verified is not None else {"schema_version": 16, "verified": True}
+            return verified if verified is not None else {"schema_version": 16, "target_version": 16, "verified": True}
 
         helper.execute = Mock(side_effect=execute)
         return helper, events
@@ -927,7 +944,7 @@ class CrashLoopRecoveryTests(IsolatedTestCase):
         self.assertEqual(events, ["snapshot"])
 
     def test_unverified_or_different_version_refuses_rollout(self):
-        for verified in ({"schema_version": 15, "verified": True}, {"schema_version": 16, "verified": False}):
+        for verified in ({"schema_version": 15, "target_version": 16, "verified": True}, {"schema_version": 16, "target_version": 16, "verified": False}):
             with self.subTest(verified=verified):
                 helper, _ = self.snapshot_flow(verified=verified)
                 with self.assertRaises(RuntimeError):
@@ -965,15 +982,16 @@ class CrashLoopRecoveryTests(IsolatedTestCase):
     # scale-to-zero opt-in; a negative or mismatched verdict refuses the release.
     # STATUS: DONE
     def test_ready_runtime_verifies_the_snapshot_before_apply(self):
-        helper, operations = self.ready_snapshot_flow({"schema_version": 16, "verified": True})
+        helper, operations = self.ready_snapshot_flow({"schema_version": 16, "target_version": 16, "verified": True})
         helper.snapshot(IMAGE)
         self.assertEqual(operations, ["snapshot", "verify"])
+        self.assertEqual(helper.schema, {"from": 16, "to": 16})
         self.assertTrue(helper.handed_off)
         self.assertFalse(helper.recovered)
         self.assertIsNone(helper.quiesced)
 
     def test_ready_runtime_refuses_unverified_or_other_version_before_apply(self):
-        for verified in ({"schema_version": 15, "verified": True}, {"schema_version": 16, "verified": False}):
+        for verified in ({"schema_version": 15, "target_version": 16, "verified": True}, {"schema_version": 16, "target_version": 16, "verified": False}):
             with self.subTest(verified=verified):
                 helper, operations = self.ready_snapshot_flow(verified)
                 with self.assertRaisesRegex(RuntimeError, "refusing rollout"):
@@ -992,6 +1010,20 @@ class CrashLoopRecoveryTests(IsolatedTestCase):
             deploy.return_value.run.return_value = result
             command.main([])
         self.assertIn("Recovered an interrupted rollout", out.getvalue())
+
+    def test_cli_names_the_schema_migration_of_the_rollout(self):
+        import io
+        command = __import__("brood.dev.deploy.cli.server", fromlist=["main"])
+        for schema, line in (({"from": 26, "to": 27}, "Database schema migrated from 26 to 27 on server start"),
+                             ({"from": 27, "to": 27}, "Database schema 27: no migration")):
+            with self.subTest(schema=schema):
+                result = {"image": IMAGE, "host": "h.example", "acceptance": "pending",
+                          "snapshot": "/data/.brood-snapshot-x.db", "schema": schema}
+                with patch.object(command, "settings"), patch.object(command, "cluster"), \
+                        patch.object(command, "Deployment") as deploy, patch("sys.stdout", new_callable=io.StringIO) as out:
+                    deploy.return_value.run.return_value = result
+                    command.main([])
+                self.assertIn(line, out.getvalue())
 
     def real_flow(self, healthy=False, trace=None):
         """Согласованный поток: настоящие ExistingInstall и Deployment.run, фейк только kubectl/API."""
@@ -1093,10 +1125,11 @@ class CrashLoopRecoveryTests(IsolatedTestCase):
 class HealthySchemaGateTests(IsolatedTestCase):
     PRIVATE = "synthetic-private-row password=hunter2"
 
-    def run_healthy(self, refusal=None):
+    def run_healthy(self, refusal=None, schema=(16, 16), after=None):
         deploy, rollout, kube = CrashLoopRecoveryTests.real_flow(self, healthy=True)
         # Без BROOD_DEPLOY_SCALE_FENCE: gate не зависит от opt-in recovery.
         deploy.get = {**VALUES, "BROOD_DEPLOY_MODE": "existing", "BROOD_ADMIN_PASSWORD": ""}.get
+        kube.schema, kube.after_version = schema, after
         if refusal is not None:
             kube.refuse["verify"] = refusal
         helpers = []
@@ -1127,16 +1160,21 @@ class HealthySchemaGateTests(IsolatedTestCase):
             "version": "incompatible database schema: found 15, want 16",
             "trigger": "incompatible database schema: missing trigger swarm_graph_immutable",
             "index": "incompatible database schema: index swarms_live_name differs from current schema",
+            # Миграции (#274): старый образ на новой базе, версия вне цепочки, упавший шаг.
+            "newer": "incompatible database schema: found 27, want 26; the database is newer than this release",
+            "unknown": "incompatible database schema: found 15, want 27; no migration from version 15",
+            "step": "incompatible database schema: migration from version 26 to 27 failed",
         }
         for name, cause in causes.items():
             with self.subTest(name):
-                log = f"{self.PRIVATE}\nbrood database: {cause}; recreate the database\n"
+                log = f"{self.PRIVATE}\nbrood database: {cause}: {self.PRIVATE}\n"
                 error, deploy, kube, before, _ = self.run_healthy(log)
                 self.assertIsInstance(error, RuntimeError)
                 message = str(error)
                 self.assertIn(cause, message)
                 self.assertIn("before apply", message)
-                self.assertIn("separate operator decision", message)
+                self.assertIn("ships with a migration from the deployed version", message)
+                self.assertNotIn("recreat", message)
                 self.assertNotIn("hunter2", message)
                 self.assertNotIn("private-row", message)
                 # Production остаётся на прежней версии: Deployment не записан, apply не было.
@@ -1148,6 +1186,27 @@ class HealthySchemaGateTests(IsolatedTestCase):
                 # Оба helper (snapshot и verify) удалены по UID, Lease снята: повтор не заблокирован.
                 self.assertEqual(len(kube.deleted), 4)
                 self.assertIsNone(kube.objects.get(("lease", "brood-go-deploy")))
+
+    # FEATURE: Schema gate passes a release that migrates the database (#274).
+    # SPEC: the snapshot is version N, the new image verifies it by migrating its
+    # bytes in memory and reports N and the target M; the rollout applies, the
+    # post-rollout inspect must read M, and the result names both versions.
+    # STATUS: DONE
+    def test_older_database_the_release_migrates_is_rolled_out(self):
+        result, deploy, kube, _, _ = self.run_healthy(schema=(26, 27))
+        self.assertNotIsInstance(result, Exception)
+        self.assertEqual(result["schema"], {"from": 26, "to": 27})
+        kinds = [e for e in kube.events if e[0] in {"logs", "apply"}]
+        self.assertEqual(kinds, [("logs", "snapshot"), ("logs", "verify"), ("apply",), ("logs", "inspect")])
+        self.assertIsNone(kube.objects.get(("lease", "brood-go-deploy")))
+
+    def test_rollout_whose_database_is_not_at_the_verified_target_needs_operator_review(self):
+        error, deploy, kube, _, _ = self.run_healthy(schema=(26, 27), after=26)
+        self.assertIsInstance(error, RuntimeError)
+        self.assertIn("schema version after rollout", str(error))
+        self.assertIn(("apply",), kube.events)
+        # После apply исход неоднозначен: Lease остаётся до решения оператора.
+        self.assertIsNotNone(kube.objects.get(("lease", "brood-go-deploy")))
 
     def test_verify_failure_without_schema_cause_still_refuses_before_apply(self):
         error, deploy, kube, before, _ = self.run_healthy("panic: " + self.PRIVATE + "\n")
@@ -2066,7 +2125,7 @@ class ForcedChainTests(IsolatedTestCase):
         def output(*args):
             if "logs" in args and "--previous" not in args and not self.verify_ok \
                     and self.kube.created["pod"]["spec"]["containers"][0]["command"][2] == "verify":
-                return 0, json.dumps({"schema_version": 16, "verified": False}), ""
+                return 0, json.dumps({"schema_version": 16, "target_version": 16, "verified": False}), ""
             return raw(*args)
 
         self.deploy.cluster.shell.output.side_effect = output
@@ -2299,7 +2358,9 @@ class HelperFailureTests(IsolatedTestCase):
                   "index swarms_live_name differs from current schema", "missing index managed_pools_live_name",
                   "trigger swarm_graph_immutable differs from current schema",
                   "missing trigger pipeline_sources_no_delete", "found 15, want 16",
-                  "swarm primary owner has no owner grant", "workflow revision counters differ from definitions")
+                  "swarm primary owner has no owner grant", "workflow revision counters differ from definitions",
+                  "found 27, want 26; the database is newer than this release",
+                  "found 15, want 27; no migration from version 15", "migration from version 26 to 27 failed")
         for cause in causes:
             with self.subTest(cause=cause):
                 log = f"private-row\nbrood database: incompatible database schema: {cause}; recreate the database\n"
@@ -2325,7 +2386,7 @@ class HelperFailureTests(IsolatedTestCase):
         self.assertNotIn("alice", message)
 
     def test_succeeded_phase_returns_and_stuck_helper_times_out_inside_deadline(self):
-        helper, deleted, _ = self.run_helper("Succeeded", log=json.dumps({"schema_version": 16, "verified": True}))
+        helper, deleted, _ = self.run_helper("Succeeded", log=json.dumps({"schema_version": 16, "target_version": 16, "verified": True}))
         self.assertTrue(helper.execute(IMAGE, "verify")["verified"])
         helper, deleted, now = self.run_helper("Running", never_terminal=True)
         with self.assertRaisesRegex(RuntimeError, "did not finish within 190s"):
@@ -2799,6 +2860,37 @@ class GenerationFenceAndLeaseTests(IsolatedTestCase):
                 with self.assertRaisesRegex(RuntimeError, "lease/brood-go-deploy exists"):
                     deploy.run()
         self.assertEqual(kube.lease_events.count("create"), creates)
+
+    # FEATURE: a failure after apply names this deploy's snapshot (#274).
+    # SPEC: the new server may already have migrated the database, so the
+    # operator's rollback needs exactly the snapshot taken before apply; the
+    # refusal carries its path and the rollback reference. Before apply the
+    # running server and database are untouched and no snapshot is named.
+    def test_failure_after_apply_names_the_snapshot_taken_before_apply(self):
+        deploy, _, _ = CrashLoopRecoveryTests.real_flow(self.suite, healthy=True)
+
+        def broken(*, before_apply):
+            before_apply(IMAGE)
+            raise RuntimeError("Go deployment rollout failed: timeout")
+        with patch.object(public, "GoDeploy") as go:
+            go.return_value.run.side_effect = broken
+            with self.assertRaises(RuntimeError) as failure:
+                deploy.run()
+        text = str(failure.exception)
+        self.assertRegex(text, r"rollout failed: timeout")
+        self.assertRegex(text, r"/data/\.brood-snapshot-[0-9a-f]{32}\.db")
+        self.assertIn("docs/DEPLOY.md", text)
+
+    def test_failure_before_apply_names_no_snapshot(self):
+        deploy, _, _ = CrashLoopRecoveryTests.real_flow(self.suite, healthy=True)
+
+        def broken(*, before_apply):
+            raise RuntimeError("Go image build failed")
+        with patch.object(public, "GoDeploy") as go:
+            go.return_value.run.side_effect = broken
+            with self.assertRaises(RuntimeError) as failure:
+                deploy.run()
+        self.assertNotIn("snapshot", str(failure.exception))
 
 
 # FEATURE: Database snapshots on the owned PVC are retained, not accumulated (#247).

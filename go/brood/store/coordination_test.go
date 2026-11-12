@@ -353,7 +353,7 @@ func TestCoordinationIndependentConnections(t *testing.T) {
 	}
 }
 
-// TestCoordinationUnversionedObjectsRefused: миграций нет (#205); база
+// TestCoordinationUnversionedObjectsRefused: цепочка миграций начинается с 26 (#274); база
 // с coordination-объектами чужой структуры отвергается без мутации.
 func TestCoordinationUnversionedObjectsRefused(t *testing.T) {
 	ctx := context.Background()

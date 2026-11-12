@@ -16,6 +16,19 @@ import (
 	"fmt"
 )
 
+// swarmSummaryQuery: сводка набора роёв одной выборкой; подсчёты запросов
+// роя идут по индексу swarm_requests_swarm (#274).
+const swarmSummaryQuery = `
+	SELECT s.id, s.execution,
+		(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.state = 'open'),
+		(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.origin = 'actor'
+			AND r.state = 'answered' AND r.delivery IN ('failed', 'unconfirmed')),
+		COALESCE(s.definition_name, ''), COALESCE(s.definition_version, 0), COALESCE(s.definition_revision, ''),
+		(SELECT COUNT(*) FROM swarm_members m WHERE m.swarm_id = s.id),
+		(SELECT COUNT(*) FROM managed_actors a WHERE a.swarm_id = s.id AND a.phase <> 'deleted')
+	FROM swarms s
+	WHERE s.id IN (SELECT value FROM json_each(?))`
+
 // SwarmSummary is the execution of a swarm graph, the number of its open
 // operator requests of either origin, node or actor, the number of operator
 // answers to actor requests whose delivery is failed or unconfirmed, the
@@ -65,16 +78,7 @@ func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSu
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.QueryContext(ctx, `
-		SELECT s.id, s.execution,
-			(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.state = 'open'),
-			(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.origin = 'actor'
-				AND r.state = 'answered' AND r.delivery IN ('failed', 'unconfirmed')),
-			COALESCE(s.definition_name, ''), COALESCE(s.definition_version, 0), COALESCE(s.definition_revision, ''),
-			(SELECT COUNT(*) FROM swarm_members m WHERE m.swarm_id = s.id),
-			(SELECT COUNT(*) FROM managed_actors a WHERE a.swarm_id = s.id AND a.phase <> 'deleted')
-		FROM swarms s
-		WHERE s.id IN (SELECT value FROM json_each(?))`, string(set))
+	rows, err := q.QueryContext(ctx, swarmSummaryQuery, string(set))
 	if err != nil {
 		return nil, fmt.Errorf("swarm summaries: %w", err)
 	}
