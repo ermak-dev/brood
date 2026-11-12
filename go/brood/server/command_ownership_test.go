@@ -40,6 +40,7 @@ var lifecycleTargetArguments = map[string]string{
 	"delete": `{"name":%q,"confirm":true}`,
 	"start":  `{"name":%q}`,
 	"reset":  `{"name":%q,"confirm":true}`,
+	"update": `{"name":%q}`,
 }
 
 // sessionTargetArguments задаёт аргументы изменяющей сессионной команды для

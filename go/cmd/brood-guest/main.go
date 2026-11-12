@@ -287,7 +287,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	// Подпись — от bootstrap-идентичности root, остановка — через сам runtime.
 	attestor := guest.NewWorkspaceAttestor(cfg, c.workspace, runtime.Quiesce)
 	c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
-		return guest.NewSupervisorSessionHandler(connection, refresh, attestor)
+		return releaseSessions(artifactRoot, guest.NewSupervisorSessionHandler(connection, refresh, attestor))
 	}
 	runtimeDone := make(chan error, 1)
 	go func() { runtimeDone <- runtime.Wait(); cancel() }()

@@ -98,7 +98,9 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 	case "add", "delete", "stop", "start", "reset", "update":
 		result, err := m.executeLifecycleCommand(ctx, from, inv)
 		if err != nil {
-			return relay.SwarmResponse{Text: err.Error()}
+			// Неизвестный исход update (#133) доходит до гостя как unknown,
+			// а не как отказ без исхода.
+			return relay.SwarmResponse{Text: err.Error(), Outcome: result.Outcome}
 		}
 		return commandSwarmResponse(result)
 	case "send":
