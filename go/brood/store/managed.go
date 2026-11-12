@@ -487,7 +487,7 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 			return nil
 		}
 		if operation == "start" || operation == "stop" || operation == "delete" || operation == "reset" {
-			if err := s.guardActorCoordination(ctx, a.UID); err != nil {
+			if err := s.guardActorCoordination(ctx, a); err != nil {
 				return err
 			}
 		}

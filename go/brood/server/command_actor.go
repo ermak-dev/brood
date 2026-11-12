@@ -270,9 +270,14 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 
 func actorCommandError(err error) error {
 	var ownership *ownershipError
+	var held *store.CoordinationConflictError
 	switch {
 	case errors.As(err, &ownership):
 		return err
+	case errors.As(err, &held):
+		// Причина координации не выходит за рой актора и называет держателя
+		// аренды (#272): её отдаём как есть, а не общим отказом.
+		return fmt.Errorf("%w: managed lifecycle refused; %s", app.ErrConflict, held.Reason)
 	case errors.Is(err, app.ErrNotAllowed):
 		return fmt.Errorf("%w: actor command delegation or swarm access is not authorized", app.ErrNotAllowed)
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, app.ErrNotFound):

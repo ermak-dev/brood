@@ -90,13 +90,20 @@ func (s *Server) authorizeSessionCoordination(ctx context.Context, target store.
 		return app.ErrConflict
 	}
 	for _, claim := range claims {
-		if operation == "restart" || operation == "wipe" || operation == "recycle" {
-			return fmt.Errorf("%w: release active coordination before restarting or cleaning this actor", app.ErrConflict)
+		reason := "release active coordination before restarting or cleaning this actor"
+		if operation != "restart" && operation != "wipe" && operation != "recycle" {
+			if (sourceUID != "" && claim.Source.UID == sourceUID && claim.Source.Generation == generation) || (sourceUID == "" && userID == claim.HumanID) {
+				continue
+			}
+			reason = "session control belongs to another dispatch owner"
 		}
-		if (sourceUID != "" && claim.Source.UID == sourceUID && claim.Source.Generation == generation) || (sourceUID == "" && userID == claim.HumanID) {
-			continue
+		// Отказ называет держателя и request ID, по которому аренду
+		// освобождают (#272).
+		hold, err := s.store.DescribeCoordinationHold(ctx, target.SwarmID, claim)
+		if err != nil {
+			return app.ErrConflict
 		}
-		return fmt.Errorf("%w: session control belongs to another dispatch owner", app.ErrConflict)
+		return fmt.Errorf("%w: %s: %s", app.ErrConflict, reason, hold)
 	}
 	return nil
 }
