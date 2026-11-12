@@ -318,6 +318,10 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 			if detail := publicSwarmExecutionError(resp.Body); detail != "" {
 				statusErr = fmt.Errorf("%w: %s", statusErr, detail)
 			}
+		} else if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
+			if reason := publicCommandRefusal(resp.Body); reason != "" {
+				statusErr = fmt.Errorf("%w: %s", statusErr, reason)
+			}
 		}
 	}
 	if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
