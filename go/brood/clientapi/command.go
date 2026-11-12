@@ -4,11 +4,46 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"brood.dev/go/brood/command"
 )
+
+const (
+	// maxCommandRefusal — предел показываемой причины отказа команды (#276).
+	maxCommandRefusal = 1024
+	// maxCommandRefusalBody — предел читаемого тела отказа, как у других путей.
+	maxCommandRefusalBody = 4096
+)
+
+// publicCommandRefusal — причина отказа команды из поля reason ответа
+// (#276). Тело недоверенное, а detail сервер заполняет текстом любой ошибки,
+// в том числе внутренней, поэтому detail и прочие поля не читаются. Причина
+// попадает в ошибку, только если тело — UTF-8 до maxCommandRefusalBody байт,
+// а она — непустая строка до maxCommandRefusal байт без управляющих
+// символов. Сервер до #276 reason не отдаёт: ошибка остаётся прежней.
+func publicCommandRefusal(body io.Reader) string {
+	data, err := io.ReadAll(io.LimitReader(body, maxCommandRefusalBody+1))
+	if err != nil || len(data) > maxCommandRefusalBody || !utf8.Valid(data) {
+		return ""
+	}
+	var response struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(data, &response) != nil {
+		return ""
+	}
+	reason := response.Reason
+	if reason == "" || len(reason) > maxCommandRefusal || strings.IndexFunc(reason, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return reason
+}
 
 // CommandExecutor binds catalog commands to an authenticated operator's scope.
 // It preserves Client TLS, CSRF, redirect refusal, and credential handling.
