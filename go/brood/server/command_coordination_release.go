@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/command"
@@ -29,14 +28,14 @@ func (m *managedProvider) dispatchLeaseAction(ctx context.Context, from store.Ma
 		}
 		target, err := m.server.store.LookupManagedActor(ctx, sw.ID, name)
 		if err != nil {
-			return fmt.Errorf("dispatch target is not in this swarm")
+			return command.Refuse(nil, "dispatch target is not in this swarm")
 		}
 		claim, err = m.server.store.ShowDispatchLease(ctx, sw.ProjectID, sw.ID, target.UID)
 		if err != nil {
-			return fmt.Errorf("dispatch allocation is not active")
+			return command.Refuse(nil, "dispatch allocation is not active")
 		}
 		if claim.RequestID != requestID || claim.Source.UID != from.UID || claim.Source.Generation != from.Incarnation || claim.HumanID != from.DelegatorID {
-			return fmt.Errorf("dispatch allocation belongs to another request or owner")
+			return command.Refuse(nil, "dispatch allocation belongs to another request or owner")
 		}
 		if action == "release" {
 			return m.server.store.ReleaseDispatchLease(ctx, claim)

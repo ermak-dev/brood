@@ -69,7 +69,7 @@ Substrate закреплён в `go.mod` на публичной версии
 - `proxy`: HTTP/WebSocket к акторам с проверкой и отзывом доступа.
 - `server`: сборка сервера, маршруты, встроенная панель.
 - `clientapi`: веб-сессия CLI, TLS, chunked push и защищённое сохранение credentials.
-- `command`: единые декларации, CLI/MCP-аргументы и канонические invocation.
+- `command`: единые декларации, CLI/MCP-аргументы, канонические invocation и сознательные отказы команд (`Refusal`: публичная причина и класс ошибки, `reason` ответа — `go/CONTRACT.md`).
 - `mcp`: stdio-адаптер над каталогом команд, без реализации операций.
 - `swarmclient`: credential-free клиент фиксированного гостевого broker для `bro --guest`.
 - `build`: текущий Broodfile, рабочие файлы, внешние Git/Docker buildx, локальный OCI-комплект.

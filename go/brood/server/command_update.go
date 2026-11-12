@@ -82,17 +82,17 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 		// Update, ждущий запроса Start, называется как есть: задачи нет, и
 		// отменяют его stop, delete или reset.
 		if updateStartPending(a) {
-			return command.Result{}, newUpdateWaitingRefusal("update", a)
+			return command.Result{}, actorCommandError(newUpdateWaitingRefusal("update", a))
 		}
 		// Незавершённое изменение (в том числе сам перезапуск update, чья
 		// CT уже остановлена) start не заменит: совет start был бы ложным.
 		if a.Stage != "done" {
-			return command.Result{}, fmt.Errorf("%w: update refused: actor %q is %s while its last lifecycle change is unfinished; update restarts only a running, reconciled actor", app.ErrConflict, a.Name, a.Phase)
+			return command.Result{}, command.Refusef(app.ErrConflict, "update refused: actor %q is %s while its last lifecycle change is unfinished; update restarts only a running, reconciled actor", a.Name, a.Phase)
 		}
 		if a.Desired == "stopped" || a.Phase == "stopped" {
-			return command.Result{}, fmt.Errorf("%w: update refused: actor %q is stopped; update restarts a running actor; start it with start, which installs the server's current guest release", app.ErrConflict, a.Name)
+			return command.Result{}, command.Refusef(app.ErrConflict, "update refused: actor %q is stopped; update restarts a running actor; start it with start, which installs the server's current guest release", a.Name)
 		}
-		return command.Result{}, fmt.Errorf("%w: update refused: actor %q is %s, not running; update restarts only a running, reconciled actor", app.ErrConflict, a.Name, a.Phase)
+		return command.Result{}, command.Refusef(app.ErrConflict, "update refused: actor %q is %s, not running; update restarts only a running, reconciled actor", a.Name, a.Phase)
 	}
 	// Шаг в работе, аренда и landing — до вызова гостя: занятому актору
 	// отказ без побочных запросов. Намерение повторит проверку в своей
@@ -104,7 +104,7 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 	// перезапуск оставил бы актора остановленным.
 	target, ok := s.currentGuestRelease()
 	if !ok {
-		return command.Result{}, fmt.Errorf("%w: update refused: the server has no verified guest release (%s); a restart would leave the actor stopped", app.ErrConflict, guestArtifactsSetting)
+		return command.Result{}, command.Refusef(app.ErrConflict, "update refused: the server has no verified guest release (%s); a restart would leave the actor stopped", guestArtifactsSetting)
 	}
 	before := s.managed.guestRelease(ctx, a)
 	if before.unknown != "" {
@@ -116,12 +116,12 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 		// актора без набора тоже даёт отказ, а названный набор доказательством
 		// root не является, и перезапуск тогда затрагивает только CT самого
 		// актора.
-		return command.Result{}, fmt.Errorf("%w: update refused: actor %q did not report its current guest release (%s), and update does not restart a container whose release it cannot check; a guest runtime older than #133 cannot report it: a one-time stop and start installs one that can, but only in a container created from a template with the bootstrap of #184; a container from an earlier template must not be stopped or restarted after a deploy that changed the guest artifacts (docs/PROXMOX.md)", app.ErrConflict, a.Name, before.unknown)
+		return command.Result{}, command.Refusef(app.ErrConflict, "update refused: actor %q did not report its current guest release (%s), and update does not restart a container whose release it cannot check; a guest runtime older than #133 cannot report it: a one-time stop and start installs one that can, but only in a container created from a template with the bootstrap of #184; a container from an earlier template must not be stopped or restarted after a deploy that changed the guest artifacts (docs/PROXMOX.md)", a.Name, before.unknown)
 	}
 	if before.plain {
 		// Плоский bin — bootstrap шаблона до #184: старт ставит артефакты
 		// поверх и отказывает при другом наборе, CT больше не стартует.
-		return command.Result{}, fmt.Errorf("%w: update refused: actor %q runs a guest bootstrap before guest releases (#184): its /opt/brood/bin is a plain directory, so a restart cannot install release %s and fails once the artifacts change; recreate the actor in a pool on a current template", app.ErrConflict, a.Name, target)
+		return command.Result{}, command.Refusef(app.ErrConflict, "update refused: actor %q runs a guest bootstrap before guest releases (#184): its /opt/brood/bin is a plain directory, so a restart cannot install release %s and fails once the artifacts change; recreate the actor in a pool on a current template", a.Name, target)
 	}
 	if before.id == target {
 		// Уже на наборе сервера: перезапуск ничего бы не обновил. Повтор

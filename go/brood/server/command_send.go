@@ -12,8 +12,9 @@ import (
 )
 
 // Публичные исходы канала оператора к актору: их текст читает клиент.
+// Отключённый адресат — отказ команды: сообщение не отправлено.
 var (
-	errRecipientOffline    = errors.New("recipient is not connected")
+	errRecipientOffline    = command.Refuse(nil, "recipient is not connected")
 	errDeliveryUnconfirmed = errors.New("message delivery is unconfirmed; check before retrying")
 )
 
@@ -36,7 +37,7 @@ func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string
 		WaitSeconds int    `json:"wait_seconds"`
 	}
 	if json.Unmarshal(inv.Arguments, &args) != nil {
-		return command.Result{}, errors.New("invalid send arguments")
+		return command.Result{}, command.Refuse(nil, "invalid send arguments")
 	}
 	byName := func(ctx context.Context) (store.ManagedActor, error) {
 		return s.store.LookupManagedActor(ctx, swarmID, args.To)

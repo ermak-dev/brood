@@ -68,17 +68,17 @@ func (s *Server) executeOperatorCommand(ctx context.Context, userID, swarmID, ca
 		return s.executeAdminCommand(ctx, userID, swarmID, inv)
 	case "add", "delete", "stop", "start", "reset", "update":
 		if swarmID == "" {
-			return command.Result{}, errors.New("a swarm scope is required")
+			return command.Result{}, command.Refuse(nil, "a swarm scope is required")
 		}
 		return s.executeActorCommand(ctx, userID, swarmID, inv)
 	case "tail", "slash", "session_history", "session_terminal", "stat", "restart", "wipe", "recycle":
 		if swarmID == "" {
-			return command.Result{}, errors.New("a swarm scope is required")
+			return command.Result{}, command.Refuse(nil, "a swarm scope is required")
 		}
 		return s.executeOperatorSessionCommand(ctx, userID, swarmID, caller, inv)
 	case "agents":
 		if swarmID == "" {
-			return command.Result{}, errors.New("a swarm scope is required")
+			return command.Result{}, command.Refuse(nil, "a swarm scope is required")
 		}
 		actors, err := s.store.ListManagedActors(ctx, swarmID)
 		if err != nil {
@@ -97,7 +97,36 @@ func (s *Server) executeOperatorCommand(ctx context.Context, userID, swarmID, ca
 	case "send":
 		return s.sendOperatorCommand(ctx, userID, swarmID, inv)
 	}
-	return command.Result{}, errors.New("command is not supported in this execution mode")
+	return command.Result{}, command.Refuse(nil, "command is not supported in this execution mode")
+}
+
+// writeCommandError отвечает на ошибку команды. Detail — как прежде, текст
+// ошибки; его клиент не показывает: у внутренней ошибки он может нести
+// подробности хранилища или провайдера. Сознательный отказ (command.Refusal)
+// добавляет reason — публичную причину в пределах command.PublicReason,
+// которую клиент показывает (#276). Статус от reason не зависит: класс
+// отказа отображается так же, как apiError и ветка 409 отображали его раньше.
+func writeCommandError(w http.ResponseWriter, r *http.Request, err error) {
+	reason := command.PublicReason(err)
+	if reason == "" {
+		if errors.Is(err, app.ErrNotAllowed) || errors.Is(err, app.ErrNotFound) || errors.Is(err, app.ErrConflict) {
+			apiError(w, r, err)
+		} else {
+			writeDetail(w, 409, err.Error())
+		}
+		return
+	}
+	status := http.StatusConflict
+	switch {
+	case errors.Is(err, app.ErrNotAllowed):
+		status = http.StatusForbidden
+	case errors.Is(err, app.ErrNotFound):
+		status = http.StatusNotFound
+	}
+	writeJSON(w, status, struct {
+		Detail string `json:"detail"`
+		Reason string `json:"reason"`
+	}{err.Error(), reason})
 }
 
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +155,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !allowed {
-			writeDetail(w, 404, "swarm not found")
+			writeCommandError(w, r, command.Refuse(app.ErrNotFound, "swarm not found"))
 			return
 		}
 		sw, found, err := s.gateway.SwarmByID(scope)
@@ -135,7 +164,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !found || sw.State != app.StateActive {
-			writeDetail(w, 409, "swarm is not active")
+			writeCommandError(w, r, command.Refuse(app.ErrConflict, "swarm is not active"))
 			return
 		}
 		if err := s.checkSwarmNamespace(r.Context(), sw); err != nil {
@@ -144,7 +173,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !spec.Guest && !user.IsAdmin {
-		writeDetail(w, 403, "administrator access required")
+		writeCommandError(w, r, command.Refuse(app.ErrNotAllowed, "administrator access required"))
 		return
 	}
 	caller := "user:" + user.ID
@@ -164,11 +193,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		if result.Outcome == "unconfirmed" || result.Outcome == "unknown" {
 			w.Header().Set("X-Brood-Command-Outcome", "unconfirmed")
 		}
-		if errors.Is(err, app.ErrNotAllowed) || errors.Is(err, app.ErrNotFound) || errors.Is(err, app.ErrConflict) {
-			apiError(w, r, err)
-		} else {
-			writeDetail(w, 409, err.Error())
-		}
+		writeCommandError(w, r, err)
 		return
 	}
 	if !s.validProxySession(r) {

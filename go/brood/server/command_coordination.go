@@ -31,10 +31,10 @@ func (m *managedProvider) executeCoordinationCommand(ctx context.Context, from s
 	case "landing":
 		result, err = m.executeLanding(ctx, from, sw, inv.Arguments)
 	default:
-		return command.Result{}, fmt.Errorf("unsupported coordination command %q", inv.Name)
+		return command.Result{}, command.Refuse(nil, fmt.Sprintf("unsupported coordination command %q", inv.Name))
 	}
 	if err != nil {
-		return command.Result{}, err
+		return command.Result{}, coordinationRefusal(err)
 	}
 	if _, err := m.authorizeCoordination(ctx, from); err != nil {
 		return command.Result{}, err
@@ -58,7 +58,7 @@ func (m *managedProvider) authorizeCoordination(ctx context.Context, from store.
 		return store.Swarm{}, err
 	}
 	if sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != current.AtespaceUID {
-		return store.Swarm{}, fmt.Errorf("%w: managed swarm binding changed", app.ErrConflict)
+		return store.Swarm{}, command.Refusef(app.ErrConflict, "managed swarm binding changed")
 	}
 	if err := m.server.checkSwarmNamespace(ctx, toAppSwarm(sw)); err != nil {
 		return store.Swarm{}, err
@@ -72,17 +72,31 @@ func (m *managedProvider) authorizeCoordination(ctx context.Context, from store.
 
 func coordinationArguments(data json.RawMessage, out any) error {
 	if len(bytes.TrimSpace(data)) == 0 || bytes.TrimSpace(data)[0] != '{' {
-		return fmt.Errorf("coordination arguments must be an object")
+		return command.Refuse(nil, "coordination arguments must be an object")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
-		return fmt.Errorf("invalid coordination arguments: %w", err)
+		// Текст декодера называет поле аргументов, а не правило сервера: он
+		// остаётся в тексте ошибки, как прежде, но не в причине отказа.
+		return fmt.Errorf("%w: %v", command.Refuse(nil, "invalid coordination arguments"), err)
 	}
 	if err := dec.Decode(new(any)); err != io.EOF {
-		return fmt.Errorf("coordination arguments must contain one object")
+		return command.Refuse(nil, "coordination arguments must contain one object")
 	}
 	return nil
+}
+
+// coordinationRefusal делает конфликт координации хранилища отказом команды.
+// Его причина — фиксированная фраза хранилища или описание держателя аренды
+// в рое актора (#272), без текста внутренней ошибки; прочие ошибки не
+// меняются.
+func coordinationRefusal(err error) error {
+	var held *store.CoordinationConflictError
+	if errors.As(err, &held) {
+		return command.Refuse(store.ErrCoordinationConflict, held.Error())
+	}
+	return err
 }
 
 func coordinationClaim(from store.ManagedActor, sw store.Swarm, requestID string) store.CoordinationClaim {
@@ -113,7 +127,7 @@ func (m *managedProvider) dispatchTarget(ctx context.Context, from, target store
 		return err
 	}
 	if current.Incarnation != target.Incarnation || current.Name != target.Name || current.UID == from.UID || current.SwarmID != from.SwarmID || current.AtespaceUID != from.AtespaceUID || current.Phase != "running" || current.Desired != "running" || current.Operation != "start" || current.Stage != "done" {
-		return fmt.Errorf("%w: recipient is not another active managed generation in this swarm", app.ErrConflict)
+		return command.Refusef(app.ErrConflict, "recipient is not another active managed generation in this swarm")
 	}
 	return nil
 }
@@ -133,23 +147,23 @@ func (m *managedProvider) executeDispatch(ctx context.Context, from store.Manage
 		args.Action = "send"
 	}
 	if strings.TrimSpace(args.To) == "" || strings.TrimSpace(args.RequestID) == "" {
-		return command.Result{}, fmt.Errorf("dispatch requires to and request_id")
+		return command.Result{}, command.Refuse(nil, "dispatch requires to and request_id")
 	}
 	if args.Action == "show" || args.Action == "release" {
 		return m.dispatchLeaseAction(ctx, from, sw, args.To, args.RequestID, args.Action)
 	}
 	if args.Action != "send" || strings.TrimSpace(args.Message) == "" {
-		return command.Result{}, fmt.Errorf("dispatch send requires message")
+		return command.Result{}, command.Refuse(nil, "dispatch send requires message")
 	}
 	if args.RequireCleanWorkspace {
-		return command.Result{}, fmt.Errorf("workspace cleanliness proof is unavailable; dispatch only provides an allocation lease")
+		return command.Result{}, command.Refuse(nil, "workspace cleanliness proof is unavailable; dispatch only provides an allocation lease")
 	}
 	if len(args.Message) > relay.MaxMessageBytes {
-		return command.Result{}, fmt.Errorf("dispatch message exceeds size limit")
+		return command.Result{}, command.Refuse(nil, "dispatch message exceeds size limit")
 	}
 	target, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, args.To)
 	if err != nil {
-		return command.Result{}, fmt.Errorf("dispatch recipient is not another active managed actor in this swarm")
+		return command.Result{}, command.Refuse(nil, "dispatch recipient is not another active managed actor in this swarm")
 	}
 	// Работу master назначает только workers, добавленным им через add (#267),
 	// тем же masterOwns, что изменения (#152): аренда без срока закрывает цели
@@ -207,7 +221,7 @@ func (m *managedProvider) executeDispatch(ctx context.Context, from store.Manage
 			}
 			current, e := m.server.store.ShowDispatchLease(ctx, sw.ProjectID, sw.ID, target.UID)
 			if e != nil || current != claim {
-				return command.Result{}, fmt.Errorf("%w: dispatch allocation lease is no longer held", app.ErrConflict)
+				return command.Result{}, command.Refusef(app.ErrConflict, "dispatch allocation lease is no longer held")
 			}
 			response, e := m.deliverMessage(ctx, target.UID, target.Incarnation, relay.MessageRequest{To: target.Name, From: from.Name, Body: args.Message})
 			if e == nil && response.OK {
@@ -243,13 +257,13 @@ func (m *managedProvider) executeLanding(ctx context.Context, from store.Managed
 		args.Action = "show"
 	}
 	if args.Name != "" && args.Name != from.Name {
-		return command.Result{}, fmt.Errorf("landing name must equal the calling managed master; impersonation is not supported")
+		return command.Result{}, command.Refuse(nil, "landing name must equal the calling managed master; impersonation is not supported")
 	}
 	if args.Action != "show" && args.Action != "take" && args.Action != "give" {
-		return command.Result{}, fmt.Errorf("landing action must be show, take or give")
+		return command.Result{}, command.Refuse(nil, "landing action must be show, take or give")
 	}
 	if args.Action == "take" && strings.TrimSpace(args.RequestID) == "" {
-		return command.Result{}, fmt.Errorf("landing take requires request_id")
+		return command.Result{}, command.Refuse(nil, "landing take requires request_id")
 	}
 	var holder store.CoordinationClaim
 	active := false
@@ -271,7 +285,7 @@ func (m *managedProvider) executeLanding(ctx context.Context, from store.Managed
 		holder, e = m.server.store.ShowLandingToken(tx, sw.ProjectID)
 		if errors.Is(e, store.ErrNotFound) {
 			if args.Action == "give" {
-				return fmt.Errorf("%w: landing token is not held", app.ErrConflict)
+				return command.Refusef(app.ErrConflict, "landing token is not held")
 			}
 			return nil
 		}
@@ -281,7 +295,7 @@ func (m *managedProvider) executeLanding(ctx context.Context, from store.Managed
 		active = true
 		if args.Action == "give" {
 			if holder.Source != (store.CoordinationActor{UID: from.UID, Generation: from.Incarnation}) || holder.HumanID != from.DelegatorID || holder.SwarmID != sw.ID || (args.RequestID != "" && args.RequestID != holder.RequestID) {
-				return fmt.Errorf("%w: landing token belongs to another holder or request", app.ErrConflict)
+				return command.Refusef(app.ErrConflict, "landing token belongs to another holder or request")
 			}
 			if e = m.server.store.GiveLandingToken(tx, holder); e != nil {
 				return e

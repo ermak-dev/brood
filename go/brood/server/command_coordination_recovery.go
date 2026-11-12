@@ -29,7 +29,7 @@ func (s *Server) executeOperatorCoordinationCommand(ctx context.Context, userID,
 		RequestID string `json:"request_id"`
 	}
 	if json.Unmarshal(inv.Arguments, &args) != nil {
-		return command.Result{}, errors.New("invalid coordination arguments")
+		return command.Result{}, command.Refuse(nil, "invalid coordination arguments")
 	}
 	action := args.Action
 	if action == "" {
@@ -40,10 +40,10 @@ func (s *Server) executeOperatorCoordinationCommand(ctx context.Context, userID,
 		}
 	}
 	if inv.Name == "dispatch" && action != "show" && action != "release" {
-		return command.Result{}, errors.New("operator dispatch supports show/release only; sending tasks requires a managed master identity")
+		return command.Result{}, command.Refuse(nil, "operator dispatch supports show/release only; sending tasks requires a managed master identity")
 	}
 	if inv.Name == "landing" && action != "show" && action != "give" {
-		return command.Result{}, errors.New("operator landing supports show/give only; taking a token requires a managed master identity")
+		return command.Result{}, command.Refuse(nil, "operator landing supports show/give only; taking a token requires a managed master identity")
 	}
 	var claim store.CoordinationClaim
 	var workspace *store.ActorOperation
@@ -71,7 +71,7 @@ func (s *Server) executeOperatorCoordinationCommand(ctx context.Context, userID,
 					return nil
 				}
 				if args.RequestID != op.OperationID || op.State != "unconfirmed" {
-					return errors.New("workspace recovery requires the exact unconfirmed operation ID; inflight operations cannot be released")
+					return command.Refuse(nil, "workspace recovery requires the exact unconfirmed operation ID; inflight operations cannot be released")
 				}
 				return s.store.FinishActorOperation(ctx, op, true)
 			}
@@ -88,7 +88,7 @@ func (s *Server) executeOperatorCoordinationCommand(ctx context.Context, userID,
 			return nil
 		}
 		if args.RequestID == "" || args.RequestID != claim.RequestID {
-			return errors.New("recovery requires the exact active request_id")
+			return command.Refuse(nil, "recovery requires the exact active request_id")
 		}
 		if inv.Name == "dispatch" {
 			return s.store.ReleaseDispatchLease(ctx, claim)
@@ -96,7 +96,7 @@ func (s *Server) executeOperatorCoordinationCommand(ctx context.Context, userID,
 		return s.store.GiveLandingToken(ctx, claim)
 	})
 	if err != nil {
-		return command.Result{}, err
+		return command.Result{}, coordinationRefusal(err)
 	}
 	if workspace != nil {
 		return coordinationResult("Explicit workspace reservation "+action+"; inspect the workspace before retrying any side effect.", "completed", map[string]any{"operation_id": workspace.OperationID, "operation": workspace.Operation, "state": workspace.State, "active": action == "show"})

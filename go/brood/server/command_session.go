@@ -30,7 +30,7 @@ func sessionCommandTarget(inv command.Invocation, fallback string) (string, bool
 		args.Name = fallback
 	}
 	if args.Name == "" {
-		return "", false, errors.New("select a target actor with --name")
+		return "", false, command.Refuse(nil, "select a target actor with --name")
 	}
 	mutate := inv.Name == "slash" || inv.Name == "wipe" || inv.Name == "recycle" || inv.Name == "restart"
 	if inv.Name == "session_terminal" {
@@ -42,13 +42,13 @@ func sessionCommandTarget(inv command.Invocation, fallback string) (string, bool
 func (m *managedProvider) callCommandSession(ctx context.Context, target store.ManagedActor, caller string, inv command.Invocation, authorize func() error) (result command.Result, err error) {
 	hub, ok := m.hub.(sessionRelay)
 	if !ok {
-		return result, errors.New("recipient session relay is unavailable")
+		return result, command.Refuse(nil, "recipient session relay is unavailable")
 	}
 	confirmed := true
 	if inv.Name == "restart" || inv.Name == "wipe" || inv.Name == "recycle" {
 		op, acquireErr := m.server.store.AcquireActorOperation(ctx, target.UID, target.Incarnation, store.NewID(), caller, inv.Name)
 		if acquireErr != nil {
-			return result, fmt.Errorf("%w: actor workspace operation is held or conflicts with coordination", app.ErrConflict)
+			return result, command.Refusef(app.ErrConflict, "actor workspace operation is held or conflicts with coordination")
 		}
 		defer func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -61,7 +61,7 @@ func (m *managedProvider) callCommandSession(ctx context.Context, target store.M
 		}()
 	}
 	if !m.hub.Connected(target.UID, target.Incarnation) {
-		return result, errors.New("recipient session relay is unavailable")
+		return result, command.Refuse(nil, "recipient session relay is unavailable")
 	}
 	if authorize != nil {
 		if err := authorize(); err != nil {
@@ -103,7 +103,7 @@ func (s *Server) authorizeSessionCoordination(ctx context.Context, target store.
 		if err != nil {
 			return app.ErrConflict
 		}
-		return fmt.Errorf("%w: %s: %s", app.ErrConflict, reason, hold)
+		return command.Refusef(app.ErrConflict, "%s: %s", reason, hold)
 	}
 	return nil
 }
