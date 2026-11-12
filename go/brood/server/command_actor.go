@@ -24,7 +24,7 @@ func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 	switch inv.Name {
 	case "add", "delete", "stop", "start", "reset", "restart", "update", "recycle", "wipe":
 	default:
-		return args, fmt.Errorf("unsupported actor lifecycle command")
+		return args, command.Refuse(nil, "unsupported actor lifecycle command")
 	}
 	parsed, err := command.ParseTool(inv.Name, inv.Arguments)
 	if err != nil {
@@ -34,20 +34,20 @@ func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 		return args, err
 	}
 	if len(args.Name) > 63 || !managedActorName.MatchString(args.Name) {
-		return args, fmt.Errorf("actor name must be a DNS label of at most 63 characters")
+		return args, command.Refuse(nil, "actor name must be a DNS label of at most 63 characters")
 	}
 	switch inv.Name {
 	case "restart":
-		return args, fmt.Errorf("restart is unsupported: managed actors have no durable workspace-preserving restart intent; reset destroys the disk and is not a substitute")
+		return args, command.Refuse(nil, "restart is unsupported: managed actors have no durable workspace-preserving restart intent; reset destroys the disk and is not a substitute")
 	case "recycle", "wipe":
-		return args, fmt.Errorf("%s is unsupported: managed reset does not implement this command's workspace and session semantics", inv.Name)
+		return args, command.Refuse(nil, fmt.Sprintf("%s is unsupported: managed reset does not implement this command's workspace and session semantics", inv.Name))
 	case "delete":
 		if !args.Confirm {
-			return args, fmt.Errorf("delete destroys the actor disk; confirm=true is required")
+			return args, command.Refuse(nil, "delete destroys the actor disk; confirm=true is required")
 		}
 	case "reset":
 		if !args.Confirm {
-			return args, fmt.Errorf("reset destroys the actor container and workspace; confirm=true is required")
+			return args, command.Refuse(nil, "reset destroys the actor container and workspace; confirm=true is required")
 		}
 	}
 	return args, nil
@@ -121,16 +121,10 @@ func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original s
 	return target, nil
 }
 
-// ownershipError is a master's refusal for an actor it did not add. It unwraps
-// to app.ErrNotAllowed; its text names whose actor the target is.
-type ownershipError struct{ reason string }
-
-func (e *ownershipError) Error() string { return e.reason }
-func (e *ownershipError) Unwrap() error { return app.ErrNotAllowed }
-
 // masterOwns is the single ownership check behind every guest command that
 // changes an actor: lifecycle, workspace and session control (#152), and the
-// dispatch lease that holds it (#267).
+// dispatch lease that holds it (#267). Its refusal is of class
+// app.ErrNotAllowed, and its text names whose actor the target is.
 func (m *managedProvider) masterOwns(ctx context.Context, from, target store.ManagedActor) error {
 	owner := ""
 	if target.ParentUID != "" && target.ParentUID != from.UID {
@@ -141,7 +135,7 @@ func (m *managedProvider) masterOwns(ctx context.Context, from, target store.Man
 		}
 	}
 	if reason := ownershipRefusal(from, target, owner); reason != "" {
-		return &ownershipError{reason: reason}
+		return command.Refuse(app.ErrNotAllowed, reason)
 	}
 	return nil
 }
@@ -194,12 +188,12 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	if inv.Name == "add" {
 		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
 		if err != nil || pool.Template != from.Template || pool.SourceFingerprint != from.SourceFingerprint {
-			return command.Result{}, fmt.Errorf("actor creation refused: approved managed pool binding is unavailable")
+			return command.Result{}, command.Refuse(nil, "actor creation refused: approved managed pool binding is unavailable")
 		}
 		input := &ateapi.Actor{Metadata: &ateapi.ResourceMetadata{Name: args.Name}, ActorTemplate: &ateapi.ObjectRef{Name: managedTemplatePrefix + pool.Name}}
 		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, input, pool, "worker", args.Origin, &from)
 		if err != nil && a.UID == "" {
-			return command.Result{}, fmt.Errorf("%s", managedAddRefusal(err))
+			return command.Result{}, command.Refuse(nil, managedAddRefusal(err))
 		}
 		return actorCommandResult(a), nil
 	}
@@ -226,7 +220,7 @@ func (s *Server) executeActorCommand(ctx context.Context, userID, swarmID string
 		return command.Result{}, app.ErrNotAllowed
 	}
 	if inv.Name == "add" {
-		return command.Result{}, fmt.Errorf("operator add is unsupported without an approved delegated pool; use explicit actor creation")
+		return command.Result{}, command.Refuse(nil, "operator add is unsupported without an approved delegated pool; use explicit actor creation")
 	}
 	sw, err := s.store.GetSwarm(ctx, swarmID)
 	if err != nil {
@@ -241,18 +235,18 @@ func (s *Server) executeActorCommand(ctx context.Context, userID, swarmID string
 
 func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Swarm, a store.ManagedActor, action string, parent *store.ManagedActor) (command.Result, error) {
 	if s.managed == nil {
-		return command.Result{}, fmt.Errorf("managed lifecycle is unavailable")
+		return command.Result{}, command.Refuse(nil, "managed lifecycle is unavailable")
 	}
 	if a.AtespaceUID != sw.AtespaceUID {
-		return command.Result{}, fmt.Errorf("%w: managed actor namespace binding changed", app.ErrConflict)
+		return command.Result{}, command.Refusef(app.ErrConflict, "managed actor namespace binding changed")
 	}
 	if s.ateapi == nil {
-		return command.Result{}, fmt.Errorf("%w: native inventory unavailable", app.ErrConflict)
+		return command.Result{}, command.Refusef(app.ErrConflict, "native inventory unavailable")
 	}
 	_, nativeErr := s.ateapi.GetActor(ctx, sw.AtespaceName, a.Name)
 	var api *substrate.APIError
 	if !errors.As(nativeErr, &api) || api.Status != 404 {
-		return command.Result{}, fmt.Errorf("%w: native actor collision or inventory unavailable", app.ErrConflict)
+		return command.Result{}, command.Refusef(app.ErrConflict, "native actor collision or inventory unavailable")
 	}
 	pool, err := s.store.GetManagedPool(ctx, a.PoolUID)
 	if err != nil {
@@ -269,28 +263,37 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 	return actorCommandResult(op.saved), nil
 }
 
+// actorCommandError делает ошибку жизненного цикла отказом команды
+// (command.Refusal). Причину называют только сознательные отказы; любая
+// другая ошибка, в том числе сбой хранилища или провайдера, становится общим
+// отказом без её текста.
 func actorCommandError(err error) error {
-	var ownership *ownershipError
+	var refusal *command.Refusal
 	var held *store.CoordinationConflictError
 	var waiting *updateWaitingRefusal
 	switch {
-	case errors.As(err, &ownership), errors.As(err, &waiting):
+	case errors.As(err, &refusal):
+		// Владение (#152) и отказы, уже ставшие отказом команды.
 		return err
+	case errors.As(err, &waiting):
+		// Ожидающий update называет ожидание и последний сбой фразой
+		// диагностики актора (#133), без текста ошибки провайдера.
+		return command.Refuse(app.ErrConflict, waiting.Error())
 	case errors.As(err, &held):
 		// Причина координации не выходит за рой актора и называет держателя
 		// аренды (#272): её отдаём как есть, а не общим отказом.
-		return fmt.Errorf("%w: managed lifecycle refused; %s", app.ErrConflict, held.Reason)
+		return command.Refusef(app.ErrConflict, "managed lifecycle refused; %s", held.Reason)
 	case errors.Is(err, store.ErrRevisionConflict):
 		// Проход reconcile (например, повтор отказавшего Start update, #133)
 		// или другая команда изменили актора между чтением и записью
 		// намерения: сверять нечего, повтор прочитает новое состояние.
-		return fmt.Errorf("%w: managed lifecycle refused; the actor changed while the command was checked (a reconcile pass or another lifecycle change); retry the command", app.ErrConflict)
+		return command.Refusef(app.ErrConflict, "managed lifecycle refused; the actor changed while the command was checked (a reconcile pass or another lifecycle change); retry the command")
 	case errors.Is(err, app.ErrNotAllowed):
-		return fmt.Errorf("%w: actor command delegation or swarm access is not authorized", app.ErrNotAllowed)
+		return command.Refusef(app.ErrNotAllowed, "actor command delegation or swarm access is not authorized")
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, app.ErrNotFound):
-		return fmt.Errorf("%w: managed actor is not available in this swarm", app.ErrNotFound)
+		return command.Refusef(app.ErrNotFound, "managed actor is not available in this swarm")
 	default:
-		return fmt.Errorf("%w: managed lifecycle refused; reconcile the current allocation and verify namespace and provider availability", app.ErrConflict)
+		return command.Refusef(app.ErrConflict, "managed lifecycle refused; reconcile the current allocation and verify namespace and provider availability")
 	}
 }
 
