@@ -11,9 +11,11 @@ import type { AccessSwarm } from '@/services/brood/access';
 import { waitingCount } from '@/features/access/swarmActivity';
 import {
   OVERVIEW_SWARMS,
+  RECENT_RUNS,
   overviewSummary,
   overviewSwarms,
   projectDetailsPath,
+  recentRuns,
   summaryTarget,
 } from '@/features/overview/overview';
 
@@ -209,5 +211,84 @@ describe('which swarms the overview lists', () => {
       row('idle'),
     ]);
     expect(ids(shown)).toEqual(['idle', 'unknown']);
+  });
+});
+
+// #268: строка роя несёт момент последнего исполнения (`executionAt`):
+// начало текущего прохода, остановку или окончание. «Последние прогоны»
+// обзора -- рои по нему, новые сверху, не больше предела; рой без момента
+// или с браком в нём сюда не входит. Пустой список правдив, только когда
+// ни один рой не запускался; рои шли, а момента не несёт ни одна строка
+// (старый сервер, проходы до записи момента) -- о прогонах неизвестно.
+describe('recent runs', () => {
+  const ran = (id: string, executionAt: string, execution = 'succeeded') =>
+    row(id, { execution, executionAt });
+
+  test('swarms are ordered by the latest execution change, newest first', () => {
+    const runs = recentRuns([
+      ran('morning', '2026-11-12T08:00:00Z'),
+      ran('now', '2026-11-12T10:00:00Z', 'running'),
+      row('never'),
+      ran('stopped', '2026-11-12T09:30:00Z', 'stopped'),
+      ran('yesterday', '2026-11-11T23:00:00Z', 'failed'),
+    ]);
+    expect(runs && ids(runs)).toEqual(['now', 'stopped', 'morning', 'yesterday']);
+  });
+
+  test('moments are compared as instants, not as strings', () => {
+    const runs = recentRuns([
+      ran('whole', '2026-11-12T10:00:00Z'),
+      ran('fraction', '2026-11-12T10:00:00.5Z'),
+      ran('offset', '2026-11-12T12:00:00+03:00'),
+    ]);
+    expect(runs && ids(runs)).toEqual(['fraction', 'whole', 'offset']);
+  });
+
+  test('the list is cut at its limit', () => {
+    const rows = Array.from({ length: RECENT_RUNS + 3 }, (_, index) =>
+      ran(`run-${index}`, `2026-11-12T10:${String(index).padStart(2, '0')}:00Z`)
+    );
+    const runs = recentRuns(rows) ?? [];
+    expect(RECENT_RUNS).toBeGreaterThan(0);
+    expect(ids(runs)).toEqual(ids(rows).reverse().slice(0, RECENT_RUNS));
+    expect(ids(recentRuns(rows, 2) ?? [])).toEqual(['run-7', 'run-6']);
+  });
+
+  test('equal moments keep the order of the server', () => {
+    const runs = recentRuns([
+      ran('first', '2026-11-12T10:00:00Z'),
+      ran('second', '2026-11-12T10:00:00.000Z'),
+    ]);
+    expect(runs && ids(runs)).toEqual(['first', 'second']);
+  });
+
+  test('a swarm without a moment, with a malformed one or without a summary is not listed', () => {
+    const runs = recentRuns([
+      row('older-pass', { execution: 'succeeded' }),
+      ran('broken', 'yesterday'),
+      ran('date-only', '2026-11-12'),
+      row('unknown', {
+        execution: undefined,
+        openRequests: undefined,
+        executionAt: '2026-11-12T11:00:00Z',
+      }),
+      ran('listed', '2026-11-12T10:00:00Z'),
+    ]);
+    expect(runs && ids(runs)).toEqual(['listed']);
+  });
+
+  test('no run yet: no swarm has started, or there are no swarms', () => {
+    expect(recentRuns([row('a'), row('b')])).toEqual([]);
+    expect(recentRuns([])).toEqual([]);
+  });
+
+  test('swarms ran but no row carries a moment: runs are unknown, not absent', () => {
+    // Старый сервер: исполнение есть, момента нет.
+    expect(recentRuns([row('a'), row('done', { execution: 'succeeded' })])).toBeNull();
+    expect(recentRuns([row('stopped', { execution: 'stopped' }), ran('bad', 'soon')])).toBeNull();
+    // Без сводки неизвестно, запускался ли рой.
+    expect(
+      recentRuns([row('a'), row('unknown', { execution: undefined, openRequests: undefined })])
+    ).toBeNull();
   });
 });

@@ -20,6 +20,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { AccessSwarm } from '@/services/brood/access';
 import { factColumns, swarmFactsOf } from '@/features/access/swarmFacts';
 import { SwarmsTable } from '@/features/access/SwarmsPage';
+import { formatDateTimeValue } from '@/utils/format';
 import { installTestDOM } from './helpers/dom';
 import en from '@/i18n/locales/en.json';
 
@@ -216,6 +217,56 @@ describe('the swarm list', () => {
   });
 });
 
+// #268: строка несёт момент последнего исполнения (`executionAt`); список
+// говорит рядом с исполнением, сколько с него прошло, а точный момент -- в
+// подсказке. Строка без момента (старый сервер, рой без прохода) -- прежняя
+// ячейка исполнения, без «только что» и без нуля.
+describe('the moment of the execution in the swarm list', () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  test('says how long ago the execution changed, the exact moment in a tooltip', () => {
+    const executionAt = ago(5 * 60_000 + 10_000);
+    const markup = render([
+      swarm('busy', { execution: 'running', executionAt }),
+      swarm('fresh', { execution: 'stopped', executionAt: ago(5_000) }),
+    ]);
+    const [busy, fresh] = cells(markup, 'Execution');
+    expect(text(busy)).toBe('Running5 minutes ago');
+    const moment = Date.parse(executionAt);
+    // Имена атрибутов HTML не различают регистр; React пишет dateTime как есть.
+    expect(busy.toLowerCase()).toContain(
+      `<time datetime="${new Date(moment).toISOString().toLowerCase()}"`
+    );
+    const absolute = formatDateTimeValue(moment, 'en');
+    expect(busy).toContain(`title="${i18n.t('access.execution_at', { time: absolute })}"`);
+    // Ячейка -- один элемент: на телефоне ячейка -- сетка «подпись -- значение».
+    const cell = document.createElement('td');
+    cell.innerHTML = busy;
+    expect(cell.childNodes.length).toBe(1);
+    expect(text(fresh)).toBe(`Stopped${en.access.execution_just_now}`);
+  });
+
+  test('a row without a moment keeps the execution cell it had', () => {
+    const before = render([swarm('done', { execution: 'succeeded' })]);
+    const after = render([
+      swarm('done', { execution: 'succeeded' }),
+      swarm('dated', { execution: 'running', executionAt: ago(60_000) }),
+    ]);
+    // Идущий -- выше завершённого (swarmOrder).
+    const [dated, done] = cells(after, 'Execution');
+    expect(done).toBe(cells(before, 'Execution')[0]);
+    expect(done).not.toContain('<time');
+    expect(text(dated)).toBe('Running1 minute ago');
+  });
+
+  test('a malformed moment is not shown and does not hide the execution', () => {
+    const markup = render([swarm('odd', { execution: 'failed', executionAt: 'yesterday' })]);
+    const [cell] = cells(markup, 'Execution');
+    expect(text(cell)).toBe('Stuck');
+    expect(cell).not.toContain('<time');
+  });
+});
+
 function Address() {
   const { pathname, search } = useLocation();
   return createElement('output', { 'data-location': `${pathname}${search}` });
@@ -285,6 +336,21 @@ describe('locales', () => {
           expect.stringContaining('{{count}}'),
         ]);
       }
+    }
+  });
+
+  test('every locale says when the execution changed', () => {
+    for (const locale of ['en', 'ru', 'zh-CN', 'zh-TW', 'vi', 'ko']) {
+      const { access } = read(locale);
+      const justNow = access.execution_just_now;
+      expect([locale, typeof justNow === 'string' && justNow.trim() !== '']).toEqual([
+        locale,
+        true,
+      ]);
+      expect([locale, String(access.execution_at ?? '')]).toEqual([
+        locale,
+        expect.stringContaining('{{time}}'),
+      ]);
     }
   });
 });

@@ -167,6 +167,8 @@
       "remove_member_hint": "Thu hồi quyền truy cập dự án và các bầy của thành viên trong đó."
     },
     "execution": "Thực thi",
+    "execution_at": "Lần thay đổi thực thi gần nhất: {{time}}",
+    "execution_just_now": "vừa xong",
     "execution_states": {
       "idle": "Chưa khởi động",
       "running": "Đang chạy",
@@ -3441,6 +3443,9 @@
     "swarm_members": "Thành viên: {{count}}",
     "managed_actors": "Tác nhân managed: {{count}}",
     "swarm_objects": "Actor và mẫu của bầy",
+    "recent_runs": "Lượt chạy gần đây",
+    "recent_runs_hint": "Các bầy theo lần thay đổi thực thi gần nhất: khởi động, dừng hoặc kết thúc lượt chạy.",
+    "no_runs": "Chưa có lượt chạy nào. Bầy sẽ xuất hiện ở đây sau lần khởi động đầu tiên.",
     "workflows": "Định nghĩa quy trình",
     "workflows_hint": "Các định nghĩa do bro build xuất bản. Lần khởi động đầu tiên của bầy cố định một trong số đó.",
     "catalog_link": "Đồ thị trong danh mục",

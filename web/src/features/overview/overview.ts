@@ -12,6 +12,31 @@ import { SWARMS_PATH, swarmPath } from '@/features/swarms/routes';
 /** Сколько роёв обзор показывает, если ни один не ждёт оператора и не идёт. */
 export const OVERVIEW_SWARMS = 6;
 
+/** Сколько роёв показывают «Последние прогоны». */
+export const RECENT_RUNS = 5;
+
+/** «Последние прогоны» (#268): рои по моменту последнего исполнения
+ * (`executionAt`: начало текущего прохода, остановка или окончание), новые
+ * сверху, не больше limit; при равенстве -- порядок сервера. Рой без
+ * момента или с браком в нём не входит. [] -- прогонов не было: ни один рой
+ * не запускался (или роёв нет). null -- о прогонах неизвестно: рои шли или
+ * их сводки нет, а момента не несёт ни одна строка (старый сервер, проходы
+ * до записи момента); «прогонов не было» было бы неправдой. */
+export function recentRuns(rows: AccessSwarm[], limit = RECENT_RUNS): AccessSwarm[] | null {
+  const dated = rows.flatMap((row) => {
+    const at = swarmActivityOf(row)?.executionAt;
+    return at === undefined ? [] : [{ row, at }];
+  });
+  if (dated.length === 0) {
+    const untouched = rows.every((row) => swarmActivityOf(row)?.execution === 'idle');
+    return untouched ? [] : null;
+  }
+  return dated
+    .sort((a, b) => b.at - a.at)
+    .slice(0, limit)
+    .map(({ row }) => row);
+}
+
 export interface OverviewSummary {
   total: number;
   /** Строки без сводки исполнения или с браком в ней: о них обзор не знает,

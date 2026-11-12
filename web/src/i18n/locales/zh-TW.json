@@ -167,6 +167,8 @@
       "remove_member_hint": "撤銷該成員對專案及其中自己群組的存取權限。"
     },
     "execution": "執行",
+    "execution_at": "執行最近一次變化：{{time}}",
+    "execution_just_now": "剛剛",
     "execution_states": {
       "idle": "未啟動",
       "running": "執行中",
@@ -3460,6 +3462,9 @@
     "swarm_members": "成員：{{count}}",
     "managed_actors": "託管執行者：{{count}}",
     "swarm_objects": "群組的 Actor 與範本",
+    "recent_runs": "最近執行",
+    "recent_runs_hint": "依執行最近一次變化排列的群組：啟動、停止或執行結束。",
+    "no_runs": "尚無執行。群組首次啟動後會顯示在這裡。",
     "workflows": "工作流程定義",
     "workflows_hint": "由 bro build 發布的定義。群組首次啟動時會固定其中一個。",
     "catalog_link": "目錄中的圖",

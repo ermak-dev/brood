@@ -167,6 +167,8 @@
       "remove_member_hint": "撤销该成员对项目及其中自己群组的访问权限。"
     },
     "execution": "执行",
+    "execution_at": "执行最近一次变化：{{time}}",
+    "execution_just_now": "刚刚",
     "execution_states": {
       "idle": "未启动",
       "running": "运行中",
@@ -3432,6 +3434,9 @@
     "swarm_members": "成员：{{count}}",
     "managed_actors": "托管执行者：{{count}}",
     "swarm_objects": "群组的 Actor 和模板",
+    "recent_runs": "最近运行",
+    "recent_runs_hint": "按执行最近一次变化排列的群组：启动、停止或运行结束。",
+    "no_runs": "尚无运行。群组首次启动后会显示在这里。",
     "workflows": "工作流定义",
     "workflows_hint": "由 bro build 发布的定义。群组首次启动时会固定其中一个。",
     "catalog_link": "目录中的图",

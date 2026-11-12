@@ -14,8 +14,10 @@ import { AccessEditor, LoadState, StatusBadge, useAccessActions, useAccessResour
 import { ProjectScope } from '@/features/substrate/components/ProjectScope';
 import { ObjectLink } from '@/features/objects/ObjectLink';
 import { swarmTone } from './state';
+import { ExecutionMoment } from './ExecutionMoment';
 import { executionActivityTone, swarmActivityOf, swarmOrder } from './swarmActivity';
 import { factColumns, swarmFactsOf, type SwarmFactColumns } from './swarmFacts';
+import { useReadMoment } from './useReadMoment';
 import styles from '@/features/substrate/substrate.module.scss';
 
 /** Рои глобально выбранного проекта; каталог уже отфильтрован сервером. */
@@ -30,12 +32,15 @@ export function SwarmsPage() {
 
 /** Таблица роёв (#255): инфраструктура и исполнение -- отдельные колонки,
  * ждущие ответа сверху. Сводку исполнения несёт строка списка (#234); без
- * неё -- прочерк. Определение снимка, участники и managed-акторы (#268) --
- * колонками, когда их несёт хоть одна строка: у старого сервера таблица
- * прежняя. Строка ведёт на страницу роя (#215). */
+ * неё -- прочерк. Рядом с исполнением -- сколько прошло с его последней
+ * смены (#268), от чтения списка; без момента ячейка прежняя. Определение
+ * снимка, участники и managed-акторы (#268) -- колонками, когда их несёт хоть
+ * одна строка: у старого сервера таблица прежняя. Строка ведёт на страницу
+ * роя (#215). */
 export function SwarmsTable({ swarms }: { swarms: AccessSwarm[] }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const now = useReadMoment(swarms);
   const rows = [...swarms].sort(swarmOrder);
   const shown = factColumns(rows);
   // Имя вместо ID: полный ID с копированием -- на странице роя.
@@ -56,12 +61,20 @@ export function SwarmsTable({ swarms }: { swarms: AccessSwarm[] }) {
       render: (swarm) => {
         const activity = swarmActivityOf(swarm);
         if (!activity) return DASH;
-        return (
+        const state = (
           <StatusBadge tone={executionActivityTone(activity.execution)}>
             {t(`access.execution_states.${activity.execution}`, {
               defaultValue: activity.execution,
             })}
           </StatusBadge>
+        );
+        if (activity.executionAt === undefined) return state;
+        // Один элемент на ячейку: на телефоне ячейка -- сетка «подпись -- значение».
+        return (
+          <span className={styles.stateCell}>
+            {state}
+            <ExecutionMoment at={activity.executionAt} now={now} />
+          </span>
         );
       },
     },
