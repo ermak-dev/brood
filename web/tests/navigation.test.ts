@@ -89,7 +89,9 @@ describe('navigation groups', () => {
   });
 
   // #255: группа ресурсов проекта названа именем проекта, у «Swarms» --
-  // число роёв, ждущих ответа оператора; без имени и без ждущих -- как было.
+  // число роёв, ждущих оператора; без имени и без ждущих -- как было. #269:
+  // счётчик называется словами плитки «Ждут вас» обзора, а не исполнения
+  // «ждёт ответа»: он считает и рои с вопросом актора.
   test('the project group carries the project name and a waiting counter', () => {
     const named = navSections({
       administrator: false,
@@ -111,6 +113,12 @@ describe('navigation groups', () => {
     for (const name of locales) {
       const text = lookup(locale(name), 'nav.waiting_swarms');
       expect([name, typeof text === 'string' && text.includes('{{count}}')]).toEqual([name, true]);
+      const tile = lookup(locale(name), 'project_overview.waiting');
+      expect([name, text, typeof tile === 'string' && String(text).includes(tile)]).toEqual([
+        name,
+        text,
+        true,
+      ]);
     }
     expect(source('components/layout/MainLayout.tsx')).toContain('badgeLabelKey');
     expect(source('components/layout/MainLayout.tsx')).toContain('group.label ??');

@@ -17,6 +17,8 @@ import { readFileSync } from 'node:fs';
 import type { AccessSwarm } from '@/services/brood/access';
 import { ProjectOverviewPage } from '@/features/overview/ProjectOverviewPage';
 import { visibleAccessPath } from '@/features/access/permissions';
+import { waitingCount } from '@/features/access/swarmActivity';
+import { navSections } from '@/components/layout/navigation';
 import { tickSwarmPolling } from '@/features/swarms/useSwarmPolling';
 import { useAuthStore, useProjectStore, useSwarmActivityStore } from '@/stores';
 import { installTestDOM } from './helpers/dom';
@@ -277,12 +279,29 @@ describe('the overview of the active project', () => {
     await unmount(page);
   });
 
-  test('the menu counts waiting swarms from the list the overview read', async () => {
+  // #269: меню считает ждущих по списку, который прочёл обзор, и тем же
+  // правилом, что плитка «Ждут вас»: рой с вопросом актора считают оба, и
+  // счётчик меню называется словами плитки.
+  test('the menu counts the swarms of the waiting tile from the list the overview read', async () => {
+    swarms = [...swarms, swarm('s-asks', 'asks-crew', { execution: 'running', openRequests: 1 })];
     useSwarmActivityStore.setState({ project: '', name: '', swarms: null });
     const page = await mount('/');
     const store = useSwarmActivityStore.getState();
     expect(store.project).toBe('p1');
     expect(store.swarms?.map((item) => item.id)).toContain('s-gate');
+    const tile = section(page, 'summary')?.querySelector('[data-tile="waiting"]');
+    const label = tile?.querySelector('span')?.textContent ?? '';
+    expect(label).toBe(en.project_overview.waiting);
+    expect(tile?.querySelector('strong')?.textContent).toBe('2');
+    const [group] = navSections({
+      administrator: false,
+      plugins: false,
+      projectName: store.name,
+      waitingSwarms: waitingCount(store.swarms),
+    });
+    const entry = group.entries.find((item) => item.path === '/swarms');
+    expect(entry?.badge).toBe(2);
+    expect(i18n.t(entry?.badgeLabelKey ?? '', { count: entry?.badge })).toBe(`${label}: 2`);
     await unmount(page);
   });
 

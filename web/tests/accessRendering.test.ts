@@ -22,6 +22,7 @@ import {
   swarmActivityOf,
   swarmOrder,
   waitingCount,
+  waitsForOperator,
 } from '@/features/access/swarmActivity';
 import { SwarmsTable } from '@/features/access/SwarmsPage';
 import { ProjectsTable } from '@/features/access/ProjectsPage';
@@ -174,14 +175,44 @@ test('swarmActivityOf reads undelivered actor answers and tolerates their absenc
   expect(odd?.undeliveredAnswers).toBeUndefined();
 });
 
-test('waitingCount counts the rows waiting for an answer', () => {
+// #269: число в сводке -- неотрицательное целое; отрицательное -- брак, как
+// дробное: вопросы прячут сводку, недоставленные -- только своё число.
+test('swarmActivityOf refuses negative counts', () => {
+  expect(swarmActivityOf(swarm('negative', { execution: 'waiting', openRequests: -1 }))).toBe(
+    undefined
+  );
+  expect(
+    swarmActivityOf(swarm('lost-count', { ...summary('idle'), undeliveredAnswers: -2 }))
+  ).toEqual({ execution: 'idle', openRequests: 0 });
+});
+
+// #269: рой ждёт оператора, когда граф ждёт ответа (и тогда, когда узловой
+// вопрос отменён) или открыт вопрос узла или актора. Недоставленные ответы --
+// отдельный признак: на вопрос уже ответили, ждёт повтор доставки (#264,
+// #266). Без сводки или с браком рой не ждёт: «неизвестно» -- не вопрос.
+test('a swarm waits for the operator on a waiting graph or an open question', () => {
+  const waits = (over: Partial<AccessSwarm>) => waitsForOperator(swarmActivityOf(swarm('s', over)));
+  expect(waits(summary('waiting', 1))).toBe(true);
+  expect(waits(summary('waiting'))).toBe(true);
+  expect(waits(summary('running', 2))).toBe(true);
+  expect(waits(summary('idle', 1))).toBe(true);
+  expect(waits(summary('running'))).toBe(false);
+  expect(waits(summary('failed'))).toBe(false);
+  expect(waits({ ...summary('succeeded'), undeliveredAnswers: 2 })).toBe(false);
+  expect(waits({})).toBe(false);
+  expect(waits({ execution: 'waiting', openRequests: -1 })).toBe(false);
+  expect(waitsForOperator(undefined)).toBe(false);
+});
+
+test('waitingCount counts the swarms waiting for the operator', () => {
   const rows = [
     swarm('a', summary('waiting', 2)),
     swarm('b', summary('running', 1)),
     swarm('c', summary('waiting')),
     swarm('d'),
+    swarm('e', { ...summary('succeeded'), undeliveredAnswers: 1 }),
   ];
-  expect(waitingCount(rows)).toBe(2);
+  expect(waitingCount(rows)).toBe(3);
   expect(waitingCount(null)).toBe(0);
 });
 

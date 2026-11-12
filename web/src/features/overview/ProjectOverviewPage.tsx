@@ -11,11 +11,16 @@ import { useCallback, useEffect, useId, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { accessApi, type AccessProject, type ShardCapacity } from '@/services/brood/access';
+import {
+  accessApi,
+  type AccessProject,
+  type AccessSwarm,
+  type ShardCapacity,
+} from '@/services/brood/access';
 import { pipelinesApi } from '@/services/brood/pipelines';
 import { LoadState, StatusBadge, useAdministrator } from '@/features/access/shared';
 import { swarmTone, type BadgeTone } from '@/features/access/state';
-import { executionActivityTone } from '@/features/access/swarmActivity';
+import { executionActivityTone, swarmActivityOf } from '@/features/access/swarmActivity';
 import { ObjectLink } from '@/features/objects/ObjectLink';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { ProjectScope } from '@/features/substrate/components/ProjectScope';
@@ -25,15 +30,7 @@ import { SWARMS_PATH } from '@/features/swarms/routes';
 import { useSwarmPolling } from '@/features/swarms/useSwarmPolling';
 import { useProjectStore, useSwarmActivityStore } from '@/stores';
 import { formatDateTimeValue } from '@/utils/format';
-import {
-  activityOf,
-  overviewSummary,
-  overviewSwarms,
-  projectDetailsPath,
-  summaryTarget,
-  undeliveredOf,
-  type OverviewRow,
-} from './overview';
+import { overviewSummary, overviewSwarms, projectDetailsPath, summaryTarget } from './overview';
 import styles from '@/features/substrate/substrate.module.scss';
 import local from './ProjectOverview.module.scss';
 
@@ -200,16 +197,16 @@ interface TileSpec {
   value: string;
   hint?: string;
   tone: BadgeTone;
-  rows: OverviewRow[] | null;
+  rows: AccessSwarm[] | null;
 }
 
 /** Плитки «что ждёт оператора»: число роёв (у недоставленных -- ответов),
  * тон -- когда смотреть есть на что. Плитка ведёт к рою, где действовать
  * (summaryTarget). */
-function Summary({ rows }: { rows: OverviewRow[] }) {
+function Summary({ rows }: { rows: AccessSwarm[] }) {
   const { t } = useTranslation();
   const summary = overviewSummary(rows);
-  const count = (list: OverviewRow[]) => String(list.length);
+  const count = (list: AccessSwarm[]) => String(list.length);
   const tiles: TileSpec[] = [
     {
       name: 'waiting',
@@ -300,7 +297,7 @@ function Swarms({
   error,
   retry,
 }: {
-  rows: OverviewRow[] | null;
+  rows: AccessSwarm[] | null;
   loading: boolean;
   error: string | null;
   retry: () => Promise<void>;
@@ -363,10 +360,10 @@ function Swarms({
  * исполнение, открытые вопросы и недоставленные ответы; у активного роя --
  * ссылки на его акторов и шаблоны. Состояние инфраструктуры -- только когда
  * рой не active: здоровое состояние покоя не красится (#254). */
-function SwarmRow({ swarm }: { swarm: OverviewRow }) {
+function SwarmRow({ swarm }: { swarm: AccessSwarm }) {
   const { t } = useTranslation();
-  const activity = activityOf(swarm);
-  const undelivered = undeliveredOf(swarm) ?? 0;
+  const activity = swarmActivityOf(swarm);
+  const undelivered = activity?.undeliveredAnswers ?? 0;
   const active = swarm.state === 'active';
   const scope = { project: swarm.project_id, swarm: swarm.id };
   return (

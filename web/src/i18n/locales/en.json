@@ -306,7 +306,7 @@
     "worker_pools": "Worker pools",
     "project": "Project",
     "overview": "Overview",
-    "waiting_swarms": "Waiting for an answer: {{count}}",
+    "waiting_swarms": "Waiting for you: {{count}}",
     "gateway_dashboard": "Gateway statistics"
   },
   "nav_groups": {

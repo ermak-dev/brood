@@ -302,8 +302,9 @@ export function MainLayout() {
   const clearCache = useConfigStore((state) => state.clearCache);
 
   // brood: список роёв выбранного проекта -- имя группы меню и число ждущих
-  // ответа у «Swarms» (#255); исполнение несёт строка списка (#234), а
-  // страница роёв отдаёт сюда свой список.
+  // оператора у «Swarms» (#255, #269: правило плитки «Ждут вас» обзора);
+  // исполнение несёт строка списка (#234), а страница роёв отдаёт сюда свой
+  // список.
   const project = useProjectStore((state) => state.project);
   const loadActivity = useSwarmActivityStore((state) => state.load);
   const activityProject = useSwarmActivityStore((state) => state.project);

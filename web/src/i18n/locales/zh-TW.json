@@ -306,7 +306,7 @@
     "worker_pools": "工作節點池",
     "project": "專案",
     "overview": "總覽",
-    "waiting_swarms": "等待回答：{{count}}",
+    "waiting_swarms": "等待你處理：{{count}}",
     "gateway_dashboard": "閘道統計"
   },
   "nav_groups": {

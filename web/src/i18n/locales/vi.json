@@ -306,7 +306,7 @@
     "worker_pools": "Nhóm worker",
     "project": "Dự án",
     "overview": "Tổng quan",
-    "waiting_swarms": "Đang chờ trả lời: {{count}}",
+    "waiting_swarms": "Đang chờ bạn: {{count}}",
     "gateway_dashboard": "Thống kê gateway"
   },
   "nav_groups": {
