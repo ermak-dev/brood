@@ -167,6 +167,8 @@
       "remove_member_hint": "Takes away access to the project and to the member's swarms in it."
     },
     "execution": "Execution",
+    "execution_at": "Last execution change: {{time}}",
+    "execution_just_now": "just now",
     "execution_states": {
       "idle": "Not started",
       "running": "Running",
@@ -3435,6 +3437,9 @@
     "swarm_members": "Members: {{count}}",
     "managed_actors": "Managed actors: {{count}}",
     "swarm_objects": "Actors and templates of the swarm",
+    "recent_runs": "Recent runs",
+    "recent_runs_hint": "Swarms by the latest change of their execution: a start, a stop or the end of a run.",
+    "no_runs": "No run has happened yet. A swarm shows up here once it starts.",
     "workflows": "Workflows",
     "workflows_hint": "Definitions published by bro build. A swarm's first start pins one of them.",
     "catalog_link": "Graphs in the catalog",

@@ -68,6 +68,10 @@ export interface AccessSwarm {
   /** Число неудалённых managed-акторов роя (#268). Native-акторов в нём нет:
    * это не число всех акторов роя. */
   managedActorCount?: number;
+  /** Момент последнего исполнения роя (#268), RFC 3339 UTC: начало текущего
+   * прохода, остановка или окончание последнего. У роя без прохода и у части
+   * прежних проходов поля нет. */
+  executionAt?: string;
 }
 
 export interface AccessUser {

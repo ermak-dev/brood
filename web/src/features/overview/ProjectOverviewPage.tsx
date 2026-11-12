@@ -1,7 +1,8 @@
 /**
  * Обзор проекта (#197) -- стартовая страница панели: что в выбранном проекте
  * сейчас и что ждёт оператора. Рои и их исполнение -- из строки списка роёв
- * (#234, #266), без запроса на рой; ёмкость, репозиторий, участники и каталог
+ * (#234, #266), без запроса на рой, как и «Последние прогоны» (момент
+ * последнего исполнения, #268); ёмкость, репозиторий, участники и каталог
  * определений -- теми же маршрутами, что страница проекта, по одному запросу.
  * Один опрос на страницу (#257) перечитывает только список роёв. Управление
  * (ёмкость, репозиторий, состав, графы определений) -- на странице проекта,
@@ -18,11 +19,13 @@ import {
   type AccessSwarm,
   type ShardCapacity,
 } from '@/services/brood/access';
-import { pipelinesApi } from '@/services/brood/pipelines';
+import { pipelinesApi, type SnapshotIdentity } from '@/services/brood/pipelines';
+import { ExecutionMoment } from '@/features/access/ExecutionMoment';
 import { LoadState, StatusBadge, useAdministrator } from '@/features/access/shared';
 import { swarmTone, type BadgeTone } from '@/features/access/state';
 import { executionActivityTone, swarmActivityOf } from '@/features/access/swarmActivity';
 import { swarmFactsOf } from '@/features/access/swarmFacts';
+import { useReadMoment } from '@/features/access/useReadMoment';
 import { ObjectLink } from '@/features/objects/ObjectLink';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { ProjectScope } from '@/features/substrate/components/ProjectScope';
@@ -32,7 +35,13 @@ import { SWARMS_PATH } from '@/features/swarms/routes';
 import { useSwarmPolling } from '@/features/swarms/useSwarmPolling';
 import { useProjectStore, useSwarmActivityStore } from '@/stores';
 import { formatDateTimeValue } from '@/utils/format';
-import { overviewSummary, overviewSwarms, projectDetailsPath, summaryTarget } from './overview';
+import {
+  overviewSummary,
+  overviewSwarms,
+  projectDetailsPath,
+  recentRuns,
+  summaryTarget,
+} from './overview';
 import styles from '@/features/substrate/substrate.module.scss';
 import local from './ProjectOverview.module.scss';
 
@@ -142,6 +151,7 @@ function ProjectOverview({ project }: { project: AccessProject }) {
             error={swarms.error}
             retry={swarms.refresh}
           />
+          {swarms.data && <RecentRuns rows={swarms.data} />}
           <Workflows projectId={id} details={details} />
         </div>
         <div className={local.column}>
@@ -428,17 +438,7 @@ function SwarmFacts({ swarm }: { swarm: AccessSwarm }) {
   if (!definition && members === undefined && managedActors === undefined) return null;
   return (
     <p className={local.swarmFacts} data-swarm-facts="">
-      {definition && (
-        <span>
-          {t('access.workflow')}{' '}
-          <ObjectLink
-            object={{ kind: 'workflow', project: swarm.project_id, name: definition.name }}
-          />{' '}
-          <span title={t('swarm_page.snapshot.hint')}>
-            {t('swarm_page.snapshot.version_short', { version: definition.version })}
-          </span>
-        </span>
-      )}
+      {definition && <SnapshotDefinition project={swarm.project_id} definition={definition} />}
       {members !== undefined && (
         <span>{t('project_overview.swarm_members', { count: members })}</span>
       )}
@@ -448,6 +448,86 @@ function SwarmFacts({ swarm }: { swarm: AccessSwarm }) {
         </span>
       )}
     </p>
+  );
+}
+
+/** Определение снимка роя: имя ссылкой на него в каталоге проекта (#270) и
+ * версия снимка -- не текущая версия каталога, о чём говорит подсказка. */
+function SnapshotDefinition({
+  project,
+  definition,
+}: {
+  project: string;
+  definition: SnapshotIdentity;
+}) {
+  const { t } = useTranslation();
+  return (
+    <span>
+      {t('access.workflow')}{' '}
+      <ObjectLink object={{ kind: 'workflow', project, name: definition.name }} />{' '}
+      <span title={t('swarm_page.snapshot.hint')}>
+        {t('swarm_page.snapshot.version_short', { version: definition.version })}
+      </span>
+    </span>
+  );
+}
+
+/** «Последние прогоны» (#268): рои по моменту последнего исполнения из их
+ * строк (recentRuns), без запроса на рой; сколько прошло -- от чтения списка,
+ * опрос страницы его обновляет. Ни один рой не запускался -- так и сказано;
+ * моментов не несёт ни одна строка, хотя рои шли (старый сервер), -- блока
+ * нет: сказать о прогонах ему нечего. */
+function RecentRuns({ rows }: { rows: AccessSwarm[] }) {
+  const { t } = useTranslation();
+  const now = useReadMoment(rows);
+  const runs = recentRuns(rows);
+  if (runs === null) return null;
+  return (
+    <Card
+      name="runs"
+      title={t('project_overview.recent_runs')}
+      hint={t('project_overview.recent_runs_hint')}
+    >
+      {runs.length === 0 ? (
+        <p className={local.hint}>{t('project_overview.no_runs')}</p>
+      ) : (
+        <ul className={local.swarms}>
+          {runs.map((row) => (
+            <RunRow key={row.id} swarm={row} now={now} />
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+/** Прогон -- это рой (#206): имя ссылкой на его страницу, исполнение и
+ * сколько прошло с его смены; под ними -- определение снимка, если оно
+ * записано. */
+function RunRow({ swarm, now }: { swarm: AccessSwarm; now: number }) {
+  const { t } = useTranslation();
+  const activity = swarmActivityOf(swarm);
+  const definition = swarmFactsOf(swarm).definition;
+  if (!activity || activity.executionAt === undefined) return null;
+  return (
+    <li className={local.swarm} data-run={swarm.id}>
+      <div className={local.swarmName}>
+        <ObjectLink object={{ kind: 'swarm', id: swarm.id }}>{swarm.name}</ObjectLink>
+      </div>
+      <div className={local.swarmNow}>
+        <StatusBadge tone={executionActivityTone(activity.execution)}>
+          {t(`access.execution_states.${activity.execution}`, {
+            defaultValue: activity.execution,
+          })}
+        </StatusBadge>
+        <ExecutionMoment at={activity.executionAt} now={now} />
+      </div>
+      {definition && (
+        <p className={local.swarmFacts}>
+          <SnapshotDefinition project={swarm.project_id} definition={definition} />
+        </p>
+      )}
+    </li>
   );
 }
 

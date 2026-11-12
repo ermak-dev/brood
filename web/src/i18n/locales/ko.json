@@ -167,6 +167,8 @@
       "remove_member_hint": "프로젝트와 그 안의 해당 구성원 스웜에 대한 접근 권한을 회수합니다."
     },
     "execution": "실행",
+    "execution_at": "마지막 실행 변경: {{time}}",
+    "execution_just_now": "방금",
     "execution_states": {
       "idle": "시작되지 않음",
       "running": "실행 중",
@@ -3435,6 +3437,9 @@
     "swarm_members": "구성원: {{count}}",
     "managed_actors": "관리형 액터: {{count}}",
     "swarm_objects": "스웜의 Actor와 템플릿",
+    "recent_runs": "최근 실행",
+    "recent_runs_hint": "실행이 마지막으로 바뀐 순서의 스웜입니다: 시작, 중지 또는 실행 종료.",
+    "no_runs": "아직 실행된 적이 없습니다. 스웜은 처음 시작되면 여기에 표시됩니다.",
     "workflows": "워크플로 정의",
     "workflows_hint": "bro build가 게시한 정의입니다. 스웜의 첫 시작이 그중 하나를 고정합니다.",
     "catalog_link": "카탈로그의 그래프",

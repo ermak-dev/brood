@@ -7,7 +7,7 @@
 // leads to the swarm where to act. Without an active project the page lets
 // the user choose one, or says how to get one. The gateway statistics stay at
 // /dashboard, an administrator page.
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createInstance } from 'i18next';
@@ -21,6 +21,7 @@ import { waitingCount } from '@/features/access/swarmActivity';
 import { navSections } from '@/components/layout/navigation';
 import { tickSwarmPolling } from '@/features/swarms/useSwarmPolling';
 import { useAuthStore, useProjectStore, useSwarmActivityStore } from '@/stores';
+import { formatDateTimeValue } from '@/utils/format';
 import { installTestDOM } from './helpers/dom';
 import en from '@/i18n/locales/en.json';
 
@@ -280,6 +281,126 @@ describe('the overview of the active project', () => {
     expect(list?.querySelector('[data-swarm="s-old"]')?.textContent).toContain('Running');
     expect(requested.filter((url) => url.startsWith('/api/swarms/'))).toEqual([]);
     await unmount(page);
+  });
+
+  // #268: «Последние прогоны» -- рои по моменту последнего исполнения из их
+  // строк, новые сверху, не больше предела; без момента рой сюда не входит.
+  // Запроса на рой нет; сколько прошло -- от чтения списка, и опрос его
+  // обновляет.
+  describe('recent runs', () => {
+    const minutes = (count: number) => count * 60_000;
+    let now = Date.UTC(2026, 10, 12, 12, 0, 0);
+    let clock: { mockRestore: () => void } | undefined;
+    const ago = (ms: number) => new Date(now - ms).toISOString();
+    beforeEach(() => {
+      now = Date.UTC(2026, 10, 12, 12, 0, 0);
+      clock = spyOn(Date, 'now').mockImplementation(() => now);
+    });
+    afterEach(() => clock?.mockRestore());
+    const runs = (page: Mounted) =>
+      Array.from(section(page, 'runs')?.querySelectorAll<HTMLElement>('[data-run]') ?? []);
+
+    test('swarms are listed by their latest execution change, newest first', async () => {
+      const definition = {
+        name: 'review',
+        version: 2,
+        revision: '0123456789abcdef0123456789abcdef',
+      };
+      swarms = [
+        swarm('s-idle', 'idle-crew'),
+        swarm('s-done', 'done-crew', {
+          execution: 'succeeded',
+          executionAt: ago(minutes(90)),
+          definition,
+        }),
+        swarm('s-busy', 'busy-crew', { execution: 'running', executionAt: ago(minutes(5)) }),
+        swarm('s-old', 'old-crew', { execution: 'succeeded' }),
+        swarm('s-halt', 'halt-crew', { execution: 'stopped', executionAt: ago(minutes(30)) }),
+        ...Array.from({ length: 4 }, (_, index) =>
+          swarm(`s-past-${index}`, `past-${index}`, {
+            execution: 'failed',
+            executionAt: ago(minutes(60 * 24 * (index + 2))),
+          })
+        ),
+      ];
+      const page = await mount('/');
+      const items = runs(page);
+      expect(items.map((item) => item.getAttribute('data-run'))).toEqual([
+        's-busy',
+        's-halt',
+        's-done',
+        's-past-0',
+        's-past-1',
+      ]);
+      const [busy, , done] = items;
+      expect(busy.querySelector('a[href="/swarms/s-busy"]')?.textContent).toBe('busy-crew');
+      expect(busy.textContent).toContain('Running');
+      const moment = busy.querySelector('time');
+      expect(moment?.textContent).toBe('5 minutes ago');
+      expect(moment?.getAttribute('datetime')).toBe(ago(minutes(5)));
+      expect(moment?.getAttribute('title')).toBe(
+        i18n.t('access.execution_at', { time: formatDateTimeValue(now - minutes(5), 'en') })
+      );
+      // Определение снимка -- ссылкой на него в каталоге и версией.
+      expect(done.querySelector('a[href="/projects/p1?workflow=review"]')?.textContent).toBe(
+        'review'
+      );
+      expect(done.textContent).toContain('v2');
+      expect(done.textContent).toContain('Succeeded');
+      expect(done.querySelector('time')?.textContent).toBe('1 hour ago');
+      expect(busy.querySelector('a[href^="/projects/"]')).toBeNull();
+      expect(requested.filter((url) => url.startsWith('/api/swarms/'))).toEqual([]);
+      await unmount(page);
+    });
+
+    test('the poll refreshes the runs and how long ago they changed', async () => {
+      swarms = [
+        swarm('s-busy', 'busy-crew', { execution: 'running', executionAt: ago(minutes(5)) }),
+        swarm('s-done', 'done-crew', { execution: 'succeeded', executionAt: ago(minutes(20)) }),
+      ];
+      const page = await mount('/');
+      expect(runs(page).map((item) => item.querySelector('time')?.textContent)).toEqual([
+        '5 minutes ago',
+        '20 minutes ago',
+      ]);
+      // Десять минут спустя прогон s-busy кончился; тик перечитывает список.
+      const finished = ago(0);
+      now += minutes(10);
+      swarms = [
+        swarm('s-done', 'done-crew', { execution: 'succeeded', executionAt: ago(minutes(30)) }),
+        swarm('s-busy', 'busy-crew', { execution: 'succeeded', executionAt: finished }),
+      ];
+      requested = [];
+      await act(async () => {
+        await tickSwarmPolling();
+      });
+      await settle();
+      expect(requested).toEqual(['/api/projects/p1/swarms']);
+      const items = runs(page);
+      expect(items.map((item) => item.getAttribute('data-run'))).toEqual(['s-busy', 's-done']);
+      expect(items.map((item) => item.querySelector('time')?.textContent)).toEqual([
+        '10 minutes ago',
+        '30 minutes ago',
+      ]);
+      expect(items[0].textContent).toContain('Succeeded');
+      await unmount(page);
+    });
+
+    test('a project where no swarm has started yet says so', async () => {
+      swarms = [swarm('s-idle', 'idle-crew'), swarm('s-new', 'new-crew')];
+      const page = await mount('/');
+      expect(runs(page)).toHaveLength(0);
+      expect(section(page, 'runs')?.textContent).toContain(en.project_overview.no_runs);
+      await unmount(page);
+    });
+
+    test('an older server without moments shows no recent runs and the swarms as before', async () => {
+      const page = await mount('/');
+      expect(section(page, 'runs')).toBeNull();
+      expect(section(page, 'swarms')?.querySelectorAll('[data-swarm]')).toHaveLength(4);
+      expect(section(page, 'swarms')?.querySelector('time')).toBeNull();
+      await unmount(page);
+    });
   });
 
   test('a tile of what waits for the operator leads to the swarm where to act', async () => {

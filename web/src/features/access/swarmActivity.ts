@@ -5,6 +5,7 @@
  * не опрашивает.
  */
 import type { AccessSwarm } from '@/services/brood/access';
+import { executionMoment } from './executionAt';
 import type { BadgeTone } from './state';
 
 export interface SwarmActivity {
@@ -15,6 +16,9 @@ export interface SwarmActivity {
   /** Ответы актору, ждущие повтора доставки (#266); без поля (старый сервер)
    * или с браком -- undefined, «неизвестно», а не ноль. */
   undeliveredAnswers?: number;
+  /** Момент последнего исполнения в миллисекундах (#268); у роя без прохода,
+   * у части прежних проходов, у старого сервера и при браке -- undefined. */
+  executionAt?: number;
 }
 
 /** Число в сводке -- неотрицательное целое; дробное и отрицательное -- брак. */
@@ -24,7 +28,8 @@ export function isCount(value: unknown): value is number {
 
 /** Сводка из строки списка (#234); без неё или с браком -- undefined,
  * «неизвестно», а не ноль вопросов и не «не запущен». Брак в
- * `undeliveredAnswers` сводку не прячет: теряется только это число. */
+ * `undeliveredAnswers` или `executionAt` сводку не прячет: теряется только
+ * это поле. */
 export function swarmActivityOf(swarm: AccessSwarm): SwarmActivity | undefined {
   if (typeof swarm.execution !== 'string' || !isCount(swarm.openRequests)) {
     return undefined;
@@ -36,6 +41,8 @@ export function swarmActivityOf(swarm: AccessSwarm): SwarmActivity | undefined {
   if (isCount(swarm.undeliveredAnswers)) {
     activity.undeliveredAnswers = swarm.undeliveredAnswers;
   }
+  const executionAt = executionMoment(swarm.executionAt);
+  if (executionAt !== undefined) activity.executionAt = executionAt;
   return activity;
 }
 
