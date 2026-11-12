@@ -5,7 +5,8 @@
  * определений -- теми же маршрутами, что страница проекта, по одному запросу.
  * Один опрос на страницу (#257) перечитывает только список роёв. Управление
  * (ёмкость, репозиторий, состав, графы определений) -- на странице проекта,
- * работа роя -- на его странице: обзор ведёт туда ссылками.
+ * работа роя -- на его странице: обзор ведёт туда ссылками, определение --
+ * к себе в каталоге (#270).
  */
 import { useCallback, useEffect, useId, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -414,7 +415,8 @@ function SwarmRow({ swarm }: { swarm: AccessSwarm }) {
 }
 
 /** Каталог определений проекта (#240): имя, версия, момент публикации.
- * Графы -- на странице проекта, туда ведёт ссылка блока. */
+ * Графы -- на странице проекта: имя ведёт к своему определению в каталоге
+ * (#270), ссылка блока -- к каталогу. */
 function Workflows({ projectId, details }: { projectId: string; details: string }) {
   const { t, i18n } = useTranslation();
   const load = useCallback(() => pipelinesApi.listDefinitions(projectId), [projectId]);
@@ -434,7 +436,11 @@ function Workflows({ projectId, details }: { projectId: string; details: string 
               const time = formatDateTimeValue(definition.publishedAt, i18n.language);
               return (
                 <li key={definition.name} className={local.definition}>
-                  <span className={local.definitionName}>{definition.name}</span>
+                  <span className={local.definitionName}>
+                    <ObjectLink
+                      object={{ kind: 'workflow', project: projectId, name: definition.name }}
+                    />
+                  </span>
                   <span className={local.definitionMeta}>
                     {t('pipelines.catalog.version', { version: definition.version })}
                     {' · '}

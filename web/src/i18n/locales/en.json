@@ -3140,7 +3140,9 @@
       "graph": "Graph of {{name}}, version {{version}}",
       "copy_revision": "Copy revision",
       "empty": "No published definitions",
-      "empty_hint": "Describe workflows in the project's Broodfile and run bro build: it publishes them here, and a swarm's first start picks one of them."
+      "empty_hint": "Describe workflows in the project's Broodfile and run bro build: it publishes them here, and a swarm's first start picks one of them.",
+      "missing": "The catalog of this project has no definition “{{name}}”: it was not published here, or a newer catalog no longer lists it.",
+      "clear_selection": "Clear selection"
     }
   },
   "swarm_page": {

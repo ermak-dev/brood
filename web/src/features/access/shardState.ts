@@ -8,8 +8,8 @@ const PROJECT_OBJECT_PAGES = ['/actors', '/templates'];
 /** Куда перейти при смене проекта в шапке: детали проекта -- к деталям
  * нового, страница роя -- к списку роёв нового проекта (рой принадлежит
  * одному проекту, #215), акторы и шаблоны -- к тому же разделу без выбора
- * прежнего проекта в адресе (#194). Остальные разделы и так следуют
- * контексту. */
+ * прежнего проекта в адресе (#194), страница проекта -- без определения
+ * прежнего каталога (#270). Остальные разделы и так следуют контексту. */
 export function projectSelectionPath(
   pathname: string,
   project: string,
@@ -17,6 +17,11 @@ export function projectSelectionPath(
 ): string | null {
   if (/^\/projects\/[^/]+\/?$/.test(pathname)) return `/projects/${encodeURIComponent(project)}`;
   if (/^\/swarms\/[^/]+\/?$/.test(pathname)) return '/swarms';
+  if (pathname === '/project') {
+    return readSelection(search).workflow
+      ? `/project${withSelection(search, { workflow: null })}`
+      : null;
+  }
   if (!PROJECT_OBJECT_PAGES.includes(pathname)) return null;
   const selection = readSelection(search);
   if (!selection.project && !selection.swarm && !selection.actor && !selection.template) {

@@ -3146,7 +3146,9 @@
       "graph": "Đồ thị của {{name}}, phiên bản {{version}}",
       "copy_revision": "Sao chép bản sửa đổi",
       "empty": "Chưa có định nghĩa nào được xuất bản",
-      "empty_hint": "Mô tả workflows trong Broodfile của dự án rồi chạy bro build: lệnh này xuất bản chúng tại đây, và lần khởi chạy đầu tiên của bầy sẽ chọn một trong số đó."
+      "empty_hint": "Mô tả workflows trong Broodfile của dự án rồi chạy bro build: lệnh này xuất bản chúng tại đây, và lần khởi chạy đầu tiên của bầy sẽ chọn một trong số đó.",
+      "missing": "Danh mục của dự án này không có định nghĩa “{{name}}”: định nghĩa chưa được xuất bản ở đây, hoặc danh mục mới không còn liệt kê nó.",
+      "clear_selection": "Bỏ chọn"
     }
   },
   "swarm_page": {

@@ -1,16 +1,20 @@
 import type { WorkflowDefinition } from '@/services/brood/pipelines';
 
 /** Определение, которое показывает каталог на странице проекта (#240):
- * выбранное по имени — в его нынешней версии каталога, иначе первое. Выбор
- * здесь только смотрит, ничего не запускает, поэтому, в отличие от диалога
- * запуска (#218), панель сразу показывает первое; выбор, ушедший из каталога
- * после перечитывания, тоже уступает первому. */
+ * названное адресом (`?workflow=`, #270) -- в его нынешней версии каталога,
+ * без имени в адресе -- первое. Выбор здесь только смотрит, ничего не
+ * запускает, поэтому, в отличие от диалога запуска (#218), панель сразу
+ * показывает первое. Имя, которого в каталоге нет (не опубликовано, ушло
+ * после перечитывания) -- missing: по правилу #194 страница называет
+ * причину, а не подменяет его первым. */
 export function catalogSelection(
   definitions: WorkflowDefinition[] | null,
-  chosen: string
-): WorkflowDefinition | undefined {
-  if (!definitions) return undefined;
-  return definitions.find((definition) => definition.name === chosen) ?? definitions[0];
+  selected: string | undefined
+): { shown: WorkflowDefinition | undefined; missing: boolean } {
+  if (!definitions) return { shown: undefined, missing: false };
+  if (!selected) return { shown: definitions[0], missing: false };
+  const shown = definitions.find((definition) => definition.name === selected);
+  return { shown, missing: shown === undefined };
 }
 
 /** Личность публикации: имя, версия и ревизия вместе (#199). Граф читается

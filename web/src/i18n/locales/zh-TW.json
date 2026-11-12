@@ -3165,7 +3165,9 @@
       "graph": "{{name}} 的圖，版本 {{version}}",
       "copy_revision": "複製修訂號",
       "empty": "沒有已發布的定義",
-      "empty_hint": "在專案的 Broodfile 中描述 workflows 並執行 bro build：它會在這裡發布定義，群組首次啟動時從中選擇一個。"
+      "empty_hint": "在專案的 Broodfile 中描述 workflows 並執行 bro build：它會在這裡發布定義，群組首次啟動時從中選擇一個。",
+      "missing": "此專案的目錄中沒有定義「{{name}}」：它未在此發布，或新的目錄已不再列出它。",
+      "clear_selection": "取消選擇"
     }
   },
   "swarm_page": {

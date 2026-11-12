@@ -3140,7 +3140,9 @@
       "graph": "{{name}} 그래프, 버전 {{version}}",
       "copy_revision": "리비전 복사",
       "empty": "게시된 정의가 없습니다",
-      "empty_hint": "프로젝트의 Broodfile에 workflows를 작성하고 bro build를 실행하세요. 정의가 여기에 게시되고, 스웜의 첫 시작에서 그중 하나를 선택합니다."
+      "empty_hint": "프로젝트의 Broodfile에 workflows를 작성하고 bro build를 실행하세요. 정의가 여기에 게시되고, 스웜의 첫 시작에서 그중 하나를 선택합니다.",
+      "missing": "이 프로젝트의 카탈로그에 정의 “{{name}}”이(가) 없습니다. 여기에 게시된 적이 없거나 새 카탈로그에 더 이상 없습니다.",
+      "clear_selection": "선택 해제"
     }
   },
   "swarm_page": {
