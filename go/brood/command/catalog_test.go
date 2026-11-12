@@ -293,3 +293,17 @@ func TestEverySpecDefaultsAndSchema(t *testing.T) {
 		}
 	}
 }
+
+// FEATURE: The dispatch description states the ownership rule (#273).
+// SPEC: since #267 a master dispatches only to the workers it added with add;
+// the CLI help and the MCP tool description come from this one spec, so the
+// model learns the rule before a refusal.
+func TestDispatchDescribesOwnership(t *testing.T) {
+	s, ok := command.Lookup("dispatch")
+	if !ok {
+		t.Fatal("dispatch is not declared")
+	}
+	if !strings.Contains(s.Description, "only to workers it added with add") {
+		t.Fatalf("dispatch description lacks the ownership rule: %q", s.Description)
+	}
+}
