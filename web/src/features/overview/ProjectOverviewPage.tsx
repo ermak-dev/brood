@@ -22,6 +22,7 @@ import { pipelinesApi } from '@/services/brood/pipelines';
 import { LoadState, StatusBadge, useAdministrator } from '@/features/access/shared';
 import { swarmTone, type BadgeTone } from '@/features/access/state';
 import { executionActivityTone, swarmActivityOf } from '@/features/access/swarmActivity';
+import { swarmFactsOf } from '@/features/access/swarmFacts';
 import { ObjectLink } from '@/features/objects/ObjectLink';
 import { PageHeader } from '@/features/substrate/components/PageHeader';
 import { ProjectScope } from '@/features/substrate/components/ProjectScope';
@@ -358,9 +359,10 @@ function Swarms({
 }
 
 /** Рой в обзоре: имя ссылкой на его страницу (прогон -- это рой, #206),
- * исполнение, открытые вопросы и недоставленные ответы; у активного роя --
- * ссылки на его акторов и шаблоны. Состояние инфраструктуры -- только когда
- * рой не active: здоровое состояние покоя не красится (#254). */
+ * исполнение, открытые вопросы и недоставленные ответы; под ними сведения
+ * строки (#268); у активного роя -- ссылки на его акторов и шаблоны.
+ * Состояние инфраструктуры -- только когда рой не active: здоровое
+ * состояние покоя не красится (#254). */
 function SwarmRow({ swarm }: { swarm: AccessSwarm }) {
   const { t } = useTranslation();
   const activity = swarmActivityOf(swarm);
@@ -400,6 +402,7 @@ function SwarmRow({ swarm }: { swarm: AccessSwarm }) {
           </StatusBadge>
         )}
       </div>
+      <SwarmFacts swarm={swarm} />
       {active && (
         <ul className={local.swarmObjects} aria-label={t('project_overview.swarm_objects')}>
           <li>
@@ -411,6 +414,40 @@ function SwarmRow({ swarm }: { swarm: AccessSwarm }) {
         </ul>
       )}
     </li>
+  );
+}
+
+/** Сведения строки роя (#268): определение снимка -- имя ссылкой на него в
+ * каталоге проекта (#270) и версия снимка, число участников и managed-акторов.
+ * Managed-акторы так и названы: native-акторов строка не считает, и «Акторы»
+ * рядом ведут ко всем. Строка старого сервера сведений не несёт -- и строки
+ * под исполнением нет, как прежде. */
+function SwarmFacts({ swarm }: { swarm: AccessSwarm }) {
+  const { t } = useTranslation();
+  const { definition, members, managedActors } = swarmFactsOf(swarm);
+  if (!definition && members === undefined && managedActors === undefined) return null;
+  return (
+    <p className={local.swarmFacts} data-swarm-facts="">
+      {definition && (
+        <span>
+          {t('access.workflow')}{' '}
+          <ObjectLink
+            object={{ kind: 'workflow', project: swarm.project_id, name: definition.name }}
+          />{' '}
+          <span title={t('swarm_page.snapshot.hint')}>
+            {t('swarm_page.snapshot.version_short', { version: definition.version })}
+          </span>
+        </span>
+      )}
+      {members !== undefined && (
+        <span>{t('project_overview.swarm_members', { count: members })}</span>
+      )}
+      {managedActors !== undefined && (
+        <span title={t('access.managed_actors_hint')}>
+          {t('project_overview.managed_actors', { count: managedActors })}
+        </span>
+      )}
+    </p>
   );
 }
 
