@@ -2,7 +2,8 @@ package store
 
 // Сводки для строк списков (#234): список роёв проекта несёт исполнение,
 // число открытых запросов и недоставленных ответов актору каждого роя
-// (#266), список проектов — число роёв. Каждая сводка — одна выборка на
+// (#266), определение снимка и числа участников и managed-акторов (#268),
+// список проектов — число роёв. Каждая сводка — одна выборка на
 // весь набор: запрос на рой или проект делал бы список N+1, а именно так
 // панель собирала сводку до #234 (#255).
 // Набор ключей едет одним параметром JSON-массивом через json_each: число
@@ -16,13 +17,27 @@ import (
 )
 
 // SwarmSummary is the execution of a swarm graph, the number of its open
-// operator requests of either origin, node or actor, and the number of
-// operator answers to actor requests whose delivery is failed or
-// unconfirmed.
+// operator requests of either origin, node or actor, the number of operator
+// answers to actor requests whose delivery is failed or unconfirmed, the
+// identity of the workflow definition its graph snapshot was taken from, and
+// the numbers of its explicit members and of its managed actors that are not
+// deleted (#268).
 type SwarmSummary struct {
 	Execution          string
 	OpenRequests       int64
 	UndeliveredAnswers int64
+	// DefinitionName, DefinitionVersion and DefinitionRevision are the
+	// identity the first start recorded with the snapshot (Swarm has the
+	// same fields); DefinitionName is empty when none is recorded.
+	DefinitionName     string
+	DefinitionVersion  int64
+	DefinitionRevision string
+	// MemberCount counts the swarm's explicit grants of any role, the same
+	// rows ListSwarmMembers returns.
+	MemberCount int64
+	// ManagedActorCount counts the swarm's managed actors whose phase is not
+	// deleted. Native actors live in Substrate and are not counted.
+	ManagedActorCount int64
 }
 
 // SwarmSummaries returns the summary of each named swarm in one query. A
@@ -37,6 +52,10 @@ func (s *Store) SwarmSummaries(ctx context.Context, ids []string) (map[string]Sw
 // предлагает повторить (#261): отвеченный запрос актора, ответ которого
 // заведомо не ушёл (failed) или ушёл без квитанции (unconfirmed, #260);
 // идущая (pending) и доставленная доставка оператора не ждут.
+// Числа объектов роя (#268) — только то, чем владеет база: участники
+// (swarm_members) и неудалённые managed-акторы, тот же фильтр, что у списка
+// акторов роя. Native-акторов и шаблонов здесь нет: они живут в Substrate,
+// а запрос к нему на рой сделал бы список N+1 и зависимым от Substrate.
 func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSummary, error) {
 	out := make(map[string]SwarmSummary, len(ids))
 	if len(ids) == 0 {
@@ -50,7 +69,10 @@ func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSu
 		SELECT s.id, s.execution,
 			(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.state = 'open'),
 			(SELECT COUNT(*) FROM swarm_requests r WHERE r.swarm_id = s.id AND r.origin = 'actor'
-				AND r.state = 'answered' AND r.delivery IN ('failed', 'unconfirmed'))
+				AND r.state = 'answered' AND r.delivery IN ('failed', 'unconfirmed')),
+			COALESCE(s.definition_name, ''), COALESCE(s.definition_version, 0), COALESCE(s.definition_revision, ''),
+			(SELECT COUNT(*) FROM swarm_members m WHERE m.swarm_id = s.id),
+			(SELECT COUNT(*) FROM managed_actors a WHERE a.swarm_id = s.id AND a.phase <> 'deleted')
 		FROM swarms s
 		WHERE s.id IN (SELECT value FROM json_each(?))`, string(set))
 	if err != nil {
@@ -60,7 +82,9 @@ func swarmSummaries(ctx context.Context, q DB, ids []string) (map[string]SwarmSu
 	for rows.Next() {
 		var id string
 		var summary SwarmSummary
-		if err := rows.Scan(&id, &summary.Execution, &summary.OpenRequests, &summary.UndeliveredAnswers); err != nil {
+		if err := rows.Scan(&id, &summary.Execution, &summary.OpenRequests, &summary.UndeliveredAnswers,
+			&summary.DefinitionName, &summary.DefinitionVersion, &summary.DefinitionRevision,
+			&summary.MemberCount, &summary.ManagedActorCount); err != nil {
 			return nil, fmt.Errorf("swarm summaries: %w", err)
 		}
 		out[id] = summary

@@ -65,7 +65,7 @@ func TestSwarmSummariesCountOpenRequestsOfEveryOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]SwarmSummary{
-		"s":     {Execution: "waiting", OpenRequests: 3},
+		"s":     {Execution: "waiting", OpenRequests: 3, MemberCount: 1},
 		"busy":  {Execution: "running", OpenRequests: 1},
 		"quiet": {Execution: "idle", OpenRequests: 0},
 	}
@@ -121,7 +121,7 @@ func TestSwarmSummariesCountUndeliveredActorAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]SwarmSummary{
-		"s":     {Execution: "running", OpenRequests: 1, UndeliveredAnswers: 3},
+		"s":     {Execution: "running", OpenRequests: 1, UndeliveredAnswers: 3, MemberCount: 1},
 		"calm":  {Execution: "idle", OpenRequests: 0, UndeliveredAnswers: 0},
 		"busy":  {Execution: "running", OpenRequests: 0, UndeliveredAnswers: 1},
 		"quiet": {Execution: "idle", OpenRequests: 0, UndeliveredAnswers: 0},
@@ -151,6 +151,74 @@ func TestSwarmSummariesAreOneQuery(t *testing.T) {
 	got, err = swarmSummaries(ctx, db, nil)
 	if err != nil || len(got) != 0 || db.calls != 0 {
 		t.Fatalf("empty set: %+v %v queries=%d", got, err, db.calls)
+	}
+}
+
+// FEATURE: Строка списка роёв несёт определение workflow роя и числа
+// объектов, которыми владеет хранилище (#268).
+// SPEC: определение — личность снимка, записанная первым запуском (имя,
+// версия, ревизия), у роя без неё пусто; участники — явные пары роя и
+// пользователя (swarm_members), любой роли; managed-акторы — неудалённые
+// (phase не deleted) managed-акторы роя. Счёт — по своему рою, той же
+// выборкой, что исполнение и запросы; рой вне набора не читается.
+// IMPLEMENTATION: SwarmSummary.Definition*, MemberCount, ManagedActorCount;
+// swarmSummaries.
+// RESULT: IMPLEMENTED
+// STATUS: DONE
+
+// objectStore: рой s запущен из определения ship версии 3, у него три
+// участника (owner, editor, viewer) и три managed-актора, один из которых
+// удалён; у other — снимок без записанной личности, один участник и один
+// managed-актор; bare без определения, участников и акторов.
+func objectStore(t *testing.T) *Store {
+	t.Helper()
+	ctx := context.Background()
+	s := swarmTestStore(t, "other", "bare")
+	if _, err := s.db.Exec(`UPDATE swarms SET state='active', atespace_uid='native-'||id;
+		UPDATE swarms SET definition_name='ship', definition_version=3, definition_revision='rev-3' WHERE id='s';
+		UPDATE swarms SET graph=x'00' WHERE id='other';
+		INSERT INTO users VALUES ('e','editor',NULL,'h',0,0,'now','now'), ('v','viewer',NULL,'h',0,0,'now','now');
+		INSERT INTO swarm_members VALUES ('s','e','editor'), ('s','v','viewer'), ('other','u','owner')`); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.CreateManagedPool(ctx, ManagedPool{UID: "pool", Name: "pve", Connection: "configured", Source: ManagedSourceSnapshot{ClusterIdentity: "cluster", Endpoint: "https://pve.invalid:8006", Node: "node", ResourcePool: "brood", Storage: "local", Network: "vmbr0"}, Labels: map[string]string{"provider": "proxmox"}, MaxActors: 8, Resources: ManagedResources{CPUMillicores: 8000, MemoryBytes: 8192, DiskBytes: 16384}, Template: ManagedTemplateSnapshot{Profile: "claude-proxmox", URI: "local:template.tar.zst", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, State: "enabled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, a := range []struct{ uid, swarm string }{{"s-new", "s"}, {"s-stopped", "s"}, {"s-gone", "s"}, {"o-new", "other"}} {
+		if _, err := s.ReserveManagedActor(ctx, ManagedActor{UID: a.uid, Name: a.uid, SwarmID: a.swarm, AtespaceUID: "native-" + a.swarm, PoolUID: p.UID, Resources: ManagedResources{CPUMillicores: 1000, MemoryBytes: 1024, DiskBytes: 2048}, CTID: 101 + i, OwnerNonce: "owner-" + a.uid, OperationID: "create-" + a.uid}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE managed_actors SET phase='stopped', desired='stopped' WHERE uid='s-stopped';
+		UPDATE managed_actors SET phase='deleted', desired='deleted', deleted_at='now' WHERE uid='s-gone'`); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestSwarmSummariesCarryDefinitionAndStoreCounts(t *testing.T) {
+	s := objectStore(t)
+	got, err := s.SwarmSummaries(context.Background(), []string{"s", "other", "bare"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]SwarmSummary{
+		"s":     {Execution: "idle", DefinitionName: "ship", DefinitionVersion: 3, DefinitionRevision: "rev-3", MemberCount: 3, ManagedActorCount: 2},
+		"other": {Execution: "idle", MemberCount: 1, ManagedActorCount: 1},
+		"bare":  {Execution: "idle"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("summaries:\n got %+v\nwant %+v", got, want)
+	}
+	// Объекты чужого роя в счёт не входят, и рой вне набора не читается.
+	got, err = s.SwarmSummaries(context.Background(), []string{"other"})
+	if err != nil || !reflect.DeepEqual(got, map[string]SwarmSummary{"other": want["other"]}) {
+		t.Fatalf("one swarm: %+v %v", got, err)
+	}
+	db := &countingDB{DB: s.db}
+	if got, err := swarmSummaries(context.Background(), db, []string{"s", "other", "bare"}); err != nil || len(got) != 3 || db.calls != 1 {
+		t.Fatalf("three swarms with objects: %+v %v queries=%d, want 1 query", got, err, db.calls)
 	}
 }
 

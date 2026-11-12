@@ -34,13 +34,20 @@ type projectRowJSON struct {
 }
 
 // swarmRowJSON — строка списка роёв: рой, исполнение его графа, число
-// открытых запросов оператору, узловых и актора (#234), и число ответов
-// актору с доставкой failed или unconfirmed (#266).
+// открытых запросов оператору, узловых и актора (#234), число ответов
+// актору с доставкой failed или unconfirmed (#266), личность определения
+// снимка, число участников и неудалённых managed-акторов (#268). Поля
+// definition у роя без записанной личности нет, как у прогона старого
+// провода. Native-акторы и шаблоны в числа не входят: имя managedActorCount
+// не даёт панели принять часть за целое.
 type swarmRowJSON struct {
 	swarmJSON
-	Execution          string `json:"execution"`
-	OpenRequests       int64  `json:"openRequests"`
-	UndeliveredAnswers int64  `json:"undeliveredAnswers"`
+	Execution          string               `json:"execution"`
+	OpenRequests       int64                `json:"openRequests"`
+	UndeliveredAnswers int64                `json:"undeliveredAnswers"`
+	Definition         *swarmDefinitionJSON `json:"definition,omitempty"`
+	MemberCount        int64                `json:"memberCount"`
+	ManagedActorCount  int64                `json:"managedActorCount"`
 }
 
 // swarmJSON — публичная форма роя.
@@ -389,7 +396,11 @@ func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []ap
 		}
 		row := toSwarmJSON(sw, username)
 		row.Role = role
-		out = append(out, swarmRowJSON{swarmJSON: row, Execution: summary.Execution, OpenRequests: summary.OpenRequests, UndeliveredAnswers: summary.UndeliveredAnswers})
+		item := swarmRowJSON{swarmJSON: row, Execution: summary.Execution, OpenRequests: summary.OpenRequests, UndeliveredAnswers: summary.UndeliveredAnswers, MemberCount: summary.MemberCount, ManagedActorCount: summary.ManagedActorCount}
+		if summary.DefinitionName != "" {
+			item.Definition = &swarmDefinitionJSON{Name: summary.DefinitionName, Version: summary.DefinitionVersion, Revision: summary.DefinitionRevision}
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
