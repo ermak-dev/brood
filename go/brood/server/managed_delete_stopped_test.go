@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -10,7 +10,9 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// Фейк PVE отклоняет повторный stop без квитанции, как настоящий vzstop.
+// Фейк PVE отклоняет повторный stop без квитанции, как настоящий vzstop:
+// HTTP 500 «CT not running», который proxmox.Client отдаёт неоднозначным
+// исходом (writeTask), а не отказом до записи.
 type stoppedDeletePVE struct {
 	*managedFakePVE
 	t     *testing.T
@@ -38,7 +40,7 @@ func (f *stoppedDeletePVE) Stop(ctx context.Context, ref proxmox.OwnedCT) (strin
 	running := f.running
 	f.mu.Unlock()
 	if !running {
-		return "", errors.New("HTTP 500: already stopped")
+		return "", fmt.Errorf("%w: PVE HTTP status 500", proxmox.ErrUncertain)
 	}
 	return f.managedFakePVE.Stop(ctx, ref)
 }

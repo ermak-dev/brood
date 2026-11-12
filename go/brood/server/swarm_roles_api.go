@@ -178,6 +178,10 @@ func swarmRoleError(w http.ResponseWriter, r *http.Request, err error) {
 		writeDetail(w, http.StatusConflict, "swarm is not active")
 	case errors.Is(err, store.ErrSwarmRoleForeignActor):
 		writeDetail(w, http.StatusConflict, "actor is not an actor of this swarm")
+	// Ждущая остановка — раньше общего неживого: фаза и желание актора —
+	// running, и общая причина ему противоречила бы (#275).
+	case errors.Is(err, store.ErrSwarmRoleStopPending):
+		writeDetail(w, http.StatusConflict, "actor is waiting to stop for a reset or update; bind it once it runs again")
 	case errors.Is(err, store.ErrSwarmRoleInactive):
 		writeDetail(w, http.StatusConflict, "actor is not live: it must be provisioning or running and meant to run")
 	case errors.Is(err, store.ErrSwarmRoleStale):

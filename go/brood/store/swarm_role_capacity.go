@@ -112,7 +112,8 @@ func boundRoleActor(snap SwarmRoleSnapshot, b SwarmRoleBinding) (ManagedActor, e
 }
 
 // runningRoleActor — пригодность актора под роль при запуске: правило
-// liveRoleActor, строже по фазе (provisioning ещё не работает, #211) и с
+// liveRoleActor (в том числе отказ актору, чью остановку ждёт reset или
+// update, #275), строже по фазе (provisioning ещё не работает, #211) и с
 // инкарнацией привязки, как в ResolveSwarmRole.
 func runningRoleActor(swarm Swarm, a ManagedActor, b SwarmRoleBinding) error {
 	if err := liveRoleActor(swarm, a); err != nil {

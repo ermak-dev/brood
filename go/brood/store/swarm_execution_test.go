@@ -321,6 +321,31 @@ func TestStartSwarmRefusesBeforeWrite(t *testing.T) {
 	}
 }
 
+// TestStartSwarmWaitingStop — запуск отказывает, пока reset или update ещё
+// только должны остановить работающего актора роли (#275): иначе проход
+// начался бы, а его шаг получил бы отказ. Отказ называет роль и ждущую
+// остановку и ничего не пишет; тот же актор без незавершённого изменения
+// запуск проходит.
+func TestStartSwarmWaitingStop(t *testing.T) {
+	for change, waiting := range waitingStops {
+		t.Run(change, func(t *testing.T) {
+			s := startStore(t)
+			setActor(t, s, "a", waiting)
+			before := dumpTables(t, s, append(executionTables, lifeTables...)...)
+			_, err := startOne(s, "release")
+			waitingStopRefused(t, "start", change, err)
+			if !strings.Contains(fmt.Sprint(err), `role "build": `) {
+				t.Fatalf("start refusal does not name the role: %v", err)
+			}
+			if after := dumpTables(t, s, append(executionTables, lifeTables...)...); after != before {
+				t.Fatalf("refused start wrote:\n%s\nwant\n%s", after, before)
+			}
+			setActor(t, s, "a", settledRunning)
+			mustStart(t, s, "release")
+		})
+	}
+}
+
 func mustStart(t *testing.T, s *Store, definition string) Swarm {
 	t.Helper()
 	w, err := startOne(s, definition)

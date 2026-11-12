@@ -206,14 +206,15 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			o.saved = a
 			return nil
 		}
-		// Start update, ещё не запрошенный (#133), задачи не держит: CT
+		// Start, ещё не запрошенный (#133, #275), задачи не держит: CT
 		// остановлена, и stop, delete и reset его отменяют. Start и update
 		// ничего бы не добавили к уже записанному start: отказ называет
-		// ожидание, а не неизвестный исход.
-		waiting := updateStartPending(a)
+		// ожидание, а не неизвестный исход. Незапрошенный stop тоже задачи
+		// не держит, но CT работает, и любое изменение ждёт саму остановку.
+		waiting := startNotRequested(a)
 		cancels := o.action == "stop" || o.action == "delete" || o.action == "reset"
-		if waiting && !cancels {
-			return newUpdateWaitingRefusal(o.action, a)
+		if notRequested(a) && !(waiting && cancels) {
+			return newWaitingRefusal(o.action, a)
 		}
 		// Stop/start/reset require a reconciled task slot, not merely a terminal
 		// diagnostic phase. Delete may settle a known prior task before cleanup.
@@ -268,15 +269,30 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 					return err
 				}
 			}
-			a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
-			if err == nil && (o.action == "delete" || waiting) && observed == "stopped" {
-				// Эта stop-стадия создана в текущей транзакции и ещё не
-				// отправлена провайдеру. Владение и stopped уже проверены:
-				// фиксируем сразу delete, не повторяя vzstop. Для старой
-				// неизвестной отправки наблюдение stopped не доказывает исход.
-				// Отмена start update так же не шлёт vzstop: stop
-				// согласуется сразу, reset переходит к delete.
-				a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+			switch {
+			case o.action == "start" && observed == "running":
+				// CT уже работает (#275): ни bootstrap env, который пишется
+				// только остановленной CT, ни второй Start ей не нужны.
+				// Намерение start сразу согласовано наблюдением, а running
+				// опубликует только проверка готовности гостя.
+				a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
+				if err == nil {
+					a, err = m.confirmStartRunning(ctx, a)
+				}
+			case o.action == "start":
+				a, err = m.beginStart(ctx, a, o.intentID())
+			default:
+				a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
+				if err == nil && a.Stage == "stop" && observed == "stopped" {
+					// Эта stop-стадия создана в текущей транзакции и ещё не
+					// отправлена провайдеру. Владение и stopped уже
+					// проверены: остановка подтверждена без vzstop, на
+					// который PVE ответил бы «CT not running» (#275). Stop
+					// согласуется сразу, delete и reset переходят к delete.
+					// Для старой неизвестной отправки наблюдение stopped не
+					// доказывает исход.
+					a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+				}
 			}
 			return err
 		})
@@ -309,7 +325,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			o.saved = a
 			return err
 		}
-		// Stop, отменивший start update, согласован без задачи.
+		// Stop остановленной CT и start работающей согласованы без задачи.
 		if a.Stage == "done" {
 			o.saved = a
 			return nil

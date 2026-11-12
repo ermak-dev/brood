@@ -18,7 +18,8 @@ package server
 // Proxmox stop is reported as an unknown outcome, never as acceptance, and the
 // durable intent fences every concurrent lifecycle change while the stop is in
 // flight; once the stop is confirmed and Start is not yet requested, update and
-// start are refused naming the waiting update.
+// start are refused naming the waiting start (#275: not the update, which the
+// record does not tell apart from an ordinary start).
 // IMPLEMENTATION: Server.updateActor over the shared lifecycle executor; the
 // guest answer is a CallSession fake, Proxmox the managed fake.
 // RESULT: IMPLEMENTED
@@ -558,7 +559,7 @@ func TestUpdateFencesConcurrentLifecycle(t *testing.T) {
 		says := `actor "worker" is ` + intent.Phase + ` while its last lifecycle change is unfinished`
 		changes := [][2]string{{"stop", `{"name":"worker"}`}, {"start", `{"name":"worker"}`}, {"reset", `{"name":"worker","confirm":true}`}}
 		if moment == "start pending" {
-			says = `actor "worker" update is waiting to start its stopped container (Start is not yet requested)`
+			says = `actor "worker" is waiting to start its stopped container (Start is not yet requested)`
 			changes = changes[1:2]
 		}
 		effects := providerEffectsOf(pve)

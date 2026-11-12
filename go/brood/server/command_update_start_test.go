@@ -344,7 +344,7 @@ func TestUpdateRetriesUnconfirmedBootstrap(t *testing.T) {
 		fault  func(pve *managedFakePVE, shutdown func())
 		detail string
 	}{
-		"5xx or lost reply": {fault: func(pve *managedFakePVE, _ func()) { pve.bootstrapUncertain = 1 }, detail: managedProviderError(errUpdateBootstrapUnconfirmed)},
+		"5xx or lost reply": {fault: func(pve *managedFakePVE, _ func()) { pve.bootstrapUncertain = 1 }, detail: managedProviderError(errBootstrapUnconfirmed)},
 		"server stops during the write": {fault: func(pve *managedFakePVE, shutdown func()) {
 			pve.duringBootstrap = func() {
 				shutdown()
