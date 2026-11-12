@@ -33,7 +33,7 @@ func TestRecoveryRechecksSessionAfterNamespacePreflight(t *testing.T) {
 }
 
 func TestOperatorRecoversExactDispatchLease(t *testing.T) {
-	ts, master, worker := coordinationServerSetup(t)
+	ts, master, worker := ownedWorkerSetup(t)
 	ctx := context.Background()
 	ts.srv.managed.deliverMessage = func(context.Context, string, int64, relay.MessageRequest) (relay.MessageResponse, error) {
 		return relay.MessageResponse{OK: true}, nil

@@ -12,7 +12,7 @@ import (
 // FEATURE: Dispatch ownership has an explicit authenticated release utility.
 // SPEC: A request ID binds the task content; only its owner can release its allocation.
 func TestCommandDispatchReleaseAndPayloadBinding(t *testing.T) {
-	ts, master, worker := coordinationServerSetup(t)
+	ts, master, worker := ownedWorkerSetup(t)
 	ctx := context.Background()
 	calls := 0
 	ts.srv.managed.deliverMessage = func(context.Context, string, int64, relay.MessageRequest) (relay.MessageResponse, error) {

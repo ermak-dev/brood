@@ -131,7 +131,8 @@ func (e *ownershipError) Error() string { return e.reason }
 func (e *ownershipError) Unwrap() error { return app.ErrNotAllowed }
 
 // masterOwns is the single ownership check behind every guest command that
-// changes an actor: lifecycle, workspace and session control (#152).
+// changes an actor: lifecycle, workspace and session control (#152), and the
+// dispatch lease that holds it (#267).
 func (m *managedProvider) masterOwns(ctx context.Context, from, target store.ManagedActor) error {
 	owner := ""
 	if target.ParentUID != "" && target.ParentUID != from.UID {

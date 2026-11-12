@@ -9,7 +9,14 @@ import (
 	"brood.dev/go/brood/store"
 )
 
+// dispatchLeaseAction shows or releases the caller's exact dispatch request.
+// It does not check ownership of the target (#267).
 func (m *managedProvider) dispatchLeaseAction(ctx context.Context, from store.ManagedActor, sw store.Swarm, name, requestID, action string) (command.Result, error) {
+	// Аренду, взятую на чужого актора до #267, правило не снимает, и срока у
+	// неё нет: держатель отпускает её сам, без него её отпускает оператор
+	// точным release (executeOperatorCoordinationCommand). Владелец worker
+	// чужую аренду не отпускает: задача держателя может уже идти в сессии, и
+	// снять её решает человек, а не соседний master.
 	var claim store.CoordinationClaim
 	err := m.server.store.WithTx(ctx, func(ctx context.Context) error {
 		current, err := m.server.store.GetManagedActor(ctx, from.UID)

@@ -28,6 +28,9 @@ func coordinationInvocation(name string, args map[string]any) command.Invocation
 	return command.Invocation{Name: name, Arguments: data}
 }
 
+// coordinationServerSetup заводит master и актора "worker", созданного
+// оператором. Назначить ему работу master не может (#267): проверки dispatch
+// берут worker, добавленного master, из ownedWorkerSetup.
 func coordinationServerSetup(t *testing.T, targetRole ...string) (*substrateServer, store.ManagedActor, store.ManagedActor) {
 	t.Helper()
 	ts, alice, master, pve := masterSetup(t)
@@ -67,7 +70,7 @@ func coordinationData(t *testing.T, result command.Result) map[string]any {
 }
 
 func TestCoordinationDispatchOnceAndReleasedRetry(t *testing.T) {
-	ts, master, worker := coordinationServerSetup(t)
+	ts, master, worker := ownedWorkerSetup(t)
 	ctx := context.Background()
 	var calls atomic.Int32
 	ts.srv.managed.deliverMessage = func(_ context.Context, uid string, generation int64, req relay.MessageRequest) (relay.MessageResponse, error) {
@@ -121,7 +124,7 @@ func TestCoordinationDispatchOnceAndReleasedRetry(t *testing.T) {
 func TestCoordinationDispatchUnconfirmedAndOccupied(t *testing.T) {
 	for _, negativeAck := range []bool{false, true} {
 		t.Run(map[bool]string{false: "transport", true: "negative_ack"}[negativeAck], func(t *testing.T) {
-			ts, master, worker := coordinationServerSetup(t)
+			ts, master, worker := ownedWorkerSetup(t)
 			ctx := context.Background()
 			calls := 0
 			ts.srv.managed.deliverMessage = func(context.Context, string, int64, relay.MessageRequest) (relay.MessageResponse, error) {
@@ -156,7 +159,7 @@ func TestCoordinationDispatchUnconfirmedAndOccupied(t *testing.T) {
 func TestCoordinationAuthorizationAndInput(t *testing.T) {
 	for _, scenario := range []string{"stale", "revoked", "forged_scope", "foreign_target", "self", "empty_request", "empty_message", "namespace", "target_stale", "workspace_proof", "landing_name", "landing_request"} {
 		t.Run(scenario, func(t *testing.T) {
-			ts, master, worker := coordinationServerSetup(t)
+			ts, master, worker := ownedWorkerSetup(t)
 			ctx := context.Background()
 			args := map[string]any{"to": "worker", "message": "task", "request_id": "denied"}
 			name := "dispatch"
@@ -272,7 +275,7 @@ func TestCoordinationLandingHolderAndConflict(t *testing.T) {
 }
 
 func TestCoordinationRechecksAfterDelivery(t *testing.T) {
-	ts, master, _ := coordinationServerSetup(t)
+	ts, master, _ := ownedWorkerSetup(t)
 	ts.srv.managed.deliverMessage = func(ctx context.Context, _ string, _ int64, _ relay.MessageRequest) (relay.MessageResponse, error) {
 		if err := ts.srv.store.SetUserDisabled(ctx, master.DelegatorID, true); err != nil {
 			t.Fatal(err)
