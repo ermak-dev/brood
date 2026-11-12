@@ -15,8 +15,10 @@ import {
 
 /** Выбор страницы -- из её адреса (#194). open -- строка списка открывает
  * панель новой записью истории, change -- смена фильтра новой записью,
- * close -- закрытие панели (closeTarget). Location -- слоя страницы: во
- * время перехода уходящая страница видит свой адрес, а не новый. */
+ * replace -- выбор на месте текущей записи (радиогруппа каталога, #270:
+ * стрелки не копят записей и не прокручивают страницу к началу), close --
+ * закрытие панели (closeTarget). Location -- слоя страницы: во время
+ * перехода уходящая страница видит свой адрес, а не новый. */
 export function useObjectSelection() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -35,6 +37,11 @@ export function useObjectSelection() {
     (changes: SelectionChange) => navigate({ search: withSelection(search, changes) }),
     [navigate, search]
   );
+  const replace = useCallback(
+    (changes: SelectionChange) =>
+      navigate({ search: withSelection(search, changes) }, { replace: true }),
+    [navigate, search]
+  );
   const close = useCallback(
     (param: SelectionParam) => {
       if (!readSelection(search)[param] || closed.current === location) return;
@@ -45,7 +52,7 @@ export function useObjectSelection() {
     },
     [location, navigate, search, state]
   );
-  return { selection, open, change, close };
+  return { selection, open, change, replace, close };
 }
 
 /** Панель объекта следует за адресом (followPanel); состояние меняется во

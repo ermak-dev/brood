@@ -213,6 +213,10 @@ describe('the overview of the active project', () => {
     expect(workflows?.textContent).toContain('review');
     expect(workflows?.textContent).toContain('version 2');
     expect(workflows?.querySelector('a[href="/projects/p1"]')).not.toBeNull();
+    // Каждое определение ведёт к себе в каталоге (#270), блок -- к каталогу.
+    expect(workflows?.querySelector('a[href="/projects/p1?workflow=review"]')?.textContent).toBe(
+      'review'
+    );
     expect(link(page, '/projects/p1')).not.toBeNull();
     await unmount(page);
   });

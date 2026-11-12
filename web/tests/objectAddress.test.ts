@@ -3,7 +3,9 @@
 // swarm S and opens the panel of actor A; templates, workers and pools follow
 // the same scheme. Closing the panel removes the parameter: back to the list it
 // was opened from, or the same address without it for a link. Every object
-// type has one address builder that the shared link component uses.
+// type has one address builder that the shared link component uses. A
+// workflow definition opens in the catalog of its project page:
+// /projects/P?workflow=W (#270).
 import { describe, expect, test } from 'bun:test';
 import {
   CLOSED_PANEL,
@@ -47,6 +49,19 @@ describe('reading a selection', () => {
       template: 'x y',
       swarm: 'рой',
     });
+  });
+
+  // Определение workflow в каталоге проекта (#270).
+  test('a workflow definition is read by its name', () => {
+    expect(readSelection('?workflow=release&probe=1')).toEqual({ workflow: 'release' });
+    expect(readSelection('?workflow=%D1%80%D0%B5%D0%BB%D0%B8%D0%B7+a%2Fb')).toEqual({
+      workflow: 'релиз a/b',
+    });
+  });
+
+  test('a workflow without a name selects nothing: the catalog shows as without it', () => {
+    expect(readSelection('?workflow=')).toEqual({});
+    expect(readSelection('?workflow')).toEqual({});
   });
 });
 
@@ -101,8 +116,18 @@ describe('object addresses', () => {
       [{ kind: 'worker', name: 'w' }, '/workers?worker=w'],
       [{ kind: 'pool', name: 'n' }, '/worker-pools?pool=n'],
       [{ kind: 'proxmoxPool', name: 'x' }, '/worker-pools?proxmox=x'],
+      // Определение -- в каталоге на странице своего проекта (#270).
+      [{ kind: 'workflow', project: 'p', name: 'release' }, '/projects/p?workflow=release'],
     ];
     for (const [ref, path] of cases) expect([ref.kind, objectPath(ref)]).toEqual([ref.kind, path]);
+  });
+
+  test('a workflow address keeps the project one path segment and its name one value', () => {
+    const path = objectPath({ kind: 'workflow', project: 'p/1 x', name: 'a&b #c=d' });
+    expect(path).toBe('/projects/p%2F1%20x?workflow=a%26b+%23c%3Dd');
+    const query = path.indexOf('?');
+    expect(decodeURIComponent(path.slice('/projects/'.length, query))).toBe('p/1 x');
+    expect(readSelection(path.slice(query))).toEqual({ workflow: 'a&b #c=d' });
   });
 
   test('without a name the address is the list of the swarm', () => {
@@ -229,6 +254,15 @@ describe('switching the project in the header', () => {
   test('installation objects do not belong to a project', () => {
     expect(projectSelectionPath('/workers', 'new', '?worker=w')).toBeNull();
     expect(projectSelectionPath('/worker-pools', 'new', '?pool=n')).toBeNull();
+  });
+
+  test('a definition of the old project leaves the address of the project page', () => {
+    expect(projectSelectionPath('/project', 'new', '?workflow=release&probe=1')).toBe(
+      '/project?probe=1'
+    );
+    expect(projectSelectionPath('/project', 'new', '?workflow=release')).toBe('/project');
+    expect(projectSelectionPath('/project', 'new', '')).toBeNull();
+    expect(projectSelectionPath('/projects/old', 'new', '?workflow=release')).toBe('/projects/new');
   });
 
   test('detail and swarm pages keep their former destinations', () => {

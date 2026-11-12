@@ -2,12 +2,14 @@ import { swarmPath } from '@/features/swarms/routes';
 
 /** Адрес выбранного объекта (#194): проект, рой и объект -- параметры query
  * страницы своего типа. Порядок -- порядок адреса: так ссылка читается
- * слева направо от проекта к объекту. */
+ * слева направо от проекта к объекту. Определение workflow (#270) --
+ * объект проекта, как рой, поэтому стоит за роем и его объектами. */
 export const SELECTION_PARAMS = [
   'project',
   'swarm',
   'actor',
   'template',
+  'workflow',
   'worker',
   'pool',
   'proxmox',
@@ -19,7 +21,8 @@ export type Selection = Partial<Record<SelectionParam, string>>;
 export type SelectionChange = Partial<Record<SelectionParam, string | null>>;
 
 /** Объект, на который ведёт ссылка. Прогон -- это рой (#206): ссылка на
- * прогон ведёт на страницу роя. Актор и шаблон без имени -- список роя. */
+ * прогон ведёт на страницу роя. Актор и шаблон без имени -- список роя.
+ * Определение workflow (#270) -- в каталоге на странице своего проекта. */
 export type ObjectRef =
   | { kind: 'swarm'; id: string }
   | { kind: 'run'; swarm: string }
@@ -27,7 +30,8 @@ export type ObjectRef =
   | { kind: 'template'; project: string; swarm: string; name?: string }
   | { kind: 'worker'; name: string }
   | { kind: 'pool'; name: string }
-  | { kind: 'proxmoxPool'; name: string };
+  | { kind: 'proxmoxPool'; name: string }
+  | { kind: 'workflow'; project: string; name: string };
 
 /** Параметры адреса, которые выбирают объект; прочие параметры не выбор. */
 export function readSelection(search: string): Selection {
@@ -76,6 +80,10 @@ export function objectPath(ref: ObjectRef): string {
       return pathWith('/worker-pools', { pool: ref.name });
     case 'proxmoxPool':
       return pathWith('/worker-pools', { proxmox: ref.name });
+    case 'workflow':
+      // Проект -- в пути, как у ссылки обзора на страницу проекта: адрес
+      // открывает тот проект, а не глобальный контекст (LegacyProjectRoute).
+      return pathWith(`/projects/${encodeURIComponent(ref.project)}`, { workflow: ref.name });
   }
 }
 

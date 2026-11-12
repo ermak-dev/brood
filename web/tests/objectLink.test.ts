@@ -1,5 +1,5 @@
 // FEATURE: One link component for every object type (#194, epic #190).
-// SPEC: A swarm, run, actor, template, worker or pool link leads to the
+// SPEC: A swarm, run, actor, template, worker, pool or workflow link leads to the
 // object's address from objectPath; without children it is labelled by the
 // object's name. #195 and #197 reuse it for relations and the project overview.
 import { describe, expect, test } from 'bun:test';
@@ -27,6 +27,7 @@ describe('object link', () => {
     { kind: 'worker', name: 'w' },
     { kind: 'pool', name: 'n' },
     { kind: 'proxmoxPool', name: 'x' },
+    { kind: 'workflow', project: 'p', name: 'release' },
   ];
 
   test('every type leads to its address', () => {
@@ -40,6 +41,7 @@ describe('object link', () => {
       'builder'
     );
     expect(text(render({ kind: 'pool', name: 'gvisor' }))).toBe('gvisor');
+    expect(text(render({ kind: 'workflow', project: 'p', name: 'release' }))).toBe('release');
     expect(text(render({ kind: 'swarm', id: 's-1' }, 'docs crew'))).toBe('docs crew');
   });
 });

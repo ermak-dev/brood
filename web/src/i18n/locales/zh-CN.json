@@ -3137,7 +3137,9 @@
       "graph": "{{name}} 的图，版本 {{version}}",
       "copy_revision": "复制修订号",
       "empty": "没有已发布的定义",
-      "empty_hint": "在项目的 Broodfile 中描述 workflows 并运行 bro build：它会在这里发布定义，群组首次启动时从中选择一个。"
+      "empty_hint": "在项目的 Broodfile 中描述 workflows 并运行 bro build：它会在这里发布定义，群组首次启动时从中选择一个。",
+      "missing": "此项目的目录中没有定义“{{name}}”：它未在此发布，或新的目录已不再列出它。",
+      "clear_selection": "取消选择"
     }
   },
   "swarm_page": {

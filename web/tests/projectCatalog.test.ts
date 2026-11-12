@@ -8,13 +8,17 @@
 // read-only. An empty catalog says that `bro build` publishes definitions from
 // the Broodfile. A refusal of the catalog or of a graph shows the server's
 // reason, and a graph refused because the catalog moved on reads the catalog
-// again.
+// again. The definition shown lives in the address (#270):
+// /projects/P?workflow=W opens W, a choice writes its name there in place of
+// the current entry, back and forward show the definition of their address,
+// and a name the catalog lacks is named with an action that clears it rather
+// than replaced by the first.
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import type { WorkflowDefinition } from '@/services/brood/pipelines';
 import { catalogSelection, definitionKey } from '@/features/pipelines/catalog';
 import { ProjectDetailPage } from '@/features/access/ProjectDetailPage';
@@ -65,23 +69,42 @@ describe('which definition the page shows', () => {
   const architecture = definition({ name: 'architecture', version: 2, revision: second });
 
   test('nothing before the catalog is read and nothing in an empty one', () => {
-    expect(catalogSelection(null, '')).toBeUndefined();
-    expect(catalogSelection([], '')).toBeUndefined();
-    expect(catalogSelection([], 'release')).toBeUndefined();
+    expect(catalogSelection(null, undefined)).toEqual({ shown: undefined, missing: false });
+    expect(catalogSelection(null, 'release')).toEqual({ shown: undefined, missing: false });
+    expect(catalogSelection([], undefined)).toEqual({ shown: undefined, missing: false });
   });
 
-  test('the first definition until one is chosen', () => {
-    expect(catalogSelection([architecture, release], '')).toBe(architecture);
+  test('the first definition while the address names none', () => {
+    expect(catalogSelection([architecture, release], undefined)).toEqual({
+      shown: architecture,
+      missing: false,
+    });
   });
 
-  test('the chosen definition in its current catalog version', () => {
+  test('the definition the address names, in its current catalog version', () => {
     const newer = definition({ version: 3, revision: third });
-    expect(catalogSelection([architecture, release], 'release')).toBe(release);
-    expect(catalogSelection([architecture, newer], 'release')).toBe(newer);
+    expect(catalogSelection([architecture, release], 'release')).toEqual({
+      shown: release,
+      missing: false,
+    });
+    expect(catalogSelection([architecture, newer], 'release')).toEqual({
+      shown: newer,
+      missing: false,
+    });
   });
 
-  test('the first one again when the chosen definition left the catalog', () => {
-    expect(catalogSelection([architecture], 'release')).toBe(architecture);
+  // Правило #194: адрес, назвавший то, чего нет, не подменяется первым.
+  test('a definition the address names but the catalog lacks is missing, not the first', () => {
+    expect(catalogSelection([architecture], 'release')).toEqual({
+      shown: undefined,
+      missing: true,
+    });
+    expect(catalogSelection([], 'release')).toEqual({ shown: undefined, missing: true });
+  });
+
+  test('names are compared exactly', () => {
+    expect(catalogSelection([architecture, release], 'Release').missing).toBe(true);
+    expect(catalogSelection([architecture, release], ' release').missing).toBe(true);
   });
 
   test('a definition is identified by name, version and revision together', () => {
@@ -153,8 +176,26 @@ afterEach(async () => {
 
 const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 
-/** Страница проекта глазами участника: не администратор, проект выбран. */
-async function openProject() {
+// Адрес страницы и кнопки «Назад» и «Вперёд», как у браузера.
+function Address() {
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  return createElement(
+    'nav',
+    null,
+    createElement('output', { 'data-location': `${pathname}${search}` }),
+    createElement('button', { type: 'button', 'data-travel': '-1', onClick: () => navigate(-1) }),
+    createElement('button', { type: 'button', 'data-travel': '1', onClick: () => navigate(1) })
+  );
+}
+const addressOf = (container: HTMLElement) =>
+  container.querySelector('[data-location]')?.getAttribute('data-location');
+const travel = (container: HTMLElement, delta: -1 | 1) =>
+  click(container.querySelector(`[data-travel="${delta}"]`));
+
+/** Страница проекта глазами участника: не администратор, проект выбран.
+ * entries -- история адресов, открыт последний. */
+async function openProject(entries: string[] = ['/projects/project-1']) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   useAuthStore.setState({ isSuperuser: false, username: 'victor' });
   useProjectStore.setState({ project: 'project-1', selectedFor: 'victor' });
@@ -167,7 +208,12 @@ async function openProject() {
       createElement(
         I18nextProvider,
         { i18n },
-        createElement(MemoryRouter, null, createElement(ProjectDetailPage))
+        createElement(
+          MemoryRouter,
+          { initialEntries: entries, initialIndex: entries.length - 1 },
+          createElement(ProjectDetailPage),
+          createElement(Address)
+        )
       )
     )
   );
@@ -297,5 +343,98 @@ describe('the catalog on the project page', () => {
     expect(calls.map((c) => c.url)).toContain(graphPath('architecture', 3, third));
     expect(graph(container)?.querySelector('[data-node-id="design-3"]')).not.toBeNull();
     expect(row(container, 'architecture')?.textContent).toContain(third.slice(0, 8));
+  });
+});
+
+const checkedNames = (container: HTMLElement) =>
+  radios(container)
+    .filter((radio) => radio.checked)
+    .map((radio) => radio.value);
+const notice = (container: HTMLElement) =>
+  block(container)?.querySelector('[data-selection-notice]') as HTMLElement | null;
+const graphRoutes = {
+  [`GET ${graphPath('architecture', 2, second)}`]: { body: { svg: graphSvg('design') } },
+  [`GET ${graphPath('release', 1, first)}`]: { body: { svg: graphSvg('ship') } },
+};
+
+describe('the definition in the address of the project page', () => {
+  test('the address opens the definition it names, not the first', async () => {
+    const calls = api({ ...projectRoutes({ body: published }), ...graphRoutes });
+    const container = await openProject(['/projects/project-1?workflow=release']);
+    expect(checkedNames(container)).toEqual(['release']);
+    expect(calls.map((c) => c.url)).toContain(graphPath('release', 1, first));
+    expect(calls.map((c) => c.url)).not.toContain(graphPath('architecture', 2, second));
+    expect(graph(container)?.querySelector('[data-node-id="ship"]')).not.toBeNull();
+    expect(notice(container)).toBeNull();
+  });
+
+  test('a choice writes its name to the address in place of the current entry', async () => {
+    api({ ...projectRoutes({ body: published }), ...graphRoutes });
+    const container = await openProject(['/', '/projects/project-1']);
+    await click(radios(container)[1]);
+    expect(addressOf(container)).toBe('/projects/project-1?workflow=release');
+    expect(graph(container)?.querySelector('[data-node-id="ship"]')).not.toBeNull();
+    // Стрелки по радиогруппе не копят записей: назад -- туда, откуда пришли.
+    await travel(container, -1);
+    expect(addressOf(container)).toBe('/');
+  });
+
+  test('back and forward show the definition of their address', async () => {
+    api({ ...projectRoutes({ body: published }), ...graphRoutes });
+    const container = await openProject([
+      '/projects/project-1?workflow=architecture',
+      '/projects/project-1?workflow=release',
+    ]);
+    expect(checkedNames(container)).toEqual(['release']);
+    await travel(container, -1);
+    expect(checkedNames(container)).toEqual(['architecture']);
+    expect(graph(container)?.querySelector('[data-node-id="design"]')).not.toBeNull();
+    await travel(container, 1);
+    expect(checkedNames(container)).toEqual(['release']);
+    expect(graph(container)?.querySelector('[data-node-id="ship"]')).not.toBeNull();
+  });
+
+  test('a name the catalog lacks is named with a way out, not replaced by the first', async () => {
+    const calls = api({ ...projectRoutes({ body: published }), ...graphRoutes });
+    const container = await openProject(['/projects/project-1?workflow=gone']);
+    const text = notice(container)?.textContent ?? '';
+    expect(text).toContain(catalogText.missing.replace('{{name}}', 'gone'));
+    expect(checkedNames(container)).toEqual([]);
+    expect(graph(container)).toBeNull();
+    expect(calls.some((c) => c.url.includes('/graph'))).toBe(false);
+    // Список остаётся: выбрать другое можно и отсюда.
+    expect(radios(container).map((radio) => radio.value)).toEqual(['architecture', 'release']);
+    const clear = notice(container)?.querySelector('button');
+    expect(clear?.textContent).toBe(catalogText.clear_selection);
+    await click(clear);
+    expect(addressOf(container)).toBe('/projects/project-1');
+    expect(notice(container)).toBeNull();
+    expect(checkedNames(container)).toEqual(['architecture']);
+    expect(calls.map((c) => c.url)).toContain(graphPath('architecture', 2, second));
+  });
+
+  test('a named definition that left the catalog on a reread is named as well', async () => {
+    let catalog: { workflows: WorkflowDefinition[] } = published;
+    api({
+      ...projectRoutes(() => ({ body: catalog })),
+      [`GET ${graphPath('release', 1, first)}`]: {
+        status: 409,
+        body: { detail: 'workflow version changed' },
+      },
+    });
+    const container = await openProject(['/projects/project-1?workflow=release']);
+    catalog = { workflows: [published.workflows[0]] };
+    await click(block(container)?.querySelector('[role="alert"] button'));
+    expect(notice(container)?.textContent).toContain(
+      catalogText.missing.replace('{{name}}', 'release')
+    );
+    expect(checkedNames(container)).toEqual([]);
+  });
+
+  test('an empty catalog says so whatever the address names', async () => {
+    api(projectRoutes({ body: { workflows: [] } }));
+    const container = await openProject(['/projects/project-1?workflow=gone']);
+    expect(block(container)?.textContent).toContain(catalogText.empty);
+    expect(notice(container)).toBeNull();
   });
 });
