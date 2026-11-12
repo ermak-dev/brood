@@ -306,7 +306,7 @@
     "worker_pools": "Пулы воркеров",
     "project": "Проект",
     "overview": "Обзор",
-    "waiting_swarms": "Ждут ответа: {{count}}",
+    "waiting_swarms": "Ждут вас: {{count}}",
     "gateway_dashboard": "Статистика шлюза"
   },
   "nav_groups": {

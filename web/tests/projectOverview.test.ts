@@ -4,19 +4,20 @@
 // swarm. A row without a summary is unknown, not zero. The swarms needing the
 // operator and the running ones are always listed, the rest fill the overview
 // up to its limit. A summary tile leads to the swarm where to act: one swarm
-// to its page, several to the swarm list.
+// to its page, several to the swarm list. The waiting tile and the menu counter
+// of the swarm list decide by one rule (#269).
 import { describe, expect, test } from 'bun:test';
 import type { AccessSwarm } from '@/services/brood/access';
+import { waitingCount } from '@/features/access/swarmActivity';
 import {
   OVERVIEW_SWARMS,
   overviewSummary,
   overviewSwarms,
   projectDetailsPath,
   summaryTarget,
-  type OverviewRow,
 } from '@/features/overview/overview';
 
-const row = (id: string, fields: Partial<OverviewRow> = {}): OverviewRow => ({
+const row = (id: string, fields: Partial<AccessSwarm> = {}): AccessSwarm => ({
   id,
   project_id: 'p1',
   owner_id: 'u1',
@@ -101,6 +102,26 @@ describe('overview summary', () => {
     expect(summary.undeliveredAnswers).toBeNull();
     expect(summary.unknown).toBe(0);
     expect(ids(summary.running)).toEqual(['b']);
+  });
+
+  // #269: плитка «Ждут вас» и счётчик меню у «Swarms» решают одинаково о
+  // каждом рое, а не только сходятся числом.
+  test('the waiting tile and the menu counter decide every swarm alike', () => {
+    const rows = [
+      row('gate', { execution: 'waiting', openRequests: 1 }),
+      row('actor-asks', { execution: 'running', openRequests: 2 }),
+      row('cancelled-gate', { execution: 'waiting' }),
+      row('undelivered', { execution: 'succeeded', undeliveredAnswers: 1 }),
+      row('broken', { execution: 'waiting', openRequests: -1 }),
+      row('old', { execution: undefined, openRequests: undefined }),
+      row('quiet', { execution: 'running' }),
+    ];
+    const decide = (count: (rows: AccessSwarm[]) => number) =>
+      Object.fromEntries(rows.map((swarm) => [swarm.id, count([swarm])]));
+    const tile = decide((list) => overviewSummary(list).waiting.length);
+    expect(decide(waitingCount)).toEqual(tile);
+    expect(ids(overviewSummary(rows).waiting)).toEqual(['gate', 'actor-asks', 'cancelled-gate']);
+    expect(waitingCount(rows)).toBe(3);
   });
 
   test('a broken undelivered count is not a count', () => {

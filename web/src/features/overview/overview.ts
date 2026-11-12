@@ -6,13 +6,8 @@
  * список. Прогон -- это исполнение роя (#206): прогон роя -- его строка.
  */
 import type { AccessSwarm } from '@/services/brood/access';
-import { swarmActivityOf, swarmOrder } from '@/features/access/swarmActivity';
+import { swarmActivityOf, swarmOrder, waitsForOperator } from '@/features/access/swarmActivity';
 import { SWARMS_PATH, swarmPath } from '@/features/swarms/routes';
-
-/** Строка списка роёв с числом недоставленных ответов (#266). Поле читает
- * только обзор; тип строки списка панель расширит вместе с признаком в
- * списке роёв. */
-export type OverviewRow = AccessSwarm & { undeliveredAnswers?: number };
 
 /** Сколько роёв обзор показывает, если ни один не ждёт оператора и не идёт. */
 export const OVERVIEW_SWARMS = 6;
@@ -22,28 +17,23 @@ export interface OverviewSummary {
   /** Строки без сводки исполнения или с браком в ней: о них обзор не знает,
    * в группы ниже они не входят. */
   unknown: number;
-  /** Ждут оператора: открытый вопрос узла или актора, или граф ждёт ответа. */
-  waiting: OverviewRow[];
+  /** Ждут оператора (waitsForOperator, то же правило у счётчика меню):
+   * открытый вопрос узла или актора, или граф ждёт ответа. */
+  waiting: AccessSwarm[];
   openRequests: number;
   /** Рои с ответами актору, ждущими повтора доставки; null -- сервер их не
    * считает (строки без поля), это не ноль. */
-  undelivered: OverviewRow[] | null;
+  undelivered: AccessSwarm[] | null;
   undeliveredAnswers: number | null;
-  running: OverviewRow[];
+  running: AccessSwarm[];
   /** Исполнение встало (`failed`). */
-  stuck: OverviewRow[];
+  stuck: AccessSwarm[];
 }
 
-/** Число недоставленных ответов строки; брак и отсутствие поля -- undefined. */
-export function undeliveredOf(row: OverviewRow): number | undefined {
-  const value = row.undeliveredAnswers;
-  return Number.isSafeInteger(value) && (value as number) >= 0 ? value : undefined;
-}
-
-/** Сводка обзора по строкам списка. Строка с браком сводки (дробное число
- * вопросов отвергает swarmActivityOf, отрицательное -- activityOf)
- * неизвестна и в группы не входит. */
-export function overviewSummary(rows: OverviewRow[]): OverviewSummary {
+/** Сводка обзора по строкам списка. Строка с браком сводки (swarmActivityOf
+ * отвергает дробное и отрицательное число вопросов) неизвестна и в группы
+ * не входит. */
+export function overviewSummary(rows: AccessSwarm[]): OverviewSummary {
   const summary: OverviewSummary = {
     total: rows.length,
     unknown: 0,
@@ -56,19 +46,19 @@ export function overviewSummary(rows: OverviewRow[]): OverviewSummary {
   };
   let counted = false;
   for (const row of rows) {
-    const undelivered = undeliveredOf(row);
+    const activity = swarmActivityOf(row);
+    if (!activity) {
+      summary.unknown += 1;
+      continue;
+    }
+    const undelivered = activity.undeliveredAnswers;
     if (undelivered !== undefined) {
       counted = true;
       summary.undeliveredAnswers = (summary.undeliveredAnswers ?? 0) + undelivered;
       if (undelivered > 0) summary.undelivered?.push(row);
     }
-    const activity = activityOf(row);
-    if (!activity) {
-      summary.unknown += 1;
-      continue;
-    }
     summary.openRequests += activity.openRequests;
-    if (activity.execution === 'waiting' || activity.openRequests > 0) summary.waiting.push(row);
+    if (waitsForOperator(activity)) summary.waiting.push(row);
     if (activity.execution === 'running') summary.running.push(row);
     if (activity.execution === 'failed') summary.stuck.push(row);
   }
@@ -79,16 +69,9 @@ export function overviewSummary(rows: OverviewRow[]): OverviewSummary {
   return summary;
 }
 
-/** Сводка исполнения строки (swarmActivityOf), если число вопросов в ней --
- * неотрицательное целое; иначе undefined, «неизвестно». */
-export function activityOf(row: OverviewRow) {
-  const activity = swarmActivityOf(row);
-  return activity && activity.openRequests >= 0 ? activity : undefined;
-}
-
 /** Куда ведёт плитка сводки: к единственному рою -- на его страницу, там
  * инбокс и граф; к нескольким -- в список роёв, где ждущие сверху. */
-export function summaryTarget(rows: OverviewRow[]): string | undefined {
+export function summaryTarget(rows: AccessSwarm[]): string | undefined {
   if (rows.length === 0) return undefined;
   return rows.length === 1 ? swarmPath(rows[0].id) : SWARMS_PATH;
 }
@@ -103,14 +86,13 @@ const inProgressStates = new Set(['provisioning', 'deleting']);
 /** Ступень роя в обзоре: 0 -- нужен оператор (вопрос, граф ждёт ответа,
  * недоставленный ответ, встало исполнение, сбой инфраструктуры), 1 -- идёт
  * работа (исполнение или операция инфраструктуры), 2 -- остальное. */
-function stepOf(row: OverviewRow): 0 | 1 | 2 {
-  const activity = activityOf(row);
+function stepOf(row: AccessSwarm): 0 | 1 | 2 {
+  const activity = swarmActivityOf(row);
   const execution = activity?.execution;
   if (
-    execution === 'waiting' ||
+    waitsForOperator(activity) ||
     execution === 'failed' ||
-    (activity?.openRequests ?? 0) > 0 ||
-    (undeliveredOf(row) ?? 0) > 0 ||
+    (activity?.undeliveredAnswers ?? 0) > 0 ||
     row.state === 'error'
   ) {
     return 0;
@@ -124,9 +106,9 @@ function stepOf(row: OverviewRow): 0 | 1 | 2 {
  * OVERVIEW_SWARMS. Внутри ступени -- порядок списка роёв (swarmOrder), при
  * равенстве -- порядок сервера. hidden -- сколько роёв осталось в списке. */
 export function overviewSwarms(
-  rows: OverviewRow[],
+  rows: AccessSwarm[],
   limit = OVERVIEW_SWARMS
-): { shown: OverviewRow[]; hidden: number } {
+): { shown: AccessSwarm[]; hidden: number } {
   const ordered = rows
     .map((row) => ({ row, step: stepOf(row) }))
     .sort((a, b) => a.step - b.step || swarmOrder(a.row, b.row));

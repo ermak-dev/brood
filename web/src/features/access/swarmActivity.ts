@@ -17,21 +17,42 @@ export interface SwarmActivity {
   undeliveredAnswers?: number;
 }
 
+/** Число в сводке -- неотрицательное целое; дробное и отрицательное -- брак. */
+function isCount(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
 /** Сводка из строки списка (#234); без неё или с браком -- undefined,
  * «неизвестно», а не ноль вопросов и не «не запущен». Брак в
  * `undeliveredAnswers` сводку не прячет: теряется только это число. */
 export function swarmActivityOf(swarm: AccessSwarm): SwarmActivity | undefined {
-  if (typeof swarm.execution !== 'string' || !Number.isSafeInteger(swarm.openRequests)) {
+  if (typeof swarm.execution !== 'string' || !isCount(swarm.openRequests)) {
     return undefined;
   }
   const activity: SwarmActivity = {
     execution: swarm.execution,
-    openRequests: swarm.openRequests as number,
+    openRequests: swarm.openRequests,
   };
-  if (Number.isSafeInteger(swarm.undeliveredAnswers)) {
+  if (isCount(swarm.undeliveredAnswers)) {
     activity.undeliveredAnswers = swarm.undeliveredAnswers;
   }
   return activity;
+}
+
+/** Рой ждёт оператора (#269): граф ждёт ответа -- и тогда, когда узловой
+ * вопрос отменён, -- или открыт вопрос узла или актора. Одно правило для
+ * плитки «Ждут вас» обзора и счётчика у пункта меню «Swarms».
+ *
+ * Недоставленные ответы актору сюда не входят и остаются отдельным
+ * признаком: на вопрос оператор уже ответил, от него ждут не ответа, а
+ * повтора доставки. Так их подаёт и инбокс (#264) -- отдельной группой
+ * «Доставка требует внимания» и отдельным числом в шапке рядом с открытыми,
+ * -- и список роёв (#266): отдельным признаком рядом с открытыми вопросами,
+ * которого `openRequests` не считает и который порядок списка не меняет. У
+ * обзора для них своя плитка; войди они в «Ждут вас», рой считался бы
+ * дважды. Без сводки или с браком рой не ждёт: «неизвестно» -- не вопрос. */
+export function waitsForOperator(activity: SwarmActivity | undefined): boolean {
+  return activity !== undefined && (activity.execution === 'waiting' || activity.openRequests > 0);
 }
 
 /** Тон исполнения в словаре бейджей #254: внимание оператора, работа, проблема, ничего. */
@@ -78,7 +99,8 @@ export function swarmOrder(a: AccessSwarm, b: AccessSwarm): number {
   return (second?.openRequests ?? 0) - (first?.openRequests ?? 0);
 }
 
-/** Число ждущих роёв -- для счётчика у пункта меню. */
+/** Число роёв, ждущих оператора (waitsForOperator), -- для счётчика у пункта
+ * меню. */
 export function waitingCount(swarms: AccessSwarm[] | null): number {
-  return (swarms ?? []).filter((swarm) => swarmActivityOf(swarm)?.execution === 'waiting').length;
+  return (swarms ?? []).filter((swarm) => waitsForOperator(swarmActivityOf(swarm))).length;
 }

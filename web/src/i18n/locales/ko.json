@@ -306,7 +306,7 @@
     "worker_pools": "워커 풀",
     "project": "프로젝트",
     "overview": "개요",
-    "waiting_swarms": "답변 대기: {{count}}",
+    "waiting_swarms": "처리 대기: {{count}}",
     "gateway_dashboard": "게이트웨이 통계"
   },
   "nav_groups": {
