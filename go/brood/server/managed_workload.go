@@ -254,6 +254,12 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			if errors.Is(err, store.ErrPoolUnavailable) || errors.Is(err, store.ErrRevisionConflict) {
 				return err
 			}
+			// Отказ координации называет держателя и request ID (#272): общий
+			// текст отправил бы сверять задачу провайдера вместо аренды.
+			var held *store.CoordinationConflictError
+			if errors.As(err, &held) {
+				return fmt.Errorf("%w: %w", app.ErrConflict, held)
+			}
 			return fmt.Errorf("%w: managed task must be reconciled before changing intent", app.ErrConflict)
 		}
 		if o.action == "stop" || o.action == "delete" || o.action == "reset" {

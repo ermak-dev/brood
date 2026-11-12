@@ -65,7 +65,7 @@ func (s *Store) AcquireActorOperation(ctx context.Context, uid string, generatio
 		if a.Incarnation != generation || a.Desired != "running" || a.Phase != "running" || a.Stage != "done" || a.Operation != "start" || sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != a.AtespaceUID {
 			return newCoordinationConflict("actor incarnation is not ready for workspace control")
 		}
-		if err := s.guardActorCoordination(ctx, uid); err != nil {
+		if err := s.guardActorCoordination(ctx, a); err != nil {
 			return err
 		}
 		op = ActorOperation{ProjectID: sw.ProjectID, SwarmID: sw.ID, UID: uid, Generation: generation, OperationID: id, Caller: caller, Operation: operation, State: "inflight"}
