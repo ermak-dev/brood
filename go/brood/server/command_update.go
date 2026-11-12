@@ -79,10 +79,10 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 	// только явный start, и он сам ставит текущий набор. Иначе update был
 	// бы start под другим именем.
 	if !managedRunning(a) {
-		// Update, ждущий запроса Start, называется как есть: задачи нет, и
-		// отменяют его stop, delete или reset.
-		if updateStartPending(a) {
-			return command.Result{}, actorCommandError(newUpdateWaitingRefusal("update", a))
+		// Start или stop, ждущие запроса, называются как есть: задачи нет
+		// (#133, #275).
+		if notRequested(a) {
+			return command.Result{}, actorCommandError(newWaitingRefusal("update", a))
 		}
 		// Незавершённое изменение (в том числе сам перезапуск update, чья
 		// CT уже остановлена) start не заменит: совет start был бы ложным.
@@ -146,9 +146,15 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 			saved = store.ManagedActor{UID: a.UID, Name: a.Name, Incarnation: a.Incarnation, OperationID: op.operationID}
 		}
 	}
-	// Успех — только принятая PVE задача остановки: UPID записан, ошибки нет.
-	// Без UPID или с ошибкой исход неизвестен: задача могла начаться, поэтому
-	// это не принятие и не повод повторять.
+	// Stop, отказавший до записи (#275), PVE не получал: намерение записано, и
+	// reconcile запрашивает остановку каждым проходом. Это принятие, а не
+	// неизвестный исход.
+	if err == nil && stopNotRequested(saved) {
+		return updateResult(saved, before.id, target, "accepted", fmt.Sprintf("actor %q update accepted (uid %s): a controlled restart in the retained container from guest release %s to %s; the profile's template and resources do not change; its stop is not yet requested (last attempt failed: %s); reconcile requests it on every pass; the restart is asynchronous, not a completion or readiness confirmation; current state: %s", a.Name, a.UID, before.id, target, saved.Error, saved.Phase)), nil
+	}
+	// Иначе успех — только принятая PVE задача остановки: UPID записан,
+	// ошибки нет. Без UPID или с ошибкой исход неизвестен: задача могла
+	// начаться, поэтому это не принятие и не повод повторять.
 	if err != nil || saved.Stage != "stop" || saved.UPID == "" || saved.Phase == "error" {
 		detail := saved.Error
 		switch {

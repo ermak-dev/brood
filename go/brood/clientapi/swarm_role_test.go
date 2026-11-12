@@ -108,6 +108,7 @@ func TestSwarmRoleRefusalReasons(t *testing.T) {
 		shown  bool
 	}{
 		{"actor is not live: it must be provisioning or running and meant to run", true},
+		{"actor is waiting to stop for a reset or update; bind it once it runs again", true},
 		{"swarm execution is running or waiting; stop the swarm before changing role bindings", true},
 		{"swarm role is not bound", true},
 		{"synthetic-secret-sentinel", false},

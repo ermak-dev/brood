@@ -270,7 +270,7 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 func actorCommandError(err error) error {
 	var refusal *command.Refusal
 	var held *store.CoordinationConflictError
-	var waiting *updateWaitingRefusal
+	var waiting *waitingRefusal
 	switch {
 	case errors.As(err, &refusal):
 		// Владение (#152) и отказы, уже ставшие отказом команды.

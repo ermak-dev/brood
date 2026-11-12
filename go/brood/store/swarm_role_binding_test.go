@@ -14,6 +14,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -190,6 +192,55 @@ func TestSwarmRoleBindRejectsInactiveActor(t *testing.T) {
 			if bindings, err := s.SwarmsRoleBindings(ctx, "one"); err != nil || len(bindings) != 0 {
 				t.Fatalf("inactive binding persisted: %+v %v", bindings, err)
 			}
+		})
+	}
+}
+
+// waitingStops — строки актора, чью работающую CT reset или update должны
+// остановить, а Stop до PVE ещё не дошёл (#275): стадия stop, фаза running,
+// желание running, задачи нет, причина последнего отказа. Update хранится
+// как операция start.
+var waitingStops = map[string]string{
+	"update": "operation='start', stage='stop', upid='', desired='running', phase='running', error='Proxmox reconciliation unavailable; allocation retained'",
+	"reset":  "operation='reset', stage='stop', upid='', desired='running', phase='running', error='Proxmox reconciliation unavailable; allocation retained'",
+}
+
+// settledRunning — работающий актор без незавершённого изменения.
+const settledRunning = "operation='start', stage='done', upid='', desired='running', phase='running', error=''"
+
+// waitingStopRefused — отказ актору, чью остановку ждёт change: типизирован
+// как ждущая остановка и как неживой актор и называет её и последний отказ.
+func waitingStopRefused(t *testing.T, what, change string, err error) {
+	t.Helper()
+	says := "actor is waiting to stop its running container for " + change + " (last attempt failed: Proxmox reconciliation unavailable; allocation retained)"
+	if !errors.Is(err, ErrSwarmRoleStopPending) || !errors.Is(err, ErrSwarmRoleInactive) || !strings.Contains(fmt.Sprint(err), says) {
+		t.Fatalf("%s of an actor waiting to stop for %s: %v, want %q", what, change, err, says)
+	}
+}
+
+// TestSwarmRoleWaitingStopIsNotLive — актор, чью CT reset или update ещё
+// только должны остановить, по фазе работает, но роль не принимает и не
+// разрешается: шаг прохода ему откажет, а reset сменит инкарнацию. Тот же
+// актор без незавершённого изменения роль берёт и разрешается.
+func TestSwarmRoleWaitingStopIsNotLive(t *testing.T) {
+	ctx := context.Background()
+	for change, waiting := range waitingStops {
+		t.Run(change, func(t *testing.T) {
+			s := bindingFixture(t)
+			setActor(t, s, "actor", settledRunning)
+			mustNil(t, s.BindSwarmRole(ctx, SwarmRoleBinding{SwarmID: "one", Role: "build", ActorUID: "actor"}))
+			setActor(t, s, "actor", waiting)
+			_, err := s.ResolveSwarmRole(ctx, "one", "build")
+			waitingStopRefused(t, "resolve", change, err)
+			waitingStopRefused(t, "bind", change, s.BindSwarmRole(ctx, SwarmRoleBinding{SwarmID: "one", Role: "review", ActorUID: "actor"}))
+			if bindings, err := s.SwarmsRoleBindings(ctx, "one"); err != nil || len(bindings) != 1 || bindings[0].Role != "build" {
+				t.Fatalf("refused binding persisted: %+v %v", bindings, err)
+			}
+			setActor(t, s, "actor", settledRunning)
+			if got, err := s.ResolveSwarmRole(ctx, "one", "build"); err != nil || got.ActorUID != "actor" {
+				t.Fatalf("resolve of a settled actor: %+v %v", got, err)
+			}
+			mustNil(t, s.BindSwarmRole(ctx, SwarmRoleBinding{SwarmID: "one", Role: "review", ActorUID: "actor"}))
 		})
 	}
 }

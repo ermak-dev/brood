@@ -352,7 +352,9 @@ not found` (посторонний), 404 `swarm role is not bound` (`DELETE`), 4
 `swarm is not active`, 409 `swarm execution is running or waiting; stop
 the swarm before changing role bindings`, 409 `actor is not an actor of
 this swarm` (в том числе неизвестный UID), 409 `actor is not live: it must
-be provisioning or running and meant to run`, 409 `actor incarnation
+be provisioning or running and meant to run`, 409 `actor is waiting to stop
+for a reset or update; bind it once it runs again` (Stop reset или update ещё
+не дошёл до PVE, фаза актора `running`, #275), 409 `actor incarnation
 changed; list the swarm actors and bind again`. Текст ошибок хранилища
 клиенту не возвращается.
 

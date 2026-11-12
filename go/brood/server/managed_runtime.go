@@ -23,6 +23,11 @@ import (
 	"brood.dev/go/brood/store"
 )
 
+// proxmoxAPI is the PVE client of the managed provider (proxmox.Client). A
+// write that fails without a UPID and without wrapping proxmox.ErrUncertain
+// submitted nothing: it failed on a read before the write (ownership, digest,
+// status) or PVE refused it explicitly (401, 403, 409). Any other failure of a
+// write may have been applied and wraps proxmox.ErrUncertain.
 type proxmoxAPI interface {
 	NextID(context.Context) (int, error)
 	Create(context.Context, proxmox.CTSpec) (string, error)
@@ -78,10 +83,10 @@ const managedTaskPendingError = "Proxmox task has not finished; allocation retai
 // errManagedTaskPending — задача ещё идёт; истёк только срок прохода.
 var errManagedTaskPending = errors.New("managed Proxmox task is still running")
 
-// errUpdateBootstrapUnconfirmed — PVE не подтвердил запись bootstrap env
-// остановленной CT у start update (#133); Start не отправлялся, и запись
+// errBootstrapUnconfirmed — PVE не подтвердил запись bootstrap env
+// остановленной CT перед Start (#133, #275); Start не отправлялся, и запись
 // повторяется.
-var errUpdateBootstrapUnconfirmed = errors.New("update bootstrap configuration write is unconfirmed")
+var errBootstrapUnconfirmed = errors.New("bootstrap configuration write is unconfirmed")
 
 func (m *managedRuntime) clock() time.Time {
 	if m.now == nil {
@@ -280,7 +285,7 @@ func managedProviderError(err error) string {
 		return "Proxmox task failed; allocation retained"
 	case errors.Is(err, errManagedTaskPending):
 		return managedTaskPendingError
-	case errors.Is(err, errUpdateBootstrapUnconfirmed):
+	case errors.Is(err, errBootstrapUnconfirmed):
 		return "Proxmox did not confirm the bootstrap configuration of the stopped container; it is written again before the start"
 	case errors.Is(err, proxmox.ErrUncertain):
 		return "Proxmox operation outcome is uncertain; recorded CTID and reservation retained"
@@ -326,12 +331,10 @@ func (m *managedProvider) launch(ctx context.Context, client proxmoxAPI, a store
 	case "create":
 		upid, err = client.Create(ctx, m.createSpec(a))
 	case "start":
-		err = client.ConfigureBootstrap(ctx, managedOwned(a), m.createSpec(a).Env)
-		if err == nil {
-			upid, err = client.Start(ctx, managedOwned(a))
-		}
+		// Стадию start записывает beginStart: Start ещё не запрошен.
+		return m.launchStart(ctx, client, a, "")
 	case "stop":
-		upid, err = client.Stop(ctx, managedOwned(a))
+		return m.launchStop(ctx, client, a)
 	case "delete":
 		upid, err = client.Delete(ctx, managedOwned(a))
 	default:
@@ -377,47 +380,71 @@ func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedA
 	if errors.Is(err, errManagedTaskPending) && m.pendingQuiet(current) {
 		return
 	}
-	// Незапрошенный start update не стал неизвестным: проход отказал до
-	// Start (чтение PVE или запись bootstrap env), CT остаётся
-	// остановленной, следующий проход повторит.
+	// Незапрошенные start и stop не стали неизвестными: проход отказал до
+	// записи PVE (чтение PVE или запись bootstrap env), CT в прежнем
+	// состоянии, следующий проход повторит.
 	phase := "error"
-	if updateStartPending(current) {
-		phase = "stopped"
+	if notRequested(current) {
+		phase = current.Phase
 	}
 	m.saveObservation(parent, current, phase, "", managedProviderError(err))
 }
 
-// updateStartPending — стадия start update (#133), чей Start ещё не
-// запрошен: остановка подтверждена (ConfirmManagedActorStage оставил phase
-// stopped), задачи нет. Запрос отмечается до отправки: launchUpdateStart
-// ставит provisioning и только потом зовёт Start. Наблюдение CT эти случаи
-// не различает: Start, чей ответ потерян, может ещё не поднять CT, и повтор
-// по виду остановленной CT запустил бы её дважды. Обычный start в эту фазу
-// не попадает: BeginManagedActorOperation сразу ставит provisioning.
-func updateStartPending(a store.ManagedActor) bool {
+// startNotRequested — стадия start, чей Start ещё не запрошен: CT
+// остановлена (phase stopped), задачи нет. Так её записывают beginStart и
+// подтверждённая остановка update (#133), так её возвращает отказ до Start.
+// Запрос отмечается до отправки: launchStart ставит provisioning и только
+// потом зовёт Start. Наблюдение CT эти случаи не различает: Start, чей ответ
+// потерян, может ещё не поднять CT, и повтор по виду остановленной CT
+// запустил бы её дважды.
+func startNotRequested(a store.ManagedActor) bool {
 	return a.Operation == "start" && a.Stage == "start" && a.UPID == "" && a.Phase == "stopped" && a.Desired == "running"
 }
 
-// updateWaitingRefusal refuses start and update while the start of an update
-// is not yet requested (updateStartPending). It names the waiting update and
-// the last failure instead of an unknown outcome: no task is in flight, and
-// stop, delete or reset cancel the update.
-type updateWaitingRefusal struct {
-	action, name, last string
+// stopNotRequested — стадия stop, чей Stop ещё не запрошен (#275): CT
+// работает (phase running), задачи нет. Так стадию оставляет только отказ
+// Stop до записи; BeginManagedActorOperation ставит stopping или deleting, и
+// launchStop ставит их снова перед каждой отправкой.
+func stopNotRequested(a store.ManagedActor) bool {
+	return a.Stage == "stop" && a.UPID == "" && a.Phase == "running"
 }
 
-func (e *updateWaitingRefusal) Error() string {
-	last := "Start is not yet requested"
+// notRequested — стадия, чью запись PVE ещё не получал: reconcile повторяет
+// её каждым проходом, а phase хранит наблюдённое состояние CT.
+func notRequested(a store.ManagedActor) bool {
+	return startNotRequested(a) || stopNotRequested(a)
+}
+
+// unsent сообщает, что запись PVE отказала, ничего не отправив (proxmoxAPI).
+func unsent(upid string, err error) bool {
+	return err != nil && upid == "" && !errors.Is(err, proxmox.ErrUncertain)
+}
+
+// waitingRefusal refuses a lifecycle change while a start or stop stage is not
+// yet requested from PVE (notRequested). It names the wait and the last
+// failure instead of an unknown outcome: no task is in flight. stop, delete or
+// reset cancel a waiting start, whose container is stopped; a waiting stop
+// is the change that has to happen first.
+type waitingRefusal struct {
+	action, name, stage, last string
+}
+
+func (e *waitingRefusal) Error() string {
+	verb, state, request, cancel := "start", "stopped", "Start", "; stop, delete or reset cancels it"
+	if e.stage == "stop" {
+		verb, state, request, cancel = "stop", "running", "Stop", ""
+	}
+	last := request + " is not yet requested"
 	if e.last != "" {
 		last = "last attempt failed: " + e.last
 	}
-	return fmt.Sprintf("%s refused: actor %q update is waiting to start its stopped container (%s); reconcile retries the start on every pass; stop, delete or reset cancels it", e.action, e.name, last)
+	return fmt.Sprintf("%s refused: actor %q is waiting to %s its %s container (%s); reconcile retries the %s on every pass%s", e.action, e.name, verb, state, last, verb, cancel)
 }
 
-func (e *updateWaitingRefusal) Unwrap() error { return app.ErrConflict }
+func (e *waitingRefusal) Unwrap() error { return app.ErrConflict }
 
-func newUpdateWaitingRefusal(action string, a store.ManagedActor) error {
-	return &updateWaitingRefusal{action: action, name: a.Name, last: a.Error}
+func newWaitingRefusal(action string, a store.ManagedActor) error {
+	return &waitingRefusal{action: action, name: a.Name, stage: a.Stage, last: a.Error}
 }
 
 func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedActor) (result store.ManagedActor, err error) {
@@ -449,13 +476,15 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	if a.SourceFingerprint != p.SourceFingerprint || a.Template != p.Template {
 		return a, proxmox.ErrOwnership
 	}
-	// Start незапрошенного start update не отправлялся: его можно запросить.
-	if updateStartPending(a) {
-		return m.resumeUpdateStart(ctx, client, a)
+	// Незапрошенный Start не отправлялся: его можно запросить.
+	if startNotRequested(a) {
+		return m.resumeStart(ctx, client, a)
 	}
+	// Незапрошенный Stop тоже: наблюдение ниже решает, нужен ли он.
+	waitingStop := stopNotRequested(a)
 	// A missing task response is not proof that no task is still running. Never
 	// replay a submitted stage, even if the CT is currently stopped or absent.
-	if a.Stage != "done" && a.UPID == "" {
+	if a.Stage != "done" && a.UPID == "" && !waitingStop {
 		return a, proxmox.ErrUncertain
 	}
 	if a.Stage == "reconcile" && a.Operation == "reset" {
@@ -503,13 +532,16 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		if err != nil {
 			return a, err
 		}
-		a, err = m.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, store.NewID(), "start")
+		a, err = m.beginStart(ctx, a, store.NewID())
 		if err != nil {
 			return a, err
 		}
 		return m.launch(ctx, client, a)
 	case "stop", "delete":
 		if observed == "running" {
+			if waitingStop {
+				return m.launchStop(ctx, client, a)
+			}
 			return a, proxmox.ErrUncertain
 		}
 		if a.Stage == "done" {
@@ -530,7 +562,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		}
 		// Start update идёт следующим проходом со своим сроком: этот срок
 		// мог уйти на ожидание stop-задачи.
-		if updateStartPending(a) {
+		if startNotRequested(a) {
 			return a, nil
 		}
 		return m.launch(ctx, client, a)
@@ -539,16 +571,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 			return a, proxmox.ErrUncertain
 		}
 		if a.Stage != "done" {
-			// Завершение task не зависит от readiness гостя. Фиксируем task fence
-			// без публикации running до настоящего ttyd probe.
-			err = m.server.store.WithTx(ctx, func(tx context.Context) error {
-				var e error
-				a, e = m.server.store.ConfirmManagedActorStage(tx, a.UID, a.Revision, a.OperationID, a.Stage, "running")
-				if e == nil {
-					a, e = m.saveObservation(tx, a, "provisioning", "", "")
-				}
-				return e
-			})
+			a, err = m.confirmStartRunning(ctx, a)
 			if err != nil {
 				return a, err
 			}
@@ -587,33 +610,68 @@ func (m *managedProvider) resolveTaskFailure(ctx context.Context, client proxmox
 	return a, err
 }
 
-// resumeUpdateStart запрашивает start update (#133), чья остановка
-// подтверждена. Остановленная CT получает start; исчезнувшая CT кончает
+// confirmStartRunning закрывает стадию start наблюдённой работающей CT.
+// Работающая CT не зависит от readiness гостя: task fence фиксируется без
+// публикации running до настоящего ttyd probe (reconcileActor).
+func (m *managedProvider) confirmStartRunning(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
+	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
+		var e error
+		a, e = m.server.store.ConfirmManagedActorStage(tx, a.UID, a.Revision, a.OperationID, a.Stage, "running")
+		if e == nil {
+			a, e = m.saveObservation(tx, a, "provisioning", "", "")
+		}
+		return e
+	})
+	return a, err
+}
+
+// beginStart записывает намерение start остановленной CT незапрошенным
+// (startNotRequested, #275): BeginManagedActorOperation ставит provisioning,
+// а фаза stopped в той же транзакции говорит, что Start не отправлялся. Сбой
+// до Start, в том числе остановка сервера, оставляет start следующему
+// проходу, как start update (#133); provisioning ставит launchStart перед
+// самим Start.
+func (m *managedProvider) beginStart(ctx context.Context, a store.ManagedActor, operationID string) (store.ManagedActor, error) {
+	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
+		var e error
+		a, e = m.server.store.BeginManagedActorOperation(tx, a.UID, a.Revision, operationID, "start")
+		if e == nil {
+			a, e = m.saveObservation(tx, a, "stopped", "", "")
+		}
+		return e
+	})
+	return a, err
+}
+
+// resumeStart запрашивает start, чей Start ещё не запрошен
+// (startNotRequested). Остановленная CT получает start; исчезнувшая CT кончает
 // операцию ошибкой, как после stop-стадии. Работающая CT без запроса этой
 // операции — изменение мимо brood: исход неизвестен, и start не повторяется.
-func (m *managedProvider) resumeUpdateStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *managedProvider) resumeStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
 	config, observed, err := managedObservation(ctx, client, a)
 	if err != nil {
 		return a, err
 	}
 	switch observed {
 	case "stopped":
-		return m.launchUpdateStart(ctx, client, a, config.Digest)
+		return m.launchStart(ctx, client, a, config.Digest)
 	case "absent":
 		return m.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 	}
 	return m.recordTask(ctx, a, "", proxmox.ErrUncertain)
 }
 
-// launchUpdateStart отправляет start update CT, наблюдённой остановленной с
-// digest конфигурации digest. Отказ до Start (чтения владения, digest и
-// статуса, отказ или неоднозначный исход записи bootstrap) оставляет start
-// незапрошенным для следующего прохода. Bootstrap, уже записанный этой
+// launchStart отправляет незапрошенный start (startNotRequested) CT,
+// наблюдённой остановленной с digest конфигурации digest ("" — digest не
+// известен). Отказ до Start (чтения владения, digest и статуса, отказ или
+// неоднозначный исход записи bootstrap) оставляет start незапрошенным с
+// диагностикой для следующего прохода. Bootstrap, уже записанный этой
 // операцией, не переписывается, пока конфигурация не менялась
 // (bootstrapCurrent): Start, отказывающий явно, повторяется каждым проходом,
-// а запись конфигурации — нет. Перед Start отметка provisioning фиксирует запрос: Start,
-// отправленный до остановки сервера, по ней не уходит второй раз.
-func (m *managedProvider) launchUpdateStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor, digest string) (store.ManagedActor, error) {
+// а запись конфигурации — нет. Перед Start отметка provisioning фиксирует
+// запрос: Start, отправленный до остановки сервера, по ней не уходит второй
+// раз.
+func (m *managedProvider) launchStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor, digest string) (store.ManagedActor, error) {
 	owned := managedOwned(a)
 	env := m.createSpec(a).Env
 	if !m.bootstrapCurrent(a, env, digest) {
@@ -625,9 +683,9 @@ func (m *managedProvider) launchUpdateStart(ctx context.Context, client proxmoxA
 			// снова проверит владение, digest и остановленную CT и запишет
 			// то же содержимое.
 			if errors.Is(err, proxmox.ErrUncertain) {
-				return a, errUpdateBootstrapUnconfirmed
+				err = errBootstrapUnconfirmed
 			}
-			return a, err
+			return m.leavePending(ctx, a, a.Phase, err)
 		}
 		m.rememberBootstrap(ctx, client, a, env)
 	}
@@ -636,21 +694,63 @@ func (m *managedProvider) launchUpdateStart(ctx context.Context, client proxmoxA
 		return a, err
 	}
 	upid, err := client.Start(ctx, owned)
-	if err != nil && upid == "" && !errors.Is(err, proxmox.ErrUncertain) {
+	if unsent(upid, err) {
 		// Start отказал на чтении владения или явным 403/409: задачи нет, и
-		// start снова ждёт запроса. Запись переживает отмену прохода.
+		// start снова ждёт запроса. Возврат к stopped переживает отмену
+		// прохода.
 		durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		pending, saveErr := m.saveObservation(durable, a, "stopped", "", managedProviderError(err))
-		if saveErr != nil {
-			return a, saveErr
-		}
-		return pending, err
+		return m.leavePending(durable, a, "stopped", err)
 	}
 	return m.recordTask(ctx, a, upid, err)
 }
 
-// managedBootstrap — подтверждённая запись bootstrap env start update:
+// launchStop отправляет Stop стадии stop CT, наблюдённой работающей.
+// Незапрошенный Stop (stopNotRequested) сначала снова получает фазу
+// остановки, как от BeginManagedActorOperation: Stop, чей ответ потерян или
+// чей UPID не записан, по ней второй раз не уходит. Отказ Stop до записи
+// (чтение владения, явный 403/409) возвращает стадии фазу running: задачи
+// нет, и следующий проход повторит Stop (#275).
+func (m *managedProvider) launchStop(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+	if stopNotRequested(a) {
+		marked, err := m.saveObservation(ctx, a, stopPhase(a), "", "")
+		if err != nil {
+			return a, err
+		}
+		a = marked
+	}
+	upid, err := client.Stop(ctx, managedOwned(a))
+	if unsent(upid, err) {
+		durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return m.leavePending(durable, a, "running", err)
+	}
+	return m.recordTask(ctx, a, upid, err)
+}
+
+// stopPhase — фаза запрошенной стадии stop, как её ставит
+// BeginManagedActorOperation: deleting у delete, stopping у остальных.
+func stopPhase(a store.ManagedActor) string {
+	if a.Operation == "delete" {
+		return "deleting"
+	}
+	return "stopping"
+}
+
+// leavePending оставляет стадию незапрошенной (notRequested) с фазой phase и
+// диагностикой отказа err: отказ до записи PVE — состояние актора, а не
+// ошибка прохода. Если записать не удалось, возвращается err: диагностику
+// сохранит проход (reconcilePass), а неснятая отметка отправки оставит исход
+// неизвестным.
+func (m *managedProvider) leavePending(ctx context.Context, a store.ManagedActor, phase string, err error) (store.ManagedActor, error) {
+	saved, saveErr := m.saveObservation(ctx, a, phase, "", managedProviderError(err))
+	if saveErr != nil {
+		return a, err
+	}
+	return saved, nil
+}
+
+// managedBootstrap — подтверждённая запись bootstrap env стадии start:
 // операция operationID записала env (его SHA-256: значения секретны), и
 // после записи конфигурация CT имела digest. Запись живёт в памяти процесса:
 // после перезапуска сервера первый повтор пишет env снова.
@@ -785,7 +885,14 @@ func (m *managedProvider) actorByName(ctx context.Context, swarm, name string) (
 // recomputation for a.Origin ("" when the origin has no admissible mode).
 func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace, originMode string) map[string]any {
 	state := "ACTOR_STATE_UNSPECIFIED"
-	switch a.Phase {
+	// Stop, ещё не запрошенный у PVE (#275), — та же остановка, что stopping
+	// или deleting: CT работает лишь до запроса. phase остаётся наблюдением
+	// CT, state называет идущее изменение.
+	lifecycle := a.Phase
+	if stopNotRequested(a) {
+		lifecycle = stopPhase(a)
+	}
+	switch lifecycle {
 	case "provisioning":
 		state = "ACTOR_STATE_RESUMING"
 	case "running":

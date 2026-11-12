@@ -161,6 +161,7 @@ var swarmRoleRefusals = map[string]bool{
 	"swarm execution is running or waiting; stop the swarm before changing role bindings": true,
 	"actor is not an actor of this swarm":                                                 true,
 	"actor is not live: it must be provisioning or running and meant to run":              true,
+	"actor is waiting to stop for a reset or update; bind it once it runs again":          true,
 	"actor incarnation changed; list the swarm actors and bind again":                     true,
 	"swarm graph is pinned to another workflow definition":                                true,
 	"workflow graph is not executable":                                                    true,

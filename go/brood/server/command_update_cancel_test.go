@@ -8,7 +8,7 @@ package server
 // owning master can then stop the actor (it stays stopped, desired stopped,
 // with no further Proxmox write), delete it (as a stopped container, without
 // a stop task) or reset it (the container is replaced without a stop task).
-// start and update are refused with a reason naming the waiting update and the
+// start and update are refused with a reason naming the waiting start and the
 // last failure, not an unknown outcome. Once Start may have been sent (the
 // provisioning mark or an ambiguous Start), stop, delete and reset stay
 // refused.
@@ -168,7 +168,7 @@ func TestUpdateWaitingStartIsCanceledByReset(t *testing.T) {
 // исход.
 func TestUpdateWaitingStartRefusesStartAndUpdate(t *testing.T) {
 	u := waitingOnRefusedStart(t)
-	waiting := `actor "worker" update is waiting to start its stopped container (last attempt failed: Proxmox permission denied; allocation retained); reconcile retries the start on every pass; stop, delete or reset cancels it`
+	waiting := `actor "worker" is waiting to start its stopped container (last attempt failed: Proxmox permission denied; allocation retained); reconcile retries the start on every pass; stop, delete or reset cancels it`
 	for via, call := range waitingCallers(u) {
 		ok, text, _ := call(t, "start", cancelArguments["start"])
 		text = refusalText(text)

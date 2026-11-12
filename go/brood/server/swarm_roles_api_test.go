@@ -20,6 +20,10 @@ import (
 	"brood.dev/go/brood/store"
 )
 
+// swarmRoleStopPending — фиксированная причина отказа привязки актору, чью
+// остановку ждёт reset или update (#275, go/CONTRACT.md).
+const swarmRoleStopPending = "actor is waiting to stop for a reset or update; bind it once it runs again"
+
 func (f startAPIFixture) roles(client *http.Client, query string) (*http.Response, map[string]any) {
 	r, b, _ := f.ts.do(client, "GET", "/api/swarms/"+f.swarm+"/roles"+query, "", nil)
 	return r, b
@@ -213,6 +217,12 @@ func TestSwarmRoleBindRefusalsWire(t *testing.T) {
 			setManagedPhase(t, f, "stopped")
 			return master(f)
 		}, status: http.StatusConflict, detail: inactive},
+		// Stop update отказал до записи (#275): CT работает, но актор ждёт
+		// остановки.
+		{name: "actor waiting to stop", setup: func(t *testing.T, f startAPIFixture) map[string]any {
+			execDB(t, f.ts, `UPDATE managed_actors SET stage='stop', upid='', error='Proxmox reconciliation unavailable; allocation retained' WHERE uid=?`, f.master.UID)
+			return master(f)
+		}, status: http.StatusConflict, detail: swarmRoleStopPending},
 		{name: "another incarnation", body: func(f startAPIFixture) any {
 			return map[string]any{"actorUid": f.master.UID, "actorIncarnation": f.master.Incarnation + 1}
 		}, status: http.StatusConflict, detail: stale},

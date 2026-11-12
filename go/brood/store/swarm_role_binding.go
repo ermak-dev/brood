@@ -49,6 +49,12 @@ var ErrSwarmRoleForeignActor = errors.New("swarm role binding requires an actor 
 // or it is no longer meant to run.
 var ErrSwarmRoleInactive = errors.New("swarm role binding names an inactive swarm or actor")
 
+// ErrSwarmRoleStopPending indicates that the actor runs and is meant to run,
+// but a reset or update is about to stop it: the change waits in its stop
+// stage (#275). It is an ErrSwarmRoleInactive: the actor takes no role until
+// the change runs it again.
+var ErrSwarmRoleStopPending = fmt.Errorf("%w: actor is waiting to stop its running container", ErrSwarmRoleInactive)
+
 // ErrSwarmRoleUnbound indicates that the node's role has no binding in the
 // swarm, so no actor may take the step.
 var ErrSwarmRoleUnbound = errors.New("node role is not bound to an actor of the swarm")
@@ -88,9 +94,17 @@ type SwarmRoleBinding struct {
 
 // liveRoleActor — единое правило пригодности актора под роль: рой активен,
 // актор принадлежит рою и его нынешнему atespace (как в
-// authorizeCommandActorDurable), живёт в фазе provisioning или running и
-// должен работать. Фазы stopped, stopping, error, deleting и deleted, как и
-// желание deleted или stopped, роль не принимают.
+// authorizeCommandActorDurable), живёт в фазе provisioning или running,
+// должен работать и не ждёт остановки. Фазы stopped, stopping, error,
+// deleting и deleted, как и желание deleted или stopped, роль не принимают.
+//
+// Стадия stop при желании running — остановка reset или update. Фаза running
+// у неё значит, что Stop ещё не дошёл до PVE (#275), а не что актор работает:
+// это та же остановка, что stopping, только незапрошенная. Шаг прохода такому
+// актору откажет (AcquireActorOperation требует стадию done), а reset сменит
+// инкарнацию. Отказ — именно ждущей остановке, а не любой незавершённой
+// стадии: актор в стадии create или start (provisioning) поднимается, и роль
+// ему привязать можно (#208).
 func liveRoleActor(swarm Swarm, a ManagedActor) error {
 	if a.SwarmID != swarm.ID || swarm.AtespaceUID == nil || *swarm.AtespaceUID != a.AtespaceUID {
 		return ErrSwarmRoleForeignActor
@@ -101,7 +115,27 @@ func liveRoleActor(swarm Swarm, a ManagedActor) error {
 	if a.Desired != "running" || (a.Phase != "provisioning" && a.Phase != "running") {
 		return fmt.Errorf("%w: actor is %s, desired %s", ErrSwarmRoleInactive, a.Phase, a.Desired)
 	}
+	if a.Stage == "stop" {
+		return fmt.Errorf("%w for %s (%s)", ErrSwarmRoleStopPending, stoppingChange(a), stopAttempt(a))
+	}
 	return nil
+}
+
+// stoppingChange — изменение, чья стадия stop ждёт при желании running:
+// update хранится как операция start (BeginManagedActorOperation).
+func stoppingChange(a ManagedActor) string {
+	if a.Operation == "start" {
+		return "update"
+	}
+	return a.Operation
+}
+
+// stopAttempt — состояние ждущего Stop: не запрошен или последний отказ.
+func stopAttempt(a ManagedActor) string {
+	if a.Error == "" {
+		return "Stop is not yet requested"
+	}
+	return "last attempt failed: " + a.Error
 }
 
 // BindSwarmRole atomically binds a role to a live actor of the same active
@@ -110,7 +144,9 @@ func liveRoleActor(swarm Swarm, a ManagedActor) error {
 // time; a positive b.ActorIncarnation is the incarnation the caller expects,
 // and another current one is refused with ErrSwarmRoleStale. Deleted,
 // deleting, failed or stopped actors are refused with ErrSwarmRoleInactive,
-// unknown actors and actors of another swarm with ErrSwarmRoleForeignActor,
+// an actor that a reset or update is about to stop with
+// ErrSwarmRoleStopPending (an ErrSwarmRoleInactive), unknown actors and
+// actors of another swarm with ErrSwarmRoleForeignActor,
 // a role that is not a DNS label with ErrSwarmRoleInvalid.
 //
 // BindSwarmRole checks neither the caller's rights nor the execution: a

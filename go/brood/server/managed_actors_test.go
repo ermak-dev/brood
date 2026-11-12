@@ -79,6 +79,13 @@ type managedFakePVE struct {
 	// ответа; отменённый к тому времени контекст делает ответ
 	// неоднозначным, как у клиента (#133).
 	duringBootstrap func()
+	// stopReadFailures — сколько раз Stop откажет на чтении владения, до
+	// записи (#275).
+	stopReadFailures int
+	// stopRefusesStopped — Stop остановленной CT отвечает, как
+	// proxmox.Client на HTTP 500 «CT not running» настоящего PVE:
+	// неоднозначным исходом (#275).
+	stopRefusesStopped bool
 }
 
 func (f *managedFakePVE) NextID(context.Context) (int, error) {
@@ -212,7 +219,16 @@ func (f *managedFakePVE) Stop(ctx context.Context, r proxmox.OwnedCT) (string, e
 		return "", err
 	}
 	f.mu.Lock()
+	if f.stopReadFailures > 0 {
+		f.stopReadFailures--
+		f.mu.Unlock()
+		return "", errors.New("PVE HTTPS request failed")
+	}
 	f.stops++
+	if f.stopRefusesStopped && !f.running {
+		f.mu.Unlock()
+		return "", fmt.Errorf("%w: PVE HTTP status 500", proxmox.ErrUncertain)
+	}
 	f.running = false
 	after := f.afterStop
 	uncertain := f.uncertainStop
@@ -671,8 +687,9 @@ func TestManagedUncertainStartAndUnfinishedTaskBlockMutations(t *testing.T) {
 }
 
 // FEATURE: Uncertain responses preserve every piece of provider evidence.
-// SPEC: Never drop a returned UPID alongside an error, and never replay a
-// synchronous bootstrap whose response was lost or start an unconfigured guest.
+// SPEC: Never drop a returned UPID alongside an error and never start an
+// unconfigured guest. A synchronous bootstrap whose response was lost is not a
+// start: it is written again under the digest CAS before the one Start (#275).
 func TestManagedUncertainResponseRetainsReturnedUPID(t *testing.T) {
 	ts, alice, _, id, pve, _ := managedSetup(t)
 	pve.uncertainWithUPID = true
@@ -696,8 +713,13 @@ func TestManagedTaskEvidencePersistsAfterRequestCancellation(t *testing.T) {
 	}
 }
 
-func TestManagedUncertainBootstrapIsNotReplayed(t *testing.T) {
-	ts, alice, _, id, pve, _ := managedSetup(t)
+// TestManagedUncertainBootstrapIsRetriedBeforeStart: запись bootstrap env,
+// чей ответ потерян, — не Start (#275, как start update в #133). CT
+// проверена остановленной и своей, запись идёт через digest CAS с тем же
+// содержимым, поэтому каждый проход пишет env снова, а Start не уходит, пока
+// PVE не подтвердит запись; после неё CT запускается ровно один раз.
+func TestManagedUncertainBootstrapIsRetriedBeforeStart(t *testing.T) {
+	ts, alice, _, id, pve, hub := managedSetup(t)
 	pve.bootstrapError = proxmox.ErrUncertain
 	r, b, _ := ts.do(alice, "POST", "/api/swarms/"+id+"/actors", ts.csrf(alice), map[string]any{"metadata": map[string]string{"name": "bootstrap"}, "actorTemplate": map[string]string{"name": "claude-proxmox-brood-proxmox"}})
 	expectStatus(t, "create", r, b, 201)
@@ -705,8 +727,21 @@ func TestManagedUncertainBootstrapIsNotReplayed(t *testing.T) {
 		ts.srv.managed.reconcileOnce(context.Background())
 	}
 	a := mustManagedActor(t, ts, id)
-	if pve.bootstraps != 1 || pve.starts != 0 || a.Phase != "error" || a.Operation != "start" || a.UPID != "" {
-		t.Fatalf("uncertain bootstrap replayed or guest started: bootstraps=%d starts=%d phase=%s operation=%s", pve.bootstraps, pve.starts, a.Phase, a.Operation)
+	if pve.bootstraps != 5 || pve.starts != 0 || a.Operation != "start" || a.Stage != "start" || a.UPID != "" || a.Phase != "stopped" || a.Error != managedProviderError(errBootstrapUnconfirmed) {
+		t.Fatalf("unconfirmed bootstrap not retried before Start: bootstraps=%d starts=%d %+v", pve.bootstraps, pve.starts, a)
+	}
+	pve.mu.Lock()
+	pve.bootstrapError = nil
+	pve.mu.Unlock()
+	hub.mu.Lock()
+	hub.connected = true
+	hub.mu.Unlock()
+	for range 4 {
+		ts.srv.managed.reconcileOnce(context.Background())
+	}
+	a = mustManagedActor(t, ts, id)
+	if !actorRunning(a) || pve.bootstraps != 6 || pve.starts != 1 {
+		t.Fatalf("confirmed bootstrap did not start the guest exactly once: bootstraps=%d starts=%d %+v", pve.bootstraps, pve.starts, a)
 	}
 }
 
@@ -766,9 +801,12 @@ func TestManagedTerminalFailureExplicitRetry(t *testing.T) {
 				r, b, _ = ts.do(alice, method, path+"/retry", ts.csrf(alice), body)
 				expectStatus(t, "explicit retry", r, b, map[bool]int{true: 202, false: 200}[action == "delete"])
 				retried := mustManagedActor(t, ts, id)
-				if action == "delete" && stage == "delete" {
+				// Упавшая delete-задача оставила CT остановленной: явный повтор
+				// delete и reset не шлёт ей vzstop (#275), а сразу получает
+				// свежий слот delete.
+				if stage == "delete" {
 					if retried.OperationID == before.OperationID || retried.Stage != "delete" || retried.UPID != "delete-task" || pve.stops != stops || pve.deletes != deletes+1 {
-						t.Fatal("explicit delete retry did not allocate a fresh delete slot for the owned stopped CT")
+						t.Fatalf("explicit %s retry did not allocate a fresh delete slot for the owned stopped CT: %+v stops=%d->%d", action, retried, stops, pve.stops)
 					}
 				} else if retried.OperationID == before.OperationID || retried.Stage != "stop" || pve.stops != stops+1 {
 					t.Fatal("explicit retry did not allocate a fresh stop task slot")
