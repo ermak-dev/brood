@@ -151,6 +151,20 @@ func (m *managedProvider) executeDispatch(ctx context.Context, from store.Manage
 	if err != nil {
 		return command.Result{}, fmt.Errorf("dispatch recipient is not another active managed actor in this swarm")
 	}
+	// Работу master назначает только workers, добавленным им через add (#267),
+	// тем же masterOwns, что изменения (#152): аренда без срока закрывает цели
+	// управление сессией, жизненный цикл и подтверждение шага роя
+	// (guardActorCoordination), то есть тоже меняет актора. Worker оператора
+	// не исключение: такие workers ведёт диспетчер шагов, а он отказывает шагу,
+	// пока на акторе висит dispatch-аренда. Ни поток роя, ни документация на
+	// dispatch master к ним не опираются: инструкции MCP делегируют через
+	// send, а его правило не трогает. Отказ получает и повтор request_id,
+	// взятого до правила: повтор ничего не отправил бы, а аренда остаётся
+	// (dispatchLeaseAction). ParentUID неизменен с резервирования, поэтому
+	// перед доставкой достаточно перепроверки dispatchTarget.
+	if err := m.masterOwns(ctx, from, target); err != nil {
+		return command.Result{}, err
+	}
 	if err := m.dispatchTarget(ctx, from, target); err != nil {
 		return command.Result{}, err
 	}

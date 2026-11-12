@@ -25,7 +25,7 @@ type coordinationCheckingRelay struct {
 func (h coordinationCheckingRelay) Connected(string, int64) bool { h.check(); return true }
 
 func TestCoordinationDoesNotDeliverAfterClaimRelease(t *testing.T) {
-	ts, master, worker := coordinationServerSetup(t)
+	ts, master, worker := ownedWorkerSetup(t)
 	ctx := context.Background()
 	sw, err := ts.srv.store.GetSwarm(ctx, master.SwarmID)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestCoordinationRechecksAfterNamespaceRead(t *testing.T) {
 func TestCoordinationReauthorizesImmediatelyBeforeDelivery(t *testing.T) {
 	for _, scenario := range []string{"revoked", "target_generation", "namespace"} {
 		t.Run(scenario, func(t *testing.T) {
-			ts, master, worker := coordinationServerSetup(t)
+			ts, master, worker := ownedWorkerSetup(t)
 			ctx := context.Background()
 			sw, err := ts.srv.store.GetSwarm(ctx, master.SwarmID)
 			if err != nil {
