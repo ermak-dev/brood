@@ -18,7 +18,7 @@ export interface SwarmActivity {
 }
 
 /** Число в сводке -- неотрицательное целое; дробное и отрицательное -- брак. */
-function isCount(value: unknown): value is number {
+export function isCount(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 

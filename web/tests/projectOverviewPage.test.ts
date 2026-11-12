@@ -243,6 +243,45 @@ describe('the overview of the active project', () => {
     await unmount(page);
   });
 
+  // #268: строка роя несёт определение снимка, число участников и
+  // managed-акторов; обзор показывает их из строки, без запроса на рой.
+  // Managed-акторы так и названы: native-акторов строка не считает. Строка
+  // старого сервера -- как прежде, без строки сведений.
+  test('each swarm names its workflow, members and managed actors from its row', async () => {
+    const definition = { name: 'review', version: 2, revision: '0123456789abcdef0123456789abcdef' };
+    swarms = [
+      swarm('s-gate', 'gate-crew', {
+        execution: 'waiting',
+        openRequests: 2,
+        definition,
+        memberCount: 3,
+        managedActorCount: 2,
+      }),
+      swarm('s-fresh', 'fresh-crew', { memberCount: 1, managedActorCount: 0 }),
+      swarm('s-old', 'old-crew', { execution: 'running' }),
+    ];
+    const page = await mount('/');
+    const list = section(page, 'swarms');
+    const facts = (id: string) =>
+      list?.querySelector(`[data-swarm="${id}"] [data-swarm-facts]`) ?? null;
+    const gate = facts('s-gate');
+    expect(gate?.querySelector('a[href="/projects/p1?workflow=review"]')?.textContent).toBe(
+      'review'
+    );
+    expect(gate?.textContent).toContain('v2');
+    expect(gate?.textContent).toContain('Members: 3');
+    expect(gate?.textContent).toContain('Managed actors: 2');
+    expect(gate?.textContent).not.toContain('Actors: 2');
+    const fresh = facts('s-fresh');
+    expect(fresh?.querySelector('a')).toBeNull();
+    expect(fresh?.textContent).toContain('Members: 1');
+    expect(fresh?.textContent).toContain('Managed actors: 0');
+    expect(facts('s-old')).toBeNull();
+    expect(list?.querySelector('[data-swarm="s-old"]')?.textContent).toContain('Running');
+    expect(requested.filter((url) => url.startsWith('/api/swarms/'))).toEqual([]);
+    await unmount(page);
+  });
+
   test('a tile of what waits for the operator leads to the swarm where to act', async () => {
     const page = await mount('/');
     const summary = section(page, 'summary');

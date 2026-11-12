@@ -32,9 +32,12 @@ export function executionAction(
   return run ? 'restart' : 'start';
 }
 
-/** Личность снимка, записанная роем; без неё — null, а не догадка по имени. */
-export function snapshotIdentity(run: PipelineRun | null): SnapshotIdentity | null {
-  const identity = run?.definition;
+/** Личность снимка, записанная роем; без неё — null, а не догадка по имени.
+ * Её несут чтение исполнения и строка списка роёв (#268). */
+export function snapshotIdentity(
+  source: Pick<PipelineRun, 'definition'> | null
+): SnapshotIdentity | null {
+  const identity = source?.definition;
   if (
     !identity ||
     typeof identity.name !== 'string' ||

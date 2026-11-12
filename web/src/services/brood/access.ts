@@ -1,4 +1,5 @@
 import { request } from './http';
+import type { SnapshotIdentity } from './pipelines';
 
 export interface AccessProject {
   id: string;
@@ -59,6 +60,14 @@ export interface AccessSwarm {
   /** Ответы актору с доставкой `failed` или `unconfirmed` (#266): ждут повтора
    * доставки. Старый сервер поля не шлёт. */
   undeliveredAnswers?: number;
+  /** Личность определения снимка роя (#268): записана первым запуском, у
+   * роя без неё поля нет. Это не текущее определение каталога. */
+  definition?: SnapshotIdentity;
+  /** Число явных участников роя (#268), длина `GET /api/swarms/{id}/members`. */
+  memberCount?: number;
+  /** Число неудалённых managed-акторов роя (#268). Native-акторов в нём нет:
+   * это не число всех акторов роя. */
+  managedActorCount?: number;
 }
 
 export interface AccessUser {
