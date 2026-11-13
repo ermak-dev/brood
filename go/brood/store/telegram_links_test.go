@@ -1055,8 +1055,8 @@ func TestTelegramInputsHaveLimits(t *testing.T) {
 		"DEL":                             {"alice\x7fbot", false},
 		"Cyrillic":                        {"алиса_bot", false},
 	} {
-		if got := telegramBotName(tc.value); got != tc.want {
-			t.Errorf("telegramBotName(%s) = %v, want %v", name, got, tc.want)
+		if got := TelegramBotName(tc.value); got != tc.want {
+			t.Errorf("TelegramBotName(%s) = %v, want %v", name, got, tc.want)
 		}
 	}
 	ctx := context.Background()

@@ -27,6 +27,10 @@ var telegramEventKinds = []string{"request_opened", "request_answered", "answer_
 // subscribe to, in display order.
 func TelegramEventKinds() []string { return slices.Clone(telegramEventKinds) }
 
+// TelegramReasonLimit is the most bytes a link error reason may take
+// (RecordTelegramLinkError); a writer clips a longer reason to it.
+const TelegramReasonLimit = 512
+
 var (
 	// ErrTelegramInvalid refuses malformed link input: an empty or malformed
 	// token, bot name, code or reason, a reason carrying a bot token, a code
@@ -120,7 +124,7 @@ func (s *Store) GetTelegramLink(ctx context.Context, userID string) (TelegramLin
 // user: ErrTelegramBotTaken, before anything is written. The returned view
 // and every error leave the token out.
 func (s *Store) SetTelegramBot(ctx context.Context, userID, token, username, installationBot string) (TelegramLink, error) {
-	if !telegramWord(token, 256) || !telegramBotName(username) {
+	if !telegramWord(token, 256) || !TelegramBotName(username) {
 		return TelegramLink{}, fmt.Errorf("%w: a bot token and the bot username from getMe are required", ErrTelegramInvalid)
 	}
 	if telegramSameBot(username, installationBot) {
@@ -383,8 +387,8 @@ func (s *Store) UnlinkTelegram(ctx context.Context, userID string) (TelegramLink
 // own, so a stray '%' elsewhere does not hide an encoded token. The caller
 // redacts an HTTP error before recording it.
 func (s *Store) RecordTelegramLinkError(ctx context.Context, userID, reason, installationToken string) (TelegramLink, error) {
-	if strings.TrimSpace(reason) == "" || len(reason) > 512 {
-		return TelegramLink{}, fmt.Errorf("%w: a link error needs a reason of at most 512 bytes", ErrTelegramInvalid)
+	if strings.TrimSpace(reason) == "" || len(reason) > TelegramReasonLimit {
+		return TelegramLink{}, fmt.Errorf("%w: a link error needs a reason of at most %d bytes", ErrTelegramInvalid, TelegramReasonLimit)
 	}
 	return s.changeTelegramLink(ctx, userID, func(ctx context.Context, _ TelegramLink) error {
 		var own string
@@ -632,8 +636,11 @@ func telegramWord(value string, limit int) bool {
 		strings.IndexFunc(value, func(r rune) bool { return r <= ' ' || r == 0x7f }) < 0
 }
 
-// telegramBotName: имя бота из getMe — латиница, цифры и подчёркивание, без @.
-func telegramBotName(name string) bool {
+// TelegramBotName reports whether name is a bot username as getMe gives it:
+// Latin letters, digits and underscores, without @, at most 64 bytes. The
+// store takes only such a name for an own bot; a caller applies the same rule
+// to a bot name the store never sees, such as the installation bot's.
+func TelegramBotName(name string) bool {
 	return name != "" && len(name) <= 64 && strings.IndexFunc(name, func(r rune) bool {
 		return !(r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
 	}) < 0

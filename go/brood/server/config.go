@@ -16,6 +16,7 @@ import (
 
 	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/gitidentity"
+	"brood.dev/go/brood/telegram"
 )
 
 // Значения по умолчанию: адрес слушателя и путь базы рядом с сервером.
@@ -107,6 +108,14 @@ type Config struct {
 	// artifactsDir — каталог артефактов бутстрапа гостя (BROOD_ARTIFACTS_DIR):
 	// свойство машины, без дефолта. Пусто — доставка артефактов не настроена.
 	artifactsDir string
+	// TelegramAPI — origin Bot API (BROOD_TELEGRAM_API, #281): по умолчанию
+	// публичный telegram.DefaultBaseURL; HTTPS или HTTP на loopback для
+	// локального Bot API. Им пользуются бот установки и свои боты.
+	TelegramAPI string
+	// telegramBotToken — токен бота установки (BROOD_TELEGRAM_BOT_TOKEN),
+	// секрет установки: только .env и секрет CI, не в логи, ответы API и
+	// гостевое окружение. Пусто — бота установки нет.
+	telegramBotToken string
 }
 
 // String, GoString and Format keep server credentials, including the
@@ -164,6 +173,11 @@ func LoadConfig(get getenv) (Config, error) {
 		ActorModels:           actormodel.Models{Model: envGet(get, "BROOD_ACTOR_MODEL"), Small: envGet(get, "BROOD_ACTOR_SMALL_MODEL")},
 		CLIProxyURL:           envGet(get, "CLIPROXY_URL"),
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
+		TelegramAPI:           envGet(get, telegramAPISetting),
+		telegramBotToken:      envGet(get, telegramBotTokenSetting),
+	}
+	if cfg.TelegramAPI == "" {
+		cfg.TelegramAPI = telegram.DefaultBaseURL
 	}
 	artifactsDir, err := loadGuestArtifactsDir(get)
 	if err != nil {
@@ -240,6 +254,9 @@ func (cfg Config) validateAdapters() error {
 	if err := cfg.validateRegistry(); err != nil {
 		return err
 	}
+	if err := cfg.validateTelegram(); err != nil {
+		return err
+	}
 	if cfg.CLIProxyURL != "" {
 		u, err := url.Parse(cfg.CLIProxyURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
@@ -273,6 +290,35 @@ func (cfg Config) validateAdapters() error {
 			return &ConfigError{Setting: setting.name, Detail: "is required when actor ingress is configured"}
 		}
 	}
+	return nil
+}
+
+// Настройки Telegram (#281): origin Bot API и токен бота установки.
+const (
+	telegramAPISetting      = "BROOD_TELEGRAM_API"
+	telegramBotTokenSetting = "BROOD_TELEGRAM_BOT_TOKEN"
+)
+
+// telegramProbeToken — токен формы BotFather для проверки одного origin
+// клиентом: без бота установки токена нет, а origin нужен и своим ботам.
+const telegramProbeToken = "0:probe"
+
+// validateTelegram проверяет origin Bot API и токен бота установки тем же
+// клиентом, который их возьмёт. Отказ называет настройку, но не значение.
+func (cfg Config) validateTelegram() error {
+	client, err := telegram.NewClient(telegramProbeToken, telegram.Config{BaseURL: cfg.TelegramAPI})
+	if err != nil {
+		return &ConfigError{Setting: telegramAPISetting, Detail: "must be an HTTPS origin, or an HTTP origin on a loopback address, without path, query or credentials"}
+	}
+	client.Close()
+	if cfg.telegramBotToken == "" {
+		return nil
+	}
+	client, err = telegram.NewClient(cfg.telegramBotToken, telegram.Config{BaseURL: cfg.TelegramAPI})
+	if err != nil {
+		return &ConfigError{Setting: telegramBotTokenSetting, Detail: "must be a bot token as BotFather issues it: <bot id>:<secret>"}
+	}
+	client.Close()
 	return nil
 }
 

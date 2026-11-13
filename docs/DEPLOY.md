@@ -517,6 +517,22 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `BROOD_DEPLOY_BUILD_CACHE_GB` | необязательный предел кэша сборки Docker, GiB, целое от 0; после успешной выкладки - уборка старых образов и `docker builder prune` (#247) |
 | `BROOD_DEPLOY_KEEP_SNAPSHOTS` | необязательное число снимков базы на PVC в `existing`, целое от 1, включая снимок этой выкладки (#247) |
 | `BROOD_ACTOR_MODEL`, `BROOD_ACTOR_SMALL_MODEL` | необязательные модели Claude Code акторов (#263): основная и быстрых задач, например `glm-5.3` и `glm-5.3-flash`; каждая сама по себе, без дефолта, до 256 печатаемых ASCII без пробелов. Пустая — модель этой группы выбирает Claude Code. Гость передаёт их Claude Code (`ANTHROPIC_MODEL` и псевдонимы `opus`/`sonnet`, `haiku`), см. «Модели Claude Code актора» в `docs/PROXMOX.md`; смена доходит до актора со следующим стартом CT |
+| `BROOD_TELEGRAM_BOT_TOKEN` | необязательный токен бота установки (#281) в форме BotFather `<id>:<секрет>`: бот пользователей без своего бота, свой приоритетнее. Секрет установки: только `.env` и защищённая переменная CI, не в логи, ответы API и guest env. Неверная форма — отказ запуска с именем настройки, без значения |
+| `BROOD_TELEGRAM_API` | необязательный origin Bot API (#281), по умолчанию `https://api.telegram.org`; HTTPS или HTTP на loopback (локальный Bot API), без path, query и credentials. Им пользуются бот установки и свои боты пользователей |
+
+Выкладка (`brood deploy go`) ещё не передаёт `BROOD_TELEGRAM_BOT_TOKEN` и
+`BROOD_TELEGRAM_API` в Secret и env сервера, а deny-all NetworkPolicy не
+пускает к `api.telegram.org:443`: способ egress — открытое решение эпика #278,
+оба шага — его задача деплоя. До неё в кластере бота установки нет, а
+`PUT /api/me/telegram` отвечает 503: Bot API недостижим.
+
+401 или 409 от Telegram останавливают бота установки для всех пользователей
+без своего бота до перезапуска сервера: сам сервер его снова не запускает, а
+причину показывает `bot_reason` профиля Telegram. Оператор устраняет
+причину — 401: выпускает новый токен в BotFather и записывает его в
+`BROOD_TELEGRAM_BOT_TOKEN`; 409: останавливает второй процесс, который
+опрашивает того же бота `getUpdates`, или снимает его webhook
+(`deleteWebhook`) — и перезапускает brood.
 
 Переход акторов с псевдонимов Claude в CLIProxy на модели установки (#263):
 задать `BROOD_ACTOR_MODEL` и `BROOD_ACTOR_SMALL_MODEL` в `.env` релиза,
