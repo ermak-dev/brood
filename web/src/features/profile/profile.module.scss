@@ -1,0 +1,95 @@
+@use '../../styles/mixins' as *;
+
+/* Секция Telegram профиля (#285). Карточки, сведения и пояснения -- из
+ * substrate.module.scss; здесь только раскладка: сведения слева, отвязка
+ * справа; блок выданного кода -- вложенный уровень (--card-inset-*). */
+
+.summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+
+  > dl {
+    flex: 1 1 auto;
+  }
+}
+
+@include mobile {
+  .summary {
+    flex-direction: column;
+  }
+}
+
+.code {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  max-width: var(--measure);
+  padding: 12px;
+  border: 1px solid var(--card-inset-border);
+  border-radius: var(--radius-md);
+  background: var(--card-inset-bg);
+}
+
+.linkRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Ссылка длинная (код -- 43 знака): переносится в любом месте, а не
+ * распирает карточку на телефоне. */
+.url {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.codeValue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tokenForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: var(--measure);
+
+  /* Подпись поля -- кеглем Field, а не крупной подписью форм апстрима:
+   * иначе она громче заголовка своей секции. */
+  :global(.form-group) {
+    margin-bottom: 0;
+
+    label {
+      font-size: var(--fs-13);
+      line-height: var(--lh-13);
+      font-weight: 600;
+    }
+  }
+}
+
+.events {
+  display: grid;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

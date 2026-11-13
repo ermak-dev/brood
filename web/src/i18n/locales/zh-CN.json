@@ -287,7 +287,8 @@
   },
   "header": {
     "refresh_all": "刷新全部",
-    "logout": "登出"
+    "logout": "登出",
+    "profile_of": "个人资料：{{user}}"
   },
   "connection": {
     "status": "连接状态:"
@@ -3450,5 +3451,83 @@
     "members_count": "成员：{{count}}",
     "more_members": "另有 {{count}} 位，见项目页面",
     "no_members": "还没有成员"
+  },
+  "profile": {
+    "title": "个人资料",
+    "role_admin": "管理员",
+    "role_member": "成员",
+    "telegram": {
+      "title": "Telegram",
+      "hint": "你的群组中的操作员请求和轮次事件会发送到你的 Telegram 私聊。",
+      "state": {
+        "unlinked": "未绑定",
+        "linked": "已绑定",
+        "error": "错误",
+        "waiting": "等待 /start"
+      },
+      "bot": "机器人",
+      "own_bot": "你的机器人",
+      "installation_bot": "系统机器人",
+      "no_bot": "暂无机器人",
+      "chat": "聊天",
+      "chat_none": "未绑定",
+      "chat_user": "Telegram 用户 {{id}}",
+      "error_reason": "绑定已停止：{{reason}}",
+      "install_stopped": "系统机器人已停止：{{reason}}",
+      "refresh_failed": "无法刷新 Telegram 资料：{{reason}}",
+      "refused": "已拒绝：{{reason}}",
+      "remove_bot": "移除机器人",
+      "remove_bot_title": "移除你的机器人？",
+      "remove_bot_message": "{{bot}} 的令牌将被删除，通过它绑定的聊天也会解除绑定。在重新绑定聊天之前不会再收到通知。",
+      "remove_bot_unlinked_message": "{{bot}} 的令牌将被删除。没有自己的机器人时，聊天会通过系统机器人绑定（如果有）。",
+      "removed": "机器人已移除。",
+      "unlink": "解除聊天绑定",
+      "unlink_title": "解除聊天绑定？",
+      "unlink_message": "{{chat}} 将不再收到通知。之后可以用新代码重新绑定聊天。",
+      "unlinked": "聊天已解除绑定。",
+      "link_title": "聊天绑定",
+      "link_hint": "机器人只会给通过一次性代码绑定的私聊发送消息。",
+      "link_issue": "获取绑定代码",
+      "link_reissue": "获取新代码",
+      "link_open": "在 Telegram 中打开 {{bot}}",
+      "link_open_hint": "在 Telegram 中打开链接并点击 Start，或向 {{bot}} 发送 /start 和代码。",
+      "link_manual": "在私聊中向机器人发送 /start {{code}}。",
+      "copy_link": "复制链接",
+      "copy_code": "复制代码",
+      "link_code": "代码",
+      "link_expires": "有效期至",
+      "minutes_left_other": "剩余 {{count}} 分钟",
+      "under_minute": "剩余不到一分钟",
+      "code_expired": "已过期",
+      "link_waiting": "正在等待 Telegram 中的 /start。页面会自动更新。",
+      "link_expired": "绑定代码已过期，请获取新代码。",
+      "link_pending_elsewhere": "之前获取的绑定代码有效期至 {{time}}。代码只显示一次：如果你已经没有它，请获取新代码。",
+      "linked_notice": "聊天已绑定：{{chat}}。",
+      "linked_hint": "通知会发送到已绑定的聊天。要绑定其他聊天，请先解除当前绑定。",
+      "blocked_no_bot": "还没有可用于绑定的机器人：请先保存你的机器人令牌。",
+      "blocked_install_stopped": "系统机器人停止期间无法获取绑定代码。请保存你自己的机器人令牌，或请管理员重启服务器。",
+      "token_title": "机器人令牌",
+      "token_label": "@BotFather 提供的令牌",
+      "token_label_replace": "@BotFather 提供的新令牌",
+      "token_hint_none": "通过 @BotFather 创建机器人，并粘贴它提供的令牌。",
+      "token_hint_install": "没有自己的机器人时，聊天通过系统机器人 {{bot}} 绑定。粘贴 @BotFather 提供的令牌即可改用你自己的机器人。",
+      "token_hint_own": "已设置你的机器人 {{bot}}。同一机器人的新令牌会保留聊天绑定；其他机器人的令牌会解除绑定。",
+      "token_write_only": "令牌只能写入：保存后面板只显示机器人名称。",
+      "token_shape": "机器人令牌的格式与 @BotFather 提供的一致：123456789:AA…",
+      "token_save": "保存令牌",
+      "token_saved": "机器人 {{bot}} 已保存。",
+      "events_title": "通知",
+      "events_hint": "会发送到已绑定聊天的内容。面板暂时无法更改订阅：服务器尚无写入订阅的 API（#295）。",
+      "events": {
+        "request_opened": "新的操作员请求",
+        "request_answered": "操作员请求已回答",
+        "answer_delivery": "回答送达 Actor",
+        "pass_started": "轮次已开始",
+        "pass_finished": "轮次已结束",
+        "step_failed": "步骤失败",
+        "actor_question": "来自 Actor 的问题"
+      },
+      "unsaved_message": "你输入的机器人令牌尚未保存。确定离开并放弃吗？"
+    }
   }
 }

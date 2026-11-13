@@ -548,6 +548,16 @@ export function IconSidebarSwarms({ size = 20, ...props }: IconProps) {
   );
 }
 
+/** brood: профиль вошедшего пользователя (Lucide user) */
+export function IconUser({ size = 20, ...props }: IconProps) {
+  return (
+    <svg {...baseSvgProps} width={size} height={size} {...props}>
+      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
 /** brood: пользователи установки (Lucide users) */
 export function IconSidebarUsers({ size = 20, ...props }: IconProps) {
   return (

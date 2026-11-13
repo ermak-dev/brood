@@ -42,6 +42,7 @@ import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { getSidebarShortcutLabel, isSidebarToggleShortcut } from '@/utils/sidebarShortcut';
 import { ProjectSwitcher } from '@/features/substrate/components/ProjectSwitcher';
+import { ProfileLink } from '@/features/profile/ProfileLink';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
 import type { Theme } from '@/types';
@@ -1066,6 +1067,7 @@ export function MainLayout() {
               </div>
             )}
           </div>
+          <ProfileLink />
           <Button variant="ghost" size="sm" onClick={logout} title={t('header.logout')}>
             {headerIcons.logout}
           </Button>
