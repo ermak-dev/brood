@@ -209,8 +209,9 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		// Start, ещё не запрошенный (#133, #275), задачи не держит: CT
 		// остановлена, и stop, delete и reset его отменяют. Start и update
 		// ничего бы не добавили к уже записанному start: отказ называет
-		// ожидание, а не неизвестный исход. Незапрошенный stop тоже задачи
-		// не держит, но CT работает, и любое изменение ждёт саму остановку.
+		// ожидание, а не неизвестный исход. Незапрошенные stop и delete
+		// (#277) тоже задачи не держат, но их изменение уже идёт, и любое
+		// другое ждёт саму остановку или удаление.
 		waiting := startNotRequested(a)
 		cancels := o.action == "stop" || o.action == "delete" || o.action == "reset"
 		if notRequested(a) && !(waiting && cancels) {
@@ -318,10 +319,8 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if o.action == "delete" && observed == "absent" {
 			// No stop/delete was submitted: prior task is terminal and the exact
 			// VMID was positively proven free. There is no task to await here.
-			a, err = o.server.store.ConfirmManagedActorStage(o.context, a.UID, a.Revision, a.OperationID, a.Stage, "absent")
-			if err == nil {
-				a, err = m.finishConfirmedCleanup(o.context, client, a)
-			}
+			// The stage closes with the release in one transaction (#277).
+			a, err = m.cleanupAbsent(o.context, client, a)
 			o.saved = a
 			return err
 		}

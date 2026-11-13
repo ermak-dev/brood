@@ -336,7 +336,7 @@ func (m *managedProvider) launch(ctx context.Context, client proxmoxAPI, a store
 	case "stop":
 		return m.launchStop(ctx, client, a)
 	case "delete":
-		upid, err = client.Delete(ctx, managedOwned(a))
+		return m.launchDelete(ctx, client, a)
 	default:
 		return a, fmt.Errorf("%w: unsupported managed intent", app.ErrConflict)
 	}
@@ -363,7 +363,9 @@ func (m *managedProvider) reconcileOnce(parent context.Context) {
 }
 
 // reconcilePass — один проход reconcile актора a со своим сроком; ошибка
-// прохода становится диагностикой актора. Вызывающий держит lifecycle.
+// прохода становится диагностикой актора. Стадия, чью запись PVE ещё не
+// получал (notRequested), сохраняет фазу и отметку незапрошенной стадии, у
+// остальных фаза — error. Вызывающий держит lifecycle.
 func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedActor) {
 	ctx, cancel := context.WithTimeout(parent, m.actorPassTimeout())
 	_, err := m.reconcileActor(ctx, a)
@@ -380,14 +382,17 @@ func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedA
 	if errors.Is(err, errManagedTaskPending) && m.pendingQuiet(current) {
 		return
 	}
-	// Незапрошенные start и stop не стали неизвестными: проход отказал до
-	// записи PVE (чтение PVE или запись bootstrap env), CT в прежнем
-	// состоянии, следующий проход повторит.
-	phase := "error"
+	// Незапрошенные start, stop и delete не стали неизвестными: проход
+	// отказал до записи PVE (чтение PVE или запись bootstrap env), CT в
+	// прежнем состоянии, следующий проход повторит. Фаза и отметка
+	// незапрошенной стадии сохраняются, меняется только диагностика: без
+	// отметки стадия считалась бы отправленной навсегда (#277).
+	phase, diagnostic := "error", managedProviderError(err)
 	if notRequested(current) {
 		phase = current.Phase
+		diagnostic = store.ManagedUnsentError(current.Unsent(), diagnostic)
 	}
-	m.saveObservation(parent, current, phase, "", managedProviderError(err))
+	m.saveObservation(parent, current, phase, "", diagnostic)
 }
 
 // startNotRequested — стадия start, чей Start ещё не запрошен: CT
@@ -401,18 +406,38 @@ func startNotRequested(a store.ManagedActor) bool {
 	return a.Operation == "start" && a.Stage == "start" && a.UPID == "" && a.Phase == "stopped" && a.Desired == "running"
 }
 
-// stopNotRequested — стадия stop, чей Stop ещё не запрошен (#275): CT
-// работает (phase running), задачи нет. Так стадию оставляет только отказ
-// Stop до записи; BeginManagedActorOperation ставит stopping или deleting, и
-// launchStop ставит их снова перед каждой отправкой.
+// stopNotRequested — стадия stop без задачи, чей Stop ещё не запрошен: так
+// её записывает BeginManagedActorOperation (фаза stopping или deleting с
+// отметкой store.ManagedStopUnsent, #277), так её оставляет отказ Stop до
+// записи (фаза наблюдённой работающей CT running, #275) и возврат
+// незапрошенного delete к остановке (ReopenManagedActorStop). launchStop
+// снимает отметку и ставит фазу остановки перед каждой отправкой: Stop,
+// чей ответ потерян или чей UPID не записан, по ней второй раз не уходит.
+// Stop-стадия без отметки в фазе остановки — запись до #277 или отправка, и
+// исход её неизвестен.
 func stopNotRequested(a store.ManagedActor) bool {
-	return a.Stage == "stop" && a.UPID == "" && a.Phase == "running"
+	if a.Stage != "stop" || a.UPID != "" {
+		return false
+	}
+	return a.Phase == "running" || ((a.Phase == "stopping" || a.Phase == "deleting") && a.Unsent() == store.ManagedStopUnsent)
+}
+
+// deleteNotRequested — стадия delete без задачи, чей Delete ещё не запрошен
+// (#277): CT остановлена (phase stopped), отметка store.ManagedDeleteUnsent.
+// Так её записывает подтверждённая остановка очистки
+// (ConfirmManagedActorStage) и возвращает отказ Delete до записи
+// (MarkManagedActorDeleteUnsent). launchDelete снимает отметку перед
+// отправкой. Delete-стадия без отметки, в том числе записанная до #277,
+// могла отправить Delete и не повторяется: одна фаза stopped этого не
+// доказывает.
+func deleteNotRequested(a store.ManagedActor) bool {
+	return a.Stage == "delete" && a.UPID == "" && a.Phase == "stopped" && a.Unsent() == store.ManagedDeleteUnsent
 }
 
 // notRequested — стадия, чью запись PVE ещё не получал: reconcile повторяет
 // её каждым проходом, а phase хранит наблюдённое состояние CT.
 func notRequested(a store.ManagedActor) bool {
-	return startNotRequested(a) || stopNotRequested(a)
+	return startNotRequested(a) || stopNotRequested(a) || deleteNotRequested(a)
 }
 
 // unsent сообщает, что запись PVE отказала, ничего не отправив (proxmoxAPI).
@@ -420,31 +445,43 @@ func unsent(upid string, err error) bool {
 	return err != nil && upid == "" && !errors.Is(err, proxmox.ErrUncertain)
 }
 
-// waitingRefusal refuses a lifecycle change while a start or stop stage is not
-// yet requested from PVE (notRequested). It names the wait and the last
-// failure instead of an unknown outcome: no task is in flight. stop, delete or
-// reset cancel a waiting start, whose container is stopped; a waiting stop
-// is the change that has to happen first.
+// waitingRefusal refuses a lifecycle change while a start, stop or delete
+// stage is not yet requested from PVE (notRequested). It names the wait and
+// the last failure instead of an unknown outcome: no task is in flight. stop,
+// delete or reset cancel a waiting start, whose container is stopped; a
+// waiting stop or delete is the change that has to happen first. phase is
+// the stage's phase: running or stopped is the container a pass observed;
+// a stop that only its intent recorded (stopping or deleting with
+// store.ManagedStopUnsent) has no observation, and its container may have
+// stopped or vanished since. last is the public diagnostic without the
+// unsent mark (store.ManagedActor.Diagnostic).
 type waitingRefusal struct {
-	action, name, stage, last string
+	action, name, stage, phase, last string
 }
 
 func (e *waitingRefusal) Error() string {
-	verb, state, request, cancel := "start", "stopped", "Start", "; stop, delete or reset cancels it"
-	if e.stage == "stop" {
-		verb, state, request, cancel = "stop", "running", "Stop", ""
+	verb, request, cancel := "start", "Start", "; stop, delete or reset cancels it"
+	switch e.stage {
+	case "stop":
+		verb, request, cancel = "stop", "Stop", ""
+	case "delete":
+		verb, request, cancel = "delete", "Delete", ""
+	}
+	container := "its container"
+	if e.phase == "running" || e.phase == "stopped" {
+		container = "its " + e.phase + " container"
 	}
 	last := request + " is not yet requested"
 	if e.last != "" {
 		last = "last attempt failed: " + e.last
 	}
-	return fmt.Sprintf("%s refused: actor %q is waiting to %s its %s container (%s); reconcile retries the %s on every pass%s", e.action, e.name, verb, state, last, verb, cancel)
+	return fmt.Sprintf("%s refused: actor %q is waiting to %s %s (%s); reconcile retries the %s on every pass%s", e.action, e.name, verb, container, last, verb, cancel)
 }
 
 func (e *waitingRefusal) Unwrap() error { return app.ErrConflict }
 
 func newWaitingRefusal(action string, a store.ManagedActor) error {
-	return &waitingRefusal{action: action, name: a.Name, stage: a.Stage, last: a.Error}
+	return &waitingRefusal{action: action, name: a.Name, stage: a.Stage, phase: a.Phase, last: a.Diagnostic()}
 }
 
 func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedActor) (result store.ManagedActor, err error) {
@@ -479,6 +516,28 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	// Незапрошенный Start не отправлялся: его можно запросить.
 	if startNotRequested(a) {
 		return m.resumeStart(ctx, client, a)
+	}
+	// Незапрошенный Delete тоже, после наблюдения CT (#277).
+	if deleteNotRequested(a) {
+		observed, err := managedObservedState(ctx, client, a)
+		if err != nil {
+			return a, err
+		}
+		switch observed {
+		case "absent":
+			return m.finishConfirmedCleanup(ctx, client, a)
+		case "running":
+			// CT запустили мимо brood: Delete работающей CT не уходит, а
+			// исход не неизвестен — Delete не запрашивался. Стадия
+			// возвращается к незапрошенной остановке той же операции, и
+			// владение уже проверено наблюдением.
+			a, err = m.server.store.ReopenManagedActorStop(ctx, a.UID, a.Revision, a.OperationID)
+			if err != nil {
+				return a, err
+			}
+			return m.launchStop(ctx, client, a)
+		}
+		return m.launchDelete(ctx, client, a)
 	}
 	// Незапрошенный Stop тоже: наблюдение ниже решает, нужен ли он.
 	waitingStop := stopNotRequested(a)
@@ -553,12 +612,12 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 			}
 			return m.saveObservation(ctx, a, observed, "", "")
 		}
+		if observed == "absent" && (a.Operation == "delete" || a.Operation == "reset") {
+			return m.cleanupAbsent(ctx, client, a)
+		}
 		a, err = m.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 		if err != nil || a.Stage == "done" {
 			return a, err
-		}
-		if observed == "absent" {
-			return m.finishConfirmedCleanup(ctx, client, a)
 		}
 		// Start update идёт следующим проходом со своим сроком: этот срок
 		// мог уйти на ожидание stop-задачи.
@@ -645,8 +704,11 @@ func (m *managedProvider) beginStart(ctx context.Context, a store.ManagedActor, 
 
 // resumeStart запрашивает start, чей Start ещё не запрошен
 // (startNotRequested). Остановленная CT получает start; исчезнувшая CT кончает
-// операцию ошибкой, как после stop-стадии. Работающая CT без запроса этой
-// операции — изменение мимо brood: исход неизвестен, и start не повторяется.
+// операцию ошибкой, как после stop-стадии. Работающую CT запустили мимо
+// brood (#277): Start этой операции не отправлялся, и задачи PVE, чей исход
+// неизвестен, нет. Стадия согласуется наблюдением без записи в PVE, как
+// start работающей CT (confirmStartRunning), а running публикует только
+// проверка готовности гостя следующим проходом.
 func (m *managedProvider) resumeStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
 	config, observed, err := managedObservation(ctx, client, a)
 	if err != nil {
@@ -657,8 +719,10 @@ func (m *managedProvider) resumeStart(ctx context.Context, client proxmoxAPI, a 
 		return m.launchStart(ctx, client, a, config.Digest)
 	case "absent":
 		return m.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+	case "running":
+		return m.confirmStartRunning(ctx, a)
 	}
-	return m.recordTask(ctx, a, "", proxmox.ErrUncertain)
+	return a, proxmox.ErrUncertain
 }
 
 // launchStart отправляет незапрошенный start (startNotRequested) CT,
@@ -728,6 +792,36 @@ func (m *managedProvider) launchStop(ctx context.Context, client proxmoxAPI, a s
 	return m.recordTask(ctx, a, upid, err)
 }
 
+// launchDelete отправляет незапрошенный Delete (deleteNotRequested) CT,
+// наблюдённой остановленной. Перед отправкой отметка незапрошенной стадии
+// снимается, а фаза становится фазой запрошенного Delete (deletePhase):
+// Delete, чей ответ потерян или чей UPID не записан, по ней второй раз не
+// уходит. Только отказ до записи (чтение владения, явный 403/409)
+// возвращает отметку (MarkManagedActorDeleteUnsent), и следующий проход
+// повторит Delete. Delete-стадия без отметки не отправляется: её исход
+// неизвестен.
+func (m *managedProvider) launchDelete(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+	if !deleteNotRequested(a) {
+		return a, proxmox.ErrUncertain
+	}
+	marked, err := m.saveObservation(ctx, a, deletePhase(a), "", "")
+	if err != nil {
+		return a, err
+	}
+	a = marked
+	upid, err := client.Delete(ctx, managedOwned(a))
+	if unsent(upid, err) {
+		durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		saved, saveErr := m.server.store.MarkManagedActorDeleteUnsent(durable, a.UID, a.Revision, a.OperationID, managedProviderError(err))
+		if saveErr != nil {
+			return a, err
+		}
+		return saved, nil
+	}
+	return m.recordTask(ctx, a, upid, err)
+}
+
 // stopPhase — фаза запрошенной стадии stop, как её ставит
 // BeginManagedActorOperation: deleting у delete, stopping у остальных.
 func stopPhase(a store.ManagedActor) string {
@@ -735,6 +829,16 @@ func stopPhase(a store.ManagedActor) string {
 		return "deleting"
 	}
 	return "stopping"
+}
+
+// deletePhase — фаза запрошенной стадии delete: deleting у delete и stopped
+// у reset, как до #277: CT остановлена, а старая инкарнация reset ещё
+// получает ответы на свои вопросы (actorAnswerable), пока её CT удаляют.
+func deletePhase(a store.ManagedActor) string {
+	if a.Operation == "delete" {
+		return "deleting"
+	}
+	return "stopped"
 }
 
 // leavePending оставляет стадию незапрошенной (notRequested) с фазой phase и
@@ -834,17 +938,49 @@ func (m *managedProvider) finishCleanup(ctx context.Context, client proxmoxAPI, 
 
 // finishConfirmedCleanup consumes an already-positive global absence proof.
 func (m *managedProvider) finishConfirmedCleanup(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
-	if a.Operation == "delete" {
-		return m.server.store.ConfirmManagedActorDeleted(ctx, a.UID, a.Revision, a.OperationID)
-	}
-	if a.Operation != "reset" {
-		return a, app.ErrConflict
-	}
-	a, err := m.server.store.ConfirmManagedActorReset(ctx, a.UID, a.Revision, a.OperationID, store.NewID())
-	if err != nil {
+	a, err := m.releaseCleanup(ctx, a)
+	if err != nil || a.Operation != "reset" {
 		return a, err
 	}
 	return m.launch(ctx, client, a)
+}
+
+// releaseCleanup — запись в базе после подтверждённого отсутствия CT стадии
+// delete: delete освобождает аллокацию, reset начинает новую инкарнацию.
+// PVE не зовётся: Create reset отправляет вызывающий после фиксации.
+func (m *managedProvider) releaseCleanup(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
+	switch a.Operation {
+	case "delete":
+		return m.server.store.ConfirmManagedActorDeleted(ctx, a.UID, a.Revision, a.OperationID)
+	case "reset":
+		return m.server.store.ConfirmManagedActorReset(ctx, a.UID, a.Revision, a.OperationID, store.NewID())
+	}
+	return a, app.ErrConflict
+}
+
+// cleanupAbsent кончает стадию stop очистки (delete, reset), чья CT
+// подтверждённо отсутствует: стадия закрывается и аллокация освобождается
+// (у reset — начинается новая инкарнация) одной транзакцией, затем reset
+// отправляет Create. Отдельная фиксация закрытой стадии оставила бы при
+// остановке сервера стадию delete без задачи и без отметки — её исход
+// неизвестен навсегда, хотя Delete не отправлялся (#277). При отказе стадия
+// stop остаётся, и следующий проход снова находит CT отсутствующей.
+func (m *managedProvider) cleanupAbsent(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+	var released store.ManagedActor
+	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
+		confirmed, e := m.server.store.ConfirmManagedActorStage(tx, a.UID, a.Revision, a.OperationID, a.Stage, "absent")
+		if e == nil {
+			released, e = m.releaseCleanup(tx, confirmed)
+		}
+		return e
+	})
+	if err != nil {
+		return a, err
+	}
+	if released.Operation != "reset" {
+		return released, nil
+	}
+	return m.launch(ctx, client, released)
 }
 
 func (m *managedProvider) probe(ctx context.Context, a store.ManagedActor) bool {
@@ -886,11 +1022,15 @@ func (m *managedProvider) actorByName(ctx context.Context, swarm, name string) (
 func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace, originMode string) map[string]any {
 	state := "ACTOR_STATE_UNSPECIFIED"
 	// Stop, ещё не запрошенный у PVE (#275), — та же остановка, что stopping
-	// или deleting: CT работает лишь до запроса. phase остаётся наблюдением
-	// CT, state называет идущее изменение.
+	// или deleting: CT работает лишь до запроса. Незапрошенный Delete (#277)
+	// — то же удаление, что запрошенный. phase остаётся наблюдением CT, state
+	// называет идущее изменение.
 	lifecycle := a.Phase
-	if stopNotRequested(a) {
+	switch {
+	case stopNotRequested(a):
 		lifecycle = stopPhase(a)
+	case deleteNotRequested(a):
+		lifecycle = deletePhase(a)
 	}
 	switch lifecycle {
 	case "provisioning":
@@ -904,7 +1044,7 @@ func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace, origi
 	case "error":
 		state = "ACTOR_STATE_CRASHED"
 	}
-	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "atespace": atespace}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name, "atespace": atespace}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Error}, "origin": a.Origin, "originMode": originMode}
+	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "atespace": atespace}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name, "atespace": atespace}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Diagnostic()}, "origin": a.Origin, "originMode": originMode}
 }
 
 func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNames map[string]bool) ([]any, error) {

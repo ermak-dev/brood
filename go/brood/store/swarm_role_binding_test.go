@@ -245,6 +245,28 @@ func TestSwarmRoleWaitingStopIsNotLive(t *testing.T) {
 	}
 }
 
+// TestSwarmRoleWaitingStopHidesUnsentMark — отказ роли актору, чей Stop ждёт,
+// называет только диагностику последнего отказа (#277): отметка
+// незапрошенной стадии в начале error — состояние, а не причина отказа.
+// Сервер сейчас снимает отметку, ставя фазу running, но контракт строки
+// (ManagedActor.Error, UpdateManagedActor) её там допускает.
+func TestSwarmRoleWaitingStopHidesUnsentMark(t *testing.T) {
+	ctx := context.Background()
+	for stored, says := range map[string]string{
+		ManagedStopUnsent: "actor is waiting to stop its running container for reset (Stop is not yet requested)",
+		ManagedUnsentError(ManagedStopUnsent, "Proxmox reconciliation unavailable; allocation retained"): "actor is waiting to stop its running container for reset (last attempt failed: Proxmox reconciliation unavailable; allocation retained)",
+	} {
+		t.Run(stored, func(t *testing.T) {
+			s := bindingFixture(t)
+			setActor(t, s, "actor", "operation='reset', stage='stop', upid='', desired='running', phase='running', error='"+stored+"'")
+			err := s.BindSwarmRole(ctx, SwarmRoleBinding{SwarmID: "one", Role: "build", ActorUID: "actor"})
+			if !errors.Is(err, ErrSwarmRoleStopPending) || !strings.Contains(fmt.Sprint(err), says) || strings.Contains(fmt.Sprint(err), ManagedStopUnsent) {
+				t.Fatalf("bind of an actor waiting to stop: %v, want %q", err, says)
+			}
+		})
+	}
+}
+
 // TestSwarmRoleBindRejectsInactiveSwarm — рой не в состоянии active
 // (удаляется, создаётся) роли не принимает.
 func TestSwarmRoleBindRejectsInactiveSwarm(t *testing.T) {

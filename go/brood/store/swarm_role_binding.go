@@ -131,11 +131,13 @@ func stoppingChange(a ManagedActor) string {
 }
 
 // stopAttempt — состояние ждущего Stop: не запрошен или последний отказ.
+// Отметка незапрошенной стадии (#277) — состояние, а не отказ: причина —
+// только диагностика (ManagedActor.Diagnostic).
 func stopAttempt(a ManagedActor) string {
-	if a.Error == "" {
-		return "Stop is not yet requested"
+	if detail := a.Diagnostic(); detail != "" {
+		return "last attempt failed: " + detail
 	}
-	return "last attempt failed: " + a.Error
+	return "Stop is not yet requested"
 }
 
 // BindSwarmRole atomically binds a role to a live actor of the same active

@@ -142,7 +142,7 @@ func TestManagedDurableIntentAndFences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Incarnation != 1 || a.Stage != "stop" || a.OwnerNonce != "owner-a" || a.UPID != "" || a.Error != "" || a.Desired != "running" {
+	if a.Incarnation != 1 || a.Stage != "stop" || a.OwnerNonce != "owner-a" || a.UPID != "" || a.Error != ManagedStopUnsent || a.Desired != "running" {
 		t.Fatalf("reset intent=%+v", a)
 	}
 	same, err := s.BeginManagedActorOperation(ctx, a.UID, a.Revision, "reset-1", "reset")

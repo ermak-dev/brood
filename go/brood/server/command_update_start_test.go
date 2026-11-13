@@ -246,10 +246,10 @@ func confirmedStop(t *testing.T) (*substrateServer, store.ManagedActor, *managed
 	return ts, worker, pve, want
 }
 
-// TestUpdateRunningContainerBeforeStartIsUnknown: Start не запрошен, а CT
-// работает — её запустили мимо brood. Это не подтверждённый start, а
-// неизвестный исход: Start не идёт, актор не объявлен работающим.
-func TestUpdateRunningContainerBeforeStartIsUnknown(t *testing.T) {
+// TestUpdateRunningContainerBeforeStartIsAdopted: Start не запрошен, а CT
+// работает — её запустили мимо brood. Проверка владения позволяет принять CT;
+// running публикуется только после проверки готовности гостя.
+func TestUpdateRunningContainerBeforeStartIsAdopted(t *testing.T) {
 	ts, worker, pve, want := confirmedStop(t)
 	pve.mu.Lock()
 	pve.running = true
@@ -258,7 +258,7 @@ func TestUpdateRunningContainerBeforeStartIsUnknown(t *testing.T) {
 	for range 4 {
 		a = passActor(t, ts, worker.UID)
 	}
-	if !startPending(a) || a.Phase != "error" || a.Error != managedProviderError(proxmox.ErrUncertain) {
+	if !actorRunning(a) || a.Stage != "done" {
 		t.Fatalf("running container before Start: %+v", a)
 	}
 	if got := providerEffectsOf(pve); got != want {

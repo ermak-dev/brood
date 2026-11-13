@@ -79,8 +79,8 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 	// только явный start, и он сам ставит текущий набор. Иначе update был
 	// бы start под другим именем.
 	if !managedRunning(a) {
-		// Start или stop, ждущие запроса, называются как есть: задачи нет
-		// (#133, #275).
+		// Start, stop или delete, ждущие запроса, называются как есть:
+		// задачи нет (#133, #275, #277).
 		if notRequested(a) {
 			return command.Result{}, actorCommandError(newWaitingRefusal("update", a))
 		}
@@ -132,10 +132,12 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: a.Name, action: "update", actor: a, parent: parent, operationID: store.NewID()}
 	err := s.admitWorkload(userID, sw.ID, op)
 	saved := op.saved
-	if err != nil && saved.UID == "" {
-		// Без сохранённого актора отказ мог случиться и после записи
-		// намерения: PVE принял остановку, а запись её UPID не удалась.
-		// Записанное намерение — неизвестный исход, иначе — обычный отказ.
+	if err != nil {
+		// Отказ мог случиться и после записи намерения: PVE принял остановку,
+		// а запись её UPID не удалась, или не записалась отметка отправки
+		// Stop. Ответ называет состояние базы, а не копию в памяти.
+		// Записанное намерение — неизвестный исход или ждущий Stop, иначе —
+		// обычный отказ.
 		current, getErr := s.store.GetManagedActor(context.WithoutCancel(ctx), a.UID)
 		if getErr == nil && current.OperationID != op.operationID {
 			return command.Result{}, actorCommandError(err)
@@ -146,17 +148,22 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 			saved = store.ManagedActor{UID: a.UID, Name: a.Name, Incarnation: a.Incarnation, OperationID: op.operationID}
 		}
 	}
-	// Stop, отказавший до записи (#275), PVE не получал: намерение записано, и
-	// reconcile запрашивает остановку каждым проходом. Это принятие, а не
-	// неизвестный исход.
-	if err == nil && stopNotRequested(saved) {
-		return updateResult(saved, before.id, target, "accepted", fmt.Sprintf("actor %q update accepted (uid %s): a controlled restart in the retained container from guest release %s to %s; the profile's template and resources do not change; its stop is not yet requested (last attempt failed: %s); reconcile requests it on every pass; the restart is asynchronous, not a completion or readiness confirmation; current state: %s", a.Name, a.UID, before.id, target, saved.Error, saved.Phase)), nil
+	// Stop, отказавший до записи (#275) или не дошедший до отметки отправки
+	// (#277), PVE не получал: намерение записано, и reconcile запрашивает
+	// остановку каждым проходом. Это принятие, а не неизвестный исход, даже
+	// если сам запрос кончился ошибкой.
+	if stopNotRequested(saved) {
+		last := ""
+		if detail := saved.Diagnostic(); detail != "" {
+			last = " (last attempt failed: " + detail + ")"
+		}
+		return updateResult(saved, before.id, target, "accepted", fmt.Sprintf("actor %q update accepted (uid %s): a controlled restart in the retained container from guest release %s to %s; the profile's template and resources do not change; its stop is not yet requested%s; reconcile requests it on every pass; the restart is asynchronous, not a completion or readiness confirmation; current state: %s", a.Name, a.UID, before.id, target, last, saved.Phase)), nil
 	}
 	// Иначе успех — только принятая PVE задача остановки: UPID записан,
 	// ошибки нет. Без UPID или с ошибкой исход неизвестен: задача могла
 	// начаться, поэтому это не принятие и не повод повторять.
 	if err != nil || saved.Stage != "stop" || saved.UPID == "" || saved.Phase == "error" {
-		detail := saved.Error
+		detail := saved.Diagnostic()
 		switch {
 		case detail != "":
 		case err != nil:
