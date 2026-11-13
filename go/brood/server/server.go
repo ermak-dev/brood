@@ -32,6 +32,9 @@ type Options struct {
 	Provisioner app.Provisioner
 	// Logger — slog запросов и внутренних отказов; nil — умолчание slog.
 	Logger *slog.Logger
+	// telegram — ритм поллеров Telegram, часы и источник кода привязки;
+	// нулевой берёт умолчания, тесты пакета его подменяют.
+	telegram telegramOptions
 }
 
 // Server — собранный сервер: зависимости и маршруты без запуска сети.
@@ -68,6 +71,8 @@ type Server struct {
 	deliveries deliveryLocks
 	// steps доставляет инструкции шагов actor-узлов (#212).
 	steps *stepDispatcher
+	// telegram держит поллеры ботов Telegram (#281).
+	telegram *telegramBots
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -116,6 +121,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.steps = newStepDispatcher(srv)
+	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
 		catalog.Close()
@@ -184,6 +190,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProjectSecrets()
 	srv.mountGitCredentials()
 	srv.mountGitRepositories()
+	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
@@ -193,6 +200,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.proxy.Start(proxyCtx)
 	srv.managed.start(proxyCtx)
 	srv.steps.start(proxyCtx)
+	srv.telegram.start(proxyCtx)
 	return srv, nil
 }
 
@@ -221,6 +229,8 @@ func (s *Server) Close() error {
 	}
 	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
 	s.steps.close()
+	// Поллеры Telegram пишут в базу: остановлены до её закрытия.
+	s.telegram.close()
 	s.proxy.Close()
 	s.managed.close()
 	var errs []error
