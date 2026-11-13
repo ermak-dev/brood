@@ -129,8 +129,8 @@ func (s *Store) GetSwarmRequest(ctx context.Context, swarmID, id string) (SwarmR
 // транзакции, которая создаёт посещение в состоянии waiting: шаг и запрос
 // появляются вместе или не появляются. material — то, что оператор
 // одобряет: отчёт шага, который ввёл граф в узел (#233); пустой — без
-// материала.
-func (s *Store) openNodeRequest(ctx context.Context, swarmID string, sequence int64, n pipeline.Node, material string) error {
+// материала. Та же транзакция ставит уведомление request_opened (#282).
+func (s *Store) openNodeRequest(ctx context.Context, swarmID string, sequence int64, node string, n pipeline.Node, material string) error {
 	options := make([]RequestOption, 0, len(n.Options))
 	for _, o := range n.Options {
 		options = append(options, RequestOption{Label: o.Label, Outcome: o.Outcome})
@@ -139,9 +139,12 @@ func (s *Store) openNodeRequest(ctx context.Context, swarmID string, sequence in
 	if err != nil {
 		return err
 	}
-	_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,sequence,origin,kind,question,context,options,state,created_at) VALUES (?,?,?,'node','choice',?,NULLIF(?,''),?,'open',?)`,
-		NewID(), swarmID, sequence, n.Question, material, encoded, nowRFC3339())
-	return err
+	id := NewID()
+	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,sequence,origin,kind,question,context,options,state,created_at) VALUES (?,?,?,'node','choice',?,NULLIF(?,''),?,'open',?)`,
+		id, swarmID, sequence, n.Question, material, encoded, nowRFC3339()); err != nil {
+		return err
+	}
+	return s.queueTelegram(ctx, "request_opened", TelegramEvent{Swarm: swarmID, Request: id, Sequence: sequence, Node: node})
 }
 
 // ActorRequestInput — вопрос актора по его инициативе. Личность актора
@@ -221,9 +224,11 @@ func (s *Store) OpenActorRequest(ctx context.Context, in ActorRequestInput) (Swa
 		if open >= maxOpenActorRequests {
 			return fmt.Errorf("%w: %w from this actor", ErrSwarmRequestInvalid, ErrSwarmRequestLimit)
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,context,options,state,created_at) VALUES (?,?,'actor',?,?,?,?,NULLIF(?,''),?,'open',?)`,
-			id, in.SwarmID, in.ActorUID, in.ActorIncarnation, in.Kind, in.Question, in.Context, encoded, nowRFC3339())
-		return err
+		if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,context,options,state,created_at) VALUES (?,?,'actor',?,?,?,?,NULLIF(?,''),?,'open',?)`,
+			id, in.SwarmID, in.ActorUID, in.ActorIncarnation, in.Kind, in.Question, in.Context, encoded, nowRFC3339()); err != nil {
+			return err
+		}
+		return s.queueTelegram(ctx, "actor_question", TelegramEvent{Swarm: in.SwarmID, Request: id})
 	})
 	if err != nil {
 		return SwarmRequest{}, err
@@ -334,6 +339,19 @@ func (s *Store) AnswerSwarmRequest(ctx context.Context, in SwarmAnswer, authoriz
 			}
 		}
 		if err := s.recordAnswer(ctx, req, in.UserID, in.Outcome, in.Response); err != nil {
+			return err
+		}
+		// Ответ из панели, CLI или Telegram — одно событие (#282), и оно
+		// идёт раньше конца прохода или следующего запроса, которые
+		// открывает продвижение графа.
+		answered := TelegramEvent{Swarm: req.SwarmID, Request: req.ID}
+		if req.Sequence != nil {
+			answered.Sequence = *req.Sequence
+			if answered.Node, err = s.stepNode(ctx, req.SwarmID, *req.Sequence); err != nil {
+				return err
+			}
+		}
+		if err := s.queueTelegram(ctx, "request_answered", answered); err != nil {
 			return err
 		}
 		if req.Origin != "node" {
@@ -518,7 +536,9 @@ func (s *Store) recordAnswer(ctx context.Context, req SwarmRequest, userID, outc
 // pending, failed или unconfirmed: доставленный ответ не переоткрывается, у
 // узлового запроса адресата нет — иначе ErrPipelineVisitConflict. failed
 // поверх unconfirmed оставляет unconfirmed: прежняя попытка могла дойти.
-// Запрос чужого роя — ErrNotFound.
+// Запрос чужого роя — ErrNotFound. Смена состояния доставки ставит в той же
+// транзакции уведомление answer_delivery (#282); исход, который состояния не
+// меняет, — нет.
 func (s *Store) RecordSwarmRequestDelivery(ctx context.Context, swarmID, id, outcome string) (SwarmRequest, error) {
 	if !validPipelineField(swarmID) || !validPipelineField(id) {
 		return SwarmRequest{}, ErrNotFound
@@ -528,20 +548,31 @@ func (s *Store) RecordSwarmRequestDelivery(ctx context.Context, swarmID, id, out
 	default:
 		return SwarmRequest{}, fmt.Errorf("%w: unknown delivery outcome %q", ErrSwarmRequestInvalid, outcome)
 	}
-	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_requests SET delivery=CASE WHEN delivery='unconfirmed' AND ?='failed' THEN 'unconfirmed' ELSE ? END WHERE swarm_id=? AND id=? AND origin='actor' AND state='answered' AND delivery IN ('pending','failed','unconfirmed')`, outcome, outcome, swarmID, id)
+	var req SwarmRequest
+	err := s.WithTx(ctx, func(ctx context.Context) error {
+		before, err := s.GetSwarmRequest(ctx, swarmID, id)
+		if err != nil {
+			return err
+		}
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_requests SET delivery=CASE WHEN delivery='unconfirmed' AND ?='failed' THEN 'unconfirmed' ELSE ? END WHERE swarm_id=? AND id=? AND origin='actor' AND state='answered' AND delivery IN ('pending','failed','unconfirmed')`, outcome, outcome, swarmID, id)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n != 1 {
+			return ErrPipelineVisitConflict
+		}
+		if req, err = s.GetSwarmRequest(ctx, swarmID, id); err != nil {
+			return err
+		}
+		if req.Delivery == before.Delivery {
+			return nil
+		}
+		return s.queueTelegram(ctx, "answer_delivery", TelegramEvent{Swarm: swarmID, Request: id, Delivery: req.Delivery})
+	})
 	if err != nil {
 		return SwarmRequest{}, err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return SwarmRequest{}, err
-	}
-	req, err := s.GetSwarmRequest(ctx, swarmID, id)
-	if err != nil {
-		return SwarmRequest{}, err
-	}
-	if n != 1 {
-		return SwarmRequest{}, ErrPipelineVisitConflict
 	}
 	return req, nil
 }

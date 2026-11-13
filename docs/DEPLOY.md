@@ -519,11 +519,12 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `BROOD_ACTOR_MODEL`, `BROOD_ACTOR_SMALL_MODEL` | необязательные модели Claude Code акторов (#263): основная и быстрых задач, например `glm-5.3` и `glm-5.3-flash`; каждая сама по себе, без дефолта, до 256 печатаемых ASCII без пробелов. Пустая — модель этой группы выбирает Claude Code. Гость передаёт их Claude Code (`ANTHROPIC_MODEL` и псевдонимы `opus`/`sonnet`, `haiku`), см. «Модели Claude Code актора» в `docs/PROXMOX.md`; смена доходит до актора со следующим стартом CT |
 | `BROOD_TELEGRAM_BOT_TOKEN` | необязательный токен бота установки (#281) в форме BotFather `<id>:<секрет>`: бот пользователей без своего бота, свой приоритетнее. Секрет установки: только `.env` и защищённая переменная CI, не в логи, ответы API и guest env. Неверная форма — отказ запуска с именем настройки, без значения |
 | `BROOD_TELEGRAM_API` | необязательный origin Bot API (#281), по умолчанию `https://api.telegram.org`; HTTPS или HTTP на loopback (локальный Bot API), без path, query и credentials. Им пользуются бот установки и свои боты пользователей |
+| `BROOD_PANEL_ORIGIN` | необязательный origin панели, каким его открывает пользователь (#282): http(s) без credentials, path, query и fragment, например `https://brood.example:8443`. Уведомления Telegram ссылаются по нему на страницу роя; без настройки уведомления идут без ссылки. Неверная форма — отказ запуска с именем настройки |
 
-Выкладка (`brood deploy go`) ещё не передаёт `BROOD_TELEGRAM_BOT_TOKEN` и
-`BROOD_TELEGRAM_API` в Secret и env сервера, а deny-all NetworkPolicy не
-пускает к `api.telegram.org:443`: способ egress — открытое решение эпика #278,
-оба шага — его задача деплоя. До неё в кластере бота установки нет, а
+Выкладка (`brood deploy go`) ещё не передаёт `BROOD_TELEGRAM_BOT_TOKEN`,
+`BROOD_TELEGRAM_API` и `BROOD_PANEL_ORIGIN` в Secret и env сервера, а
+deny-all NetworkPolicy не пускает к `api.telegram.org:443`: способ egress —
+открытое решение эпика #278, оба шага — его задача деплоя. До неё в кластере бота установки нет, а
 `PUT /api/me/telegram` отвечает 503: Bot API недостижим.
 
 401 или 409 от Telegram останавливают бота установки для всех пользователей

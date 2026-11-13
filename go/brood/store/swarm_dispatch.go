@@ -26,6 +26,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -254,9 +255,29 @@ func (s *Store) markStepAttesting(ctx context.Context, swarmID string, sequence 
 	return nil
 }
 
+// refusePendingStep закрывает ждущий доставки шаг как refused с причиной и
+// ставит в той же транзакции уведомление об отказе шага (#282).
 func (s *Store) refusePendingStep(ctx context.Context, swarmID string, sequence int64, detail string) error {
-	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='refused',finished_at=?,detail=? WHERE swarm_id=? AND sequence=? AND state='pending'`, nowRFC3339(), stepDetail(detail), swarmID, sequence)
-	return err
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='refused',finished_at=?,detail=? WHERE swarm_id=? AND sequence=? AND state='pending'`, nowRFC3339(), stepDetail(detail), swarmID, sequence)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return err
+	}
+	return s.queueStepFailure(ctx, swarmID, sequence)
+}
+
+// queueStepFailure ставит уведомление step_failed о шаге, который только
+// что стал refused или unconfirmed: узел и состояние — из самого шага, как
+// их записала транзакция. Причину строка не копирует: шаг refused и
+// unconfirmed ни одна запись больше не меняет, отправитель читает её из шага.
+func (s *Store) queueStepFailure(ctx context.Context, swarmID string, sequence int64) error {
+	ev := TelegramEvent{Swarm: swarmID, Sequence: sequence}
+	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&ev.Node, &ev.State); err != nil {
+		return err
+	}
+	return s.queueTelegram(ctx, "step_failed", ev)
 }
 
 // RecordActorStepAttestation records the verified workspace attestation of
@@ -415,27 +436,72 @@ func (s *Store) moveAttempt(ctx context.Context, a ActorStepAttempt, from []stri
 	if finished {
 		finishedAt = nowRFC3339()
 	}
-	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,detail=?,finished_at=COALESCE(?,finished_at) WHERE swarm_id=? AND sequence=? AND request_id=? AND state IN (?,?)`,
-		to, reason, finishedAt, a.SwarmID, a.Sequence, a.RequestID, from[0], from[len(from)-1])
-	if err != nil {
-		return err
-	}
-	if changed, err := result.RowsAffected(); err != nil {
-		return err
-	} else if changed != 1 {
-		return ErrPipelineVisitConflict
-	}
-	return nil
+	// Шаг без исхода (refused, unconfirmed) — отказ шага в Telegram (#282),
+	// в одной транзакции с переходом.
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,detail=?,finished_at=COALESCE(?,finished_at) WHERE swarm_id=? AND sequence=? AND request_id=? AND state IN (?,?)`,
+			to, reason, finishedAt, a.SwarmID, a.Sequence, a.RequestID, from[0], from[len(from)-1])
+		if err != nil {
+			return err
+		}
+		if changed, err := result.RowsAffected(); err != nil {
+			return err
+		} else if changed != 1 {
+			return ErrPipelineVisitConflict
+		}
+		if to != "refused" && to != "unconfirmed" {
+			return nil
+		}
+		return s.queueStepFailure(ctx, a.SwarmID, a.Sequence)
+	})
 }
 
 // RecoverActorSteps marks attempts whose guest effect may have been cut by the
 // previous server process as unconfirmed: an attestation (attesting) or an
 // instruction being sent (delivering). Neither is repeated. Delivered
 // (inflight) and pending steps keep their state: the actor still reports, the
-// dispatcher still delivers. Call only during exclusive server startup.
+// dispatcher still delivers. Call only during exclusive server startup. Each
+// recovered step queues its step_failed Telegram notification in the same
+// transaction (#282).
 func (s *Store) RecoverActorSteps(ctx context.Context) error {
-	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET detail=CASE state WHEN 'attesting' THEN ? ELSE ? END,state='unconfirmed' WHERE state IN ('attesting','delivering')`, detailRestartAttestation, detailRestartDelivery)
-	return err
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		rows, err := s.conn(ctx).QueryContext(ctx, `UPDATE swarm_steps SET detail=CASE state WHEN 'attesting' THEN ? ELSE ? END,state='unconfirmed' WHERE state IN ('attesting','delivering') RETURNING swarm_id,sequence`, detailRestartAttestation, detailRestartDelivery)
+		if err != nil {
+			return err
+		}
+		type step struct {
+			swarm    string
+			sequence int64
+		}
+		var recovered []step
+		for rows.Next() {
+			var st step
+			if err := rows.Scan(&st.swarm, &st.sequence); err != nil {
+				rows.Close()
+				return err
+			}
+			recovered = append(recovered, st)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		// RETURNING порядка не обещает: уведомления идут по рою и шагу.
+		sort.Slice(recovered, func(i, j int) bool {
+			if recovered[i].swarm != recovered[j].swarm {
+				return recovered[i].swarm < recovered[j].swarm
+			}
+			return recovered[i].sequence < recovered[j].sequence
+		})
+		for _, st := range recovered {
+			if err := s.queueStepFailure(ctx, st.swarm, st.sequence); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // PendingActorStepSwarms lists the swarms whose latest step waits for

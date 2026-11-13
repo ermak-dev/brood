@@ -116,6 +116,11 @@ type Config struct {
 	// секрет установки: только .env и секрет CI, не в логи, ответы API и
 	// гостевое окружение. Пусто — бота установки нет.
 	telegramBotToken string
+	// PanelOrigin — origin панели, каким его открывает пользователь
+	// (BROOD_PANEL_ORIGIN, #282): уведомления Telegram ссылаются на объект
+	// панели по нему. Свойство установки, без дефолта; пусто — уведомления
+	// без ссылки.
+	PanelOrigin string
 }
 
 // String, GoString and Format keep server credentials, including the
@@ -176,6 +181,11 @@ func LoadConfig(get getenv) (Config, error) {
 		TelegramAPI:           envGet(get, telegramAPISetting),
 		telegramBotToken:      envGet(get, telegramBotTokenSetting),
 	}
+	panel, err := loadPanelOrigin(envGet(get, panelOriginSetting))
+	if err != nil {
+		return cfg, err
+	}
+	cfg.PanelOrigin = panel
 	if cfg.TelegramAPI == "" {
 		cfg.TelegramAPI = telegram.DefaultBaseURL
 	}
@@ -320,6 +330,23 @@ func (cfg Config) validateTelegram() error {
 	}
 	client.Close()
 	return nil
+}
+
+// panelOriginSetting — origin панели для ссылок уведомлений (#282).
+const panelOriginSetting = "BROOD_PANEL_ORIGIN"
+
+// loadPanelOrigin проверяет origin панели: http(s) без credentials, path,
+// query и fragment; завершающий "/" снимается. Пусто — ссылок нет.
+func loadPanelOrigin(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Opaque != "" ||
+		(u.Path != "" && u.Path != "/") || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", &ConfigError{Setting: panelOriginSetting, Detail: "must be an http(s) origin without credentials, path, query or fragment"}
+	}
+	return u.Scheme + "://" + u.Host, nil
 }
 
 // LoadConfigEnv читает настройки из окружения процесса.

@@ -95,6 +95,27 @@ func (s *Store) SwarmSteps(ctx context.Context, swarmID string) ([]PipelineVisit
 	return result, rows.Err()
 }
 
+// GetSwarmStep returns one visit of the swarm graph, with the first step of
+// its pass (Pass) as SwarmSteps names it. A missing step, or a step of
+// another swarm, is ErrNotFound.
+func (s *Store) GetSwarmStep(ctx context.Context, swarmID string, sequence int64) (PipelineVisit, error) {
+	missing := fmt.Errorf("%w: step %d of swarm %q", ErrNotFound, sequence, swarmID)
+	if !validPipelineField(swarmID) || sequence < 1 {
+		return PipelineVisit{}, missing
+	}
+	v, err := scanSwarmStep(s.conn(ctx).QueryRowContext(ctx, swarmStepSelect+` WHERE s.swarm_id=? AND s.sequence=?`, swarmID, sequence))
+	if errors.Is(err, sql.ErrNoRows) {
+		return PipelineVisit{}, missing
+	}
+	if err != nil {
+		return PipelineVisit{}, err
+	}
+	if v.Pass, _, _, err = s.stepPass(ctx, swarmID, sequence); err != nil {
+		return PipelineVisit{}, err
+	}
+	return v, nil
+}
+
 // stepPass — первый шаг, задача и commit прохода, которому принадлежит шаг
 // sequence: последний шаг роя с задачей не дальше него, как в SwarmSteps и
 // в триггерах swarm_steps_attested. Шаг вне прохода, открытого запуском, —
@@ -247,7 +268,7 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 		return v, ErrPipelineVisitConflict
 	}
 	if err == nil && v.State == "waiting" {
-		err = s.openNodeRequest(ctx, swarmID, v.Sequence, n, "")
+		err = s.openNodeRequest(ctx, swarmID, v.Sequence, v.NodeID, n, "")
 	}
 	return v, err
 }
@@ -384,18 +405,37 @@ func (s *Store) progressPipeline(ctx context.Context, w Swarm, d *pipeline.Docum
 	} else if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state=?,outcome=?,finished_at=?,report=NULLIF(?,'') WHERE swarm_id=? AND sequence=?`, state, value, now, report, w.ID, sequence); err != nil {
 		return err
 	}
-	if transition.Terminal {
-		return s.advanceExecution(ctx, w.ID, executionOfTransition(transition.Execution), now)
-	}
-	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES (?,?,?,?)`, w.ID, sequence+1, transition.Next, transition.NextState); err != nil {
-		return err
-	}
-	if next := d.Nodes[transition.Next]; next.Type == "human" && transition.NextState == "waiting" {
-		if err := s.openNodeRequest(ctx, w.ID, sequence+1, next, stepReportContext(sequence, node, value, report)); err != nil {
+	execution := executionOfTransition(transition.Execution)
+	if !transition.Terminal {
+		if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state) VALUES (?,?,?,?)`, w.ID, sequence+1, transition.Next, transition.NextState); err != nil {
 			return err
 		}
+		if next := d.Nodes[transition.Next]; next.Type == "human" && transition.NextState == "waiting" {
+			if err := s.openNodeRequest(ctx, w.ID, sequence+1, transition.Next, next, stepReportContext(sequence, node, value, report)); err != nil {
+				return err
+			}
+		}
 	}
-	return s.advanceExecution(ctx, w.ID, executionOfTransition(transition.Execution), now)
+	if err := s.advanceExecution(ctx, w.ID, execution, now); err != nil {
+		return err
+	}
+	if activeExecution(execution) {
+		return nil
+	}
+	// Конец прохода (#282) — терминальный отказ или шаг выхода; узел — тот,
+	// чей исход его кончил, номер прохода — его первый шаг.
+	pass, _, _, err := s.stepPass(ctx, w.ID, sequence)
+	if err != nil {
+		return err
+	}
+	return s.queueTelegram(ctx, "pass_finished", TelegramEvent{Swarm: w.ID, Sequence: pass, Node: node, Execution: execution})
+}
+
+// stepNode — узел шага sequence роя.
+func (s *Store) stepNode(ctx context.Context, swarmID string, sequence int64) (string, error) {
+	var node string
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT node_id FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&node)
+	return node, err
 }
 
 // advanceExecution пишет исполнение роя после перехода. Переход, кончающий

@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +42,9 @@ type fakePoll struct {
 type fakeSent struct {
 	ChatID int64  `json:"chat_id"`
 	Text   string `json:"text"`
+	// Document и Name — файл sendDocument; Text у него — подпись.
+	Document string `json:"-"`
+	Name     string `json:"-"`
 }
 
 type fakeBot struct {
@@ -225,9 +230,60 @@ func (a *fakeBotAPI) serve(w http.ResponseWriter, r *http.Request) {
 		a.notify()
 		a.mu.Unlock()
 		fakeResult(w, map[string]any{"message_id": id, "chat": map[string]any{"id": s.ChatID, "type": "private"}, "date": 1763000000, "text": s.Text})
+	case "sendDocument":
+		s, ok := fakeDocumentForm(r, body)
+		if !ok {
+			a.t.Errorf("sendDocument form %q", body)
+			fakeRefuse(w, http.StatusBadRequest, "Bad Request: bad form")
+			return
+		}
+		a.mu.Lock()
+		send := b.send
+		a.mu.Unlock()
+		if send != nil && send(w, r, s) {
+			return
+		}
+		a.mu.Lock()
+		b.sent = append(b.sent, s)
+		id := int64(len(b.sent))
+		a.notify()
+		a.mu.Unlock()
+		fakeResult(w, map[string]any{"message_id": id, "chat": map[string]any{"id": s.ChatID, "type": "private"}, "date": 1763000000, "caption": s.Text})
 	default:
 		fakeRefuse(w, http.StatusNotFound, "Not Found")
 	}
+}
+
+// fakeDocumentForm разбирает multipart sendDocument: чат, подпись и файл.
+func fakeDocumentForm(r *http.Request, body []byte) (fakeSent, bool) {
+	_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return fakeSent{}, false
+	}
+	form, err := multipart.NewReader(bytes.NewReader(body), params["boundary"]).ReadForm(8 << 20)
+	if err != nil {
+		return fakeSent{}, false
+	}
+	var s fakeSent
+	if _, err := fmt.Sscan(strings.Join(form.Value["chat_id"], ""), &s.ChatID); err != nil {
+		return fakeSent{}, false
+	}
+	s.Text = strings.Join(form.Value["caption"], "")
+	files := form.File["document"]
+	if len(files) != 1 {
+		return fakeSent{}, false
+	}
+	f, err := files[0].Open()
+	if err != nil {
+		return fakeSent{}, false
+	}
+	defer f.Close()
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return fakeSent{}, false
+	}
+	s.Document, s.Name = string(content), files[0].Filename
+	return s, true
 }
 
 func (a *fakeBotAPI) getUpdates(w http.ResponseWriter, r *http.Request, b *fakeBot, p fakePoll) {
@@ -384,11 +440,19 @@ func (a *fakeBotAPI) scriptSend(token string, send func(w http.ResponseWriter, r
 // сервера, пусто — api. tune правит настройки поллеров сборки.
 func startTelegramHarness(t *testing.T, api *fakeBotAPI, apiURL, install string, prepare func(ctx context.Context, st *store.Store), tune ...func(*telegramOptions)) *telegramHarness {
 	t.Helper()
+	return startTelegramHarnessAt(t, t.TempDir()+"/brood.db", api, apiURL, install, prepare, tune...)
+}
+
+// startTelegramHarnessAt — startTelegramHarness над базой dbPath: проверка
+// перезапуска готовит базу сама, как её оставил прежний процесс.
+func startTelegramHarnessAt(t *testing.T, dbPath string, api *fakeBotAPI, apiURL, install string, prepare func(ctx context.Context, st *store.Store), tune ...func(*telegramOptions)) *telegramHarness {
+	t.Helper()
 	if apiURL == "" {
 		apiURL = api.url
 	}
 	ctx := context.Background()
-	cfg := Config{DBPath: t.TempDir() + "/brood.db", TelegramAPI: apiURL, telegramBotToken: install}
+	// Ссылки уведомлений ведут на панель этого origin.
+	cfg := Config{DBPath: dbPath, TelegramAPI: apiURL, telegramBotToken: install, PanelOrigin: "https://brood.example"}
 	st, err := store.Open(ctx, cfg.DBPath)
 	if err != nil {
 		t.Fatal(err)
@@ -402,6 +466,7 @@ func startTelegramHarness(t *testing.T, api *fakeBotAPI, apiURL, install string,
 		reconcile: 50 * time.Millisecond,
 		backoff:   func(int) time.Duration { return 5 * time.Millisecond },
 		now:       clock.Now,
+		scan:      20 * time.Millisecond,
 	}
 	for _, f := range tune {
 		f(&options)
