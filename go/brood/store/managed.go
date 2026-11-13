@@ -73,6 +73,7 @@ type ManagedPool struct {
 // ManagedActor keeps allocation identity and the current durable operation intent.
 // All phases except deleted consume capacity. Deleted rows are retained for audit.
 // Error must be a sanitized public diagnostic; never pass raw provider responses.
+// It may begin with an unsent mark (Unsent); callers show Diagnostic.
 // OperationID is caller-generated and must be fresh for each new intent.
 // Role defaults to worker. A master retains its approving human's DelegatorID;
 // delegated workers retain the creating master's ParentUID for idempotent retries.
@@ -419,6 +420,8 @@ func (s *Store) HasManagedActorsBySwarm(ctx context.Context, swarmID string) (bo
 // It cannot release capacity, change ownership, or change operation intent/stage.
 // Phase is diagnostic, not task completion. Prefer BindManagedActorTask for UPID;
 // this compatibility path can bind only an active, previously unbound task slot.
+// Error keeps or drops the row's unsent mark (ManagedActor.Unsent) but never
+// sets one: only stage transitions say that a write was not submitted.
 func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected int64) (ManagedActor, error) {
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -446,6 +449,9 @@ func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected
 		}
 		if (old.UPID != "" || old.Stage == "done" || old.Stage == "reconcile") && a.UPID != old.UPID {
 			return fmt.Errorf("managed task is already bound or requires stage reconciliation")
+		}
+		if mark := a.Unsent(); mark != "" && mark != old.Unsent() {
+			return fmt.Errorf("managed unsent mark is set only by a stage transition")
 		}
 		a.Revision = expected + 1
 		a.UpdatedAt = nowRFC3339()
@@ -564,12 +570,14 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 		switch operation {
 		case "delete":
 			a.Phase = "deleting"
+			a.Error = ManagedStopUnsent
 		case "stop", "reset", "update":
 			a.Phase = "stopping"
+			a.Error = ManagedStopUnsent
 		case "start":
 			a.Phase = "provisioning"
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET operation_id=?,operation=?,desired=?,upid='',error='',revision=?,updated_at=?,incarnation=?,phase=?,stage=? WHERE uid=?`, a.OperationID, a.Operation, a.Desired, a.Revision, a.UpdatedAt, a.Incarnation, a.Phase, a.Stage, uid)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET operation_id=?,operation=?,desired=?,upid='',error=?,revision=?,updated_at=?,incarnation=?,phase=?,stage=? WHERE uid=?`, a.OperationID, a.Operation, a.Desired, a.Error, a.Revision, a.UpdatedAt, a.Incarnation, a.Phase, a.Stage, uid)
 		result = a
 		return err
 	})
@@ -581,6 +589,7 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 // including unknown submissions. This method performs no external calls and
 // requires the completed stop stage; absence alone cannot bypass a pending stop.
 // OperationID and revision fence stale cleanup observations from newer operations.
+// The tombstone keeps the public diagnostic but no unsent mark (Unsent).
 func (s *Store) ConfirmManagedActorDeleted(ctx context.Context, uid string, expected int64, operationID string) (ManagedActor, error) {
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -603,10 +612,13 @@ func (s *Store) ConfirmManagedActorDeleted(ctx context.Context, uid string, expe
 		}
 		a.Phase = "deleted"
 		a.Stage = "done"
+		// Удалённая строка — не ждущая стадия: отметка незапрошенного Delete
+		// (#277) снимается, диагностика последнего отказа остаётся.
+		a.Error = a.Diagnostic()
 		a.Revision++
 		a.UpdatedAt = nowRFC3339()
 		a.DeletedAt = ptrManaged(a.UpdatedAt)
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET phase='deleted',stage='done',revision=?,updated_at=?,deleted_at=? WHERE uid=?`, a.Revision, a.UpdatedAt, a.DeletedAt, uid)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET phase='deleted',stage='done',error=?,revision=?,updated_at=?,deleted_at=? WHERE uid=?`, a.Error, a.Revision, a.UpdatedAt, a.DeletedAt, uid)
 		result = a
 		return err
 	})
@@ -637,7 +649,9 @@ func (s *Store) BindManagedActorTask(ctx context.Context, uid string, expected i
 // done without discarding its task evidence. Phase updates alone never do this.
 // The stop stage of an update (#133) advances to its start stage with a fresh
 // task slot and Phase=stopped: the CT is stopped and its start is not yet
-// requested, so the caller may submit it.
+// requested, so the caller may submit it. A cleanup stop confirmed stopped
+// advances to a delete stage marked ManagedDeleteUnsent; a confirmed absence
+// leaves no mark, and the caller releases it in the same transaction.
 func (s *Store) ConfirmManagedActorStage(ctx context.Context, uid string, expected int64, operationID, stage, observed string) (ManagedActor, error) {
 	return s.changeManagedStage(ctx, uid, expected, operationID, stage, func(a *ManagedActor) error {
 		if observed != "running" && observed != "stopped" && observed != "absent" {
@@ -681,6 +695,9 @@ func (s *Store) ConfirmManagedActorStage(ctx context.Context, uid string, expect
 			a.Phase = "error"
 		}
 		a.Error = ""
+		if cleanup && observed == "stopped" {
+			a.Error = ManagedDeleteUnsent
+		}
 		return nil
 	})
 }
@@ -755,6 +772,91 @@ func (s *Store) changeManagedStage(ctx context.Context, uid string, expected int
 		return err
 	})
 	return result, err
+}
+
+// Unsent marks (#277) begin Error of a stop or delete stage whose PVE write
+// has not been requested; the public diagnostic of the last failure, if any,
+// follows after ": ". BeginManagedActorOperation marks every stop stage it
+// creates, ConfirmManagedActorStage marks the delete stage of a cleanup, and
+// MarkManagedActorDeleteUnsent marks a delete stage again after a Delete
+// refused before any write. UpdateManagedActor never sets a mark, and
+// ConfirmManagedActorDeleted drops it from the tombstone. A stage without a
+// mark may have been submitted, including every stage written before #277.
+const (
+	// ManagedStopUnsent marks a stop stage created before any Stop request.
+	ManagedStopUnsent = "stop not requested"
+	// ManagedDeleteUnsent marks a delete stage whose Delete is not requested.
+	ManagedDeleteUnsent = "delete not requested"
+)
+
+// Unsent returns the unsent mark that begins a.Error, or "" without one.
+func (a ManagedActor) Unsent() string {
+	mark, _ := splitManagedUnsent(a.Error)
+	return mark
+}
+
+// Diagnostic returns the public diagnostic of a.Error without its unsent mark.
+// Callers show this text: the mark is state, not a failure.
+func (a ManagedActor) Diagnostic() string {
+	_, diagnostic := splitManagedUnsent(a.Error)
+	return diagnostic
+}
+
+// ManagedUnsentError joins an unsent mark ("" for none) with a diagnostic.
+func ManagedUnsentError(mark, diagnostic string) string {
+	switch {
+	case mark == "":
+		return diagnostic
+	case diagnostic == "":
+		return mark
+	}
+	return mark + ": " + diagnostic
+}
+
+func splitManagedUnsent(text string) (mark, diagnostic string) {
+	for _, mark := range []string{ManagedStopUnsent, ManagedDeleteUnsent} {
+		if text == mark {
+			return mark, ""
+		}
+		if rest, ok := strings.CutPrefix(text, mark+": "); ok {
+			return mark, rest
+		}
+	}
+	return "", text
+}
+
+// MarkManagedActorDeleteUnsent records that the Delete of a delete stage
+// failed before any PVE write (a read of ownership or an explicit refusal):
+// the stage waits with Phase=stopped, ManagedDeleteUnsent and diagnostic, and
+// the caller may submit it again. Only a failure that proves nothing was
+// submitted may call this; a lost reply or an unrecorded UPID must not.
+func (s *Store) MarkManagedActorDeleteUnsent(ctx context.Context, uid string, expected int64, operationID, diagnostic string) (ManagedActor, error) {
+	return s.changeManagedStage(ctx, uid, expected, operationID, "delete", func(a *ManagedActor) error {
+		if a.UPID != "" || (a.Operation != "delete" && a.Operation != "reset") {
+			return fmt.Errorf("managed delete stage without a bound task is required")
+		}
+		a.Phase = "stopped"
+		a.Error = ManagedUnsentError(ManagedDeleteUnsent, diagnostic)
+		return nil
+	})
+}
+
+// ReopenManagedActorStop returns a delete stage whose Delete was never
+// requested (ManagedDeleteUnsent) to the stop stage of the same operation
+// after the caller observed its owned CT running: it was started outside
+// brood. The stop waits with Phase=running and no task, as after a Stop
+// refused before any write (#275). A delete stage without the mark may have
+// been submitted and is refused.
+func (s *Store) ReopenManagedActorStop(ctx context.Context, uid string, expected int64, operationID string) (ManagedActor, error) {
+	return s.changeManagedStage(ctx, uid, expected, operationID, "delete", func(a *ManagedActor) error {
+		if a.UPID != "" || a.Unsent() != ManagedDeleteUnsent || (a.Operation != "delete" && a.Operation != "reset") {
+			return fmt.Errorf("managed delete stage must be unsent to return to its stop stage")
+		}
+		a.Stage = "stop"
+		a.Phase = "running"
+		a.Error = ""
+		return nil
+	})
 }
 
 func ptrManaged(value string) *string { return &value }

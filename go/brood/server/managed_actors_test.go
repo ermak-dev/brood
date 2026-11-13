@@ -39,15 +39,23 @@ type managedFakePVE struct {
 	uncertain                       bool
 	uncertainStart                  bool
 	uncertainDelete                 bool
-	uncertainWithUPID               bool
-	bootstrapError                  error
-	inspectError, absenceError      error
-	taskErrors                      map[string]error
-	startUPID                       string
-	waited                          []string
-	absenceChecks                   int
-	inspectStarted, inspectRelease  chan struct{}
-	deletedWhileRunning             bool
+	// deleteReadFailures — сколько раз Delete откажет на чтении владения, до
+	// записи (#277).
+	deleteReadFailures int
+	// beforeDelete вызывается в начале Delete, после наблюдения прохода и
+	// до чтений Delete (#277).
+	beforeDelete func()
+	// afterDelete вызывается, когда PVE принял Delete, до ответа (#277).
+	afterDelete                    func()
+	uncertainWithUPID              bool
+	bootstrapError                 error
+	inspectError, absenceError     error
+	taskErrors                     map[string]error
+	startUPID                      string
+	waited                         []string
+	absenceChecks                  int
+	inspectStarted, inspectRelease chan struct{}
+	deletedWhileRunning            bool
 	// envs — bootstrap env каждого Create и ConfigureBootstrap по порядку.
 	envs []proxmox.BootstrapEnv
 	// uncertainStop — Stop без UPID с неизвестным исходом (#133).
@@ -242,18 +250,39 @@ func (f *managedFakePVE) Stop(ctx context.Context, r proxmox.OwnedCT) (string, e
 	return "stop-task", nil
 }
 func (f *managedFakePVE) Delete(ctx context.Context, r proxmox.OwnedCT) (string, error) {
+	f.mu.Lock()
+	before := f.beforeDelete
+	f.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	f.mu.Lock()
+	if f.deleteReadFailures > 0 {
+		f.deleteReadFailures--
+		f.mu.Unlock()
+		return "", errors.New("PVE HTTPS request failed")
+	}
+	f.mu.Unlock()
 	if _, err := f.InspectOwned(ctx, r); err != nil {
 		return "", err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.deletes++
 	if f.running {
+		// PVE отвергает Delete работающей CT ответом HTTP 500, а клиент
+		// считает 500 неоднозначным (#277).
 		f.deletedWhileRunning = true
-		return "", errors.New("delete before completed stop")
+		f.mu.Unlock()
+		return "", fmt.Errorf("%w: PVE HTTP status 500", proxmox.ErrUncertain)
 	}
 	f.exists = false
-	if f.uncertainDelete {
+	after := f.afterDelete
+	uncertain := f.uncertainDelete
+	f.mu.Unlock()
+	if after != nil {
+		after()
+	}
+	if uncertain {
 		return "", proxmox.ErrUncertain
 	}
 	return "delete-task", nil
