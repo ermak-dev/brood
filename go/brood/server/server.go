@@ -73,6 +73,8 @@ type Server struct {
 	steps *stepDispatcher
 	// telegram держит поллеры ботов Telegram (#281).
 	telegram *telegramBots
+	// sender отправляет уведомления outbox Telegram (#282).
+	sender *telegramSender
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -119,9 +121,16 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("actor step recovery failed")
 	}
+	// Уведомление Telegram, чью отправку оборвал прошлый процесс, могло
+	// дойти: unconfirmed без повтора, до первой попытки отправителя (#282).
+	if err := st.RecoverTelegramOutbox(ctx); err != nil {
+		catalog.Close()
+		return nil, errors.New("telegram outbox recovery failed")
+	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.steps = newStepDispatcher(srv)
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
+	srv.sender = newTelegramSender(st, cfg, opts.telegram)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
 		catalog.Close()
@@ -201,6 +210,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.managed.start(proxyCtx)
 	srv.steps.start(proxyCtx)
 	srv.telegram.start(proxyCtx)
+	srv.sender.start(proxyCtx)
 	return srv, nil
 }
 
@@ -229,8 +239,10 @@ func (s *Server) Close() error {
 	}
 	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
 	s.steps.close()
-	// Поллеры Telegram пишут в базу: остановлены до её закрытия.
+	// Поллеры и отправитель Telegram пишут в базу: остановлены до её
+	// закрытия.
 	s.telegram.close()
+	s.sender.close()
 	s.proxy.Close()
 	s.managed.close()
 	var errs []error

@@ -12,8 +12,8 @@ package server
 //
 // Поллер только принимает обновления: /start <код> из личного чата
 // подтверждает привязку, привязанный чат на неизвестную команду получает
-// справку. Уведомления пойдут через outbox (#282). Пакет молчит: исход
-// поллера виден в состоянии привязки и в профиле.
+// справку. Уведомления идут через outbox (#282, telegram_sender.go). Пакет
+// молчит: исход поллера виден в состоянии привязки и в профиле.
 
 import (
 	"context"
@@ -86,7 +86,8 @@ type telegramOptions struct {
 	reconcile time.Duration
 	// backoff — пауза после failures сбоев подряд.
 	backoff func(failures int) time.Duration
-	// now — часы выдачи и подтверждения кода.
+	// now — часы выдачи и подтверждения кода и возраста уведомления
+	// (telegramSendMaxAge).
 	now func() time.Time
 	// random — источник байтов кода привязки, в работе crypto/rand.
 	random io.Reader
@@ -96,6 +97,18 @@ type telegramOptions struct {
 	// afterWrite зовёт API профиля после фиксации записи, перед сверкой
 	// набора поллеров; nil в работе. В ней проверки уводят клиента.
 	afterWrite func(r *http.Request)
+	// scan — период поиска очередей отправителем уведомлений (#282).
+	scan time.Duration
+	// sendAttempts — предел попыток уведомления, которое не дошло до
+	// отправки из-за сбоя чтения базы (telegramSendAttempts).
+	sendAttempts int
+	// grace — сколько остановка сервера ждёт отправку уведомления в полёте
+	// (telegramSendGrace).
+	grace time.Duration
+	// retention — срок хранения уведомления с записанным исходом, prune —
+	// период удаления старших.
+	retention time.Duration
+	prune     time.Duration
 }
 
 func (o telegramOptions) withDefaults() telegramOptions {
@@ -113,6 +126,21 @@ func (o telegramOptions) withDefaults() telegramOptions {
 	}
 	if o.random == nil {
 		o.random = rand.Reader
+	}
+	if o.scan == 0 {
+		o.scan = telegramScanInterval
+	}
+	if o.sendAttempts == 0 {
+		o.sendAttempts = telegramSendAttempts
+	}
+	if o.grace == 0 {
+		o.grace = telegramSendGrace
+	}
+	if o.retention == 0 {
+		o.retention = telegramRetention
+	}
+	if o.prune == 0 {
+		o.prune = telegramPruneInterval
 	}
 	return o
 }

@@ -210,6 +210,19 @@ func (s *Store) StopSwarm(ctx context.Context, swarmID, userID string, authorize
 		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='unconfirmed',detail=? WHERE swarm_id=? AND state='delivering'`, detailStoppedDelivery, w.ID); err != nil {
 			return err
 		}
+		// Остановка — конец прохода (#282); шаг, который она закрыла или
+		// оставила без исхода, отдельного отказа не получает.
+		var latest int64
+		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM swarm_steps WHERE swarm_id=?`, w.ID).Scan(&latest); err != nil {
+			return err
+		}
+		pass, _, _, err := s.stepPass(ctx, w.ID, latest)
+		if err != nil {
+			return err
+		}
+		if err := s.queueTelegram(ctx, "pass_finished", TelegramEvent{Swarm: w.ID, Sequence: pass, Execution: "stopped"}); err != nil {
+			return err
+		}
 		stopped, err = s.GetSwarm(ctx, w.ID)
 		return err
 	})
@@ -347,8 +360,15 @@ func (s *Store) beginPass(ctx context.Context, swarmID, goal string, plan passPl
 	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal,source_commit) VALUES (?,?,?,?,?,?)`, swarmID, sequence, plan.entry.Next, plan.entry.NextState, goal, plan.source.Commit); err != nil {
 		return err
 	}
+	// Начало прохода в Telegram идёт раньше запроса его первого шага (#282).
+	// Задачу строка не копирует: она в этом шаге и не меняется
+	// (swarmStepPassFence), отправитель читает её оттуда.
+	started := TelegramEvent{Swarm: swarmID, Sequence: sequence, Node: plan.entry.Next, Execution: executionOfTransition(plan.entry.Execution)}
+	if err := s.queueTelegram(ctx, "pass_started", started); err != nil {
+		return err
+	}
 	if plan.entry.NextState == "waiting" {
-		if err := s.openNodeRequest(ctx, swarmID, sequence, plan.doc.Nodes[plan.entry.Next], ""); err != nil {
+		if err := s.openNodeRequest(ctx, swarmID, sequence, plan.entry.Next, plan.doc.Nodes[plan.entry.Next], ""); err != nil {
 			return err
 		}
 	}
