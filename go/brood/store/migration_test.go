@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -77,8 +79,8 @@ func TestSchemaMigrationsFormChainToCurrentVersion(t *testing.T) {
 // TestMigrateV26DatabaseToCurrent: база версии 26, записанная кодом той же
 // версии, открывается текущим кодом, получает индекс swarm_requests(swarm_id)
 // и совпадает со свежей базой объект в объект; строки не меняются, кроме
-// колонки execution_at роя, которую дописывает шаг 27→28; внешние ключи,
-// триггеры и WAL работают после миграции.
+// колонки execution_at роя, которую дописывает шаг 27→28, и пустых таблиц
+// Telegram шага 28→29; внешние ключи, триггеры и WAL работают после миграции.
 func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	ctx := context.Background()
 	path := loadSchemaFixture(t, 26)
@@ -105,8 +107,8 @@ func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	// Шаг 27→28 дописывает рою execution_at; точного момента у роёв базы 26
 	// нет: s идёт шагом вне прохода запуска, one и two не запускались.
 	before["swarms"] = withExecutionAt(before["swarms"], ids, nil)
-	if after := databaseRows(t, s.db); !reflect.DeepEqual(after, before) {
-		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, before)
+	if after, want := databaseRows(t, s.db), withTelegramStep(before); !reflect.DeepEqual(after, want) {
+		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
 	var foreignKeys int
@@ -277,13 +279,104 @@ func TestMigrateV27DatabaseToCurrent(t *testing.T) {
 		t.Fatalf("backfilled execution_at:\n got %v\nwant %v", got, executionAtV27)
 	}
 	before["swarms"] = withExecutionAt(before["swarms"], ids, executionAtV27)
-	if after := databaseRows(t, s.db); !reflect.DeepEqual(after, before) {
-		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, before)
+	if after, want := databaseRows(t, s.db), withTelegramStep(before); !reflect.DeepEqual(after, want) {
+		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
 	summaries, err := s.SwarmSummaries(ctx, []string{"done", "cut"})
 	if err != nil || summaries["done"].ExecutionAt != executionAtV27["done"] || summaries["cut"].ExecutionAt != "" {
 		t.Fatalf("summary over migrated rows = %+v, %v", summaries, err)
+	}
+}
+
+// sessionsV28: веб-сессии базы версии 28, со сроком и без: в замороженной
+// базе сессий нет, а шаг 28→29 дописывает их строкам вид сессии.
+const sessionsV28 = `INSERT INTO sessions VALUES
+	('cookie-u', 'u', '2026-11-12T08:00:00Z', '2026-12-12T08:00:00Z', x'7b7d'),
+	('cookie-root', 'root', '2026-11-12T09:00:00Z', NULL, NULL)`
+
+// withTelegramStep: строки базы после шага 28→29: у сессий в конце вид
+// 'web', таблицы привязок Telegram и исходящих уведомлений пусты.
+func withTelegramStep(rows map[string][]string) map[string][]string {
+	out := maps.Clone(rows)
+	var sessions []string
+	for _, row := range rows["sessions"] {
+		sessions = append(sessions, row+",'web'")
+	}
+	out["sessions"] = sessions
+	out["user_telegram_links"], out["telegram_outbox"] = nil, nil
+	return out
+}
+
+// TestMigrateV28DatabaseToCurrent: шаг 28→29 добавляет вид сессии
+// sessions.kind (прежние сессии — web), пустые user_telegram_links и
+// telegram_outbox с индексом и ограждениями и триггер отзыва сессии
+// telegram. Итог совпадает со свежей базой объект в объект, прочие строки не
+// меняются; веб-сессии находятся по хэшу токена, а привязка, её отзыв и
+// ограждения outbox работают на мигрированной базе.
+func TestMigrateV28DatabaseToCurrent(t *testing.T) {
+	ctx := context.Background()
+	path := loadSchemaFixture(t, 28)
+	raw := rawDatabase(t, path)
+	if _, err := raw.Exec(sessionsV28); err != nil {
+		t.Fatal(err)
+	}
+	requireIntact(t, raw)
+	before := databaseRows(t, raw)
+	raw.Close()
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("v28 database refused: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("migrated version = %d, %v; want %d", version, err, schemaVersion)
+	}
+	fresh := newTestStore(t)
+	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
+	}
+	if after, want := databaseRows(t, s.db), withTelegramStep(before); !reflect.DeepEqual(after, want) {
+		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
+	}
+	requireIntact(t, s.db)
+	if sess, err := s.GetSession(ctx, "cookie-u"); err != nil || sess.UserID != "u" || sess.ExpiresAt == nil {
+		t.Fatalf("web session after migration = %+v, %v", sess, err)
+	}
+	link := linkTelegram(t, s, "u", "", 42)
+	if link.State != "linked" || !active(t, s, "u", "", 42, 42) {
+		t.Fatalf("link on the migrated database = %+v", link)
+	}
+	if _, err := s.DeleteSessionsOfUser(ctx, "u"); err != nil {
+		t.Fatal(err)
+	}
+	if link, err := s.GetTelegramLink(ctx, "u"); err != nil || link.State != "error" || link.Reason != telegramSessionRevoked {
+		t.Fatalf("revocation on the migrated database = %+v, %v", link, err)
+	}
+	id := queueNotification(t, s, "u", "request_opened")
+	outboxSteps(t, s, id, `attempts = 1`, `state = 'sent', settled_attempts = 1, telegram_message_id = 1`)
+	if err := outboxExec(s, id, `state = 'pending', telegram_message_id = NULL`); err == nil || !strings.Contains(err.Error(), "telegram notification is immutable") {
+		t.Fatalf("outbox fence after migration: %v", err)
+	}
+	interrupted := queueNotification(t, s, "u", "pass_started")
+	outboxSteps(t, s, interrupted, `attempts = 1`)
+	if err := outboxExec(s, interrupted, `attempts = 2`); err == nil || !strings.Contains(err.Error(), attemptFence) {
+		t.Fatalf("attempt fence after migration: %v", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM telegram_outbox WHERE id = ?`, interrupted); err == nil || !strings.Contains(err.Error(), "telegram notification is queued or in flight") {
+		t.Fatalf("delete fence after migration: %v", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM telegram_outbox WHERE id = ?`, id); err != nil {
+		t.Fatalf("retention of a sent notification after migration: %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO telegram_outbox (user_id, kind, ref, payload, state, attempts, settled_attempts, telegram_message_id, created_at, updated_at)
+		VALUES ('u', 'request_opened', 'r', '{}', 'sent', 1, 1, 7, 'now', 'now')`); err == nil || !strings.Contains(err.Error(), "telegram notification is queued pending") {
+		t.Fatalf("insert fence after migration: %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sessions (token_hash, user_id, created_at, kind) VALUES ('other-kind', 'u', 'now', 'other')`); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("session kind check after migration: %v", err)
 	}
 }
 
@@ -321,6 +414,33 @@ func TestMigrateEveryFrozenVersionToCurrent(t *testing.T) {
 				}
 			}
 			requireIntact(t, s.db)
+		})
+	}
+}
+
+// TestEachMigrationStepYieldsTheNextFrozenVersion: шаг N→N+1 на замороженной
+// базе N даёт ровно объекты замороженной базы N+1, а не текущей схемы. Шаг,
+// который берёт DDL у живого реестра, после правки этого DDL следующей
+// версией создал бы уже её объекты, и шаг N+1→N+2 лёг бы поверх них; тест
+// требует заморозить текст такого шага до правки.
+func TestEachMigrationStepYieldsTheNextFrozenVersion(t *testing.T) {
+	ctx := context.Background()
+	versions := frozenSchemaVersions(t)
+	for _, from := range versions {
+		if !slices.Contains(versions, from+1) {
+			continue
+		}
+		t.Run(fmt.Sprintf("%d-%d", from, from+1), func(t *testing.T) {
+			db := rawDatabase(t, loadSchemaFixture(t, from))
+			conn, err := db.Conn(ctx)
+			mustNil(t, err)
+			mustNil(t, migrateStep(ctx, conn, schemaVersion, schemaMigrations))
+			mustNil(t, conn.Close())
+			next := rawDatabase(t, loadSchemaFixture(t, from+1))
+			if got, want := schemaObjects(t, db), schemaObjects(t, next); !reflect.DeepEqual(got, want) {
+				t.Fatalf("step %d→%d differs from %s: freeze the DDL of the step before changing it in the registry\n got %q\nwant %q",
+					from, from+1, schemaFixturePath(from+1), got, want)
+			}
 		})
 	}
 }
@@ -433,8 +553,9 @@ func TestMigrationRecordsTheVersionAfterEachStep(t *testing.T) {
 	ctx := context.Background()
 	path := loadSchemaFixture(t, 26)
 	_, conn := openedConn(t, path)
-	failing := []schemaMigration{{from: 26, sql: swarmRequestSwarm}, {from: 27, sql: "CREATE TABLE migration_probe (x); INSERT INTO no_such_table VALUES (1)"}}
-	if err := prepareSchema(ctx, conn, 28, failing); err == nil ||
+	failing := slices.Clone(schemaMigrations)
+	failing[1] = schemaMigration{from: 27, sql: "CREATE TABLE migration_probe (x); INSERT INTO no_such_table VALUES (1)"}
+	if err := prepareSchema(ctx, conn, schemaVersion, failing); err == nil ||
 		!strings.Contains(err.Error(), "migration from version 27 to 28 failed") {
 		t.Fatalf("second step error = %v", err)
 	}
@@ -447,14 +568,15 @@ func TestMigrationRecordsTheVersionAfterEachStep(t *testing.T) {
 	if version != 27 || probes != 0 || indexes != 1 {
 		t.Fatalf("after a failed second step: version %d, probe %d, index %d; want 27, 0, 1", version, probes, indexes)
 	}
-	// Исправленный второй шаг: настоящий шаг 27→28 и проба, потому что
-	// последний шаг сверяется с реестром текущей версии.
-	fixed := []schemaMigration{failing[0], {from: 27, sql: schemaMigrations[1].sql + "; CREATE TABLE migration_probe (x)"}}
-	if err := prepareSchema(ctx, conn, 28, fixed); err != nil {
+	// Исправленный второй шаг: настоящий шаг 27→28 и проба; цепочка идёт до
+	// текущей версии, потому что последний шаг сверяется с её реестром.
+	fixed := slices.Clone(schemaMigrations)
+	fixed[1].sql += "; CREATE TABLE migration_probe (x)"
+	if err := prepareSchema(ctx, conn, schemaVersion, fixed); err != nil {
 		t.Fatalf("resumed chain: %v", err)
 	}
 	if err := conn.QueryRowContext(ctx, `SELECT (SELECT user_version FROM pragma_user_version),
-		(SELECT count(*) FROM sqlite_master WHERE name = 'migration_probe')`).Scan(&version, &probes); err != nil || version != 28 || probes != 1 {
+		(SELECT count(*) FROM sqlite_master WHERE name = 'migration_probe')`).Scan(&version, &probes); err != nil || version != schemaVersion || probes != 1 {
 		t.Fatalf("resumed chain: version %d, probe %d, %v", version, probes, err)
 	}
 }

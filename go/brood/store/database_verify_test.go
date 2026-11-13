@@ -94,9 +94,10 @@ func frozenSnapshot(t *testing.T, version int, change string) (string, DatabaseS
 
 // Снимок версии 27 несёт рои на каждом исполнении: перенос момента
 // исполнения шага 27→28 (#268) переписывает строки swarms под триггерами и
-// в gate идёт с trusted_schema=OFF.
+// в gate идёт с trusted_schema=OFF. Снимок версии 28 несёт веб-сессии:
+// колонка вида сессии шага 28→29 (#279) проверяет CHECK на их строках.
 func TestVerifyMigratesAnOlderSnapshotOnlyInMemory(t *testing.T) {
-	for version, change := range map[int]string{26: "", 27: executionHistoryV27} {
+	for version, change := range map[int]string{26: "", 27: executionHistoryV27, 28: sessionsV28} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path, meta := frozenSnapshot(t, version, change)
 			if meta.SchemaVersion != int64(version) {

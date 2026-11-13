@@ -52,7 +52,11 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // записано так, как ALTER оставляет текст таблицы в sqlite_master: с новой
 // строки после последней колонки, перед закрывающей скобкой. Иначе свежая
 // база разошлась бы с мигрированной текстом таблицы.
-const schemaVersion = 28
+// 29: вид сессии sessions.kind (web, telegram), привязки Telegram
+// user_telegram_links и исходящие уведомления telegram_outbox с их
+// ограждениями (#279). Колонку вида добавляет ALTER TABLE шага 28→29, и
+// schema.sql повторяет её текст так же, как execution_at.
+const schemaVersion = 29
 
 //go:embed schema.sql
 var currentSchema string

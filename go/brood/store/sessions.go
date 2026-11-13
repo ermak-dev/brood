@@ -1,6 +1,10 @@
 // Сессии сервера: запись по хэшу токена. Физическая схема
 // предварительная, аутентификация (#30) может адаптировать её под
-// библиотеку сессий, не меняя остальной Store.
+// библиотеку сессий, не меняя остальной Store. Вид сессии (#279): web —
+// вход браузера по cookie, его создают, ищут и завершают методы ниже;
+// telegram открывает и закрывает привязка Telegram (telegram_links.go),
+// cookie у неё нет. Отзыв сессий пользователя и уборка истёкших касаются
+// обоих видов.
 package store
 
 import (
@@ -20,8 +24,8 @@ type Session struct {
 	Data      []byte
 }
 
-// CreateSession вставляет сессию; store проставляет created_at, при
-// ExpiresAt == nil срок остаётся неограниченным (NULL).
+// CreateSession inserts a web session; the store sets created_at, and a nil
+// ExpiresAt leaves the session without expiry (NULL).
 func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	var expires any
 	if sess.ExpiresAt != nil {
@@ -45,13 +49,14 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	return nil
 }
 
-// GetSession возвращает сессию по хэшу токена.
+// GetSession returns the web session with the token hash. A telegram session
+// has no cookie and is never found here.
 func (s *Store) GetSession(ctx context.Context, tokenHash string) (Session, error) {
 	var sess Session
 	var createdAt string
 	var expires sql.NullString
 	err := s.conn(ctx).QueryRowContext(ctx,
-		`SELECT token_hash, user_id, created_at, expires_at, data FROM sessions WHERE token_hash = ?`,
+		`SELECT token_hash, user_id, created_at, expires_at, data FROM sessions WHERE token_hash = ? AND kind = 'web'`,
 		tokenHash).Scan(&sess.TokenHash, &sess.UserID, &createdAt, &expires, &sess.Data)
 	if err == sql.ErrNoRows {
 		return sess, fmt.Errorf("%w: session", ErrNotFound)
@@ -70,10 +75,10 @@ func (s *Store) GetSession(ctx context.Context, tokenHash string) (Session, erro
 	return sess, nil
 }
 
-// DeleteSession удаляет сессию по хэшу токена (logout).
+// DeleteSession deletes the web session with the token hash (logout).
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	res, err := s.conn(ctx).ExecContext(ctx,
-		`DELETE FROM sessions WHERE token_hash = ?`, tokenHash)
+		`DELETE FROM sessions WHERE token_hash = ? AND kind = 'web'`, tokenHash)
 	if err != nil {
 		return err
 	}
@@ -83,8 +88,10 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return nil
 }
 
-// DeleteSessionsOfUser отзывает все сессии пользователя (блокировка,
-// сброс пароля) и возвращает их число.
+// DeleteSessionsOfUser revokes every session of the user, web and telegram
+// (disable, a role change either way, password reset), and returns their
+// number. Revoking a telegram session drops its Telegram link with a reason
+// (sessions_telegram_revoke).
 func (s *Store) DeleteSessionsOfUser(ctx context.Context, userID string) (int64, error) {
 	res, err := s.conn(ctx).ExecContext(ctx,
 		`DELETE FROM sessions WHERE user_id = ?`, userID)
