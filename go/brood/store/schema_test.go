@@ -43,7 +43,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_sources", "project_capacity", "project_git_credential_refs", "project_git_credentials", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "swarm_members", "swarm_requests", "swarm_role_bindings", "swarm_steps", "swarms", "users", "workflow_definitions", "workflow_revision_counters"}
+	want := []string{"command_project_details", "coordination_claims", "managed_actors", "managed_connections", "managed_pools", "pipeline_sources", "project_capacity", "project_git_credential_refs", "project_git_credentials", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "sqlite_sequence", "swarm_members", "swarm_requests", "swarm_role_bindings", "swarm_steps", "swarms", "telegram_outbox", "user_telegram_links", "users", "workflow_definitions", "workflow_revision_counters"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}
@@ -188,7 +188,7 @@ func TestSchemaModulesCoverExpectedTables(t *testing.T) {
 			seen[table] = true
 		}
 	}
-	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "project_git_credentials", "project_git_credential_refs", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "swarm_role_bindings", "swarm_requests"}
+	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "project_git_credentials", "project_git_credential_refs", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "swarm_role_bindings", "swarm_requests", "user_telegram_links", "telegram_outbox"}
 	for _, table := range want {
 		if !seen[table] {
 			t.Errorf("table %s is missing from schemaModules DDL", table)
@@ -277,12 +277,23 @@ func TestSchemaWithoutNodeActorModel(t *testing.T) {
 // целостности ловится при открытии базы текущей версии.
 func TestOpenRejectsDamagedTriggers(t *testing.T) {
 	for name, change := range map[string]string{
-		"missing trigger":                     `DROP TRIGGER pipeline_sources_immutable`,
-		"missing step report fence":           `DROP TRIGGER swarm_steps_report_fence`,
-		"missing pass fence":                  `DROP TRIGGER swarm_steps_pass_fence`,
-		"different trigger":                   `DROP TRIGGER swarm_graph_immutable; CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms BEGIN SELECT RAISE(ABORT, 'other'); END`,
-		"missing index":                       `DROP INDEX swarms_live_name`,
-		"missing live name index for managed": `DROP INDEX managed_pools_live_name`,
+		"missing trigger":                       `DROP TRIGGER pipeline_sources_immutable`,
+		"missing step report fence":             `DROP TRIGGER swarm_steps_report_fence`,
+		"missing pass fence":                    `DROP TRIGGER swarm_steps_pass_fence`,
+		"different trigger":                     `DROP TRIGGER swarm_graph_immutable; CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms BEGIN SELECT RAISE(ABORT, 'other'); END`,
+		"missing index":                         `DROP INDEX swarms_live_name`,
+		"missing live name index for managed":   `DROP INDEX managed_pools_live_name`,
+		"missing outbox fence":                  `DROP TRIGGER telegram_outbox_fence`,
+		"missing unconfirmed outbox fence":      `DROP TRIGGER telegram_outbox_unconfirmed`,
+		"missing outbox replace fence":          `DROP TRIGGER telegram_outbox_no_replace`,
+		"missing outbox delete fence":           `DROP TRIGGER telegram_outbox_no_delete`,
+		"missing outbox attempt fence":          `DROP TRIGGER telegram_outbox_attempts`,
+		"missing telegram session revocation":   `DROP TRIGGER sessions_telegram_revoke`,
+		"different telegram session revocation": `DROP TRIGGER sessions_telegram_revoke; CREATE TRIGGER sessions_telegram_revoke BEFORE DELETE ON sessions BEGIN SELECT 1; END`,
+		"missing outbox queue index":            `DROP INDEX telegram_outbox_pending`,
+		"missing outbox user index":             `DROP INDEX telegram_outbox_user`,
+		"missing outbox insert fence":           `DROP TRIGGER telegram_outbox_insert`,
+		"missing outbox id fence":               `DROP TRIGGER telegram_outbox_fresh_id`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()

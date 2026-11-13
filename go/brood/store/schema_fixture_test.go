@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Замороженные базы версий схемы (#274): testdata/schema-<N>.sql содержит DDL и
@@ -56,7 +57,15 @@ func frozenSchemaVersions(t *testing.T) []int {
 // и открытый запросы оператору, ответ актору с неизвестной доставкой,
 // managed-пул и актор. С версии 28 ещё рой one, прошедший проход запуска до
 // конца: каталог и repository проекта, источник роя, шаг с задачей и commit
-// прохода и момент последнего исполнения роя (#268).
+// прохода и момент последнего исполнения роя (#268). С версии 29 ещё
+// веб-сессия и привязки Telegram (#279): root привязан через своего бота с
+// сессией telegram, ed ждёт подтверждения кода через бот установки и выбрал
+// подписки, у vw ошибка привязки. И исходящие уведомления root, записанные
+// переходами отправителя, которые пропускают ограждения версии 29 (API
+// отправки хранилище версии 29 ещё не несёт): в очереди, попытка в полёте,
+// sent, failed, unconfirmed из восстановления при запуске и sent, которое
+// удалил срок хранения последним, поэтому sqlite_sequence ушёл дальше
+// последнего номера.
 func seedSchemaFixture(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
@@ -75,6 +84,31 @@ func seedSchemaFixture(t *testing.T) *Store {
 	publish(t, s, "one", map[string]string{"approve": startApprove})
 	mustStart(t, s, "approve")
 	mustNil(t, answer(s, openNodeRequestOf(t, s, 1), "u", "success", "approved"))
+	expires := telegramTestTime.Add(30 * 24 * time.Hour)
+	mustNil(t, s.CreateSession(ctx, Session{TokenHash: "fixture-web-session", UserID: "u", ExpiresAt: &expires, Data: []byte(`{"csrf":"fixture"}`)}))
+	_, err := s.SetTelegramBot(ctx, "root", "100:fixture-token", "root_brood_bot", "")
+	mustNil(t, err)
+	linkTelegram(t, s, "root", "root_brood_bot", 4242)
+	_, err = s.IssueTelegramLinkCode(ctx, "ed", linkCode("fixture"), telegramTestTime, telegramTestTime.Add(time.Hour))
+	mustNil(t, err)
+	_, err = s.SetTelegramEvents(ctx, "ed", []string{"request_opened", "actor_question"})
+	mustNil(t, err)
+	_, err = s.RecordTelegramLinkError(ctx, "vw", "the chat blocked the bot", "")
+	mustNil(t, err)
+	queueNotification(t, s, "root", "request_opened")
+	sent := queueNotification(t, s, "root", "request_answered")
+	outboxSteps(t, s, sent, `attempts = 1`, `state = 'sent', settled_attempts = 1, telegram_message_id = 1001`)
+	failed := queueNotification(t, s, "root", "pass_started")
+	outboxSteps(t, s, failed, `attempts = 1`, `state = 'failed', settled_attempts = 1`)
+	interrupted := queueNotification(t, s, "root", "pass_finished")
+	outboxSteps(t, s, interrupted, `attempts = 1`)
+	mustNil(t, s.RecoverTelegramOutbox(ctx))
+	inFlight := queueNotification(t, s, "root", "step_failed")
+	outboxSteps(t, s, inFlight, `attempts = 1`)
+	retained := queueNotification(t, s, "root", "actor_question")
+	outboxSteps(t, s, retained, `attempts = 1`, `state = 'sent', settled_attempts = 1, telegram_message_id = 1002`)
+	_, err = s.db.Exec(`DELETE FROM telegram_outbox WHERE id = ?`, retained)
+	mustNil(t, err)
 	return s
 }
 
@@ -122,6 +156,20 @@ func dumpDatabase(t *testing.T, db *sql.DB) string {
 	for _, name := range names {
 		for _, row := range tableRows(t, db, name) {
 			fmt.Fprintf(&b, "INSERT INTO %q VALUES(%s);\n", name, row)
+		}
+	}
+	// Счётчики AUTOINCREMENT, как в sqlite3 .dump: вставка строк поднимает
+	// счётчик только до последнего уцелевшего номера, а номер удалённой
+	// строки новой не достаётся. sqlite_sequence при загрузке заводит сама
+	// таблица с AUTOINCREMENT, и счётчики пишутся после строк таблиц.
+	var sequences bool
+	if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence')`).Scan(&sequences); err != nil {
+		t.Fatal(err)
+	}
+	if sequences {
+		b.WriteString("DELETE FROM sqlite_sequence;\n")
+		for _, row := range tableRows(t, db, "sqlite_sequence") {
+			fmt.Fprintf(&b, "INSERT INTO sqlite_sequence VALUES(%s);\n", row)
 		}
 	}
 	for _, definition := range objects {
@@ -270,6 +318,34 @@ func requireIntact(t *testing.T, db *sql.DB) {
 	}
 }
 
+// requireOutboxFixture: замороженная база несёт уведомления на каждом шаге
+// отправителя — в очереди, попытку в полёте и каждый записанный исход — и
+// счётчик AUTOINCREMENT дальше последнего номера: уведомление с последним
+// номером удалил срок хранения, и шаг следующей версии обязан номер не
+// вернуть.
+func requireOutboxFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`SELECT state || ':' || attempts || '/' || settled_attempts FROM telegram_outbox ORDER BY id`)
+	mustNil(t, err)
+	var shapes []string
+	for rows.Next() {
+		var shape string
+		mustNil(t, rows.Scan(&shape))
+		shapes = append(shapes, shape)
+	}
+	mustNil(t, rows.Err())
+	rows.Close()
+	sort.Strings(shapes)
+	if want := []string{"failed:1/1", "pending:0/0", "pending:1/0", "sent:1/1", "unconfirmed:1/1"}; !reflect.DeepEqual(shapes, want) {
+		t.Fatalf("fixture notifications = %v, want %v", shapes, want)
+	}
+	var sequence, last int64
+	mustNil(t, db.QueryRow(`SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name = 'telegram_outbox'), 0), (SELECT max(id) FROM telegram_outbox)`).Scan(&sequence, &last))
+	if sequence <= last {
+		t.Fatalf("fixture outbox sequence %d does not pass the last id %d: a deleted notification's id would be given again", sequence, last)
+	}
+}
+
 // FEATURE: Frozen database of the current schema version (#274).
 // SPEC: testdata/schema-<schemaVersion>.sql loads to exactly the objects a
 // fresh Open creates and opens as is. A schema change without a new version
@@ -294,6 +370,10 @@ func TestSchemaFixtureMatchesCurrentSchema(t *testing.T) {
 	if rows := databaseRows(t, fixture); len(rows["swarm_requests"]) == 0 || len(rows["swarm_steps"]) == 0 {
 		t.Fatalf("fixture carries no swarm rows: %v", rows)
 	}
+	if rows := databaseRows(t, fixture); len(rows["user_telegram_links"]) == 0 || len(rows["sessions"]) == 0 {
+		t.Fatalf("fixture carries no session or Telegram link rows: %v", rows)
+	}
+	requireOutboxFixture(t, fixture)
 	fixture.Close()
 	s, err := Open(context.Background(), path)
 	if err != nil {

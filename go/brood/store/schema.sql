@@ -45,4 +45,4 @@ CREATE TABLE sessions (
     created_at TEXT NOT NULL,
     expires_at TEXT,
     data       BLOB
-);
+, kind TEXT NOT NULL DEFAULT 'web' CHECK (kind IN ('web', 'telegram')));
