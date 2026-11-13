@@ -11,6 +11,8 @@ import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { ProjectOverviewPage } from '@/features/overview/ProjectOverviewPage';
+import { ProfilePage } from '@/features/profile/ProfilePage';
+import { PROFILE_PATH } from '@/features/profile/routes';
 import { ActorsPage } from '@/features/substrate/ActorsPage';
 import { PolicyPage } from '@/features/substrate/PolicyPage';
 import { TemplatesPage } from '@/features/substrate/TemplatesPage';
@@ -60,6 +62,8 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   // AI-шлюза -- в группе шлюза, по своему адресу.
   { path: '/', element: <ProjectOverviewPage /> },
   { path: '/dashboard', element: <DashboardPage /> },
+  // Профиль вошедшего (#285): открыт каждому, данные -- только его собственные.
+  { path: PROFILE_PATH, element: <ProfilePage /> },
   // Проект — глобальный контекст; прежние адреса сохраняют выбор проекта.
   { path: '/project', element: <ProjectDetailPage /> },
   { path: '/projects', element: <AccessProjectsPage /> },
