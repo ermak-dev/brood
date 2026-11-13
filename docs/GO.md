@@ -76,6 +76,7 @@ Substrate закреплён в `go.mod` на публичной версии
 - `pipeline`: схема декларативных конвейеров (эпик #165), строгая валидация графа, выбор рёбер, симуляция прогона и DOT-рендер.
 - `oci`: проверка digest/графа и потоковое чтение OCI-архива без распаковки.
 - `piprender`: детерминированный DOT и standalone SVG пайплайнов со state-overlay, без graphviz; только stdlib.
+- `telegram`: клиент Telegram Bot API без store и server; только stdlib (`net/http`, `encoding/json`), новой зависимости нет.
 - `cmd/brood`, `cmd/bro`: сервер и клиент.
 
 API входа описан в `go/CONTRACT.md`. Наличие пакета и зелёные тесты не
