@@ -1,7 +1,10 @@
 """brood dev bug start <iid> [slug] [--no-branch] [--worker W]: claim an issue
 
 Sets status::wip and, unless --no-branch, creates the issue's branch from
-the integration branch.
+the integration branch. The issue note and the output name the branch by the
+CLAUDE.md rule: the type label word, the iid and the slug (the ASCII words of
+the title unless given). With --no-branch the executor creates exactly that
+branch.
 """
 import subprocess
 
@@ -37,7 +40,10 @@ def main(argv):
         if exists.returncode != 1:
             raise RuntimeError("cannot check whether branch already exists")
     gitlab.relabel(a.iid, gitlab.with_status(i["labels"], "wip"))
-    note = f"Работа начата в ветке `{branch}`"
+    # С --no-branch ветку заводит исполнитель, ровно под этим именем (CLAUDE.md,
+    # «Ветка задачи»): заметка говорит, что её может ещё не быть на origin.
+    where = f"; ветку `{branch}` заведёт исполнитель" if a.no_branch else f" в ветке `{branch}`"
+    note = f"Работа начата{where}"
     if a.worker:
         note += f" · воркер {a.worker}"
     gitlab.comment(a.iid, note + ".")

@@ -15,6 +15,8 @@ ROUTES = [
 
 EVIDENCE_BRANCHES = [
     ("origin/bug/12", True),
+    ("origin/feature/12-driver-seam", True),
+    # Ветки задач до #297 сокращали feature до feat: их улики тоже ищутся.
     ("origin/feat/12-driver-seam", True),
     # Соседний номер -- чужая задача.
     ("origin/bug/123", False),
