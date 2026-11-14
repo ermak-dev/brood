@@ -20,11 +20,16 @@ REF_LIMIT = 500
 INTEGRATION_LIMIT = 40
 MERGE_LIMIT = 80
 INTEGRATION_PREFIXES = ("origin/epic/", "origin/integration/", "origin/integrate/")
+# Префиксы веток задач -- из того же списка, что строит branch_name, плюс
+# `feat`: его строил branch_name до #297, и evidence искал такие ветки и
+# раньше. Другие исторические префиксы (`fix/`) evidence не искал и до #297;
+# их поиск -- отдельное изменение, не это.
+BRANCH_PREFIXES = gitlab.TYPES + ("feat",)
 
 
 def evidence_branch(ref, iid):
     """Удалённая ветка задачи: тип и точный номер, без соседних номеров."""
-    return bool(re.fullmatch(r"origin/(?:bug|feat|refactor|docs|ci)/" +
+    return bool(re.fullmatch(r"origin/(?:" + "|".join(BRANCH_PREFIXES) + ")/" +
                              re.escape(str(iid)) + r"(?:-[a-z0-9-]+)?", ref))
 
 

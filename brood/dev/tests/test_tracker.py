@@ -23,11 +23,15 @@ BRANCHES = [
     (["bug", "sev::high"], 12, None, "bug/12"),
     (["bug"], 12, "Папет залипает на диалоге", "bug/12"),
     (["bug"], 12, "clone holds work", "bug/12-clone-holds-work"),
-    (["feature"], 7, "driver seam", "feat/7-driver-seam"),
+    # Префикс -- слово метки `type::` как есть, без сокращения до feat (#297).
+    (["feature"], 7, "driver seam", "feature/7-driver-seam"),
+    # Настоящая #285: из русского заголовка в слаг попадает только `telegram`.
+    (["type::feature", "status::live"], 285, "Панель: секция Telegram в профиле пользователя",
+     "feature/285-telegram"),
     (["type::docs"], 3, "BUS", "docs/3-bus"),
     # Дефект перевешивает тип.
     (["bug", "feature"], 9, None, "bug/9"),
-    ([], 1, None, "feat/1"),
+    ([], 1, None, "feature/1"),
     (["type::refactor"], 5, "a" * 60, "refactor/5-" + "a" * 40),
 ]
 

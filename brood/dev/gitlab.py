@@ -40,8 +40,11 @@ OPEN_STATUSES = ("live", "wip", "parked")
 CLOSE_STATUSES = ("fixed", "noise", "dup")
 SEV_ORDER = {"sev::high": 0, "sev::med": 1, "sev::low": 2}
 
-TYPES = {"bug": "bug", "feature": "feat", "refactor": "refactor",
-         "docs": "docs", "ci": "ci"}
+# Типы, дающие префикс ветки: префикс -- слово метки как есть (CLAUDE.md,
+# «Ветка задачи»). Сокращение feature до feat расходилось с веткой, которую
+# исполнитель заводит по правилу, и заметка называла ветку, которой нет (#297).
+# Эпика здесь нет: `epic/` -- интеграционные ветки, а не ветки задач.
+TYPES = ("bug", "feature", "refactor", "docs", "ci")
 
 
 # ─── координаты ──────────────────────────────────────────────────────────
@@ -456,10 +459,10 @@ def branch_type(labels):
     нести и `bug`, и тип, но если несёт -- правда о работе в дефекте."""
     if "bug" in labels or "type::bug" in labels:
         return "bug"
-    for kind, prefix in TYPES.items():
+    for kind in TYPES:
         if kind in labels or f"type::{kind}" in labels:
-            return prefix
-    return "feat"
+            return kind
+    return "feature"
 
 
 def branch_name(labels, iid, slug=None):
