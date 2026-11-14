@@ -523,7 +523,7 @@ func newSubstrateServer(t *testing.T, fake *fakeAteapi, configure ...func(*Confi
 	for _, configure := range configure {
 		configure(&cfg)
 	}
-	srv, err := New(nil2ctx(), cfg, Options{})
+	srv, err := New(nil2ctx(), cfg, Options{argon2: cheapArgon2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
