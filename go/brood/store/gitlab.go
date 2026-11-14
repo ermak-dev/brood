@@ -436,7 +436,17 @@ func (s *Store) ReserveGitLabMutation(ctx context.Context, p GitLabPrincipal, ki
 	if kind != "create" || len(payload) == 0 || len(payload) > 65536 {
 		return GitLabOperation{}, ErrGitLabDenied
 	}
-	return s.reserveGitLabOperation(ctx, p, kind, request, gitlabHash(payload), GitLabMergeSnapshot{})
+	return s.reserveGitLabOperation(ctx, p, kind, request, gitlabHash(payload), "", GitLabMergeSnapshot{})
+}
+
+// ReserveGitLabMutationWithGrant reserves MR creation using exactly grantID.
+// Empty, revoked, expired, or superseded authority is denied, never substituted.
+// Reusing a request with another grant conflicts, even if both remain active.
+func (s *Store) ReserveGitLabMutationWithGrant(ctx context.Context, p GitLabPrincipal, kind, request, grantID string, payload []byte) (GitLabOperation, error) {
+	if grantID == "" || kind != "create" || len(payload) == 0 || len(payload) > 65536 {
+		return GitLabOperation{}, ErrGitLabDenied
+	}
+	return s.reserveGitLabOperation(ctx, p, kind, request, gitlabHash(payload), grantID, GitLabMergeSnapshot{})
 }
 
 // ReserveGitLabProposal records a typed merge proposal without granting approval.
@@ -448,15 +458,15 @@ func (s *Store) ReserveGitLabProposal(ctx context.Context, p GitLabPrincipal, re
 	if err != nil {
 		return GitLabOperation{}, err
 	}
-	return s.reserveGitLabOperation(ctx, p, "propose", request, gitlabHash(payload), snapshot)
+	return s.reserveGitLabOperation(ctx, p, "propose", request, gitlabHash(payload), "", snapshot)
 }
-func (s *Store) reserveGitLabOperation(ctx context.Context, p GitLabPrincipal, kind, request, hash string, snapshot GitLabMergeSnapshot) (GitLabOperation, error) {
+func (s *Store) reserveGitLabOperation(ctx context.Context, p GitLabPrincipal, kind, request, hash, grantID string, snapshot GitLabMergeSnapshot) (GitLabOperation, error) {
 	if request == "" || len(request) > 128 || strings.TrimSpace(request) != request {
 		return GitLabOperation{}, ErrGitLabDenied
 	}
 	var op GitLabOperation
 	err := s.WithTx(ctx, func(ctx context.Context) error {
-		g, err := s.gitlabCheckGrant(ctx, p, kind, "")
+		g, err := s.gitlabCheckGrant(ctx, p, kind, grantID)
 		if err != nil {
 			return err
 		}
@@ -474,7 +484,7 @@ func (s *Store) reserveGitLabOperation(ctx context.Context, p GitLabPrincipal, k
 			if err != nil {
 				return err
 			}
-			if op.Principal != p || op.PayloadHash != hash {
+			if op.Principal != p || op.PayloadHash != hash || (grantID != "" && op.GrantID != grantID) {
 				return ErrGitLabConflict
 			}
 			_, err = s.gitlabCheckGrant(ctx, p, kind, op.GrantID)
