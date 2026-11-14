@@ -98,6 +98,10 @@ type telegramOptions struct {
 	// afterWrite зовёт API профиля после фиксации записи, перед сверкой
 	// набора поллеров; nil в работе. В ней проверки уводят клиента.
 	afterWrite func(r *http.Request)
+	// reconciling зовёт desired сразу после чтения базы, до снимков памяти
+	// сверки; nil в работе. В ней проверки привязывают чат: снимок, взятый
+	// после чтения, эту привязку уже видит.
+	reconciling func()
 	// scan — период поиска очередей отправителем уведомлений (#282).
 	scan time.Duration
 	// sendAttempts — предел попыток уведомления, которое не дошло до
@@ -194,8 +198,10 @@ type telegramBots struct {
 	// процессе продолжает очередь, а не берёт её с начала.
 	offsets map[int64]int64
 	// installChats — чаты, привязанные через бот установки, и их
-	// пользователи; права перепроверяет TelegramSessionActive.
-	installChats map[int64]string
+	// пользователи; права перепроверяет TelegramSessionActive. installLinks —
+	// счёт привязок, которые подтвердил поллер (telegramInstallChat).
+	installChats map[int64]telegramInstallChat
+	installLinks uint64
 	// installBot — имя бота установки из getMe, пусто — ещё не известно;
 	// installFailure — причина его остановки (401, 409).
 	installBot     string
@@ -214,6 +220,15 @@ type telegramBots struct {
 	answering sync.WaitGroup
 }
 
+// telegramInstallChat — пользователь чата бота установки и номер привязки,
+// которую подтвердил поллер; у чата из базы номера нет. Чат с номером сверка
+// снимает только набором, прочитанным после этой привязки: сверка,
+// прочитавшая базу до неё, чат не теряет (#300).
+type telegramInstallChat struct {
+	userID string
+	link   uint64
+}
+
 func newTelegramBots(st *store.Store, cfg Config, opts telegramOptions) *telegramBots {
 	return &telegramBots{
 		store:        st,
@@ -223,7 +238,7 @@ func newTelegramBots(st *store.Store, cfg Config, opts telegramOptions) *telegra
 		opts:         opts.withDefaults(),
 		pollers:      map[string]*telegramPoller{},
 		offsets:      map[int64]int64{},
-		installChats: map[int64]string{},
+		installChats: map[int64]telegramInstallChat{},
 		halted:       map[string][32]byte{},
 		kick:         make(chan struct{}, 1),
 	}
@@ -339,13 +354,16 @@ func (b *telegramBots) syncLocked(ctx context.Context) error {
 	if b.ctx == nil || b.ctx.Err() != nil {
 		return errTelegramStopped
 	}
+	// Счёт привязок — до чтения базы: привязка, подтверждённая после него,
+	// может не попасть в прочитанный набор.
+	b.mu.Lock()
+	links := b.installLinks
+	b.mu.Unlock()
 	specs, chats, err := b.desired(ctx)
 	if err != nil {
 		return err
 	}
-	b.mu.Lock()
-	b.installChats = chats
-	b.mu.Unlock()
+	b.setInstallationChats(chats, links)
 	for key, p := range b.pollers {
 		spec, ok := specs[key]
 		if ok && telegramFingerprint(spec.token) == p.fingerprint && p.alive() {
@@ -425,6 +443,9 @@ func (b *telegramBots) desired(ctx context.Context) (map[string]telegramBotSpec,
 		}
 		specs[u.ID] = telegramBotSpec{userID: u.ID, token: token, botUsername: link.BotUsername}
 	}
+	if b.opts.reconciling != nil {
+		b.opts.reconciling()
+	}
 	b.mu.Lock()
 	failed := b.installFailure != ""
 	b.mu.Unlock()
@@ -477,13 +498,34 @@ func (b *telegramBots) failInstallation(reason string) {
 func (b *telegramBots) installationChat(chatID int64) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.installChats[chatID]
+	return b.installChats[chatID].userID
 }
 
+// linkInstallationChat запоминает чат, который привязал поллер, с номером
+// привязки.
 func (b *telegramBots) linkInstallationChat(chatID int64, userID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.installChats[chatID] = userID
+	b.installLinks++
+	b.installChats[chatID] = telegramInstallChat{userID: userID, link: b.installLinks}
+}
+
+// setInstallationChats заменяет чаты бота установки набором chats, который
+// сверка прочла из базы после links привязок поллера. Чат, привязанный
+// позже, остаётся: набор его мог не видеть.
+func (b *telegramBots) setInstallationChats(chats map[int64]string, links uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	next := make(map[int64]telegramInstallChat, len(chats))
+	for chatID, userID := range chats {
+		next[chatID] = telegramInstallChat{userID: userID}
+	}
+	for chatID, c := range b.installChats {
+		if c.link > links {
+			next[chatID] = c
+		}
+	}
+	b.installChats = next
 }
 
 func (b *telegramBots) offset(botID int64) int64 {

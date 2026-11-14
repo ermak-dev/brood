@@ -834,12 +834,6 @@ func TestTelegramConfirmationOfAnEarlierLinkRunsNothing(t *testing.T) {
 	if got := chat.send("/start " + code); len(got) != 1 || got[0].Text != telegramReplyLinked {
 		t.Fatalf("relinking the chat: %+v", got)
 	}
-	// Сверка, прочитавшая базу, пока чат был отвязан, могла записать чаты
-	// бота установки уже после новой привязки (#300); сверка под syncMu
-	// дожидается её и пишет набор последней.
-	if err := h.srv.telegram.sync(ctx); err != nil {
-		t.Fatal(err)
-	}
 	got := chat.press("q1", ask, 0)
 	expectText(t, "press of the earlier link", got.answer, "This button is no longer valid; nothing was done.")
 	if len(got.sent) != 0 || h.execution("s1") != "waiting" {
