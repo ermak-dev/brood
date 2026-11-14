@@ -67,7 +67,8 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // 32: поле ответа отправленного уведомления telegram_outbox.force_reply
 // (#298): разметку такого сообщения Telegram не правит. Колонку добавляет
 // ALTER TABLE шага 31→32, ограждение отправленного держит и её.
-const schemaVersion = 32
+// 33: явные GitLab API bindings, grants, журнал эффектов и merge approvals (#302).
+const schemaVersion = 33
 
 //go:embed schema.sql
 var currentSchema string

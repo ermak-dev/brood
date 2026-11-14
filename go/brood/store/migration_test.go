@@ -107,7 +107,7 @@ func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	// Шаг 27→28 дописывает рою execution_at; точного момента у роёв базы 26
 	// нет: s идёт шагом вне прохода запуска, one и two не запускались.
 	before["swarms"] = withExecutionAt(before["swarms"], ids, nil)
-	if after, want := databaseRows(t, s.db), withTelegramStep(before); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withGitLabStep(withTelegramStep(before)); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -279,7 +279,7 @@ func TestMigrateV27DatabaseToCurrent(t *testing.T) {
 		t.Fatalf("backfilled execution_at:\n got %v\nwant %v", got, executionAtV27)
 	}
 	before["swarms"] = withExecutionAt(before["swarms"], ids, executionAtV27)
-	if after, want := databaseRows(t, s.db), withTelegramStep(before); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withGitLabStep(withTelegramStep(before)); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -338,7 +338,7 @@ func TestMigrateV28DatabaseToCurrent(t *testing.T) {
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
 	}
-	if after, want := databaseRows(t, s.db), withTelegramStep(before); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withGitLabStep(withTelegramStep(before)); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -422,7 +422,7 @@ func TestMigrateV29DatabaseToCurrent(t *testing.T) {
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
 	}
-	if after, want := databaseRows(t, s.db), withForceReplyStep(withLinkColumnStep(withLinkColumnStep(before))); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withGitLabStep(withForceReplyStep(withLinkColumnStep(withLinkColumnStep(before)))); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -470,7 +470,7 @@ func TestMigrateV30DatabaseToCurrent(t *testing.T) {
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
 	}
-	if after, want := databaseRows(t, s.db), withForceReplyStep(withLinkColumnStep(before)); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withGitLabStep(withForceReplyStep(withLinkColumnStep(before))); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -509,6 +509,34 @@ func withForceReplyStep(rows map[string][]string) map[string][]string {
 	return out
 }
 
+// withGitLabStep: шаг 32→33 добавляет только пустые таблицы, не выводит
+// полномочия API из существующих Git credentials и не трогает прежние строки.
+func withGitLabStep(rows map[string][]string) map[string][]string {
+	out := maps.Clone(rows)
+	for _, table := range []string{"gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals"} {
+		out[table] = nil
+	}
+	return out
+}
+
+func TestMigrateV32DatabaseToCurrent(t *testing.T) {
+	ctx := context.Background()
+	path := loadSchemaFixture(t, 32)
+	raw := rawDatabase(t, path)
+	before := databaseRows(t, raw)
+	raw.Close()
+	s, err := Open(ctx, path)
+	mustNil(t, err)
+	defer s.Close()
+	if got, want := databaseRows(t, s.db), withGitLabStep(before); !reflect.DeepEqual(got, want) {
+		t.Fatal("GitLab migration changed existing rows or created authority")
+	}
+	if got, want := schemaObjects(t, s.db), schemaObjects(t, newTestStore(t).db); !reflect.DeepEqual(got, want) {
+		t.Fatal("migrated GitLab schema differs from fresh")
+	}
+	requireIntact(t, s.db)
+}
+
 // TestMigrateV31DatabaseToCurrent: шаг 31→32 добавляет
 // telegram_outbox.force_reply (#298) поверх имени собеседника версии 31
 // (#294). Итог совпадает со свежей базой объект в объект; прежние
@@ -540,7 +568,7 @@ func TestMigrateV31DatabaseToCurrent(t *testing.T) {
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
 	}
-	if after, want := databaseRows(t, s.db), withForceReplyStep(before); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withGitLabStep(withForceReplyStep(before)); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
