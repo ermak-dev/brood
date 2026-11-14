@@ -1,18 +1,20 @@
 package server
 
-// API профиля Telegram (#281, эпик #278): GET/PUT/DELETE /api/me/telegram и
-// POST /api/me/telegram/link — только для самого вызывающего, за сессией и
-// CSRF middleware; запись перепроверяет сессию в своей транзакции. Токен
-// бота write-only: ни один ответ и ни один отказ его не несут. Отказы —
-// фиксированные публичные причины (telegramRefusal), текст ошибок хранилища
-// и клиента Bot API наружу не идёт.
+// API профиля Telegram (#281, эпик #278): GET/PUT/DELETE /api/me/telegram,
+// POST /api/me/telegram/link и PUT /api/me/telegram/events (#295) — только
+// для самого вызывающего, за сессией и CSRF middleware; запись перепроверяет
+// сессию в своей транзакции. Токен бота write-only: ни один ответ и ни один
+// отказ его не несут. Отказы — фиксированные публичные причины
+// (telegramRefusal), текст ошибок хранилища и клиента Bot API наружу не идёт.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"brood.dev/go/brood/store"
@@ -20,7 +22,8 @@ import (
 )
 
 const (
-	// telegramBodyLimit ограничивает тело PUT: токен короче 150 байт.
+	// telegramBodyLimit ограничивает тело обоих PUT: токен и полный набор
+	// подписок короче 150 байт.
 	telegramBodyLimit = 4 << 10
 	// telegramGetMeTimeout ограничивает проверку токена в запросе PUT.
 	telegramGetMeTimeout = 15 * time.Second
@@ -66,6 +69,12 @@ var (
 	// telegramRefuseOwnIsInstallBot — свой бот, сохранённый до того, как
 	// оператор сделал его ботом установки.
 	telegramRefuseOwnIsInstallBot = &telegramRefusal{http.StatusConflict, telegramReasonInstallationBot}
+	// telegramRefuseEventsBody и telegramRefuseEventKind — отказы записи
+	// подписок (#295). Неизвестный вид назван словарём хранилища, а не
+	// присланным значением: отказ не повторяет тело, в нём мог быть токен.
+	telegramRefuseEventsBody = &telegramRefusal{http.StatusBadRequest, `telegram events request must be exactly {"events"} with an array of strings`}
+	telegramRefuseEventKind  = &telegramRefusal{http.StatusBadRequest,
+		"unknown telegram event; known events: " + strings.Join(store.TelegramEventKinds(), ", ")}
 )
 
 // writeTelegramError отвечает отказом: сознательный — его причиной в detail
@@ -120,6 +129,7 @@ func (s *Server) mountTelegramProfile() {
 	s.mux.HandleFunc("PUT /api/me/telegram", s.handleTelegramBotPut)
 	s.mux.HandleFunc("DELETE /api/me/telegram", s.handleTelegramProfileDelete)
 	s.mux.HandleFunc("POST /api/me/telegram/link", s.handleTelegramLinkCode)
+	s.mux.HandleFunc("PUT /api/me/telegram/events", s.handleTelegramEventsPut)
 }
 
 // handleTelegramProfile — GET: профиль; пользователь без привязки получает
@@ -257,6 +267,63 @@ func (s *Server) proveTelegramToken(ctx context.Context, token string) (telegram
 		return telegram.User{}, telegramRefuseInstallBot
 	}
 	return me, nil
+}
+
+// handleTelegramEventsPut — PUT ровно {"events"}: полный набор подписок
+// вызывающего; виды сверяет хранилище, повтор схлопывается, порядок — словаря.
+// Поллеры подписки не меняют: сверки после записи нет.
+func (s *Server) handleTelegramEventsPut(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(w, r)
+	if !ok {
+		return
+	}
+	events, err := readTelegramEvents(w, r)
+	if err != nil {
+		writeTelegramError(w, r, err)
+		return
+	}
+	var link store.TelegramLink
+	s.telegram.opts.writing(r)
+	err = s.store.WithTx(r.Context(), func(ctx context.Context) error {
+		if !secretRequestSession(ctx, s, r, user.ID) {
+			return telegramRefuseSessionChanged
+		}
+		var err error
+		link, err = s.store.SetTelegramEvents(ctx, user.ID, events)
+		return err
+	})
+	if errors.Is(err, store.ErrTelegramInvalid) {
+		// Причина хранилища повторяет присланный вид — наружу и в журнал идёт
+		// словарь.
+		err = telegramRefuseEventKind
+	}
+	if err != nil {
+		writeTelegramError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.telegram.view(link))
+}
+
+// readTelegramEvents принимает объект ровно с полем events — массивом строк.
+// Виды сверяет SetTelegramEvents по словарю хранилища.
+func readTelegramEvents(w http.ResponseWriter, r *http.Request) ([]string, error) {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, telegramBodyLimit))
+	if err != nil {
+		return nil, telegramRefuseEventsBody
+	}
+	fields, err := proxmoxObject(string(data))
+	raw := fields["events"]
+	var items []json.RawMessage
+	if err != nil || len(fields) != 1 || len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &items) != nil {
+		return nil, telegramRefuseEventsBody
+	}
+	events := make([]string, len(items))
+	for i, item := range items {
+		if !syncString(item, &events[i]) {
+			return nil, telegramRefuseEventsBody
+		}
+	}
+	return events, nil
 }
 
 // handleTelegramProfileDelete — DELETE: снимает свой бот и привязку чата
