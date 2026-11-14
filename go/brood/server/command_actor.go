@@ -258,6 +258,12 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: a.Name, action: action, actor: a, parent: parent}
 	err = s.admitWorkload(userID, sw.ID, op)
 	if err != nil && op.saved.UID == "" {
+		if op.intent.UID != "" {
+			result := actorCommandResult(op.intent)
+			result.Outcome = "unknown"
+			result.Text = "The lifecycle intent may have been accepted, but its provider task was not confirmed; check the actor before retrying."
+			return result, errors.New(result.Text)
+		}
 		return command.Result{}, actorCommandError(err)
 	}
 	return actorCommandResult(op.saved), nil

@@ -32,6 +32,9 @@ type managedWorkloadOperation struct {
 	// (#133) задаёт его заранее, чтобы после сбоя отличить записанное
 	// намерение от отказа до него.
 	operationID string
+	// intent сохраняется до commit и запуска PVE отдельно от saved: запись
+	// задачи может вернуть пустой actor, но не отменяет принятое намерение.
+	intent store.ManagedActor
 }
 
 func (o *managedWorkloadOperation) intentID() string {
@@ -68,6 +71,10 @@ func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]a
 }
 
 func (o *managedWorkloadOperation) authorize() error {
+	// Namespace — сетевое чтение: полномочия могли отозвать, пока оно шло.
+	if err := o.server.checkSwarmNamespace(o.context, o.swarm); err != nil {
+		return err
+	}
 	userID := o.userID
 	if userID == "" {
 		user, ok := auth.UserFromContext(o.context)
@@ -94,8 +101,59 @@ func (o *managedWorkloadOperation) authorize() error {
 	if !allowed {
 		return app.ErrNotAllowed
 	}
-	return o.server.checkSwarmNamespace(o.context, o.swarm)
+	if !commandSessionValid(o.context) {
+		return app.ErrNotAllowed
+	}
+	return o.context.Err()
 }
+
+// authorizeIntent проверяет правило manage-swarm по транзакционным чтениям:
+// app.Can использует Gateway с context.Background и не видит этот snapshot.
+func (o *managedWorkloadOperation) authorizeIntent(ctx context.Context) error {
+	userID := o.userID
+	if userID == "" {
+		user, ok := auth.UserFromContext(ctx)
+		if !ok {
+			return app.ErrNotAllowed
+		}
+		userID = user.ID
+	}
+	user, err := o.server.store.GetUser(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && user.Disabled) {
+		return app.ErrNotAllowed
+	}
+	if err != nil {
+		return err
+	}
+	swarm, err := o.server.store.GetSwarm(ctx, o.swarm.ID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && swarm.State != string(app.StateActive)) {
+		return app.ErrNotAllowed
+	}
+	if err != nil {
+		return err
+	}
+	if !user.IsAdmin {
+		member, err := o.server.store.IsMember(ctx, swarm.ProjectID, userID)
+		if err != nil {
+			return err
+		}
+		if !member {
+			return app.ErrNotAllowed
+		}
+		role, err := o.server.store.GetSwarmRole(ctx, swarm.ID, userID)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && role != app.RoleOwner && role != app.RoleEditor) {
+			return app.ErrNotAllowed
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if !commandSessionValid(ctx) {
+		return app.ErrNotAllowed
+	}
+	return ctx.Err()
+}
+
 func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmission, error) {
 	plan := app.WorkloadAdmission{Name: o.name}
 	if err := o.authorize(); err != nil {
@@ -253,6 +311,11 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		// is immediately being deleted. Both local transitions commit together,
 		// before submitting the new provider write.
 		err = o.server.store.WithTx(o.context, func(ctx context.Context) error {
+			// Права, сессия и намерение — один snapshot: отзыв до транзакции
+			// запрещает запись даже после успешной внешней проверки.
+			if err := o.authorizeIntent(ctx); err != nil {
+				return err
+			}
 			var err error
 			// Известная задача уже дождана выше; у незапрошенного start
 			// update задачи нет вовсе. Слот закрывает наблюдение CT.
@@ -295,10 +358,14 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 					a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 				}
 			}
+			if err == nil {
+				o.intent = a
+				noteLifecycleIntent(o.context, lifecycleIntentPossible)
+			}
 			return err
 		})
 		if err != nil {
-			if errors.Is(err, store.ErrPoolUnavailable) || errors.Is(err, store.ErrRevisionConflict) {
+			if errors.Is(err, store.ErrPoolUnavailable) || errors.Is(err, store.ErrRevisionConflict) || errors.Is(err, app.ErrNotAllowed) {
 				return err
 			}
 			// Отказ координации называет держателя и request ID (#272): общий
@@ -309,6 +376,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			}
 			return fmt.Errorf("%w: managed task must be reconciled before changing intent", app.ErrConflict)
 		}
+		noteLifecycleIntent(o.context, lifecycleIntentAccepted)
 		if o.action == "stop" || o.action == "delete" || o.action == "reset" || o.action == "update" {
 			if m.hub != nil {
 				m.hub.Disconnect(a.UID, a.Incarnation)
