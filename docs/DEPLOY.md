@@ -521,11 +521,13 @@ preflight, перед apply. Поддержка `/brood database` должна �
 | `BROOD_TELEGRAM_API` | необязательный origin Bot API (#281), по умолчанию `https://api.telegram.org`; HTTPS или HTTP на loopback (локальный Bot API), без path, query и credentials. Им пользуются бот установки и свои боты пользователей |
 | `BROOD_PANEL_ORIGIN` | необязательный origin панели, каким его открывает пользователь (#282): http(s) без credentials, path, query и fragment, например `https://brood.example:8443`. Уведомления Telegram ссылаются по нему на страницу роя; без настройки уведомления идут без ссылки. Неверная форма — отказ запуска с именем настройки |
 
-Выкладка (`brood deploy go`) ещё не передаёт `BROOD_TELEGRAM_BOT_TOKEN`,
-`BROOD_TELEGRAM_API` и `BROOD_PANEL_ORIGIN` в Secret и env сервера, а
-deny-all NetworkPolicy не пускает к `api.telegram.org:443`: способ egress —
-открытое решение эпика #278, оба шага — его задача деплоя. До неё в кластере бота установки нет, а
-`PUT /api/me/telegram` отвечает 503: Bot API недостижим.
+Выкладка передаёт `BROOD_TELEGRAM_BOT_TOKEN`, `BROOD_TELEGRAM_API` и
+`BROOD_PANEL_ORIGIN` в Secret и env сервера (#286). Egress к Bot API —
+разрешение имени при каждой выкладке: kindnet умеет только IP-правила, и
+смена адреса Telegram между выкладками останавливает уведомления до
+следующей выкладки; локальный Bot API на loopback правил не требует.
+Подробности и хрупкость — [TELEGRAM.md](TELEGRAM.md), «Egress к Bot API и
+выкладка».
 
 401 или 409 от Telegram останавливают бота установки для всех пользователей
 без своего бота до перезапуска сервера: сам сервер его снова не запускает, а
