@@ -86,7 +86,8 @@ func writeTelegramError(w http.ResponseWriter, r *http.Request, err error) {
 // через который идёт привязка: свой или, без него, бот установки; OwnBot —
 // задан ли свой токен. BotReason — причина остановки бота установки.
 // Reason — причина ошибки привязки из хранилища. Chat — привязанный чат,
-// Username собеседника — если поллер его видел.
+// Username — имя пользователя Telegram собеседника из хранилища (#294),
+// пусто у собеседника без имени.
 type telegramProfileJSON struct {
 	BotUsername       string            `json:"bot_username"`
 	OwnBot            bool              `json:"own_bot"`
@@ -140,7 +141,8 @@ func (s *Server) writeTelegramProfile(w http.ResponseWriter, r *http.Request, us
 	writeJSON(w, http.StatusOK, s.telegram.view(link))
 }
 
-// view строит профиль из представления хранилища и того, что знают поллеры.
+// view строит профиль из представления хранилища и того, что поллеры знают
+// о боте установки.
 func (b *telegramBots) view(link store.TelegramLink) telegramProfileJSON {
 	out := telegramProfileJSON{BotUsername: link.BotUsername, OwnBot: link.HasBotToken, State: link.State,
 		Reason: link.Reason, Events: link.Events}
@@ -152,7 +154,7 @@ func (b *telegramBots) view(link store.TelegramLink) telegramProfileJSON {
 	}
 	if link.State == "linked" {
 		out.Chat = &telegramChatJSON{TelegramUserID: link.TelegramUserID, ChatID: link.ChatID,
-			Username: b.contact(link.UserID, link.TelegramUserID)}
+			Username: link.TelegramUsername}
 	}
 	if link.LinkCodeExpiresAt != "" {
 		expires, err := time.Parse(time.RFC3339Nano, link.LinkCodeExpiresAt)
