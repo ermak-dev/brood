@@ -2,7 +2,9 @@ package server
 
 // Поддельный Bot API и сборка сервера для проверок профиля Telegram и
 // поллеров (#281): боты по токену, очередь обновлений с подтверждением по
-// offset, long poll до timeout запроса, запись getUpdates и sendMessage.
+// offset, long poll до timeout запроса, запись getUpdates и sendMessage, а
+// для кнопок ответа (#283) — клавиатур, editMessageReplyMarkup и
+// answerCallbackQuery.
 
 import (
 	"bytes"
@@ -22,6 +24,7 @@ import (
 
 	"brood.dev/go/brood/auth"
 	"brood.dev/go/brood/store"
+	"brood.dev/go/brood/telegram"
 )
 
 // Токены тестовых ботов: форма BotFather, секрет — опознаваемая метка.
@@ -42,9 +45,24 @@ type fakePoll struct {
 type fakeSent struct {
 	ChatID int64  `json:"chat_id"`
 	Text   string `json:"text"`
+	// Markup — клавиатура сообщения, nil — без неё.
+	Markup *telegram.InlineKeyboardMarkup `json:"reply_markup"`
 	// Document и Name — файл sendDocument; Text у него — подпись.
 	Document string `json:"-"`
 	Name     string `json:"-"`
+}
+
+// fakeEdit — editMessageReplyMarkup: сообщение чата и его новая клавиатура.
+type fakeEdit struct {
+	ChatID    int64                          `json:"chat_id"`
+	MessageID int64                          `json:"message_id"`
+	Markup    *telegram.InlineKeyboardMarkup `json:"reply_markup"`
+}
+
+// fakeCallbackAnswer — answerCallbackQuery: нажатие и текст ответа.
+type fakeCallbackAnswer struct {
+	ID   string `json:"callback_query_id"`
+	Text string `json:"text"`
 }
 
 type fakeBot struct {
@@ -66,6 +84,11 @@ type fakeBot struct {
 	// обычного ответа нет.
 	me   func(w http.ResponseWriter) bool
 	send func(w http.ResponseWriter, r *http.Request, s fakeSent) bool
+	// edits и answers — принятые правки клавиатур и ответы на нажатия; edit
+	// — сценарий правки: true — ответ записан, правки нет.
+	edits   []fakeEdit
+	answers []fakeCallbackAnswer
+	edit    func(w http.ResponseWriter, e fakeEdit) bool
 }
 
 type fakeBotAPI struct {
@@ -249,6 +272,32 @@ func (a *fakeBotAPI) serve(w http.ResponseWriter, r *http.Request) {
 		a.notify()
 		a.mu.Unlock()
 		fakeResult(w, map[string]any{"message_id": id, "chat": map[string]any{"id": s.ChatID, "type": "private"}, "date": 1763000000, "caption": s.Text})
+	case "editMessageReplyMarkup":
+		var e fakeEdit
+		if err := json.Unmarshal(body, &e); err != nil {
+			a.t.Errorf("editMessageReplyMarkup body %q: %v", body, err)
+		}
+		a.mu.Lock()
+		edit := b.edit
+		a.mu.Unlock()
+		if edit != nil && edit(w, e) {
+			return
+		}
+		a.mu.Lock()
+		b.edits = append(b.edits, e)
+		a.notify()
+		a.mu.Unlock()
+		fakeResult(w, true)
+	case "answerCallbackQuery":
+		var answer fakeCallbackAnswer
+		if err := json.Unmarshal(body, &answer); err != nil {
+			a.t.Errorf("answerCallbackQuery body %q: %v", body, err)
+		}
+		a.mu.Lock()
+		b.answers = append(b.answers, answer)
+		a.notify()
+		a.mu.Unlock()
+		fakeResult(w, true)
 	default:
 		fakeRefuse(w, http.StatusNotFound, "Not Found")
 	}
@@ -269,6 +318,11 @@ func fakeDocumentForm(r *http.Request, body []byte) (fakeSent, bool) {
 		return fakeSent{}, false
 	}
 	s.Text = strings.Join(form.Value["caption"], "")
+	if markup := strings.Join(form.Value["reply_markup"], ""); markup != "" {
+		if err := json.Unmarshal([]byte(markup), &s.Markup); err != nil {
+			return fakeSent{}, false
+		}
+	}
 	files := form.File["document"]
 	if len(files) != 1 {
 		return fakeSent{}, false
@@ -427,6 +481,26 @@ func (a *fakeBotAPI) scriptMe(token string, me func(w http.ResponseWriter) bool)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.bot(token).me = me
+}
+
+// scriptEdit задаёт сценарий editMessageReplyMarkup бота token; nil —
+// обычный ответ.
+func (a *fakeBotAPI) scriptEdit(token string, edit func(w http.ResponseWriter, e fakeEdit) bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.bot(token).edit = edit
+}
+
+func (a *fakeBotAPI) edits(token string) []fakeEdit {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]fakeEdit(nil), a.bot(token).edits...)
+}
+
+func (a *fakeBotAPI) callbackAnswers(token string) []fakeCallbackAnswer {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]fakeCallbackAnswer(nil), a.bot(token).answers...)
 }
 
 // scriptSend задаёт сценарий sendMessage бота token; nil — обычный ответ.
