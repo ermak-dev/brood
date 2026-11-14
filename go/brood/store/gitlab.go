@@ -148,11 +148,16 @@ func gitlabBranch(branch string) bool {
 }
 
 func (s *Store) gitlabHuman(ctx context.Context, human, project, swarm string, owner bool) error {
+	return s.gitlabHumanState(ctx, human, project, swarm, owner, true)
+}
+
+// Отзыв grant требует текущих прав, но не работоспособности роя или актора.
+func (s *Store) gitlabHumanState(ctx context.Context, human, project, swarm string, owner, active bool) error {
 	var allowed bool
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users u JOIN swarms sw ON sw.id=? AND sw.project_id=? AND sw.state='active'
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users u JOIN swarms sw ON sw.id=? AND sw.project_id=? AND (?=0 OR sw.state='active')
  WHERE u.id=? AND u.disabled=0 AND (u.is_admin=1 OR (
  EXISTS(SELECT 1 FROM project_members pm WHERE pm.project_id=sw.project_id AND pm.user_id=u.id) AND
- EXISTS(SELECT 1 FROM swarm_members sm WHERE sm.swarm_id=sw.id AND sm.user_id=u.id AND (sm.role='owner' OR (?=0 AND sm.role='editor'))))))`, swarm, project, human, owner).Scan(&allowed)
+ EXISTS(SELECT 1 FROM swarm_members sm WHERE sm.swarm_id=sw.id AND sm.user_id=u.id AND (sm.role='owner' OR (?=0 AND sm.role='editor'))))))`, swarm, project, active, human, owner).Scan(&allowed)
 	if err != nil {
 		return err
 	}
@@ -195,7 +200,8 @@ func (s *Store) PutGitLabBinding(ctx context.Context, human string, b GitLabBind
 		if err != nil {
 			return err
 		}
-		if repository != b.Repository {
+		// Disable должен переживать дрейф repository, иначе старые grants оживут.
+		if b.Enabled && repository != b.Repository {
 			return ErrGitLabDenied
 		}
 		var revision int64
@@ -302,7 +308,7 @@ func (s *Store) RevokeGitLabGrant(ctx context.Context, human, id string, revisio
 		if err != nil {
 			return err
 		}
-		if err := s.gitlabHuman(ctx, human, g.Principal.ProjectID, g.Principal.SwarmID, true); err != nil {
+		if err := s.gitlabHumanState(ctx, human, g.Principal.ProjectID, g.Principal.SwarmID, true, false); err != nil {
 			return err
 		}
 		return gitlabCAS(s.conn(ctx).ExecContext(ctx, `UPDATE gitlab_grants SET revoked=1,revision=revision+1 WHERE id=? AND revision=? AND revoked=0`, id, revision))
