@@ -104,6 +104,14 @@ API/команд, клиентских адаптеров и исполнени�
   совпадение atespace UID, repository и binding revision, срок/отзыв grant и
   права живого granting human: admin либо project member + owner/editor роя.
   Master role, parent actor и текст ответа оператору grants не создают.
+  Непустой `GitLabGrant.ID` — стабильный глобально уникальный ключ запроса
+  (1–128 ASCII букв, цифр, `_`, `-`). Точный повтор активного grant возвращает
+  исходную запись после текущих проверок полномочий; отличия human/principal,
+  binding revision, permissions или expiry и повтор после отзыва конфликтуют.
+  Повтор не продлевает срок и не восстанавливает доступ. Пустой ID сохраняет
+  одноразовый внутренний вызов; HTTP-адаптер обязан требовать стабильный ID.
+  Первичный ключ и `BEGIN IMMEDIATE` сериализуют конкурентные повторы, а
+  неизменяемая история сохраняет ключ после отзыва; схема 33 не меняется.
 - `ReserveGitLabMutation` принимает только MR create и хеширует ограниченные
   canonical bytes всех аргументов; содержимое не сохраняет. Ключ повтора —
   project/actor UID/incarnation/kind/request ID; весь principal дополнительно
