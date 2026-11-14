@@ -9,10 +9,11 @@ import (
 // и личному чату, исходящая очередь уведомлений и серверная сессия вида
 // telegram. CHECK и триггеры держат правила и при записи мимо кода:
 // транзакционная проверка в Go — первая линия, схема — вторая.
-// Регистрация — schemaModules ("telegram") и verifyTelegramSchema; шаг
-// 28→29 — schemaMigrations (migration.go). Шаг создаёт таблицы этим же DDL,
-// поэтому его правка в следующей версии сначала замораживает для шага текст
-// версии 29 (TestEachMigrationStepYieldsTheNextFrozenVersion).
+// Регистрация — schemaModules ("telegram") и verifyTelegramSchema; шаги
+// 28→29 и 29→30 — schemaMigrations (migration.go). Шаг 28→29 создаёт
+// таблицы текстом версии 29 (telegramSchemaV29): живой DDL с версии 30 несёт
+// рой по умолчанию, и шаг 29→30 добавляет его колонку сам
+// (TestEachMigrationStepYieldsTheNextFrozenVersion).
 
 // sessionKindColumn — вид серверной сессии (#279): web — вход браузера по
 // cookie, telegram — право бота действовать от имени пользователя в
@@ -44,7 +45,49 @@ const sessionKindColumn = `ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DE
 //     пользователя, есть ровно у error.
 //   - events — JSON-список видов уведомлений (TelegramEventKinds), на которые
 //     пользователь подписан; словарь сверяет Go.
+//   - default_swarm_id — рой по умолчанию команд чата (/use, #284). Право
+//     читать рой проверяет запись (SetTelegramSwarm) и каждая команда, которая
+//     рой берёт, а не схема: право меняется без записи в привязку. Удаление
+//     строки роя снимает значение (ON DELETE SET NULL). Колонку добавляет
+//     ALTER шага 29→30 (telegramDefaultSwarmColumn), поэтому текст повторяет
+//     то, что ALTER оставляет в sqlite_master: колонка сразу за последней
+//     колонкой, перед ограничениями таблицы.
 const userTelegramLinksSchema = `CREATE TABLE user_telegram_links (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    bot_token TEXT CHECK (length(bot_token) > 0),
+    bot_username TEXT UNIQUE COLLATE NOCASE CHECK (length(bot_username) > 0),
+    chat_id INTEGER UNIQUE CHECK (chat_id > 0),
+    telegram_user_id INTEGER,
+    link_code_hash TEXT UNIQUE,
+    link_code_expires_at TEXT,
+    session_hash TEXT UNIQUE REFERENCES sessions(token_hash),
+    state TEXT NOT NULL CHECK (state IN ('unlinked', 'linked', 'error')),
+    reason TEXT CHECK (length(reason) > 0),
+    events TEXT NOT NULL CHECK (json_valid(events) AND json_type(events) = 'array'),
+    updated_at TEXT NOT NULL, ` + telegramDefaultSwarmDef + `,
+    CHECK ((bot_token IS NULL) = (bot_username IS NULL)),
+    CHECK ((link_code_hash IS NULL) = (link_code_expires_at IS NULL)),
+    CHECK ((state = 'linked') = (session_hash IS NOT NULL)),
+    CHECK ((state = 'linked') = (chat_id IS NOT NULL)),
+    CHECK ((state = 'linked') = (telegram_user_id IS NOT NULL)),
+    CHECK (chat_id = telegram_user_id),
+    CHECK (state <> 'linked' OR link_code_hash IS NULL),
+    CHECK ((state = 'error') = (reason IS NOT NULL))
+)`
+
+// telegramDefaultSwarmDef — определение колонки роя по умолчанию: его текст
+// ALTER шага 29→30 вставляет в CREATE TABLE как есть.
+const telegramDefaultSwarmDef = `default_swarm_id TEXT REFERENCES swarms(id) ON DELETE SET NULL`
+
+// telegramDefaultSwarmColumn — шаг 29→30: колонка с NULL по умолчанию
+// добавляется ALTER без перестройки таблицы, на которую ссылается триггер
+// sessions_telegram_revoke; прежние привязки остаются без роя по умолчанию.
+const telegramDefaultSwarmColumn = `ALTER TABLE user_telegram_links ADD COLUMN ` + telegramDefaultSwarmDef
+
+// userTelegramLinksSchemaV29 — замороженный текст таблицы привязок версии 29:
+// им шаг 28→29 создаёт таблицу, а колонку роя по умолчанию добавляет шаг
+// 29→30.
+const userTelegramLinksSchemaV29 = `CREATE TABLE user_telegram_links (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     bot_token TEXT CHECK (length(bot_token) > 0),
     bot_username TEXT UNIQUE COLLATE NOCASE CHECK (length(bot_username) > 0),
@@ -198,7 +241,18 @@ var telegramObjects = []struct{ kind, name, sql string }{
 // telegramFullSchema — таблицы, индекс и триггеры Telegram. Колонка вида
 // сессии входит в schema.sql свежей базы, а в мигрированную — шагом 28→29.
 func telegramFullSchema() string {
-	statements := userTelegramLinksSchema + ";" + telegramOutboxSchema
+	return telegramSchemaWith(userTelegramLinksSchema)
+}
+
+// telegramSchemaV29 — DDL Telegram шага 28→29: таблица привязок без роя по
+// умолчанию, прочее — текст реестра, который с версии 29 не менялся.
+func telegramSchemaV29() string {
+	return telegramSchemaWith(userTelegramLinksSchemaV29)
+}
+
+// telegramSchemaWith — таблица привязок links, outbox, индексы и триггеры.
+func telegramSchemaWith(links string) string {
+	statements := links + ";" + telegramOutboxSchema
 	for _, object := range telegramObjects {
 		statements += ";" + object.sql
 	}

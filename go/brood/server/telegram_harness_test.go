@@ -3,8 +3,8 @@ package server
 // Поддельный Bot API и сборка сервера для проверок профиля Telegram и
 // поллеров (#281): боты по токену, очередь обновлений с подтверждением по
 // offset, long poll до timeout запроса, запись getUpdates и sendMessage, а
-// для кнопок ответа (#283) — клавиатур, editMessageReplyMarkup и
-// answerCallbackQuery.
+// для кнопок ответа (#283) и подтверждений команд (#284) — клавиатур,
+// нажатий, editMessageReplyMarkup и answerCallbackQuery.
 
 import (
 	"bytes"
@@ -45,24 +45,27 @@ type fakePoll struct {
 type fakeSent struct {
 	ChatID int64  `json:"chat_id"`
 	Text   string `json:"text"`
-	// Markup — клавиатура сообщения, nil — без неё.
+	// Markup — inline-клавиатура сообщения, nil — без неё.
 	Markup *telegram.InlineKeyboardMarkup `json:"reply_markup"`
 	// Document и Name — файл sendDocument; Text у него — подпись.
 	Document string `json:"-"`
 	Name     string `json:"-"`
+	// ID — номер сообщения, который ответил поддельный Bot API.
+	ID int64 `json:"-"`
 }
 
-// fakeEdit — editMessageReplyMarkup: сообщение чата и его новая клавиатура.
+// fakeAnswer — answerCallbackQuery: id нажатия и текст уведомления.
+type fakeAnswer struct {
+	ID   string `json:"callback_query_id"`
+	Text string `json:"text"`
+}
+
+// fakeEdit — editMessageReplyMarkup: сообщение чата и его новая клавиатура,
+// nil — клавиатура снята.
 type fakeEdit struct {
 	ChatID    int64                          `json:"chat_id"`
 	MessageID int64                          `json:"message_id"`
 	Markup    *telegram.InlineKeyboardMarkup `json:"reply_markup"`
-}
-
-// fakeCallbackAnswer — answerCallbackQuery: нажатие и текст ответа.
-type fakeCallbackAnswer struct {
-	ID   string `json:"callback_query_id"`
-	Text string `json:"text"`
 }
 
 type fakeBot struct {
@@ -72,6 +75,9 @@ type fakeBot struct {
 	nextID   int64
 	polls    []fakePoll
 	sent     []fakeSent
+	// answers и edits — принятые ответы на нажатия и правки клавиатур.
+	answers  []fakeAnswer
+	edits    []fakeEdit
 	inflight int
 	// meCalls — сколько раз спросили getMe.
 	meCalls int
@@ -84,11 +90,12 @@ type fakeBot struct {
 	// обычного ответа нет.
 	me   func(w http.ResponseWriter) bool
 	send func(w http.ResponseWriter, r *http.Request, s fakeSent) bool
-	// edits и answers — принятые правки клавиатур и ответы на нажатия; edit
-	// — сценарий правки: true — ответ записан, правки нет.
-	edits   []fakeEdit
-	answers []fakeCallbackAnswer
-	edit    func(w http.ResponseWriter, e fakeEdit) bool
+	// edit — сценарий editMessageReplyMarkup: true — ответ записан, правки
+	// нет.
+	edit func(w http.ResponseWriter, e fakeEdit) bool
+	// onAnswer вызывается на answerCallbackQuery до ответа: поллер ждёт
+	// его после своей проверки привязки и до действия нажатия.
+	onAnswer func()
 }
 
 type fakeBotAPI struct {
@@ -177,6 +184,18 @@ func (a *fakeBotAPI) sentTo(token string, chat int64) []string {
 	return texts
 }
 
+func (a *fakeBotAPI) answers(token string) []fakeAnswer {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]fakeAnswer(nil), a.bot(token).answers...)
+}
+
+func (a *fakeBotAPI) edits(token string) []fakeEdit {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]fakeEdit(nil), a.bot(token).edits...)
+}
+
 func (a *fakeBotAPI) inflight(token string) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -248,30 +267,25 @@ func (a *fakeBotAPI) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.mu.Lock()
+		s.ID = int64(len(b.sent) + 1)
 		b.sent = append(b.sent, s)
-		id := int64(len(b.sent))
 		a.notify()
 		a.mu.Unlock()
-		fakeResult(w, map[string]any{"message_id": id, "chat": map[string]any{"id": s.ChatID, "type": "private"}, "date": 1763000000, "text": s.Text})
-	case "sendDocument":
-		s, ok := fakeDocumentForm(r, body)
-		if !ok {
-			a.t.Errorf("sendDocument form %q", body)
-			fakeRefuse(w, http.StatusBadRequest, "Bad Request: bad form")
-			return
+		fakeResult(w, map[string]any{"message_id": s.ID, "chat": map[string]any{"id": s.ChatID, "type": "private"}, "date": 1763000000, "text": s.Text})
+	case "answerCallbackQuery":
+		var answer fakeAnswer
+		if err := json.Unmarshal(body, &answer); err != nil {
+			a.t.Errorf("answerCallbackQuery body %q: %v", body, err)
 		}
 		a.mu.Lock()
-		send := b.send
-		a.mu.Unlock()
-		if send != nil && send(w, r, s) {
-			return
-		}
-		a.mu.Lock()
-		b.sent = append(b.sent, s)
-		id := int64(len(b.sent))
+		b.answers = append(b.answers, answer)
+		onAnswer := b.onAnswer
 		a.notify()
 		a.mu.Unlock()
-		fakeResult(w, map[string]any{"message_id": id, "chat": map[string]any{"id": s.ChatID, "type": "private"}, "date": 1763000000, "caption": s.Text})
+		if onAnswer != nil {
+			onAnswer()
+		}
+		fakeResult(w, true)
 	case "editMessageReplyMarkup":
 		var e fakeEdit
 		if err := json.Unmarshal(body, &e); err != nil {
@@ -288,16 +302,25 @@ func (a *fakeBotAPI) serve(w http.ResponseWriter, r *http.Request) {
 		a.notify()
 		a.mu.Unlock()
 		fakeResult(w, true)
-	case "answerCallbackQuery":
-		var answer fakeCallbackAnswer
-		if err := json.Unmarshal(body, &answer); err != nil {
-			a.t.Errorf("answerCallbackQuery body %q: %v", body, err)
+	case "sendDocument":
+		s, ok := fakeDocumentForm(r, body)
+		if !ok {
+			a.t.Errorf("sendDocument form %q", body)
+			fakeRefuse(w, http.StatusBadRequest, "Bad Request: bad form")
+			return
 		}
 		a.mu.Lock()
-		b.answers = append(b.answers, answer)
+		send := b.send
+		a.mu.Unlock()
+		if send != nil && send(w, r, s) {
+			return
+		}
+		a.mu.Lock()
+		s.ID = int64(len(b.sent) + 1)
+		b.sent = append(b.sent, s)
 		a.notify()
 		a.mu.Unlock()
-		fakeResult(w, true)
+		fakeResult(w, map[string]any{"message_id": s.ID, "chat": map[string]any{"id": s.ChatID, "type": "private"}, "date": 1763000000, "caption": s.Text})
 	default:
 		fakeRefuse(w, http.StatusNotFound, "Not Found")
 	}
@@ -417,6 +440,20 @@ func privateMessage(from int64, username, text string) map[string]any {
 	return chatMessage(from, "private", from, username, text)
 }
 
+// callbackPress — нажатие кнопки data под сообщением message личного чата
+// from; id — id нажатия, повтор того же нажатия Telegram шлёт с тем же id.
+func callbackPress(id string, from, message int64, data string) map[string]any {
+	return callbackPressIn(id, from, "private", from, false, message, data)
+}
+
+// callbackPressIn — нажатие кнопки data под сообщением message в чате chat
+// вида kind от собеседника from; bot — собеседник бот.
+func callbackPressIn(id string, chat int64, kind string, from int64, bot bool, message int64, data string) map[string]any {
+	return map[string]any{"callback_query": map[string]any{"id": id, "data": data,
+		"from":    map[string]any{"id": from, "is_bot": bot, "first_name": "Person"},
+		"message": map[string]any{"message_id": message, "chat": map[string]any{"id": chat, "type": kind}, "date": 1763000000}}}
+}
+
 func chatMessage(chat int64, kind string, from int64, username, text string) map[string]any {
 	sender := map[string]any{"id": from, "is_bot": false, "first_name": "Person"}
 	if username != "" {
@@ -491,23 +528,19 @@ func (a *fakeBotAPI) scriptEdit(token string, edit func(w http.ResponseWriter, e
 	a.bot(token).edit = edit
 }
 
-func (a *fakeBotAPI) edits(token string) []fakeEdit {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return append([]fakeEdit(nil), a.bot(token).edits...)
-}
-
-func (a *fakeBotAPI) callbackAnswers(token string) []fakeCallbackAnswer {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return append([]fakeCallbackAnswer(nil), a.bot(token).answers...)
-}
-
 // scriptSend задаёт сценарий sendMessage бота token; nil — обычный ответ.
 func (a *fakeBotAPI) scriptSend(token string, send func(w http.ResponseWriter, r *http.Request, s fakeSent) bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.bot(token).send = send
+}
+
+// scriptAnswer задаёт действие на answerCallbackQuery бота token; nil — без
+// него.
+func (a *fakeBotAPI) scriptAnswer(token string, onAnswer func()) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.bot(token).onAnswer = onAnswer
 }
 
 // startTelegramHarness собирает сервер над api; apiURL — origin Bot API

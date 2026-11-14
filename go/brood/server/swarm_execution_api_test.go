@@ -90,9 +90,9 @@ type startAPIFixture struct {
 // build; у проекта есть repository и каталог: release, approve, review и
 // неисполнимый retrying. bob — участник проекта вне роя. У соседнего
 // проекта своё определение foreign.
-func startAPISetup(t *testing.T) startAPIFixture {
+func startAPISetup(t *testing.T, configure ...func(*Config)) startAPIFixture {
 	t.Helper()
-	ts, alice, master, pve := masterSetup(t)
+	ts, alice, master, pve := masterSetup(t, configure...)
 	ctx := context.Background()
 	s := ts.srv.store
 	sw, err := s.GetSwarm(ctx, master.SwarmID)

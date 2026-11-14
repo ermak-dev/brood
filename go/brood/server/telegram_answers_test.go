@@ -210,7 +210,7 @@ func (a *answersHarness) press(chat, message int64, data string) string {
 	a.t.Helper()
 	query := "cb-" + strconv.FormatInt(a.presses.Add(1), 10)
 	a.deliver(installBotToken, callbackPress(query, chat, message, data))
-	for _, answer := range a.api.callbackAnswers(installBotToken) {
+	for _, answer := range a.api.answers(installBotToken) {
 		if answer.ID == query {
 			return answer.Text
 		}
@@ -261,7 +261,7 @@ func privateReply(chat, message int64, text string) map[string]any {
 
 // pressAnswered: на нажатие query бот ответил answerCallbackQuery.
 func (a *answersHarness) pressAnswered(query string) bool {
-	for _, answer := range a.api.callbackAnswers(installBotToken) {
+	for _, answer := range a.api.answers(installBotToken) {
 		if answer.ID == query {
 			return true
 		}
@@ -274,14 +274,6 @@ func (a *answersHarness) pressAnswered(query string) bool {
 func (a *answersHarness) revokeSession(user string) {
 	a.t.Helper()
 	a.sql(`DELETE FROM sessions WHERE user_id = ? AND kind = 'telegram'`, user)
-}
-
-// callbackPress — нажатие кнопки сообщения бота в личном чате.
-func callbackPress(id string, chat, message int64, data string) map[string]any {
-	person := map[string]any{"id": chat, "is_bot": false, "first_name": "Person"}
-	return map[string]any{"callback_query": map[string]any{"id": id, "from": person, "chat_instance": "1", "data": data,
-		"message": map[string]any{"message_id": message, "from": map[string]any{"id": 710000009, "is_bot": true, "first_name": "Bot"},
-			"chat": map[string]any{"id": chat, "type": "private"}, "date": 1763000000, "text": "request"}}}
 }
 
 // editsOf — правки клавиатур сообщения message чата chat ботом установки.
@@ -483,8 +475,8 @@ func TestAnswerChecksTheTelegramSessionInItsTransaction(t *testing.T) {
 	if p == nil {
 		t.Fatal("no poller of the installation bot")
 	}
-	if owner, linked, err := p.chatOwner(ctx, ownerChat, ownerChat); err != nil || !linked || owner != a.alice {
-		t.Fatalf("chat owner = %q, %t, %v; want alice, linked", owner, linked, err)
+	if chat, err := p.chatOwner(ctx, ownerChat, ownerChat); err != nil || !chat.linked() || chat.userID != a.alice {
+		t.Fatalf("chat owner = %+v, %v; want alice, linked", chat, err)
 	}
 	a.revokeSession(a.alice)
 	got := p.answer(ctx, a.alice, ownerChat, ownerChat, store.SwarmAnswer{SwarmID: "s1", RequestID: req.ID, UserID: a.alice, Outcome: "success"})

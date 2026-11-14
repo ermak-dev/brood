@@ -154,6 +154,9 @@ func TestAnswerCommandTakesTheNumberAndTheText(t *testing.T) {
 		{"/answer 12 use sqlite", 12, "use sqlite", true},
 		{"  /answer@Brood_Bot   12   use sqlite\nand  WAL  ", 12, "use sqlite\nand  WAL", true},
 		{"/answer\n12\nfirst line\nsecond line", 12, "first line\nsecond line", true},
+		// Команда в любом регистре, как команды чата (#284).
+		{"/ANSWER@Brood_Bot 12 use sqlite", 12, "use sqlite", true},
+		{"/Answer 12 use sqlite", 12, "use sqlite", true},
 		{"/answer 12", 0, "", false},
 		{"/answer 12   ", 0, "", false},
 		{"/answer", 0, "", false},
