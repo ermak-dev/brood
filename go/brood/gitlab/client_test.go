@@ -1,6 +1,6 @@
 package gitlab
 
-// FEATURE: Project-bound, read-only GitLab API client.
+// FEATURE: Project-bound GitLab reads and a narrow explicit client surface.
 // SPEC: Explicit HTTPS API base, numeric binding and supplied token only; bounded
 // reads never follow redirects/proxies or return credentials or partial results.
 // IMPLEMENTATION: Fixed numeric paths, one deadline, bounded pages/JSON, static
@@ -454,7 +454,7 @@ func TestDeadlinesCancellationAndNoProxy(t *testing.T) {
 	checkError(t, e, Timeout)
 }
 
-func TestEmptyListsAndReadOnlySurface(t *testing.T) {
+func TestEmptyListsAndNarrowClientSurface(t *testing.T) {
 	c, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `[]`) })
 	js, e := c.Jobs(context.Background(), 90)
 	if e != nil || js == nil || len(js) != 0 {
@@ -465,7 +465,7 @@ func TestEmptyListsAndReadOnlySurface(t *testing.T) {
 	for i := range names {
 		names[i] = typ.Method(i).Name
 	}
-	want := []string{"Close", "Format", "GoString", "Issue", "Jobs", "MergeRequest", "MergeRequestPipelines", "Pipeline", "Project", "String"}
+	want := []string{"Close", "CreateMergeRequest", "Format", "GoString", "Issue", "Jobs", "MergeRequest", "MergeRequestPipelines", "Pipeline", "Project", "String"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("unexpected public client surface: %v", names)
 	}

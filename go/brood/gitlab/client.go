@@ -40,10 +40,11 @@ type Config struct {
 	Timeout time.Duration
 }
 
-// Client reads one fixed project. It is safe for concurrent use. It adds no
-// application-level retries, does not log, follow redirects, use environment
-// proxies or read credentials from Git, files or the environment. The standard
-// transport may retry a GET on a lost idle connection. The zero value is unusable.
+// Client reads one fixed project and supports one-shot same-project MR creation.
+// It is safe for concurrent use. It adds no application-level retries, does not
+// log, follow redirects, use environment proxies or read credentials from Git,
+// files or the environment. The standard transport may retry a GET on a lost
+// idle connection; creation disables body replay. The zero value is unusable.
 type Client struct {
 	base      string
 	projectID int64

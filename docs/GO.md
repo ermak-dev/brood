@@ -63,7 +63,7 @@ Substrate закреплён в `go.mod` на публичной версии
 - `gitidentity`: Git-идентичность актора для коммитов из имени актора и домена установки, без Git и сети; доставка гостю — `docs/PROXMOX.md`.
 - `actormodel`: модели Claude Code акторов из настроек установки и проверка формы имени, без настроек, Claude Code и сети; доставка гостю — `docs/PROXMOX.md`.
 - `gitcredential`: серверные Git credentials проекта — имя, привязка к точному repository, Basic username/token и их проверки; хранение и API — `docs/SECRETS.md`.
-- `gitlab`: read-only API v4 одного явно заданного HTTPS endpoint и числового проекта, typed reads и чистые свидетельства CI; только stdlib, без Git credentials, grants, merge authority и server/guest wiring (`docs/GITLAB.md`, первый библиотечный слой #302).
+- `gitlab`: API v4 одного явно заданного HTTPS endpoint и числового проекта, typed reads, чистые свидетельства CI и одноразовый transport создания same-project MR; только stdlib, без Git credentials, grants, merge authority и server/guest wiring (`docs/GITLAB.md`, библиотечные слои #302).
 - `auth`: пароли, сессии, CSRF, ограничение входа, управление пользователями.
 - `app`: права на проекты и рои, восстановление операций после сбоя.
 - `substrate`, `kube`: управляющие API.

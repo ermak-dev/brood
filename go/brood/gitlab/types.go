@@ -1,5 +1,6 @@
-// Package gitlab provides bounded, read-only access to one explicitly bound
-// GitLab project. It has no store, server, Git transport or environment access.
+// Package gitlab provides bounded reads and one-shot same-project MR creation
+// for one explicitly bound GitLab project. It has no store, server, Git transport
+// or environment access.
 // CI evidence is informational: no result grants access or authorizes a merge.
 package gitlab
 
