@@ -3,8 +3,10 @@
 // goes through (own or the installation bot), whether an own token is set,
 // the state with its public reason, the subscriptions, the linked chat and
 // whether a link code waits. PUT takes exactly {"token"} and answers with the
-// profile; DELETE removes the own bot and the chat link; POST .../link issues
-// a one-time code with its t.me deep link. The token is write-only: no
+// profile; PUT .../events takes exactly {"events"}, the full set of
+// subscriptions (#296, API #295), and answers with the profile; DELETE removes
+// the own bot and the chat link; POST .../link issues a one-time code with
+// its t.me deep link. The token is write-only: no
 // result the client hands to the panel carries it, even when a server echoes
 // it in fields the contract does not have. Every result comes with the Date
 // of its reply, the server clock the page counts a code down by. Writes send
@@ -214,6 +216,7 @@ describe('requests', () => {
     );
     expect((await telegramApi.profile()).date).toBe(date);
     expect((await telegramApi.setToken(TOKEN)).date).toBe(date);
+    expect((await telegramApi.setEvents([])).date).toBe(date);
     expect((await telegramApi.remove()).date).toBe(date);
     expect((await telegramApi.issueLinkCode()).date).toBe(date);
     serve(() => Response.json(unlinkedWire));
@@ -258,6 +261,22 @@ describe('requests', () => {
       'username',
     ]);
     expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+
+  test('subscriptions are written as exactly {"events"} with CSRF and answered with the profile', async () => {
+    serve(() => Response.json({ ...linkedWire, events: ['step_failed'], ...echoed }));
+    const result = await telegramApi.setEvents(['step_failed']);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('/api/me/telegram/events');
+    expect(calls[0].method).toBe('PUT');
+    expect(calls[0].headers['X-CSRFToken']).toBe('telegram-test');
+    expect(JSON.parse(calls[0].body ?? '')).toEqual({ events: ['step_failed'] });
+    expect(result.data.events).toEqual(['step_failed']);
+    expect(Object.keys(result.data).sort()).toEqual(PROFILE_KEYS);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+    // Пустой набор -- тоже набор: отписка от всего.
+    await telegramApi.setEvents([]);
+    expect(JSON.parse(calls[1].body ?? '')).toEqual({ events: [] });
   });
 
   test('removal and a new link code are writes with CSRF', async () => {

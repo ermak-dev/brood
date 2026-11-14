@@ -2,9 +2,11 @@
  * brood: профиль Telegram вошедшего пользователя (#285, API #281).
  *
  * GET /api/me/telegram читает профиль; PUT принимает ровно {"token"} и
- * отвечает профилем; DELETE снимает свой бот и привязку чата; POST
- * /api/me/telegram/link выдаёт одноразовый код привязки. Маршруты действуют
- * только для самого вызывающего, за сессией и CSRF. Токен бота write-only:
+ * отвечает профилем; PUT /api/me/telegram/events принимает ровно {"events"},
+ * полный набор подписок, и отвечает профилем (#296, API #295); DELETE
+ * снимает свой бот и привязку чата; POST /api/me/telegram/link выдаёт
+ * одноразовый код привязки. Маршруты действуют только для самого
+ * вызывающего, за сессией и CSRF. Токен бота write-only:
  * его не несёт ни ответ, ни отказ, и здесь он нигде не хранится. Отказ --
  * {"detail", "reason"} с одной публичной причиной. Каждый результат несёт
  * заголовок Date ответа: срок кода назначен часами сервера.
@@ -176,6 +178,9 @@ export const telegramApi = {
   profile: () => served(parseTelegramProfile, 'GET', PROFILE_PATH),
   /** Токен уходит на сервер и больше никуда: ответ -- профиль без него. */
   setToken: (token: string) => served(parseTelegramProfile, 'PUT', PROFILE_PATH, { token }),
+  /** Подписки целиком: запись заменяет набор, ответ -- профиль. */
+  setEvents: (events: string[]) =>
+    served(parseTelegramProfile, 'PUT', `${PROFILE_PATH}/events`, { events }),
   remove: () => served(parseTelegramProfile, 'DELETE', PROFILE_PATH),
   issueLinkCode: () => served(parseTelegramLinkCode, 'POST', `${PROFILE_PATH}/link`),
 };

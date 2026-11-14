@@ -5,7 +5,9 @@
 // Chinese, Korean and Vietnamese other) and no form beyond them and English's
 // (Korean and Vietnamese carry every English key). Every key the source
 // names exists, including each state and each notification kind it can show,
-// and the header link to the profile is translated everywhere.
+// no profile text names a tracker issue (#296), the subscriptions hint no
+// longer says they cannot be changed yet, and the header link to the profile
+// is translated everywhere.
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { TELEGRAM_EVENTS } from '@/services/brood/telegram';
@@ -118,6 +120,35 @@ describe('profile locale keys', () => {
     }
     for (const kind of TELEGRAM_EVENTS) {
       expect(english[`profile.telegram.events.${kind}`]).toBeTruthy();
+    }
+  });
+
+  test('no profile text names a tracker issue: the page speaks of what it does', () => {
+    // Подсказка подписок (#285) называла #295, пока их нельзя было менять.
+    for (const locale of locales) {
+      const issues = Object.entries(flatten(read(locale)))
+        .filter(([key, value]) => owned(key) && /#\d+/.test(value))
+        .map(([key]) => key);
+      expect({ locale, issues }).toEqual({ locale, issues: [] });
+    }
+  });
+
+  test('the subscriptions hint no longer says they cannot be changed yet', () => {
+    // Слова «пока нельзя» подсказки #285 в каждой локали: подписки теперь
+    // меняет переключатель (#296), и подсказка не обещает этого на потом.
+    const notYet: Record<string, string[]> = {
+      en: ['yet', 'cannot', "can't"],
+      ru: ['пока', 'ещё', 'нельзя'],
+      'zh-CN': ['暂时', '尚', '无法'],
+      'zh-TW': ['暫時', '尚', '無法'],
+      ko: ['아직', '수 없'],
+      vi: ['chưa'],
+    };
+    expect(Object.keys(notYet).sort()).toEqual([...locales].sort());
+    for (const locale of locales) {
+      const hint = (flatten(read(locale))['profile.telegram.events_hint'] ?? '').toLowerCase();
+      const found = notYet[locale].filter((marker) => hint.includes(marker));
+      expect({ locale, hint: hint.length > 0, found }).toEqual({ locale, hint: true, found: [] });
     }
   });
 

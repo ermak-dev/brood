@@ -10,10 +10,16 @@
 // expiry; the server decides whether it waits, and a browser clock off by
 // minutes neither hides it nor miscounts it. The page polls while the code
 // waits and turns linked without a reload. Unlinking and removing the own
-// bot are confirmed and the link can be issued again right after. A typed,
+// bot are confirmed and the link can be issued again right after. A
+// subscription switch writes the full set (#296, API #295) and shows what the
+// server saved; a refusal is shown at the subscriptions with the server's
+// reason, and the switch stays as the server has it. A switch that lost the
+// focus while its write disabled it gets it back after the reply, unless the
+// user moved it elsewhere. A typed,
 // unsaved token blocks leaving the page like other forms. A poll that left
-// before a write does not overwrite the state the write returned, and a poll
-// or header refresh during a write stays silent. A write that failed after
+// before a write does not overwrite the state the write returned, a poll
+// that left after it lands, and a poll or header refresh during a write
+// stays silent. A write that failed after
 // the server committed it shows the committed state without a reload.
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -78,6 +84,7 @@ const fill = (template: string, values: Record<string, string | number>) =>
 const TOKEN = '123456789:AAH-synthetic_bot_token_for_tests_only';
 const SECRET = TOKEN.split(':')[1];
 const CODE = 'Zk3vQx2b8m1nP0aR7sT4uV6wX9yZ5cD3eF8gH1iJ2kL';
+const EVENTS_PATH = '/api/me/telegram/events';
 
 /** Где токен остался бы вне значения поля: хранилища браузера (глобальные
  * и окна DOM) и разметка страницы, вместе с атрибутом value поля -- её
@@ -129,9 +136,11 @@ interface Call {
 /** Поддельный API профиля: состояние сервера и записанные вызовы. GET можно
  * задержать, чтобы проверить порядок ответов; запись -- тоже, и тогда
  * сервер фиксирует её только при отпуске. failAfterCommit -- запись
- * зафиксирована, а ответ -- сбой (сверка поллеров не прошла). */
+ * зафиксирована, а ответ -- сбой (сверка поллеров не прошла). newerKinds --
+ * виды словаря сервера новее панели. */
 const server = {
   profile: installUnlinked() as Record<string, unknown>,
+  newerKinds: [] as string[],
   calls: [] as Call[],
   refusal: null as null | { status: number; reason: string },
   held: null as null | ((profile: Record<string, unknown>) => void),
@@ -141,9 +150,19 @@ const server = {
   failAfterCommit: false,
 };
 
-/** Запись сервера: правит его состояние и отвечает. */
-function commit(method: string): Response {
-  if (method === 'PUT') {
+/** Запись сервера: правит его состояние и отвечает. Подписки сервер
+ * хранит в порядке своего словаря, как store.SetTelegramEvents; вид вне
+ * словаря -- отказ #295, и запись ничего не пишет. */
+function commit(method: string, url: string, body?: string): Response {
+  if (method === 'PUT' && url === EVENTS_PATH) {
+    const known = [...TELEGRAM_EVENTS, ...server.newerKinds];
+    const sent = (JSON.parse(body ?? '{}') as { events: string[] }).events;
+    if (sent.some((kind) => !known.includes(kind))) {
+      const reason = `unknown telegram event; known events: ${known.join(', ')}`;
+      return reply({ detail: reason, reason }, 400);
+    }
+    server.profile = { ...server.profile, events: known.filter((kind) => sent.includes(kind)) };
+  } else if (method === 'PUT') {
     server.profile = { ...server.profile, bot_username: 'alice_dev_bot', own_bot: true };
   }
   if (method === 'DELETE') {
@@ -177,6 +196,7 @@ function commit(method: string): Response {
 const originalFetch = globalThis.fetch;
 beforeEach(() => {
   server.profile = installUnlinked();
+  server.newerKinds = [];
   server.calls = [];
   server.refusal = null;
   server.held = null;
@@ -192,8 +212,9 @@ beforeEach(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? 'GET';
-    server.calls.push({ method, url, body: init?.body as string | undefined });
-    if (url !== '/api/me/telegram' && url !== '/api/me/telegram/link') {
+    const body = init?.body as string | undefined;
+    server.calls.push({ method, url, body });
+    if (url !== '/api/me/telegram' && url !== '/api/me/telegram/link' && url !== EVENTS_PATH) {
       return reply({ detail: 'not found' }, 404);
     }
     if (server.refusal && method !== 'GET') {
@@ -210,10 +231,10 @@ beforeEach(() => {
     if (server.holdNextWrite) {
       server.holdNextWrite = false;
       return new Promise<Response>((resolve) => {
-        server.releaseWrite = () => resolve(commit(method));
+        server.releaseWrite = () => resolve(commit(method, url, body));
       });
     }
-    return commit(method);
+    return commit(method, url, body);
   }) as typeof fetch;
 });
 afterEach(() => {
@@ -296,6 +317,43 @@ async function confirmDialog() {
 
 const writes = () =>
   server.calls.filter((call) => call.method !== 'GET').map((call) => `${call.method} ${call.url}`);
+/** Наборы подписок, отправленные записью, по порядку. */
+const sentEvents = () =>
+  server.calls
+    .filter((call) => call.method === 'PUT' && call.url === EVENTS_PATH)
+    .map((call) => (JSON.parse(call.body ?? '') as { events: string[] }).events);
+
+const eventToggles = (container: HTMLElement) =>
+  [...container.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+const eventToggle = (container: HTMLElement, label: string) => {
+  const toggle = eventToggles(container).find((item) => text(item.closest('label')!) === label);
+  if (!toggle) throw new Error(`no switch ${label}`);
+  return toggle;
+};
+/** Подписи включённых переключателей подписок. */
+const subscribed = (container: HTMLElement) =>
+  eventToggles(container)
+    .filter((toggle) => toggle.checked)
+    .map((toggle) => text(toggle.closest('label')!));
+
+/** Щелчок переключателя и ответ записи. */
+async function flip(toggle: HTMLInputElement) {
+  await click(toggle);
+  await settle();
+}
+
+/** Что в фокусе: подпись переключателя, BODY или тег с текстом. Строка, а
+ * не узел: отказ сравнения узлов печатает всё дерево React. */
+const focused = () => {
+  const active = document.activeElement as HTMLElement | null;
+  const label = active?.closest('label');
+  if (label) return text(label);
+  if (!active || active === document.body) return 'BODY';
+  return `${active.tagName} ${text(active)}`;
+};
+/** Фокус уходит на body, как у браузера с выключенного элемента в фокусе:
+ * happy-dom сам его не уводит, а blur выключенного не принимает. */
+const loseFocus = () => document.body.focus();
 
 describe('route and entry', () => {
   test('/profile is a route of its own, open to members, and the header leads to it', () => {
@@ -659,6 +717,17 @@ describe('a write that failed after the server committed it', () => {
     await unmount(page);
   });
 
+  test('a subscription change answered 500 shows the saved set without a reload', async () => {
+    server.profile = { ...installUnlinked(), events: ['request_opened'] };
+    const page = await mount();
+    server.failAfterCommit = true;
+    await flip(eventToggle(page.container, t.events.step_failed));
+    await settle();
+    expect(text(page.container)).toContain(fill(t.refused, { reason: 'internal error' }));
+    expect(subscribed(page.container)).toEqual([t.events.request_opened, t.events.step_failed]);
+    await unmount(page);
+  });
+
   test('a code issue answered 500 shows that a code waits, without the code, and polls', async () => {
     const timers = spyOn(globalThis, 'setInterval');
     try {
@@ -722,20 +791,166 @@ describe('states', () => {
     await unmount(page);
   });
 
-  test('subscriptions show every kind on or off and cannot be changed yet', async () => {
+  test('subscriptions show every kind on or off, and every switch can be changed', async () => {
     server.profile = { ...installUnlinked(), events: ['request_opened', 'step_failed'] };
     const page = await mount();
-    const toggles = [
-      ...page.container.querySelectorAll('input[type="checkbox"]'),
-    ] as HTMLInputElement[];
+    const toggles = eventToggles(page.container);
     expect(toggles).toHaveLength(TELEGRAM_EVENTS.length);
-    const on = toggles
-      .filter((toggle) => toggle.checked)
-      .map((toggle) => text(toggle.closest('label')!));
-    expect(on).toEqual([t.events.request_opened, t.events.step_failed]);
-    expect(toggles.every((toggle) => toggle.disabled)).toBe(true);
+    expect(subscribed(page.container)).toEqual([t.events.request_opened, t.events.step_failed]);
+    expect(toggles.filter((toggle) => toggle.disabled)).toEqual([]);
     expect(text(page.container)).toContain(t.events_hint);
     await unmount(page);
+  });
+});
+
+describe('subscriptions', () => {
+  test('a switch writes the full set and the page shows what the server saved', async () => {
+    server.profile = { ...installUnlinked(), events: ['request_opened', 'step_failed'] };
+    const page = await mount();
+    await flip(eventToggle(page.container, t.events.pass_started));
+    expect(writes()).toEqual([`PUT ${EVENTS_PATH}`]);
+    expect(sentEvents()).toEqual([['request_opened', 'pass_started', 'step_failed']]);
+    expect(subscribed(page.container)).toEqual([
+      t.events.request_opened,
+      t.events.pass_started,
+      t.events.step_failed,
+    ]);
+    await flip(eventToggle(page.container, t.events.request_opened));
+    expect(sentEvents().at(-1)).toEqual(['pass_started', 'step_failed']);
+    expect(subscribed(page.container)).toEqual([t.events.pass_started, t.events.step_failed]);
+    // Последний выключенный вид -- пустой набор, а не отказ панели.
+    await flip(eventToggle(page.container, t.events.pass_started));
+    await flip(eventToggle(page.container, t.events.step_failed));
+    expect(sentEvents().at(-1)).toEqual([]);
+    expect(subscribed(page.container)).toEqual([]);
+    await unmount(page);
+  });
+
+  test('a kind of a newer server stays on: the page shows it and keeps it in the set', async () => {
+    server.newerKinds = ['swarm_deleted'];
+    server.profile = { ...installUnlinked(), events: ['request_opened', 'swarm_deleted'] };
+    const page = await mount();
+    // Выключенный, он пропал бы из списка, и панель не включила бы его снова.
+    const newer = eventToggle(page.container, 'swarm_deleted');
+    expect(newer.checked).toBe(true);
+    expect(newer.disabled).toBe(true);
+    await flip(eventToggle(page.container, t.events.step_failed));
+    expect(sentEvents()).toEqual([['request_opened', 'step_failed', 'swarm_deleted']]);
+    // Профиль ответа тоже несёт его: страница показывает его, как до записи.
+    expect(subscribed(page.container)).toEqual([
+      t.events.request_opened,
+      t.events.step_failed,
+      'swarm_deleted',
+    ]);
+    expect(eventToggle(page.container, 'swarm_deleted').disabled).toBe(true);
+    await unmount(page);
+  });
+
+  test('a refusal is shown at the subscriptions and the switch stays as the server has it', async () => {
+    server.profile = { ...installUnlinked(), events: ['request_opened'] };
+    const page = await mount();
+    // Отказ, который настоящий API даёт и известному виду (#295).
+    const reason = 'session authorization changed';
+    server.refusal = { status: 403, reason };
+    await flip(eventToggle(page.container, t.events.pass_started));
+    expect(writes()).toEqual([`PUT ${EVENTS_PATH}`]);
+    const section = eventToggle(page.container, t.events.pass_started).closest('section')!;
+    const alerts = [...section.querySelectorAll('[role="alert"]')].map((node) => text(node));
+    expect(alerts).toEqual([fill(t.refused, { reason })]);
+    expect(eventToggle(page.container, t.events.pass_started).checked).toBe(false);
+    expect(subscribed(page.container)).toEqual([t.events.request_opened]);
+    await unmount(page);
+  });
+
+  test('the switches wait for a write, a poll that left before it does not undo it, and a later one lands', async () => {
+    server.profile = { ...installUnlinked(), events: ['request_opened'] };
+    const page = await mount();
+    const stale = { ...server.profile };
+    server.holdNextGet = true;
+    let poll: Promise<void> | undefined;
+    await act(async () => {
+      poll = tickTelegramPolling();
+    });
+    server.holdNextWrite = true;
+    await flip(eventToggle(page.container, t.events.step_failed));
+    // Пока запись не ответила, второй переключатель не шлёт набор поверх неё,
+    // а переключатель показывает профиль сервера, а не щелчок.
+    expect(eventToggles(page.container).every((toggle) => toggle.disabled)).toBe(true);
+    expect(eventToggle(page.container, t.events.step_failed).checked).toBe(false);
+    expect(subscribed(page.container)).toEqual([t.events.request_opened]);
+    await act(async () => server.releaseWrite?.());
+    await settle();
+    await act(async () => {
+      server.held?.(stale);
+      await poll;
+    });
+    await settle();
+    expect(subscribed(page.container)).toEqual([t.events.request_opened, t.events.step_failed]);
+    expect(eventToggles(page.container).filter((toggle) => toggle.disabled)).toEqual([]);
+    // Ответ записи лёг под своим номером: опрос, ушедший после неё, ложится
+    // поверх и показывает то, что сервер сменил без этой страницы.
+    server.profile = {
+      ...server.profile,
+      state: 'linked',
+      chat: { telegram_user_id: 4242, chat_id: 4242, username: 'alice_tg' },
+      events: ['pass_started'],
+    };
+    await act(async () => tickTelegramPolling());
+    await settle();
+    expect(text(page.container)).toContain(t.state.linked);
+    expect(subscribed(page.container)).toEqual([t.events.pass_started]);
+    await unmount(page);
+  });
+
+  test('the switch gets the focus back after its write, saved or refused', async () => {
+    server.profile = { ...installUnlinked(), events: ['request_opened'] };
+    const page = await mount();
+    // Space на переключателе в фокусе: на время записи он выключен, и браузер
+    // уводит фокус на body. Без возврата второй Space листал бы страницу.
+    const saved = eventToggle(page.container, t.events.step_failed);
+    saved.focus();
+    server.holdNextWrite = true;
+    await flip(saved);
+    expect(saved.disabled).toBe(true);
+    loseFocus();
+    expect(focused()).toBe('BODY');
+    await act(async () => server.releaseWrite?.());
+    await settle();
+    expect(subscribed(page.container)).toEqual([t.events.request_opened, t.events.step_failed]);
+    expect(focused()).toBe(t.events.step_failed);
+    // Отказ поддельный сервер отдаёт сразу: фокус уходит в том же щелчке.
+    server.refusal = { status: 403, reason: 'session authorization changed' };
+    const refused = eventToggle(page.container, t.events.pass_started);
+    refused.focus();
+    await act(async () => {
+      refused.click();
+      loseFocus();
+    });
+    await settle();
+    expect(text(page.container)).toContain(
+      fill(t.refused, { reason: 'session authorization changed' })
+    );
+    expect(refused.checked).toBe(false);
+    expect(focused()).toBe(t.events.pass_started);
+    await unmount(page);
+  });
+
+  test('a switch does not take back the focus the user moved during its write', async () => {
+    const elsewhere = document.createElement('button');
+    elsewhere.textContent = 'elsewhere';
+    document.body.appendChild(elsewhere);
+    const page = await mount();
+    const toggle = eventToggle(page.container, t.events.step_failed);
+    toggle.focus();
+    server.holdNextWrite = true;
+    await flip(toggle);
+    elsewhere.focus();
+    await act(async () => server.releaseWrite?.());
+    await settle();
+    expect(toggle.checked).toBe(false);
+    expect(focused()).toBe('BUTTON elsewhere');
+    await unmount(page);
+    elsewhere.remove();
   });
 });
 

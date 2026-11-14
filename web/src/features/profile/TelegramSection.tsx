@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -18,6 +18,7 @@ import {
   removal,
   subscriptionRows,
   telegramTone,
+  toggledEvents,
   tokenDraft,
   tokenProblem,
   tokenValue,
@@ -29,7 +30,7 @@ import styles from '@/features/substrate/substrate.module.scss';
 import local from './profile.module.scss';
 
 /** Отказ показывается у действия, которое его получило. */
-type Action = 'token' | 'link' | 'remove';
+type Action = 'token' | 'link' | 'remove' | 'events';
 
 /** Имя поля токена в форме: значение берётся из него при отправке. */
 const TOKEN_FIELD = 'telegram-bot-token';
@@ -213,6 +214,20 @@ export function TelegramSection() {
     dialog: unsavedDialog,
   });
 
+  // Переключатель в фокусе на время записи выключен, и браузер уводит фокус
+  // на body: второй Space листал бы страницу. После ответа фокус
+  // возвращается к нему, если пользователь не увёл его сам.
+  const eventsId = useId();
+  const switchId = (kind: string) => `${eventsId}-${kind}`;
+  const [refocus, setRefocus] = useState('');
+  useEffect(() => {
+    if (busy || !refocus) return;
+    setRefocus('');
+    const target = document.getElementById(refocus);
+    const active = document.activeElement;
+    if (target && (!active || active === document.body)) target.focus();
+  }, [busy, refocus]);
+
   /** Действие с одним исходом на странице: строка состояния или отказ у
    * этого действия. */
   const perform = async (action: Action, run: () => Promise<string>) => {
@@ -252,6 +267,18 @@ export function TelegramSection() {
       await model.issueCode();
       return '';
     });
+
+  /** Подписка уходит полным набором; профиль ответа ложится, как у
+   * остальных записей секции. */
+  const switchEvent = async (kind: string, on: boolean) => {
+    if (busy || !profile) return;
+    const events = toggledEvents(profile.events, kind, on);
+    await perform('events', async () => {
+      await model.saveEvents(events);
+      return '';
+    });
+    setRefocus(switchId(kind));
+  };
 
   const confirmRemoval = () => {
     setConfirmOpen(false);
@@ -427,15 +454,20 @@ export function TelegramSection() {
         <ul className={local.events}>
           {subscriptionRows(profile.events).map((row) => (
             <li key={row.kind}>
+              {/* Переключатель показывает состояние сервера: набор меняет
+                  ответ записи, а не щелчок. Вид сервера новее панель не
+                  переключает: выключенный, он пропал бы из списка. */}
               <ToggleSwitch
+                id={switchId(row.kind)}
                 checked={row.on}
-                disabled
-                onChange={() => undefined}
+                disabled={busy || !row.known}
+                onChange={(on) => void switchEvent(row.kind, on)}
                 label={row.known ? t(`profile.telegram.events.${row.kind}`) : row.kind}
               />
             </li>
           ))}
         </ul>
+        {failure('events')}
       </Section>
 
       <ConfirmDialog

@@ -3517,7 +3517,7 @@
       "token_save": "保存令牌",
       "token_saved": "机器人 {{bot}} 已保存。",
       "events_title": "通知",
-      "events_hint": "会发送到已绑定聊天的内容。面板暂时无法更改订阅：服务器尚无写入订阅的 API（#295）。",
+      "events_hint": "会发送到已绑定聊天的内容。切换开关会立即保存更改。",
       "events": {
         "request_opened": "新的操作员请求",
         "request_answered": "操作员请求已回答",

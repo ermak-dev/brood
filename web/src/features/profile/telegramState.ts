@@ -117,6 +117,17 @@ export function subscriptionRows(events: readonly string[]): SubscriptionRow[] {
   ];
 }
 
+/** Полный набор подписок после переключателя (#296): запись подписок
+ * заменяет набор целиком. Известные виды -- в порядке сервера, каждый раз;
+ * виды сервера новее остаются, как пришли: панель их не переключает. */
+export function toggledEvents(events: readonly string[], kind: string, on: boolean): string[] {
+  const known: readonly string[] = TELEGRAM_EVENTS;
+  const wanted = (event: string) => (event === kind ? on : events.includes(event));
+  return [
+    ...new Set([...known.filter(wanted), ...events.filter((event) => !known.includes(event))]),
+  ];
+}
+
 /** Форма токена BotFather, как её проверяет клиент Bot API сервера. */
 const TOKEN_SHAPE = /^[0-9]{1,20}:[A-Za-z0-9_-]{1,128}$/;
 

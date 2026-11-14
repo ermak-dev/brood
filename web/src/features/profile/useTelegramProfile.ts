@@ -40,6 +40,8 @@ export interface TelegramProfileModel {
   busy: boolean;
   refresh: () => Promise<void>;
   saveToken: (token: string) => Promise<TelegramProfile>;
+  /** Полный набор подписок (#296): запись заменяет его целиком. */
+  saveEvents: (events: string[]) => Promise<TelegramProfile>;
   remove: () => Promise<TelegramProfile>;
   issueCode: () => Promise<TelegramLinkCode>;
 }
@@ -130,6 +132,15 @@ export function useTelegramProfile(
     [apply, write]
   );
 
+  const saveEvents = useCallback(
+    (events: string[]) =>
+      write(
+        () => telegramApi.setEvents(events),
+        (next, date, ticket) => apply(ticket, next, date)
+      ),
+    [apply, write]
+  );
+
   const remove = useCallback(
     () =>
       write(
@@ -163,5 +174,5 @@ export function useTelegramProfile(
   const waiting = profile !== null && waitsForStart(profile);
   useVisibleInterval(tickTelegramPolling, waiting ? TELEGRAM_POLL_MS : null);
 
-  return { profile, error, code, now, busy, refresh, saveToken, remove, issueCode };
+  return { profile, error, code, now, busy, refresh, saveToken, saveEvents, remove, issueCode };
 }

@@ -3527,7 +3527,7 @@
       "token_save": "Lưu token",
       "token_saved": "Đã lưu bot {{bot}}.",
       "events_title": "Thông báo",
-      "events_hint": "Những gì được gửi tới cuộc trò chuyện đã liên kết. Bảng điều khiển chưa thể thay đổi đăng ký: máy chủ chưa có API để ghi đăng ký (#295).",
+      "events_hint": "Những gì được gửi tới cuộc trò chuyện đã liên kết. Bật hoặc tắt công tắc sẽ lưu thay đổi ngay.",
       "events": {
         "request_opened": "Có yêu cầu mới tới người vận hành",
         "request_answered": "Yêu cầu tới người vận hành đã được trả lời",
