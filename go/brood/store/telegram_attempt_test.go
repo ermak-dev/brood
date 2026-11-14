@@ -13,7 +13,8 @@ import (
 // SPEC: the sender takes the queue of one user in id order, one attempt at
 // a time: an attempt is recorded before the send and the head with an
 // attempt in flight gets no second one. The outcome settles the attempt:
-// sent with the Telegram message number, failed, unconfirmed, or failed and
+// sent with the Telegram message number, and whether the message carries the
+// reply field (force_reply, #298), failed, unconfirmed, or failed and
 // queued again when the message certainly was not sent, so the same
 // notification heads the queue again. A notification nobody may receive any
 // more (no live link, no subscription to its kind, no right to read its
@@ -121,6 +122,10 @@ func TestSettleNeedsAnAttemptInFlightAndAKnownOutcome(t *testing.T) {
 		{State: "unconfirmed", Requeue: true},
 		{State: "failed", MessageID: 7},
 		{State: "delivered"},
+		// Поле ответа есть только у сообщения, которое ушло.
+		{State: "failed", ForceReply: true},
+		{State: "failed", Requeue: true, ForceReply: true},
+		{State: "unconfirmed", ForceReply: true},
 	} {
 		if err := s.SettleTelegramAttempt(ctx, head.ID, outcome); !errors.Is(err, ErrTelegramOutcomeInvalid) {
 			t.Fatalf("settle %+v: %v", outcome, err)

@@ -27,10 +27,13 @@ type TelegramMessage struct {
 	MessageID int64
 	// ChatID and OwnBot are the chat of the user's live link and whether it is
 	// linked through the user's own bot; Reader tells that the user may read
-	// the swarm of the request now. Only TelegramRequestMessages sets them.
-	ChatID int64
-	OwnBot bool
-	Reader bool
+	// the swarm of the request now; ForceReply tells that the message was
+	// sent with the reply field (#298), whose markup Telegram does not edit.
+	// Only TelegramRequestMessages sets them.
+	ChatID     int64
+	OwnBot     bool
+	Reader     bool
+	ForceReply bool
 }
 
 // telegramRequestKinds — виды уведомлений, которые открывают запрос и несут
@@ -99,14 +102,14 @@ func (s *Store) TelegramRequestOfMessage(ctx context.Context, userID string, mes
 // TelegramRequestMessages returns the sent notifications that opened the
 // request (request_opened, actor_question), with their chats, in id order: of
 // every user whose current link was made before the notification was queued,
-// and with whether the user may read the swarm now. Rights at the edit do not
-// pick the messages: a manager demoted or removed after the send still holds
-// answer buttons, and a viewer's message may show the state of the request as
-// well.
+// with whether the user may read the swarm now and whether the message was
+// sent with the reply field. Rights at the edit do not pick the messages: a
+// manager demoted or removed after the send still holds answer buttons, and a
+// viewer's message may show the state of the request as well.
 func (s *Store) TelegramRequestMessages(ctx context.Context, swarmID, requestID string) ([]TelegramMessage, error) {
 	ref := telegramRef("request_opened", TelegramEvent{Swarm: swarmID, Request: requestID})
 	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT o.id, o.user_id, o.kind, o.payload, o.state, o.telegram_message_id, l.chat_id, l.bot_token IS NOT NULL,
-		coalesce((SELECT 1 FROM swarms w WHERE w.id = ? AND `+telegramSwarmReader+`), 0)
+		coalesce((SELECT 1 FROM swarms w WHERE w.id = ? AND `+telegramSwarmReader+`), 0), o.force_reply
 		FROM `+telegramCurrentLinkMessage+` AND o.ref = ?
 		ORDER BY o.id`, swarmID, ref)
 	if err != nil {
@@ -117,7 +120,7 @@ func (s *Store) TelegramRequestMessages(ctx context.Context, swarmID, requestID 
 	for rows.Next() {
 		var m TelegramMessage
 		var payload string
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Kind, &payload, &m.State, &m.MessageID, &m.ChatID, &m.OwnBot, &m.Reader); err != nil {
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Kind, &payload, &m.State, &m.MessageID, &m.ChatID, &m.OwnBot, &m.Reader, &m.ForceReply); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(payload), &m.Event); err != nil {

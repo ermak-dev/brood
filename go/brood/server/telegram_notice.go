@@ -7,7 +7,8 @@ package server
 // записи). Текст простой, без parse_mode:
 // вопрос и материал актора идут как есть, без разметки, которую Telegram
 // стал бы разбирать. Уведомление открытого запроса получателю, который вправе
-// управлять роем, несёт кнопки ответа (#283, telegram_buttons.go).
+// управлять роем, несёт кнопки ответа (#283, telegram_buttons.go), а
+// текстового — поле ответа (force_reply, #298).
 
 import (
 	"net/url"
@@ -33,11 +34,13 @@ type telegramFacts struct {
 
 // telegramNotice — сообщение уведомления: текст, а когда он длиннее
 // предела сообщения Bot API, — один документ с полным текстом и подписью;
-// markup — кнопки ответа, nil — без них.
+// markup — его единственная разметка: кнопки ответа или поле ответа
+// текстового запроса (force_reply, #298), nil — никакой. Кнопки и поле
+// ответа исключают друг друга по типу: reply_markup у сообщения один.
 type telegramNotice struct {
 	text   string
 	doc    *telegram.Document
-	markup *telegram.InlineKeyboardMarkup
+	markup telegram.ReplyMarkup
 }
 
 // telegramDocumentNote — подпись документа говорит, где полный текст.
@@ -47,12 +50,18 @@ const telegramDocumentNote = "The full text is in the attached file."
 // — origin панели (BROOD_PANEL_ORIGIN); пусто — сообщение без ссылки.
 func renderTelegramNotice(n store.TelegramNotification, f telegramFacts, origin string) telegramNotice {
 	answerable := telegramAnswerable(n, f)
-	var markup *telegram.InlineKeyboardMarkup
+	// Пустой указатель в markup не кладётся: интерфейс с ним не nil.
+	var markup telegram.ReplyMarkup
+	buttons := false
 	if answerable {
-		markup = telegramRequestKeyboard(n.ID, *f.request)
+		if keyboard := telegramRequestKeyboard(n.ID, *f.request); keyboard != nil {
+			markup, buttons = keyboard, true
+		} else if field := telegramAnswerField(n.ID, *f.request); field != nil {
+			markup = field
+		}
 	}
 	head, sections := telegramNoticeBody(n.Kind, n.Event, f)
-	hint := telegramNoticeHint(n, f, answerable, markup != nil)
+	hint := telegramNoticeHint(n, f, answerable, buttons)
 	sections = append(sections, hint)
 	link := ""
 	if origin != "" {

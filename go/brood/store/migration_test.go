@@ -422,7 +422,7 @@ func TestMigrateV29DatabaseToCurrent(t *testing.T) {
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
 	}
-	if after, want := databaseRows(t, s.db), withLinkColumnStep(withLinkColumnStep(before)); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withForceReplyStep(withLinkColumnStep(withLinkColumnStep(before))); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -470,7 +470,7 @@ func TestMigrateV30DatabaseToCurrent(t *testing.T) {
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
 	}
-	if after, want := databaseRows(t, s.db), withLinkColumnStep(before); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withForceReplyStep(withLinkColumnStep(before)); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -494,6 +494,72 @@ func TestMigrateV30DatabaseToCurrent(t *testing.T) {
 	}
 	if _, err := s.db.Exec(`UPDATE user_telegram_links SET telegram_username = 'ed_tg' WHERE user_id = 'ed'`); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
 		t.Fatalf("username check after migration: %v", err)
+	}
+}
+
+// withForceReplyStep: строки базы после шага 31→32: у уведомлений Telegram в
+// конце поле ответа 0, прочие строки те же.
+func withForceReplyStep(rows map[string][]string) map[string][]string {
+	out := maps.Clone(rows)
+	var outbox []string
+	for _, row := range rows["telegram_outbox"] {
+		outbox = append(outbox, row+",0")
+	}
+	out["telegram_outbox"] = outbox
+	return out
+}
+
+// TestMigrateV31DatabaseToCurrent: шаг 31→32 добавляет
+// telegram_outbox.force_reply (#298) поверх имени собеседника версии 31
+// (#294). Итог совпадает со свежей базой объект в объект; прежние
+// уведомления — в очереди, в полёте, sent, failed, unconfirmed — остаются как
+// были, без поля ответа: до 32 оно не уходило ни с одним сообщением, а
+// привязки сохраняют имя собеседника. На мигрированной базе исход отправки
+// записывает поле ответа, его CHECK и ограждение отправленного действуют.
+func TestMigrateV31DatabaseToCurrent(t *testing.T) {
+	ctx := context.Background()
+	path := loadSchemaFixture(t, 31)
+	raw := rawDatabase(t, path)
+	requireIntact(t, raw)
+	before := databaseRows(t, raw)
+	raw.Close()
+	if len(before["telegram_outbox"]) == 0 {
+		t.Fatal("the v31 fixture has no notifications to migrate")
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("v31 database refused: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("migrated version = %d, %v; want %d", version, err, schemaVersion)
+	}
+	fresh := newTestStore(t)
+	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
+	}
+	if after, want := databaseRows(t, s.db), withForceReplyStep(before); !reflect.DeepEqual(after, want) {
+		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
+	}
+	requireIntact(t, s.db)
+	if link, err := s.GetTelegramLink(ctx, "root"); err != nil || link.State != "linked" || link.TelegramUsername != "root_tg" {
+		t.Fatalf("root link after migration = %+v, %v", link, err)
+	}
+	id := queueNotification(t, s, "root", "actor_question")
+	outboxSteps(t, s, id, `attempts = 1`)
+	mustNil(t, s.SettleTelegramAttempt(ctx, id, TelegramOutcome{State: "sent", MessageID: 1003, ForceReply: true}))
+	if err := outboxExec(s, id, `force_reply = 0`); err == nil || !strings.Contains(err.Error(), "telegram notification is immutable") {
+		t.Fatalf("outbox fence of the reply field after migration: %v", err)
+	}
+	var field int
+	mustNil(t, s.db.QueryRow(`SELECT force_reply FROM telegram_outbox WHERE id = ?`, id).Scan(&field))
+	if field != 1 {
+		t.Fatalf("reply field of the sent notification = %d, want 1", field)
+	}
+	if err := outboxExec(s, queueNotification(t, s, "root", "request_opened"), `force_reply = 1`); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("reply field of a queued notification after migration: %v", err)
 	}
 }
 

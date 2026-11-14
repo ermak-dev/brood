@@ -159,6 +159,10 @@ type TelegramOutcome struct {
 	// MessageID is the Telegram message of a sent notification, required
 	// with sent and only with it.
 	MessageID int64
+	// ForceReply tells that the sent message carries the reply field
+	// (force_reply, #298), only with sent: Telegram edits no markup of such
+	// a message, and no edit is sent to it.
+	ForceReply bool
 	// Requeue puts a failed notification back at the head of its queue for
 	// the next attempt: the message certainly was not sent.
 	Requeue bool
@@ -268,18 +272,19 @@ func (s *Store) beginTelegramAttempt(ctx context.Context, id int64) error {
 }
 
 // SettleTelegramAttempt records the outcome of the attempt in flight of a
-// queued notification: sent with its Telegram message, failed, or
-// unconfirmed. A failed one with Requeue goes back to the queue in the same
-// transaction and heads it again: its message certainly was not sent. An
-// outcome outside these is ErrTelegramOutcomeInvalid; a notification without an
-// attempt from the queue in flight is ErrTelegramNoAttempt. Nothing is
-// written on refusal.
+// queued notification: sent with its Telegram message and whether it carries
+// the reply field, failed, or unconfirmed. A failed one with Requeue goes
+// back to the queue in the same transaction and heads it again: its message
+// certainly was not sent. An outcome outside these is
+// ErrTelegramOutcomeInvalid; a notification without an attempt from the
+// queue in flight is ErrTelegramNoAttempt. Nothing is written on refusal.
 func (s *Store) SettleTelegramAttempt(ctx context.Context, id int64, outcome TelegramOutcome) error {
 	switch {
 	case outcome.State != "sent" && outcome.State != "failed" && outcome.State != "unconfirmed",
 		(outcome.State == "sent") != (outcome.MessageID > 0),
-		outcome.Requeue && outcome.State != "failed":
-		return fmt.Errorf("%w: an attempt settles sent with its message, failed (queued again or not) or unconfirmed", ErrTelegramOutcomeInvalid)
+		outcome.Requeue && outcome.State != "failed",
+		outcome.ForceReply && outcome.State != "sent":
+		return fmt.Errorf("%w: an attempt settles sent with its message and reply field, failed (queued again or not) or unconfirmed", ErrTelegramOutcomeInvalid)
 	}
 	var message any
 	if outcome.State == "sent" {
@@ -287,8 +292,8 @@ func (s *Store) SettleTelegramAttempt(ctx context.Context, id int64, outcome Tel
 	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
 		now := nowRFC3339()
-		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE telegram_outbox SET state = ?, settled_attempts = attempts, telegram_message_id = ?, updated_at = ? WHERE id = ? AND state = 'pending' AND attempts = settled_attempts + 1`,
-			outcome.State, message, now, id)
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE telegram_outbox SET state = ?, settled_attempts = attempts, telegram_message_id = ?, force_reply = ?, updated_at = ? WHERE id = ? AND state = 'pending' AND attempts = settled_attempts + 1`,
+			outcome.State, message, outcome.ForceReply, now, id)
 		if err != nil {
 			return err
 		}

@@ -64,7 +64,10 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // sessions_telegram_revoke, который снимает его с привязкой. Колонку
 // добавляет ALTER TABLE шага 30→31 так же, как default_swarm_id, а триггер
 // шаг пересоздаёт.
-const schemaVersion = 31
+// 32: поле ответа отправленного уведомления telegram_outbox.force_reply
+// (#298): разметку такого сообщения Telegram не правит. Колонку добавляет
+// ALTER TABLE шага 31→32, ограждение отправленного держит и её.
+const schemaVersion = 32
 
 //go:embed schema.sql
 var currentSchema string

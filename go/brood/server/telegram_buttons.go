@@ -3,7 +3,8 @@ package server
 // Кнопки ответа Telegram (#283, эпик #278). Уведомление запроса получателю,
 // который вправе управлять роем, несёт кнопки, пока запрос открыт: вариант
 // выбора — кнопкой, confirm — Yes и No, на текстовый запрос отвечает reply на
-// его сообщение или /answer <номер> <текст>. Выбор, чьи варианты Telegram
+// его сообщение, которое открывает поле ответа (force_reply, #298), или
+// /answer <номер> <текст>. Выбор, чьи варианты Telegram
 // кнопками не покажет, уходит без кнопок. callback_data несёт номер
 // уведомления в outbox и индекс варианта, а не текст варианта: Bot API
 // держит её в 64 байтах, а подпись варианта длиннее. Закрытый запрос
@@ -34,6 +35,10 @@ const (
 	telegramStatusLimit = 100
 	// telegramStateTime — момент ответа в состоянии запроса.
 	telegramStateTime = "2006-01-02 15:04 UTC"
+	// telegramAnswerPlaceholder — подсказка в пустом поле ответа текстового
+	// запроса перед номером уведомления; Bot API держит её в 64 знаках, и
+	// номер int64 в них помещается.
+	telegramAnswerPlaceholder = "Answer to request "
 )
 
 // telegramButton — разобранная callback_data: уведомление и вариант или
@@ -108,6 +113,23 @@ func telegramRequestKeyboard(notification int64, r store.SwarmRequest) *telegram
 		return nil
 	}
 	return &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// telegramAnswerField — поле ответа текстового запроса уведомления
+// notification (force_reply, #298): клиент Telegram сам открывает reply на
+// сообщение запроса, а reply записывается ответом на запрос того сообщения,
+// на которое он сделан (textReply, reply_to_message). Подсказка называет
+// запрос тем же номером, что /answer в тексте сообщения; клиент показывает её
+// в пустом поле, пока открыт reply, который открыло это сообщение. Запрос
+// ответа она не выбирает: его выбирает сообщение, на которое сделан reply, и
+// это сообщение клиент показывает над полем. Новое сообщение с полем ответа,
+// например второго открытого запроса, открывает reply на себя со своей
+// подсказкой. На запрос с кнопками отвечают кнопками, поля у него нет.
+func telegramAnswerField(notification int64, r store.SwarmRequest) *telegram.ForceReply {
+	if r.Kind != "text" {
+		return nil
+	}
+	return &telegram.ForceReply{Placeholder: telegramAnswerPlaceholder + strconv.FormatInt(notification, 10)}
 }
 
 // telegramButtonLabels: варианты выбора помещаются в клавиатуру так, как её

@@ -27,8 +27,12 @@ package server
 //
 // После ответа на запрос отправитель правит его отправленные сообщения
 // (requestClosed, #283): кнопки ответа уступают кнопке состояния. Правка —
-// лучшая попытка без outbox и повтора: сообщение, которое Telegram править
-// не даёт, — не ошибка.
+// лучшая попытка без outbox и повтора: сообщение, которое Telegram править не
+// даёт, — не ошибка. Сообщение с полем ответа (force_reply, #298) Telegram не
+// правит никогда: Bot API правит только сообщения без разметки или с
+// inline-клавиатурой. Право управлять роем, от которого поле зависит,
+// читается при попытке и не хранится, поэтому исход отправки помнит само поле
+// (TelegramOutcome.ForceReply), и правка такому сообщению не шлётся.
 
 import (
 	"context"
@@ -244,7 +248,13 @@ func (t *telegramSender) attempt(ctx context.Context, bots *telegramBotClients, 
 	send, cancel := telegramSendContext(ctx, t.opts.grace)
 	defer cancel()
 	m, err := notice.send(send, client, n.ChatID)
-	return telegramSendOutcome(m, err, telegramStale(n.CreatedAt, t.opts.now()))
+	outcome, wait := telegramSendOutcome(m, err, telegramStale(n.CreatedAt, t.opts.now()))
+	if outcome.State == "sent" {
+		// Разметку сообщения с полем ответа Telegram не правит: исход помнит
+		// поле, и правка после ответа такому сообщению не шлётся.
+		outcome.ForceReply = notice.forceReply()
+	}
+	return outcome, wait
 }
 
 // unread — исход попытки, которую сбой чтения базы оставил без отправки:
@@ -385,12 +395,18 @@ func telegramUserName(ctx context.Context, st *store.Store, userID string) strin
 }
 
 // send отправляет сообщение уведомления в чат одним сообщением Bot API:
-// текстом или документом, с кнопками ответа, если они есть.
+// текстом или документом, с кнопками ответа или полем ответа, если они есть.
 func (n telegramNotice) send(ctx context.Context, c *telegram.Client, chatID int64) (telegram.Message, error) {
 	if n.doc != nil {
 		return c.SendDocument(ctx, chatID, *n.doc, n.markup)
 	}
 	return c.SendMessage(ctx, chatID, n.text, n.markup)
+}
+
+// forceReply: сообщение уведомления открывает поле ответа (force_reply).
+func (n telegramNotice) forceReply() bool {
+	_, ok := n.markup.(*telegram.ForceReply)
+	return ok
 }
 
 // telegramOpensRequest: уведомление вида kind открывает запрос и несёт его
@@ -418,6 +434,7 @@ func (t *telegramSender) editLater(swarmID, requestID string, only int64) {
 	go func(ctx context.Context) {
 		defer t.editing.Done()
 		t.editRequest(ctx, swarmID, requestID, only)
+		t.opts.editDone(swarmID, requestID, only)
 	}(t.ctx)
 }
 
@@ -431,7 +448,8 @@ func (t *telegramSender) editLater(swarmID, requestID string, only int64) {
 // состояния. Отказ Telegram (и «не изменено» у сообщения без кнопок), сбой
 // сети и сбой чтения базы правку этого сообщения пропускают без повтора: это
 // лучшая попытка, а нажатие на оставшуюся кнопку покажет состояние запроса и
-// поправит её.
+// поправит её. Сообщению, ушедшему с полем ответа (force_reply, #298), правка
+// не шлётся: его разметку Telegram не правит (см. начало файла).
 func (t *telegramSender) editRequest(ctx context.Context, swarmID, requestID string, only int64) {
 	req, err := t.store.GetSwarmRequest(ctx, swarmID, requestID)
 	if err != nil || req.State == "open" {
@@ -445,7 +463,7 @@ func (t *telegramSender) editRequest(ctx context.Context, swarmID, requestID str
 	bots := telegramBotClients{config: t.client}
 	defer bots.close()
 	for _, m := range messages {
-		if only != 0 && m.ID != only {
+		if (only != 0 && m.ID != only) || m.ForceReply {
 			continue
 		}
 		token := t.install

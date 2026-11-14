@@ -16,9 +16,11 @@ import (
 // recorded before the send (attempts grows) and settled after it
 // (settled_attempts catches up), so an interrupted attempt is told apart from
 // a queued retry. An unsettled attempt is never attempted again or settled
-// back into the queue; startup recovery settles it as unconfirmed. A sent
-// notification is never rewritten, an unconfirmed one (it may have reached the
-// chat) never becomes failed or goes back to the queue, attempts never
+// back into the queue; startup recovery settles it as unconfirmed. Only a
+// sent notification may carry the reply field flag (force_reply, #298). A
+// sent notification is never rewritten, its reply field included, an
+// unconfirmed one (it may have reached the chat) never becomes failed or goes
+// back to the queue, attempts never
 // decrease, the notification itself (recipient, kind, reference, payload)
 // never changes, through UPDATE or REPLACE in either recursive_triggers mode.
 // A queued notification and an attempt in flight are never deleted while
@@ -58,7 +60,8 @@ func outboxRow(t *testing.T, s *Store, id int64) string {
 	t.Helper()
 	var row string
 	mustNil(t, s.db.QueryRow(`SELECT quote(id)||','||quote(user_id)||','||quote(kind)||','||quote(ref)||','||quote(payload)||','||
-		quote(state)||','||quote(attempts)||','||quote(settled_attempts)||','||quote(telegram_message_id)||','||quote(created_at)||','||quote(updated_at)
+		quote(state)||','||quote(attempts)||','||quote(settled_attempts)||','||quote(telegram_message_id)||','||quote(created_at)||','||quote(updated_at)||','||
+		quote(force_reply)
 		FROM telegram_outbox WHERE id = ?`, id).Scan(&row))
 	return row
 }
@@ -235,6 +238,9 @@ func TestSentNotificationIsNeverRewritten(t *testing.T) {
 		`settled_attempts = 0`,
 		`updated_at = 'later'`,
 		`payload = '{"text":"other"}'`,
+		// Поле ответа (#298) — свойство ушедшего сообщения: его не приписать
+		// и не снять.
+		`force_reply = 1`,
 	)
 	// Запись без изменений не переписывает и проходит.
 	before := outboxRow(t, s, id)
@@ -242,6 +248,9 @@ func TestSentNotificationIsNeverRewritten(t *testing.T) {
 	if after := outboxRow(t, s, id); after != before {
 		t.Fatalf("sent notification changed:\n got %s\nwant %s", after, before)
 	}
+	field := queueNotification(t, s, "u1", "actor_question")
+	outboxSteps(t, s, field, `attempts = 1`, `state = 'sent', settled_attempts = 1, telegram_message_id = 1003, force_reply = 1`)
+	refusedBy(t, s, field, "telegram notification is immutable", `force_reply = 0`)
 }
 
 func TestUnconfirmedNotificationNeverBecomesFailed(t *testing.T) {
@@ -433,6 +442,21 @@ func TestOutboxChecksKeepTheVocabularyAndTheSettledShape(t *testing.T) {
 	outboxSteps(t, s, id, `attempts = 1`)
 	if err := outboxExec(s, id, `state = 'sent', settled_attempts = 1`); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
 		t.Fatalf("sent without a Telegram message id: %v", err)
+	}
+	// Поле ответа (#298) — флаг, и есть только у ушедшего сообщения.
+	for name, set := range map[string]string{
+		"reply field in flight":       `force_reply = 1`,
+		"reply field of a failed":     `state = 'failed', settled_attempts = 1, force_reply = 1`,
+		"reply field of unconfirmed":  `state = 'unconfirmed', settled_attempts = 1, force_reply = 1`,
+		"reply field that is no flag": `state = 'sent', settled_attempts = 1, telegram_message_id = 5, force_reply = 2`,
+	} {
+		if err := outboxExec(s, id, set); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+			t.Fatalf("%s: %v, want a CHECK refusal", name, err)
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO telegram_outbox (user_id, kind, ref, payload, state, attempts, settled_attempts, created_at, updated_at, force_reply)
+		VALUES ('u1', 'request_opened', 'r', '{}', 'pending', 0, 0, 'now', 'now', 1)`); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("queued with the reply field: %v, want a CHECK refusal", err)
 	}
 }
 

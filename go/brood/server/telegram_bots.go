@@ -114,6 +114,11 @@ type telegramOptions struct {
 	// период удаления старших.
 	retention time.Duration
 	prune     time.Duration
+	// edited зовёт отправитель уведомлений, когда правка сообщений запроса
+	// request роя swarm кончилась (editLater): only — номер уведомления у
+	// сверки после отправки, 0 — у правки после ответа; nil в работе. По ней
+	// проверки ждут саму правку, а не работников отправителя.
+	edited func(swarm, request string, only int64)
 }
 
 func (o telegramOptions) withDefaults() telegramOptions {
@@ -161,6 +166,13 @@ func (o telegramOptions) writing(r *http.Request) {
 func (o telegramOptions) written(r *http.Request) {
 	if o.afterWrite != nil {
 		o.afterWrite(r)
+	}
+}
+
+// editDone отмечает конец правки сообщений запроса.
+func (o telegramOptions) editDone(swarm, request string, only int64) {
+	if o.edited != nil {
+		o.edited(swarm, request, only)
 	}
 }
 
