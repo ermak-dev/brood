@@ -374,7 +374,9 @@ func (h *managedFakeRelay) DialMessage(context.Context, string, int64, []byte) (
 	return nil, errors.New("swarm messages are not wired in the fake relay")
 }
 
-func managedSetup(t *testing.T) (*substrateServer, *http.Client, *http.Client, string, *managedFakePVE, *managedFakeRelay) {
+// managedSetup — сервер с managed-пулом brood-proxmox; configure правит
+// настройки сборки, например подключает поддельный Bot API.
+func managedSetup(t *testing.T, configure ...func(*Config)) (*substrateServer, *http.Client, *http.Client, string, *managedFakePVE, *managedFakeRelay) {
 	t.Helper()
 	cfg, err := loadProxmox(runtimeFixture(t))
 	if err != nil {
@@ -382,7 +384,7 @@ func managedSetup(t *testing.T) (*substrateServer, *http.Client, *http.Client, s
 	}
 	pve := &managedFakePVE{}
 	hub := &managedFakeRelay{}
-	ts := newSubstrateServer(t, newFakeAteapi(), func(c *Config) { c.proxmox = cfg.proxmox })
+	ts := newSubstrateServer(t, newFakeAteapi(), append([]func(*Config){func(c *Config) { c.proxmox = cfg.proxmox }}, configure...)...)
 	ts.srv.managed.stopReconcile()
 	ts.srv.managed.newClient = func(proxmox.Config) (proxmoxAPI, error) { return pve, nil }
 	if ts.srv.managed.hub != nil {

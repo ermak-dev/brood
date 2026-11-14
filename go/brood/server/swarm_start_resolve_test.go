@@ -54,9 +54,9 @@ func captureServerLogs(t *testing.T) *lockedBuffer {
 // gitTestOrigin с серверным Git-доступом: его задаёт access (nil — проектный
 // Git credential "gitlab"), а TLS upstream git.example.com отвечает inner на
 // запросы с этим credential.
-func resolveStartSetup(t *testing.T, access func(startAPIFixture), inner http.Handler) (startAPIFixture, *gitUpstream) {
+func resolveStartSetup(t *testing.T, access func(startAPIFixture), inner http.Handler, configure ...func(*Config)) (startAPIFixture, *gitUpstream) {
 	t.Helper()
-	f := startAPISetup(t)
+	f := startAPISetup(t, configure...)
 	if err := f.ts.srv.store.SetProjectRepository(context.Background(), f.project, gitTestOrigin); err != nil {
 		t.Fatal(err)
 	}

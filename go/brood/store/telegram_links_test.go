@@ -523,6 +523,51 @@ func TestTelegramSessionIsTiedToTheLink(t *testing.T) {
 	}
 }
 
+// TestTelegramChatSessionNamesOneLink: живая привязка называет свою сессию,
+// одну и ту же на каждом обновлении, и только для своих бота, чата и
+// собеседника. Чат, отвязанный и привязанный снова, получает другую сессию:
+// по ней команды чата (#284) отличают подтверждение прежней привязки.
+func TestTelegramChatSessionNamesOneLink(t *testing.T) {
+	ctx := context.Background()
+	s := telegramStore(t)
+	linkTelegram(t, s, "u1", "", 42)
+	first, err := s.TelegramChatSession(ctx, "u1", "", 42, 42)
+	if err != nil || first == "" {
+		t.Fatalf("session of a live link = %q, %v", first, err)
+	}
+	if again, err := s.TelegramChatSession(ctx, "u1", "", 42, 42); err != nil || again != first {
+		t.Fatalf("session of the same link = %q, %v; want %q", again, err, first)
+	}
+	for name, in := range map[string]struct {
+		user, bot  string
+		chat, from int64
+	}{
+		"other chat":   {"u1", "", 43, 42},
+		"other sender": {"u1", "", 42, 43},
+		"other user":   {"u2", "", 42, 42},
+		"other bot":    {"u1", "other_bot", 42, 42},
+	} {
+		if got, err := s.TelegramChatSession(ctx, in.user, in.bot, in.chat, in.from); err != nil || got != "" {
+			t.Fatalf("%s: session = %q, %v; want none", name, got, err)
+		}
+	}
+	_, err = s.UnlinkTelegram(ctx, "u1")
+	mustNil(t, err)
+	if got, err := s.TelegramChatSession(ctx, "u1", "", 42, 42); err != nil || got != "" {
+		t.Fatalf("session of an unlinked chat = %q, %v", got, err)
+	}
+	linkTelegram(t, s, "u1", "", 42)
+	second, err := s.TelegramChatSession(ctx, "u1", "", 42, 42)
+	if err != nil || second == "" || second == first {
+		t.Fatalf("session of the chat linked again = %q, %v; want a new one, not %q", second, err, first)
+	}
+	_, err = s.db.Exec(`UPDATE users SET disabled = 1 WHERE id = 'u1'`)
+	mustNil(t, err)
+	if got, err := s.TelegramChatSession(ctx, "u1", "", 42, 42); err != nil || got != "" {
+		t.Fatalf("session of a disabled user = %q, %v", got, err)
+	}
+}
+
 // TestTelegramSessionActiveNeedsTheLinksOwnTelegramSession: проверка в
 // транзакции не верит одной строке привязки: пользователь, отключённый мимо
 // хранилища, привязка, указывающая на веб-сессию, и привязка, указывающая на

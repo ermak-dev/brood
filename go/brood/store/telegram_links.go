@@ -50,6 +50,10 @@ var (
 	ErrTelegramLinkCode = errors.New("telegram link code is invalid or expired")
 	// ErrTelegramLinked refuses a new link code while a chat is linked.
 	ErrTelegramLinked = errors.New("telegram chat is already linked: unlink it first")
+	// ErrTelegramUnlinked refuses a write on behalf of a chat whose link is
+	// not live: the user has no linked chat, or the telegram session of the
+	// update is gone.
+	ErrTelegramUnlinked = errors.New("telegram chat is not linked")
 )
 
 // TelegramLink is the store view of a user's Telegram link. The bot token is
@@ -58,6 +62,9 @@ var (
 // State is unlinked, linked or error; Reason explains an error. ChatID and
 // TelegramUserID are set only while linked, LinkCodeExpiresAt only while a
 // link code waits. Events are the subscribed notification kinds.
+// DefaultSwarmID is the swarm the chat's commands use when they name none
+// (/use, #284), empty without one; whether the user still reads it is checked
+// where it is used.
 type TelegramLink struct {
 	UserID            string
 	HasBotToken       bool
@@ -68,6 +75,7 @@ type TelegramLink struct {
 	Reason            string
 	LinkCodeExpiresAt string
 	Events            []string
+	DefaultSwarmID    string
 	UpdatedAt         string
 }
 
@@ -88,7 +96,8 @@ type TelegramLinkConfirmation struct {
 // привязки получает её значения по умолчанию.
 const telegramLinkView = `SELECT u.id, l.bot_token IS NOT NULL, coalesce(l.bot_username, ''),
 	coalesce(l.chat_id, 0), coalesce(l.telegram_user_id, 0), coalesce(l.state, 'unlinked'),
-	coalesce(l.reason, ''), coalesce(l.link_code_expires_at, ''), l.events, coalesce(l.updated_at, '')
+	coalesce(l.reason, ''), coalesce(l.link_code_expires_at, ''), l.events, coalesce(l.default_swarm_id, ''),
+	coalesce(l.updated_at, '')
 	FROM users u LEFT JOIN user_telegram_links l ON l.user_id = u.id WHERE u.id = ?`
 
 // GetTelegramLink returns the user's Telegram link; a user who never set one
@@ -98,7 +107,7 @@ func (s *Store) GetTelegramLink(ctx context.Context, userID string) (TelegramLin
 	var events sql.NullString
 	err := s.conn(ctx).QueryRowContext(ctx, telegramLinkView, userID).Scan(&link.UserID, &link.HasBotToken,
 		&link.BotUsername, &link.ChatID, &link.TelegramUserID, &link.State, &link.Reason,
-		&link.LinkCodeExpiresAt, &events, &link.UpdatedAt)
+		&link.LinkCodeExpiresAt, &events, &link.DefaultSwarmID, &link.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TelegramLink{}, fmt.Errorf("%w: user %q", ErrNotFound, userID)
 	}
@@ -537,6 +546,45 @@ func (s *Store) SetTelegramEvents(ctx context.Context, userID string, events []s
 	})
 }
 
+// SetTelegramSwarm makes swarmID the default swarm of the user's linked chat
+// (/use, #284) and returns the link. One transaction checks the telegram
+// session of the update with authorize and that the user reads the swarm by
+// the swarm view rule (telegramSwarmReader): a swarm the user does not read
+// is ErrNotFound, as if it did not exist. A user without a live link, or a
+// session authorize refuses: ErrTelegramUnlinked. A refusal writes nothing.
+func (s *Store) SetTelegramSwarm(ctx context.Context, userID, swarmID string, authorize func(context.Context) bool) (TelegramLink, error) {
+	var link TelegramLink
+	err := s.WithTx(ctx, func(ctx context.Context) error {
+		if authorize == nil || !authorize(ctx) {
+			return ErrTelegramUnlinked
+		}
+		var readable bool
+		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users u JOIN swarms w ON w.id = ?
+			WHERE u.id = ? AND u.disabled = 0 AND `+telegramSwarmReader+`)`, swarmID, userID).Scan(&readable); err != nil {
+			return err
+		}
+		if !readable {
+			return fmt.Errorf("%w: swarm %q", ErrNotFound, swarmID)
+		}
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET default_swarm_id = ?, updated_at = ? WHERE user_id = ? AND state = 'linked'`,
+			swarmID, nowRFC3339(), userID)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrTelegramUnlinked
+		}
+		link, err = s.GetTelegramLink(ctx, userID)
+		return err
+	})
+	if err != nil {
+		return TelegramLink{}, err
+	}
+	return link, nil
+}
+
 // TelegramSessionActive reports whether the user's link is live for an update
 // that botUsername received from chatID, sent by telegramUserID: the link was
 // made through that bot (botUsername is the user's own bot in any case, empty
@@ -546,15 +594,30 @@ func (s *Store) SetTelegramEvents(ctx context.Context, userID string, events []s
 // AnswerSwarmRequest), it sees an unlink or a revocation committed before the
 // write.
 func (s *Store) TelegramSessionActive(ctx context.Context, userID, botUsername string, chatID, telegramUserID int64) (bool, error) {
-	var live bool
+	session, err := s.TelegramChatSession(ctx, userID, botUsername, chatID, telegramUserID)
+	return session != "", err
+}
+
+// TelegramChatSession returns the telegram session of the user's link when
+// the link is live for the update on the terms of TelegramSessionActive, and
+// "" when it is not. Every confirmed link opens its own session, so a chat
+// unlinked and linked again has another one: a caller that keeps the session
+// of an update tells the link the update came under from a later link of the
+// same chat. The session is a random key, not a token hash
+// (openTelegramSession); it stays in the server process.
+func (s *Store) TelegramChatSession(ctx context.Context, userID, botUsername string, chatID, telegramUserID int64) (string, error) {
+	var session string
 	// Результат coalesce не несёт COLLATE колонки, поэтому NOCASE назван явно.
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM user_telegram_links l
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT l.session_hash FROM user_telegram_links l
 		JOIN sessions s ON s.token_hash = l.session_hash JOIN users u ON u.id = l.user_id
 		WHERE l.user_id = ? AND coalesce(l.bot_username, '') = ? COLLATE NOCASE AND l.state = 'linked'
 			AND l.chat_id = ? AND l.telegram_user_id = ?
-			AND s.kind = 'telegram' AND s.user_id = l.user_id AND u.disabled = 0)`,
-		userID, botUsername, chatID, telegramUserID).Scan(&live)
-	return live, err
+			AND s.kind = 'telegram' AND s.user_id = l.user_id AND u.disabled = 0`,
+		userID, botUsername, chatID, telegramUserID).Scan(&session)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return session, err
 }
 
 // changeTelegramLink выполняет правку привязки пользователя в одной

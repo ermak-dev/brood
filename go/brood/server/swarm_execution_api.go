@@ -89,21 +89,8 @@ func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := startGoalError(in.Goal); err != nil {
-		swarmExecutionError(w, r, err)
-		return
-	}
 	in.SwarmID, in.UserID = r.PathValue("id"), user.ID
-	if in.Commit == "" {
-		// Сеть — до транзакции записи и вне её (#228).
-		origin, commit, err := s.startCommit(r.Context(), in.SwarmID, user.ID)
-		if err != nil {
-			swarmExecutionError(w, r, err)
-			return
-		}
-		in.Origin, in.Commit = origin, commit
-	}
-	sw, err := s.store.StartSwarm(r.Context(), in, func(ctx context.Context) bool {
+	sw, err := s.startSwarmPass(r.Context(), in, func(ctx context.Context) bool {
 		return secretRequestSession(ctx, s, r, user.ID)
 	})
 	if err != nil {
@@ -116,13 +103,37 @@ func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
 	s.steps.kick(sw.ID)
 }
 
+// startSwarmPass запускает новый проход роя in.SwarmID от имени in.UserID —
+// общий путь панели, bro и Telegram (#284): видимость роя, задача прохода,
+// commit HEAD repository проекта, если вызывающий его не назвал, и
+// StartSwarm, который в транзакции записи проверяет сессию authorize и право
+// управлять роем. Рой, который пользователь не видит, — ErrNotFound, как
+// отсутствующий. Диспетчер шагов будит вызывающий после своего ответа.
+func (s *Server) startSwarmPass(ctx context.Context, in store.SwarmStart, authorize func(context.Context) bool) (store.Swarm, error) {
+	if err := s.requireSwarmView(in.SwarmID, in.UserID); err != nil {
+		return store.Swarm{}, err
+	}
+	if err := startGoalError(in.Goal); err != nil {
+		return store.Swarm{}, err
+	}
+	if in.Commit == "" {
+		// Сеть — до транзакции записи и вне её (#228).
+		origin, commit, err := s.startCommit(ctx, in.SwarmID, in.UserID)
+		if err != nil {
+			return store.Swarm{}, err
+		}
+		in.Origin, in.Commit = origin, commit
+	}
+	return s.store.StartSwarm(ctx, in, authorize)
+}
+
 // handleSwarmStop: POST /api/swarms/{id}/stop.
 func (s *Server) handleSwarmStop(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.visibleSwarmUser(w, r)
+	user, ok := currentUser(w, r)
 	if !ok {
 		return
 	}
-	sw, err := s.store.StopSwarm(r.Context(), r.PathValue("id"), user.ID, func(ctx context.Context) bool {
+	sw, err := s.stopSwarm(r.Context(), r.PathValue("id"), user.ID, func(ctx context.Context) bool {
 		return secretRequestSession(ctx, s, r, user.ID)
 	})
 	if err != nil {
@@ -130,6 +141,30 @@ func (s *Server) handleSwarmStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeSwarmExecution(w, r, sw)
+}
+
+// stopSwarm останавливает проход роя от имени userID — общий путь панели,
+// bro и Telegram (#284): видящему рой — StopSwarm, который в транзакции
+// записи проверяет сессию authorize и право управлять роем; постороннему —
+// ErrNotFound, как отсутствующему рою.
+func (s *Server) stopSwarm(ctx context.Context, swarmID, userID string, authorize func(context.Context) bool) (store.Swarm, error) {
+	if err := s.requireSwarmView(swarmID, userID); err != nil {
+		return store.Swarm{}, err
+	}
+	return s.store.StopSwarm(ctx, swarmID, userID, authorize)
+}
+
+// requireSwarmView пропускает только видящего рой: постороннему рой скрыт
+// как store.ErrNotFound, сбой проверки — ошибкой как есть.
+func (s *Server) requireSwarmView(swarmID, userID string) error {
+	visible, err := s.app.Can(userID, app.ActionViewSwarm, app.SwarmRes(swarmID))
+	if err != nil {
+		return err
+	}
+	if !visible {
+		return fmt.Errorf("%w: swarm %s", store.ErrNotFound, swarmID)
+	}
+	return nil
 }
 
 // readSwarmStart разбирает тело строго: объект с уникальными ключами,
@@ -190,24 +225,34 @@ func startGoalError(goal string) error {
 // swarmExecutionError переводит отказ запуска или остановки в статус;
 // причина отказа уходит вызывающему строкой.
 func swarmExecutionError(w http.ResponseWriter, r *http.Request, err error) {
+	if status, reason, ok := swarmExecutionRefusal(err); ok {
+		writeDetail(w, status, reason)
+		return
+	}
+	apiError(w, r, err)
+}
+
+// swarmExecutionRefusal — публичный отказ запуска или остановки роя: статус
+// и причина для вызывающего, общие для HTTP и Telegram (#284). ok=false —
+// ошибка не из набора отказов: её текст наружу не идёт.
+func swarmExecutionRefusal(err error) (status int, reason string, ok bool) {
 	var fit *store.RoleFitError
 	var head *gitHeadError
 	switch {
 	case errors.As(err, &head):
-		writeDetail(w, head.status, head.Error())
+		return head.status, head.Error(), true
 	case errors.Is(err, store.ErrSwarmRequestDenied):
-		writeDetail(w, http.StatusForbidden, "swarm management denied")
+		return http.StatusForbidden, "swarm management denied", true
 	case errors.Is(err, store.ErrWorkflowDefinitionMissing):
-		writeDetail(w, http.StatusNotFound, err.Error())
+		return http.StatusNotFound, err.Error(), true
 	case errors.Is(err, store.ErrNotFound):
-		writeDetail(w, http.StatusNotFound, "swarm not found")
+		return http.StatusNotFound, "swarm not found", true
 	case errors.Is(err, store.ErrSwarmExecutionState), errors.Is(err, store.ErrSwarmGraphPinned), errors.Is(err, store.ErrSwarmSourceChanged), errors.As(err, &fit):
-		writeDetail(w, http.StatusConflict, err.Error())
+		return http.StatusConflict, err.Error(), true
 	case errors.Is(err, store.ErrWorkflowGraphInvalid), errors.Is(err, store.ErrSwarmSourceInvalid), errors.Is(err, store.ErrSwarmGoalInvalid):
-		writeDetail(w, http.StatusUnprocessableEntity, err.Error())
-	default:
-		apiError(w, r, err)
+		return http.StatusUnprocessableEntity, err.Error(), true
 	}
+	return 0, "", false
 }
 
 // writeSwarmExecution отвечает исполнением роя с задачей текущего прохода и

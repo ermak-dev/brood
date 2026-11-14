@@ -56,6 +56,8 @@ type fakeAteapi struct {
 	workerReads          int
 	beforeWorkerList     func()
 	workerReadError      error
+	// namespaceError — отказ GetAtespace, nil — обычный ответ.
+	namespaceError error
 }
 
 func newFakeAteapi() *fakeAteapi {
@@ -96,6 +98,9 @@ func (f *fakeAteapi) GetAtespace(_ context.Context, req *ateapi.GetAtespaceReque
 	if hook := f.beforeNamespaceGet; hook != nil {
 		f.beforeNamespaceGet = nil
 		hook()
+	}
+	if f.namespaceError != nil {
+		return nil, f.namespaceError
 	}
 	item, ok := f.atespaces[req.GetAtespace().GetName()]
 	if !ok {

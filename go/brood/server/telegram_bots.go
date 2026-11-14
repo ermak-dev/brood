@@ -10,11 +10,12 @@ package server
 // таймеру. Так блокировка и отзыв сессий, которые пишет auth, останавливают
 // поллер без связи с ним.
 //
-// Поллер только принимает обновления: /start <код> из личного чата
-// подтверждает привязку, привязанный чат отвечает на запросы кнопками, reply
-// и /answer (#283, telegram_answers.go), на неизвестную команду получает
-// справку. Уведомления идут через outbox (#282, telegram_sender.go). Пакет
-// молчит: исход поллера виден в состоянии привязки и в профиле.
+// Поллер принимает обновления: /start <код> из личного чата подтверждает
+// привязку. Привязанный чат отвечает на запросы кнопками, reply и /answer
+// (#283, telegram_answers.go), прочие команды и кнопки подтверждения
+// исполняет telegramCommands (#284, telegram_commands.go). Уведомления идут
+// через outbox (#282, telegram_sender.go). Пакет молчит: исход поллера виден
+// в состоянии привязки и в профиле.
 
 import (
 	"context"
@@ -65,7 +66,6 @@ const (
 	telegramReplyChatTaken     = "This chat is linked to another brood account. Unlink it there first."
 	telegramReplyLinkFailed    = "brood could not link this chat right now. Try again later."
 	telegramReplyStart         = "To link this chat, issue a link code in your brood profile and send it here as /start <code>."
-	telegramReplyHelp          = "In this chat brood answers requests: press a button of a request, or answer a text request with a reply to its message or with /answer <number> <text>. Manage the link in your brood profile."
 )
 
 // Причины ошибки привязки, которые пишут поллер и сверка. К причинам 401 и
@@ -185,6 +185,9 @@ type telegramBots struct {
 	install   string
 	installID int64
 	opts      telegramOptions
+	// commands исполняет команды и нажатия кнопок подтверждения привязанных
+	// чатов (#284); его заводит сборка сервера до старта поллеров.
+	commands *telegramCommands
 
 	// syncMu сериализует sync и останов: набор поллеров меняет только
 	// держатель. Поллеры его не берут.
@@ -758,18 +761,26 @@ func telegramClip(s string, limit int) string {
 
 // handle разбирает одно обновление. Только личный чат человека: группа,
 // канал, бот и сообщение от имени чата игнорируются без ответа. Привязанный
-// чат отвечает на запросы кнопкой, reply на сообщение запроса и /answer, на
-// прочие команды получает справку, на прочий текст — подсказку, как
-// ответить. Пока чат не привязан, действует только /start: с кодом —
-// подтверждение, без кода — подсказка; нажатие кнопки и текст
-// игнорируются. Свой бот, привязанный к другому чату, чужим чатам не
-// отвечает вовсе. Сбой чтения базы пропускает обновление без ответа.
+// чат действует от имени пользователя привязки: кнопка ответа, reply на
+// сообщение запроса и /answer отвечают на запрос (#283), кнопка
+// подтверждения и прочие команды идут в telegramCommands (#284), на прочий
+// текст чат получает подсказку, как ответить. Пока чат не привязан,
+// действует только /start: с кодом — подтверждение, без кода — подсказка;
+// нажатие кнопки и текст игнорируются. Свой бот, привязанный к другому
+// чату, чужим чатам не отвечает вовсе. Сбой чтения базы пропускает
+// обновление без ответа.
 func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 	if u.Malformed {
 		return
 	}
-	if u.CallbackQuery != nil {
-		p.handleCallback(ctx, u.CallbackQuery)
+	if q := u.CallbackQuery; q != nil {
+		// Префикс callback_data называет вид кнопки: подтверждение команды
+		// (c:) — командам, кнопки ответа и состояния запроса — ответам.
+		if strings.HasPrefix(q.Data, telegramConfirmPrefix) {
+			p.handlePress(ctx, q)
+		} else {
+			p.handleCallback(ctx, q)
+		}
 		return
 	}
 	m := u.Message
@@ -777,21 +788,19 @@ func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 		return
 	}
 	name, arg, command := telegramCommand(m.Text)
-	owner, linked, err := p.chatOwner(ctx, m.Chat.ID, m.From.ID)
+	chat, err := p.chatOwner(ctx, m.Chat.ID, m.From.ID)
 	if err != nil {
 		return
 	}
-	if linked {
-		p.bots.noteContact(owner, m.From)
+	if chat.linked() {
+		p.bots.noteContact(chat.userID, m.From)
 		switch {
 		case !command:
-			p.reply(ctx, m.Chat.ID, p.textReply(ctx, owner, m))
-		case name == "start":
-			p.reply(ctx, m.Chat.ID, telegramReplyAlreadyLinked)
-		case name == "answer":
-			p.reply(ctx, m.Chat.ID, p.answerCommand(ctx, owner, m))
+			p.reply(ctx, chat.chatID, p.textReply(ctx, chat.userID, m))
+		case telegramAnswerName(name):
+			p.reply(ctx, chat.chatID, p.answerCommand(ctx, chat.userID, m))
 		default:
-			p.reply(ctx, m.Chat.ID, telegramReplyHelp)
+			p.send(ctx, chat.chatID, p.bots.commands.run(ctx, chat, m.Text))
 		}
 		return
 	}
@@ -819,19 +828,47 @@ func telegramCommand(text string) (name, arg string, ok bool) {
 	return name, strings.Join(fields[1:], " "), true
 }
 
-// chatOwner находит пользователя, к которому привязан чат chat через этот
-// бот, и проверяет привязку хранилищем: бот, чат, собеседник from, сессия и
-// включённый пользователь.
-func (p *telegramPoller) chatOwner(ctx context.Context, chat, from int64) (string, bool, error) {
-	userID := p.userID
-	if userID == "" {
-		userID = p.bots.installationChat(chat)
-		if userID == "" {
-			return "", false, nil
+// handlePress разбирает нажатие кнопки подтверждения команды (c:, #284);
+// кнопки ответа на запрос сюда не приходят (handle). Действует только
+// личный чат человека, привязанный через этот бот; прочие нажатия остаются
+// без ответа, как сообщения непривязанных чатов. Нажатие получает ответ
+// answerCallbackQuery, клавиатура решённого подтверждения снимается, а
+// действие, которое нажатие забрало, исполняется, и его итог уходит в чат.
+func (p *telegramPoller) handlePress(ctx context.Context, q *telegram.CallbackQuery) {
+	m := q.Message
+	if q.ID == "" || q.From.IsBot || m == nil || !m.Chat.Private() || m.Chat.ID <= 0 || m.Chat.ID != q.From.ID {
+		return
+	}
+	chat, err := p.chatOwner(ctx, m.Chat.ID, q.From.ID)
+	if err != nil || !chat.linked() {
+		return
+	}
+	p.bots.noteContact(chat.userID, &q.From)
+	press := p.bots.commands.press(chat, q.Data)
+	// Ответ нажатию — до действия: Telegram ждёт его, пока крутит кнопку.
+	_ = p.client.AnswerCallbackQuery(ctx, q.ID, press.answer)
+	if press.clear {
+		_ = p.client.EditMessageReplyMarkup(ctx, m.Chat.ID, m.MessageID, nil)
+	}
+	if press.run != nil {
+		p.send(ctx, chat.chatID, telegramText(press.run(ctx)))
+	}
+}
+
+// chatOwner находит привязку чата chatID через этот бот и проверяет её
+// хранилищем: бот, чат, собеседник from, сессия и включённый пользователь.
+// Чат несёт сессию привязки; без сессии он не привязан.
+func (p *telegramPoller) chatOwner(ctx context.Context, chatID, from int64) (telegramChat, error) {
+	chat := telegramChat{userID: p.userID, botUsername: p.botUsername, chatID: chatID}
+	if chat.userID == "" {
+		chat.userID = p.bots.installationChat(chatID)
+		if chat.userID == "" {
+			return chat, nil
 		}
 	}
-	active, err := p.bots.store.TelegramSessionActive(ctx, userID, p.botUsername, chat, from)
-	return userID, active, err
+	session, err := p.bots.store.TelegramChatSession(ctx, chat.userID, p.botUsername, chatID, from)
+	chat.session = session
+	return chat, err
 }
 
 // linkedElsewhere: свой бот уже привязан к другому чату. Бот установки
@@ -874,4 +911,14 @@ func (p *telegramPoller) confirm(ctx context.Context, m *telegram.Message, code 
 // уведомление. Исход не записывается и не повторяется.
 func (p *telegramPoller) reply(ctx context.Context, chatID int64, text string) {
 	_, _ = p.client.SendMessage(ctx, chatID, text, nil)
+}
+
+// send отвечает на команду текстом и клавиатурой reply, как reply; пустой
+// текст — без ответа. Текст обрезается до предела сообщения Bot API.
+func (p *telegramPoller) send(ctx context.Context, chatID int64, reply telegramReply) {
+	if strings.TrimSpace(reply.text) == "" {
+		return
+	}
+	text := telegramClipText(strings.ToValidUTF8(reply.text, "?"), telegram.MessageLimit)
+	_, _ = p.client.SendMessage(ctx, chatID, text, reply.markup)
 }

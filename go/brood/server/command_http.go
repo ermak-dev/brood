@@ -16,6 +16,7 @@ import (
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/relay"
+	"brood.dev/go/brood/store"
 )
 
 func commandRequestBody(w http.ResponseWriter, r *http.Request) (string, json.RawMessage, bool) {
@@ -129,6 +130,42 @@ func writeCommandError(w http.ResponseWriter, r *http.Request, err error) {
 	}{err.Error(), reason})
 }
 
+// commandPreflight — проверки маршрута команды каталога до исполнения,
+// общие для POST /api/commands/{tool} и команд Telegram (#284): у команды в
+// рое — право на рой (читать для agents и profile, иначе управлять), живой
+// рой и его namespace; у команды не для гостей — администратор. refusal —
+// сознательный отказ (writeCommandError), failure — сбой проверки (apiError).
+func (s *Server) commandPreflight(ctx context.Context, user store.User, scope string, inv command.Invocation) (refusal, failure error) {
+	spec, _ := command.Lookup(inv.Name)
+	if scope != "" {
+		action := app.ActionManageSwarm
+		if spec.ReadOnly && (inv.Name == "agents" || inv.Name == "profile") {
+			action = app.ActionViewSwarm
+		}
+		allowed, err := s.app.Can(user.ID, action, app.SwarmRes(scope))
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return command.Refuse(app.ErrNotFound, "swarm not found"), nil
+		}
+		sw, found, err := s.gateway.SwarmByID(scope)
+		if err != nil {
+			return nil, err
+		}
+		if !found || sw.State != app.StateActive {
+			return command.Refuse(app.ErrConflict, "swarm is not active"), nil
+		}
+		if err := s.checkSwarmNamespace(ctx, sw); err != nil {
+			return nil, err
+		}
+	}
+	if !spec.Guest && !user.IsAdmin {
+		return command.Refuse(app.ErrNotAllowed, "administrator access required"), nil
+	}
+	return nil, nil
+}
+
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
@@ -143,37 +180,13 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, 400, err.Error())
 		return
 	}
-	spec, _ := command.Lookup(inv.Name)
-	if scope != "" {
-		action := app.ActionManageSwarm
-		if spec.ReadOnly && (inv.Name == "agents" || inv.Name == "profile") {
-			action = app.ActionViewSwarm
-		}
-		allowed, err := s.app.Can(user.ID, action, app.SwarmRes(scope))
-		if err != nil {
-			apiError(w, r, err)
-			return
-		}
-		if !allowed {
-			writeCommandError(w, r, command.Refuse(app.ErrNotFound, "swarm not found"))
-			return
-		}
-		sw, found, err := s.gateway.SwarmByID(scope)
-		if err != nil {
-			apiError(w, r, err)
-			return
-		}
-		if !found || sw.State != app.StateActive {
-			writeCommandError(w, r, command.Refuse(app.ErrConflict, "swarm is not active"))
-			return
-		}
-		if err := s.checkSwarmNamespace(r.Context(), sw); err != nil {
-			apiError(w, r, err)
-			return
-		}
+	refusal, failure := s.commandPreflight(r.Context(), user, scope, inv)
+	if failure != nil {
+		apiError(w, r, failure)
+		return
 	}
-	if !spec.Guest && !user.IsAdmin {
-		writeCommandError(w, r, command.Refuse(app.ErrNotAllowed, "administrator access required"))
+	if refusal != nil {
+		writeCommandError(w, r, refusal)
 		return
 	}
 	caller := "user:" + user.ID

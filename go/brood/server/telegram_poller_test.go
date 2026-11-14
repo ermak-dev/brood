@@ -8,7 +8,8 @@ package server
 // the link through the store; a wrong, malformed or expired code gets one
 // refusal text that names no account. Once a bot's chat is linked, updates
 // from other chats and every group are ignored without a reply. The linked
-// chat gets a short help text for unknown commands. 401 and 409 from
+// chat gets a short refusal for an unknown command and the command list for
+// /help; the commands themselves are #284. 401 and 409 from
 // Telegram move the own link to error with a reason that carries no token,
 // and stop the poller; it stays stopped until a new token or code even when
 // the error cannot be written, and a refusal of a token already replaced
@@ -158,7 +159,7 @@ func TestTelegramGroupsAndForeignChatsAreIgnored(t *testing.T) {
 	}
 }
 
-func TestTelegramLinkedChatGetsHelpForUnknownCommands(t *testing.T) {
+func TestTelegramLinkedChatGetsARefusalForUnknownCommandsAndHelp(t *testing.T) {
 	h := newTelegramHarness(t, "", nil)
 	alice, aliceID := h.member("alice")
 	h.setBot(alice, aliceID, aliceBotToken)
@@ -166,8 +167,8 @@ func TestTelegramLinkedChatGetsHelpForUnknownCommands(t *testing.T) {
 	h.deliver(aliceBotToken, privateMessage(555, "anton", "/status"))
 	h.deliver(aliceBotToken, privateMessage(555, "anton", "/help@Alice_Bot"))
 	got := h.api.sentTo(aliceBotToken, 555)
-	if len(got) != 3 || got[1] != telegramReplyHelp || got[2] != telegramReplyHelp {
-		t.Fatalf("replies to unknown commands: %q", got)
+	if len(got) != 3 || got[1] != telegramUnknownReply("status") || got[2] != telegramHelp {
+		t.Fatalf("replies to an unknown command and /help: %q", got)
 	}
 }
 
@@ -328,7 +329,7 @@ func TestTelegramInstallationBotServesUsersWithoutAnOwnBot(t *testing.T) {
 		t.Fatalf("installation link: %+v", got)
 	}
 	h.deliver(installBotToken, privateMessage(666, "bobby", "/status"))
-	if got := h.api.sentTo(installBotToken, 666); !slices.Equal(got, []string{telegramReplyLinked, telegramReplyHelp}) {
+	if got := h.api.sentTo(installBotToken, 666); !slices.Equal(got, []string{telegramReplyLinked, telegramUnknownReply("status")}) {
 		t.Fatalf("installation replies: %q", got)
 	}
 	// Чат, не привязанный ни к кому, получает от бота установки только
@@ -598,7 +599,7 @@ func TestTelegramBatchBelowTheOffsetIsHandledOnceAndPollingGoesOn(t *testing.T) 
 		return slices.ContainsFunc(h.api.polls(aliceBotToken), func(p fakePoll) bool { return p.Offset == low+1 })
 	})
 	time.Sleep(100 * time.Millisecond)
-	if got := h.api.sentTo(aliceBotToken, 555); !slices.Equal(got, []string{telegramReplyLinked, telegramReplyHelp}) {
+	if got := h.api.sentTo(aliceBotToken, 555); !slices.Equal(got, []string{telegramReplyLinked, telegramUnknownReply("status")}) {
 		t.Fatalf("replies to the renumbered update: %q", got)
 	}
 }
@@ -665,7 +666,7 @@ func TestTelegramInterruptedUpdateIsNotConfirmed(t *testing.T) {
 	replying := make(chan struct{})
 	var once sync.Once
 	h.api.scriptSend(aliceBotToken, func(_ http.ResponseWriter, r *http.Request, s fakeSent) bool {
-		if s.Text != telegramReplyHelp {
+		if s.Text != telegramUnknownReply("status") {
 			return false
 		}
 		once.Do(func() { close(replying) })
@@ -757,7 +758,7 @@ func TestTelegramRevokedChatIsNotHeardBeforeTheNextReconcile(t *testing.T) {
 				t.Fatal(err)
 			}
 			h.deliver(tc.token, privateMessage(666, "bobby", "/status"))
-			if got := h.api.sentTo(tc.token, 666); !slices.Equal(got, []string{telegramReplyHelp}) {
+			if got := h.api.sentTo(tc.token, 666); !slices.Equal(got, []string{telegramUnknownReply("status")}) {
 				t.Fatalf("replies to the linked chat: %q", got)
 			}
 			if _, err := h.srv.store.DeleteSessionsOfUser(context.Background(), bobID); err != nil {
@@ -767,7 +768,7 @@ func TestTelegramRevokedChatIsNotHeardBeforeTheNextReconcile(t *testing.T) {
 				t.Fatal("the pollers forgot the chat before the next reconcile")
 			}
 			h.deliver(tc.token, privateMessage(666, "bobby", "/status"))
-			if got := h.api.sentTo(tc.token, 666); !slices.Equal(got, []string{telegramReplyHelp}) {
+			if got := h.api.sentTo(tc.token, 666); !slices.Equal(got, []string{telegramUnknownReply("status")}) {
 				t.Fatalf("a revoked chat still gets replies: %q", got)
 			}
 		})

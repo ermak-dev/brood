@@ -130,8 +130,11 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.steps = newStepDispatcher(srv)
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
-	// Поллер отвечает на запросы путём ответа сервера (#283).
+	// Поллер отвечает на запросы путём ответа сервера (#283), а команды
+	// чатов (#284) зовут методы сервера. И то и другое — только из поллеров,
+	// которые стартуют последними, когда сборка закончена.
 	srv.telegram.answers = srv
+	srv.telegram.commands = newTelegramCommands(srv, cfg.PanelOrigin, srv.telegram.opts.now)
 	srv.sender = newTelegramSender(st, cfg, opts.telegram)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {

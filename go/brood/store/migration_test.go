@@ -380,6 +380,65 @@ func TestMigrateV28DatabaseToCurrent(t *testing.T) {
 	}
 }
 
+// withDefaultSwarmStep: строки базы после шага 29→30: у привязок Telegram в
+// конце рой по умолчанию NULL, прочие строки те же.
+func withDefaultSwarmStep(rows map[string][]string) map[string][]string {
+	out := maps.Clone(rows)
+	var links []string
+	for _, row := range rows["user_telegram_links"] {
+		links = append(links, row+",NULL")
+	}
+	out["user_telegram_links"] = links
+	return out
+}
+
+// TestMigrateV29DatabaseToCurrent: шаг 29→30 добавляет
+// user_telegram_links.default_swarm_id (#284). Итог совпадает со свежей базой
+// объект в объект; прежние привязки — linked, с ждущим кодом, с ошибкой —
+// остаются как были, без роя по умолчанию, а /use и снятие роя по
+// умолчанию вместе с роем работают на мигрированной базе.
+func TestMigrateV29DatabaseToCurrent(t *testing.T) {
+	ctx := context.Background()
+	path := loadSchemaFixture(t, 29)
+	raw := rawDatabase(t, path)
+	requireIntact(t, raw)
+	before := databaseRows(t, raw)
+	raw.Close()
+	if len(before["user_telegram_links"]) != 3 {
+		t.Fatalf("the v29 fixture has no links to migrate: %v", before["user_telegram_links"])
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("v29 database refused: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("migrated version = %d, %v; want %d", version, err, schemaVersion)
+	}
+	fresh := newTestStore(t)
+	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
+	}
+	if after, want := databaseRows(t, s.db), withDefaultSwarmStep(before); !reflect.DeepEqual(after, want) {
+		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
+	}
+	requireIntact(t, s.db)
+	if link, err := s.GetTelegramLink(ctx, "root"); err != nil || link.State != "linked" || link.ChatID != 4242 || link.DefaultSwarmID != "" {
+		t.Fatalf("root link after migration = %+v, %v", link, err)
+	}
+	if link, err := s.SetTelegramSwarm(ctx, "root", "s", allow); err != nil || link.DefaultSwarmID != "s" {
+		t.Fatalf("/use on the migrated database = %+v, %v", link, err)
+	}
+	if _, err := s.SetTelegramSwarm(ctx, "vw", "s", allow); !errors.Is(err, ErrTelegramUnlinked) {
+		t.Fatalf("/use of a failed link on the migrated database = %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO user_telegram_links (user_id, state, events, updated_at, default_swarm_id) VALUES ('u', 'unlinked', '[]', 'now', 'missing')`); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		t.Fatalf("default swarm foreign key after migration: %v", err)
+	}
+}
+
 // TestMigrateEveryFrozenVersionToCurrent: каждая поддержанная версия доходит
 // цепочкой до текущей схемы, равной свежей базе, с теми же строками в
 // таблицах обеих версий.

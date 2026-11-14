@@ -81,21 +81,22 @@ func (s *Server) canViewSwarm(userID, swarmID string) bool {
 	return err == nil && allowed
 }
 
-// handleCallback разбирает нажатие кнопки сообщения бота. Только личный
-// чат человека, привязанный через этот бот; нажатие из иного чата
-// игнорируется без ответа, как его сообщения. Ответ на нажатие — состояние
-// запроса после него или причина отказа.
+// handleCallback разбирает нажатие кнопки сообщения бота, кроме кнопки
+// подтверждения команды (c:): её поллер отдаёт telegramCommands (#284).
+// Только личный чат человека, привязанный через этот бот; нажатие из иного
+// чата игнорируется без ответа, как его сообщения. Ответ на нажатие —
+// состояние запроса после него или причина отказа.
 func (p *telegramPoller) handleCallback(ctx context.Context, q *telegram.CallbackQuery) {
 	m := q.Message
 	if q.From.IsBot || q.From.ID <= 0 || m == nil || !m.Chat.Private() || m.Chat.ID != q.From.ID {
 		return
 	}
-	owner, linked, err := p.chatOwner(ctx, m.Chat.ID, q.From.ID)
-	if err != nil || !linked {
+	chat, err := p.chatOwner(ctx, m.Chat.ID, q.From.ID)
+	if err != nil || !chat.linked() {
 		return
 	}
-	p.bots.noteContact(owner, &q.From)
-	text := p.press(ctx, owner, m.Chat.ID, q.From.ID, q.Data)
+	p.bots.noteContact(chat.userID, &q.From)
+	text := p.press(ctx, chat.userID, m.Chat.ID, q.From.ID, q.Data)
 	_ = p.client.AnswerCallbackQuery(ctx, q.ID, telegramClipText(text, telegramCallbackTextLimit))
 }
 

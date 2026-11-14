@@ -38,10 +38,14 @@ var schemaMigrations = []schemaMigration{
 	// 28: момент последнего исполнения роя (#268).
 	{from: 27, sql: swarmExecutionAtColumn + ";" + swarmExecutionAtBackfill},
 	// 29: вид сессии, привязки Telegram и исходящие уведомления (#279).
-	// Прежние сессии — web; новые таблицы пусты. Шаг берёт живой DDL
-	// реестра: версия, которая меняет DDL Telegram, сначала замораживает
-	// здесь текст версии 29 (TestEachMigrationStepYieldsTheNextFrozenVersion).
-	{from: 28, sql: sessionKindColumn + ";" + telegramFullSchema()},
+	// Прежние сессии — web; новые таблицы пусты. Таблица привязок — текст
+	// версии 29, замороженный до шага 29→30; прочий DDL Telegram шаг берёт у
+	// реестра, и версия, которая его меняет, сначала замораживает его здесь
+	// (TestEachMigrationStepYieldsTheNextFrozenVersion).
+	{from: 28, sql: sessionKindColumn + ";" + telegramSchemaV29()},
+	// 30: рой по умолчанию привязки Telegram (/use, #284); у прежних
+	// привязок его нет.
+	{from: 29, sql: telegramDefaultSwarmColumn},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).

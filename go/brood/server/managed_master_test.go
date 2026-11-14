@@ -38,9 +38,9 @@ func TestManagedRolePreservesDuplicateFieldRejection(t *testing.T) {
 	}
 }
 
-func masterSetup(t *testing.T) (*substrateServer, *http.Client, store.ManagedActor, *managedFakePVE) {
+func masterSetup(t *testing.T, configure ...func(*Config)) (*substrateServer, *http.Client, store.ManagedActor, *managedFakePVE) {
 	t.Helper()
-	ts, alice, _, swarm, pve, hub := managedSetup(t)
+	ts, alice, _, swarm, pve, hub := managedSetup(t, configure...)
 	ctx := context.Background()
 	u, err := ts.srv.store.GetUserByUsername(ctx, "alice")
 	if err != nil {

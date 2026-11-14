@@ -182,11 +182,12 @@ func telegramRequestState(r store.SwarmRequest, author string) string {
 }
 
 // telegramAnswerArgs разбирает /answer <номер> <текст>: номер уведомления
-// запроса и текст ответа с его строками. Без номера или текста — отказ.
+// запроса и текст ответа с его строками. Имя команды — в любом регистре, как
+// у команд чата (#284). Без номера или текста — отказ.
 func telegramAnswerArgs(text string) (notification int64, answer string, ok bool) {
 	head, rest := telegramField(text)
 	name, _, _ := strings.Cut(strings.TrimPrefix(head, "/"), "@")
-	if !strings.HasPrefix(head, "/") || name != "answer" {
+	if !strings.HasPrefix(head, "/") || !telegramAnswerName(name) {
 		return 0, "", false
 	}
 	number, rest := telegramField(rest)
@@ -196,6 +197,13 @@ func telegramAnswerArgs(text string) (notification int64, answer string, ok bool
 		return 0, "", false
 	}
 	return id, answer, true
+}
+
+// telegramAnswerName: имя команды name — /answer в любом регистре. Поллер
+// по нему отдаёт команду ответам, а не командам чата, которые имя тоже
+// сравнивают без регистра.
+func telegramAnswerName(name string) bool {
+	return strings.EqualFold(name, "answer")
 }
 
 // telegramField — первое слово s после пробелов и остаток после него.
