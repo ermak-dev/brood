@@ -394,6 +394,24 @@ func (s *Store) CheckGitLabAccess(ctx context.Context, p GitLabPrincipal, kind s
 	return g, nil
 }
 
+// CheckGitLabGrantAccess revalidates one exact grant in a transaction.
+// An empty ID is denied; another grant never replaces revoked or expired authority.
+func (s *Store) CheckGitLabGrantAccess(ctx context.Context, p GitLabPrincipal, kind, id string) (GitLabGrant, error) {
+	if id == "" {
+		return GitLabGrant{}, ErrGitLabDenied
+	}
+	var g GitLabGrant
+	err := s.WithTx(ctx, func(ctx context.Context) error {
+		var err error
+		g, err = s.gitlabCheckGrant(ctx, p, kind, id)
+		return err
+	})
+	if err != nil {
+		return GitLabGrant{}, err
+	}
+	return g, nil
+}
+
 func gitlabCAS(result sql.Result, err error) error {
 	if err != nil {
 		return err
