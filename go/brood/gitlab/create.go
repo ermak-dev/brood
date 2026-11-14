@@ -164,7 +164,7 @@ func (c *Client) CreateMergeRequest(ctx context.Context, allowedTarget string, i
 }
 
 func (c *Client) validCreate(allowedTarget string, in CreateMergeRequestInput) bool {
-	if !createBranch(allowedTarget) || !createBranch(in.SourceBranch) || in.TargetBranch != allowedTarget || in.SourceBranch == allowedTarget || !createSHAValid(in.SourceSHA) {
+	if !ValidCreateBranch(allowedTarget) || !ValidCreateBranch(in.SourceBranch) || in.TargetBranch != allowedTarget || in.SourceBranch == allowedTarget || !createSHAValid(in.SourceSHA) {
 		return false
 	}
 	if len(in.Title) == 0 || len(in.Title) > MaxCreateTitleBytes || strings.TrimSpace(in.Title) == "" || !utf8.ValidString(in.Title) {
@@ -206,10 +206,13 @@ func (c *Client) validCreate(allowedTarget string, in CreateMergeRequestInput) b
 	return true
 }
 
-// createBranch deliberately accepts less than git-check-ref-format --branch:
-// ASCII alphanumerics, slash, dot, underscore and hyphen, without symbolic HEAD,
-// full refs, dot components, .lock suffixes or ambiguous/option-like names.
-func createBranch(branch string) bool {
+// ValidCreateBranch reports whether a branch meets this transport's deliberately
+// narrow create syntax, not the broader Git ref or read-only binding contract.
+// It is pure and may be used before granting authority or reserving an intent.
+// Accepted names use ASCII alphanumerics, slash, dot, underscore and hyphen,
+// without symbolic HEAD, full refs, dot components, .lock suffixes or
+// ambiguous/option-like names. This check does not grant branch authority.
+func ValidCreateBranch(branch string) bool {
 	if len(branch) == 0 || len(branch) > MaxCreateBranchBytes || branch == "HEAD" || strings.HasPrefix(branch, "-") || strings.HasPrefix(branch, "refs/") || strings.Contains(branch, "..") {
 		return false
 	}
