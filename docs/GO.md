@@ -83,6 +83,70 @@ Substrate закреплён в `go.mod` на публичной версии
 API входа описан в `go/CONTRACT.md`. Наличие пакета и зелёные тесты не
 означают, что все пункты эпика #27 уже прошли живую приёмку.
 
+## GitLab authority в хранилище (#302)
+
+`store/gitlab.go` — только локальные данные и транзакции, без сети, нового
+API/команд, клиентских адаптеров и исполнения merge. Шаг 32→33 создаёт пустые
+`gitlab_bindings`, `gitlab_grants`, `gitlab_operations`, `gitlab_approvals`;
+прежние Git transport credentials не создают ни привязок, ни разрешений API.
+
+- `PutGitLabBinding`: активный администратор задаёт точный канонический
+  repository из декларации проекта, HTTPS API origin того же DNS host без
+  пути/порта/credentials, положительный numeric GitLab project ID, target branch,
+  имя server-side credential entry и enabled. Байты API token хранилище не
+  принимает. Ревизия меняется через CAS, включая ротацию с теми же полями.
+  Store проверяет локальную привязку и синтаксис; проверка repository через
+  upstream `GET /projects/:id` перед записью — обязанность будущего сервера.
+- `CreateGitLabGrant`: только текущий owner роя или администратор явно выдаёт
+  read/create/propose точному actor UID/incarnation/swarm/atespace и ревизии
+  привязки до заданного срока. Идентичность берётся из доверенного адаптера.
+  На использовании проверяются текущий settled running актор, активный рой,
+  совпадение atespace UID, repository и binding revision, срок/отзыв grant и
+  права живого granting human: admin либо project member + owner/editor роя.
+  Master role, parent actor и текст ответа оператору grants не создают.
+- `ReserveGitLabMutation` принимает только MR create и хеширует ограниченные
+  canonical bytes всех аргументов; содержимое не сохраняет. Ключ повтора —
+  project/actor UID/incarnation/kind/request ID; весь principal дополнительно
+  сверяется. Другое содержимое конфликтует. Исходный grant неизменен: новый
+  grant не оживляет старое намерение. Журнал сохраняет неизменный snapshot
+  привязки без token bytes: ротация не теряет прежний upstream project/target.
+  Только успешный revision CAS
+  `reserved→sending` даёт одну попытку, с повторной авторизацией внутри той же
+  транзакции. Транзакция должна завершиться до внешнего эффекта: нельзя
+  отправлять запрос из внешнего `WithTx`, который ещё может откатиться.
+  `sending→completed/refused/unknown` фиксирует исход даже после отзыва.
+  `reserved→refused` отменяет неотправленное намерение. Ни одно состояние
+  после sending не возвращается в reserved/sending. При exclusive startup
+  `RecoverGitLabOperations` переводит sending в unknown, но не повторяет сеть.
+- `ReserveGitLabProposal` сохраняет типизированный неизменный snapshot:
+  requester, binding revision, тот же numeric project для source/target, MR IID,
+  source branch/SHA, pipeline ID/SHA, target branch и squash. Forks и pipelines
+  с SHA, отличным от source SHA, не поддерживаются. `ApproveGitLabMerge`
+  требует текущую web session, swarm-management rights и отдельный явный
+  `GitLabApproverPolicy`; nil всегда отказывает. Policy вызывается внутри
+  транзакции, не делает сеть и читает store с переданным ctx; после callback
+  store ещё раз проверяет текущую личность, права и сессию. `ClaimGitLabApproval`
+  повторяет эти проверки и policy, сверяет snapshot целиком и через CAS
+  одноразово меняет approved на claimed. Expiry, owner/admin revocation или
+  любая смена snapshot отказывают. Generic swarm answer merge не разрешает.
+
+Get-методы — внутреннее чтение истории, не авторизация гостя. Grant, journal и
+approval не удаляются и не переписываются под другой личностью; их триггеры
+сохраняют историю после удаления пользователя/актора/роя и неопределённый эффект
+после отзыва. Claim — только локальное потребление решения, не доказательство
+проверки GitLab или завершённого merge. Proposal journal не является merge
+executor; для него нет ни merge kind, ни механизма выполнения.
+
+Остаётся отдельный server layer: явная конфигурация источника API credentials,
+аутентифицированный relay principal и live native UID checks, ограниченный
+GitLab client, повторные проверки после сети/перед выдачей private data,
+канонизация payload, атомарная фиксация sending до отправки, bounded outcomes
+и reconciliation unknown, policy одобряющих, защищённый operator endpoint и
+повторное чтение MR/pipeline/branch protection перед действием. У GitLab merge
+REST API нет атомарного expected pipeline ID precondition: локальный claim
+не закрывает эту гонку. Исполнение merge требует отдельного решения оператора
+об этой границе; этот слой его не включает.
+
 ## Приватная подготовка Go endpoint
 
 `deploy/Dockerfile.go` собирает два статических бинарника: `brood` и `bro`.
@@ -360,7 +424,7 @@ Schema gate выкладки (`brood database verify`, [DEPLOY](DEPLOY.md)) ид
 кодом: старый snapshot мигрирует в памяти, и упавший шаг отказывает до apply.
 
 Версия схемы растёт на единицу при любом изменении набора таблиц или их
-определений (сейчас 32: 17 добавила `swarm_role_bindings`, #208; 18 —
+определений (сейчас 33: 17 добавила `swarm_role_bindings`, #208; 18 —
 `swarm_requests` и шаг без колонки `answer`, #209; 19 убрала модель «актор
 под узел» — таблицу `pipeline_preparations` с её триггерами и колонки
 `native_*` шага, #223; 20 — состояние доставки ответа
@@ -380,7 +444,9 @@ Schema gate выкладки (`brood database verify`, [DEPLOY](DEPLOY.md)) ид
 привязки Telegram `user_telegram_links.default_swarm_id`, #284; 31 — имя
 собеседника привязки `user_telegram_links.telegram_username` и триггер
 отзыва сессии, который его снимает, #294; 32 — поле ответа отправленного
-уведомления `telegram_outbox.force_reply`, #298). Без подъёма база прежнего
+уведомления `telegram_outbox.force_reply`, #298; 33 — явные привязки GitLab API,
+поинкарнационные grants, журнал намерений и отдельные merge approvals, #302).
+Без подъёма база прежнего
 выпуска с тем же номером и другой схемой отвергалась бы только сверкой
 определений с текстом «missing table», а прежний бинарник открыл бы
 новую базу, не заметив лишней таблицы. Подъём делает расхождение явным:

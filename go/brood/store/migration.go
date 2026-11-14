@@ -53,6 +53,8 @@ var schemaMigrations = []schemaMigration{
 	// 32: поле ответа отправленного уведомления (#298); прежние сообщения
 	// ушли без него. Ограждение отправленного пересоздаётся с колонкой.
 	{from: 31, sql: telegramForceReplyStep},
+	// 33: явные GitLab API полномочия; прежние Git credentials их не дают (#302).
+	{from: 32, sql: gitlabFullSchema()},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).
