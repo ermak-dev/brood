@@ -57,6 +57,22 @@ type Update struct {
 	Malformed     bool           `json:"-"`
 }
 
+// ReplyMarkup is the reply_markup of a sent message: an *InlineKeyboardMarkup
+// or a *ForceReply. A nil ReplyMarkup, or a nil pointer of either kind, is no
+// markup.
+type ReplyMarkup interface {
+	// encode checks the markup and returns its reply_markup value, nil for
+	// none.
+	encode() (any, error)
+}
+
+// ForceReply asks the Telegram client to open a reply to the message, as if
+// the user chose Reply. Placeholder is the hint in the empty input field, at
+// most 64 characters (TextLength), empty for none.
+type ForceReply struct {
+	Placeholder string
+}
+
 // InlineKeyboardMarkup is an inline keyboard of callback buttons, in rows. It
 // has at least one row; a nil *InlineKeyboardMarkup is no keyboard.
 type InlineKeyboardMarkup struct {
