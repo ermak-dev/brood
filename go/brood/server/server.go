@@ -32,6 +32,9 @@ type Options struct {
 	Provisioner app.Provisioner
 	// Logger — slog запросов и внутренних отказов; nil — умолчание slog.
 	Logger *slog.Logger
+	// argon2 — стоимость настоящего хэширования в тестах пакета;
+	// нулевые параметры сохраняют auth.DefaultArgon2.
+	argon2 auth.Argon2Params
 	// telegram — ритм поллеров Telegram, часы и источник кода привязки;
 	// нулевой берёт умолчания, тесты пакета его подменяют.
 	telegram telegramOptions
@@ -162,7 +165,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.gateway = StoreGateway(st, catalog)
 	srv.app = app.NewService(srv.gateway, provisioner, time.Now, store.NewID)
 
-	authCfg := auth.Config{Secure: cfg.SecureCookies, Secret: cfg.SessionSecret}
+	authCfg := auth.Config{Secure: cfg.SecureCookies, Secret: cfg.SessionSecret, Argon2: opts.argon2}
 	srv.auth = auth.NewService(st, authCfg, time.Now)
 
 	// WorkerPool: полный набор настроек Kubernetes обязателен, иначе

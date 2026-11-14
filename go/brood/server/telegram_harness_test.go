@@ -649,7 +649,7 @@ func startTelegramHarnessAt(t *testing.T, dbPath string, api *fakeBotAPI, apiURL
 	for _, f := range tune {
 		f(&options)
 	}
-	opts := Options{Provisioner: newFakeProvisioner(), telegram: options}
+	opts := Options{Provisioner: newFakeProvisioner(), telegram: options, argon2: cheapArgon2}
 	srv, err := NewFromStore(cfg, opts, st)
 	if err != nil {
 		st.Close()
@@ -663,10 +663,6 @@ func startTelegramHarnessAt(t *testing.T, dbPath string, api *fakeBotAPI, apiURL
 	})
 	return &telegramHarness{testServer: ts, api: api, clock: clock}
 }
-
-// cheapArgon2 — дешёвые параметры хэша: вход тестового пользователя без
-// секунд Argon2 по умолчанию.
-var cheapArgon2 = auth.Argon2Params{MemoryKiB: 64, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}
 
 // createTelegramUser заводит пользователя в базе и возвращает его id.
 func createTelegramUser(t *testing.T, ctx context.Context, st *store.Store, username string) string {

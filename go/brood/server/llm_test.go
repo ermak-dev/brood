@@ -27,7 +27,7 @@ func newLLMTestServer(t *testing.T, backend string) *testServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := New(nil, cfg, Options{Provisioner: newFakeProvisioner()})
+	srv, err := New(nil, cfg, Options{Provisioner: newFakeProvisioner(), argon2: cheapArgon2})
 	if err != nil {
 		t.Fatal(err)
 	}

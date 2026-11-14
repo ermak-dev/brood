@@ -71,6 +71,10 @@ func (p *fakeProvisioner) DeleteAtespace(name, uid string) error {
 	return nil
 }
 
+// cheapArgon2 — настоящие хэши для HTTP-fixtures без повторной стоимости
+// production Argon2; умолчания отдельно проверяет TestServerDefaultPasswordCost.
+var cheapArgon2 = auth.Argon2Params{MemoryKiB: 64, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}
+
 // testServer — собранный сервер с временной базой.
 type testServer struct {
 	t            *testing.T
@@ -97,7 +101,7 @@ func newTestServerWith(t *testing.T, provisioner app.Provisioner) *testServer {
 		// обращение к atespace — 503 с именами настроек.
 		provisioner = &stubProvisioner{}
 	}
-	srv, err := New(nil, cfg, Options{Provisioner: provisioner})
+	srv, err := New(nil, cfg, Options{Provisioner: provisioner, argon2: cheapArgon2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -128,7 +132,7 @@ func (p *stubProvisioner) DeleteAtespace(string, string) error {
 // команда бинарника: хэш Argon2id, идемпотентный BootstrapAdmin.
 func (ts *testServer) bootstrapAdmin(username, password string) {
 	ts.t.Helper()
-	hash, err := auth.HashPassword(password, auth.DefaultArgon2())
+	hash, err := auth.HashPassword(password, cheapArgon2)
 	if err != nil {
 		ts.t.Fatalf("hash password: %v", err)
 	}
