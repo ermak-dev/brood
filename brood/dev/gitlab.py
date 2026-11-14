@@ -12,6 +12,7 @@
 """
 import contextlib
 import contextvars
+import http.client
 import json
 import re
 import subprocess
@@ -102,10 +103,10 @@ _project_scope = contextvars.ContextVar("gitlab_project", default=None)
 
 @contextlib.contextmanager
 def project_scope(path):
-    """Ограничить координаты одним вызовом; вложенные вызовы восстанавливают их."""
+    """Ограничить путь или ID одним вызовом; вложенные вызовы восстанавливают их."""
     if not isinstance(path, str) or not re.fullmatch(
-            r"[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+", path):
-        raise RuntimeError("invalid GitLab project path: expected group/project")
+            r"(?:[1-9][0-9]*|[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)+)", path):
+        raise RuntimeError("invalid GitLab project: expected group/project or a positive numeric ID")
     token = _project_scope.set(path)
     try:
         yield
@@ -186,6 +187,14 @@ def call_site(method, path, payload=None, params=None):
     return json.loads(raw) if raw else None
 
 
+def _read_response(response, method, path):
+    """Чтение обоих видов ответа: обрыв не доказывает отказ записи (#301)."""
+    try:
+        return response.read()
+    except (http.client.IncompleteRead, OSError):
+        raise RuntimeError(f"{method} {path}: incomplete response; tracker outcome not confirmed") from None
+
+
 def request(method, url, path, payload=None, params=None):
     """Запрос как есть -> тело байтами: трасса джобы -- текст, не JSON.
     path -- чем назвать запрос в отказе: полный URL в нём был бы шумом.
@@ -199,12 +208,16 @@ def request(method, url, path, payload=None, params=None):
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            return r.read()
+            return _read_response(r, method, path)
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{method} {path} -> HTTP {e.code}: "
-                           f"{e.read().decode(errors='replace')[:300]}") from None
+        with e:
+            _read_response(e, method, path)
+        # Сервер может повторить секрет запроса в теле ошибки: не печатаем его.
+        raise RuntimeError(f"{method} {path} -> HTTP {e.code}; tracker outcome not confirmed") from None
     except urllib.error.URLError as e:
         raise RuntimeError(f"{method} {path}: {e.reason}") from None
+    except http.client.IncompleteRead:
+        raise RuntimeError(f"{method} {path}: incomplete response; tracker outcome not confirmed") from None
     except TimeoutError:
         raise RuntimeError(f"{method} {path}: no answer in {TIMEOUT}s") from None
 

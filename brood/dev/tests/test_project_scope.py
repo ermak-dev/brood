@@ -210,6 +210,28 @@ class ProjectScopeTests(unittest.TestCase):
                 self.assertEqual(gitlab.project(), "group/one")
             self.assertEqual(gitlab.project(), "env/project")
 
+    # BUG: Восстановление с числовым GITLAB_PROJECT отвергается областью --project (#301).
+    # HYPOTHESIS: Проверка области не учитывает глобальный ID проекта в GitLab API.
+    # SOLUTION: Принимаем ID без разрешения пути и сохраняем изоляцию области.
+    # RESULT: FIXED — ID остаётся в URL API, вложенные области восстанавливаются.
+    # STATUS: FIXED
+    def test_numeric_scope_keeps_id_and_restores_default(self):
+        with mock.patch.object(gitlab.config, "get", side_effect=lambda key: {
+                "GITLAB_PROJECT": "default/project", "GITLAB_SITE": "git.example"}.get(key)):
+            with gitlab.project_scope("123"):
+                self.assertEqual(gitlab.project(), "123")
+                self.assertEqual(gitlab.base(), "https://git.example/api/v4/projects/123")
+                with gitlab.project_scope("group/project"):
+                    self.assertEqual(gitlab.project(), "group/project")
+                self.assertEqual(gitlab.project(), "123")
+            self.assertEqual(gitlab.project(), "default/project")
+
+    def test_invalid_numeric_project_ids_are_rejected(self):
+        for project in ("0", "-123", "+123", "12.3", "１２３", "123?token=secret"):
+            with self.subTest(project=project), self.assertRaises(RuntimeError):
+                with gitlab.project_scope(project):
+                    pass
+
     def test_simultaneous_scopes_are_isolated(self):
         barrier = threading.Barrier(2)
 
