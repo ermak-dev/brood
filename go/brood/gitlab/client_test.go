@@ -465,7 +465,7 @@ func TestEmptyListsAndNarrowClientSurface(t *testing.T) {
 	for i := range names {
 		names[i] = typ.Method(i).Name
 	}
-	want := []string{"Close", "CreateMergeRequest", "Format", "GoString", "Issue", "Jobs", "MergeRequest", "MergeRequestPipelines", "Pipeline", "Project", "String"}
+	want := []string{"Branch", "Close", "CreateMergeRequest", "Format", "GoString", "Issue", "Jobs", "MergeRequest", "MergeRequestPipelines", "Pipeline", "Project", "String"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("unexpected public client surface: %v", names)
 	}

@@ -50,6 +50,7 @@ HTTP `Status`, без тела/заголовков ответа, URL и исх�
 | Метод | Endpoint под `/projects/<ProjectID>` |
 |---|---|
 | `Project` | метаданные проекта |
+| `Branch(name)` | `/repository/branches/<URL-encoded name>`; точные name и полный commit ID |
 | `Issue(iid)` | `/issues/<iid>` |
 | `MergeRequest(iid)` | `/merge_requests/<iid>` |
 | `MergeRequestPipelines(iid)` | `/merge_requests/<iid>/pipelines` и проверочные чтения ниже |
