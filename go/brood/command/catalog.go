@@ -113,6 +113,10 @@ var catalog = []Spec{
 	projectAddSpec, projectLimitSpec, landingSpec, nodeSpec,
 	nodeDrainSpec, nodeUpSpec, modelsSpec, profileSpec, statSpec,
 	diagnoseSpec, serverDiagnoseSpec,
+	spec("gitlab_issue_get", "Read an issue from your explicitly granted project.", true, false, true,
+		Arg{Name: "iid", Type: "integer", Required: true, Min: number(1), Max: number(9007199254740991)}),
+	spec("gitlab_ci_get", "Read bounded MR pipeline evidence from your explicitly granted project; not merge authority.", true, false, true,
+		Arg{Name: "mr_iid", Type: "integer", Required: true, Min: number(1), Max: number(9007199254740991)}),
 }
 
 // Specs returns independent catalog metadata in stable declaration order.
