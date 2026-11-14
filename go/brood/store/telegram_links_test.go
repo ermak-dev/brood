@@ -53,15 +53,22 @@ func telegramStore(t *testing.T) *Store {
 func linkCode(name string) string { return "telegram-link-code-" + name }
 
 // linkTelegram выдаёт пользователю код и подтверждает его из чата chat
-// Telegram-пользователя chat через бота bot ("" — бот установки).
+// Telegram-пользователя chat без имени через бота bot ("" — бот установки).
 func linkTelegram(t *testing.T, s *Store, user, bot string, chat int64) TelegramLink {
+	t.Helper()
+	return linkTelegramAs(t, s, user, bot, chat, "")
+}
+
+// linkTelegramAs — linkTelegram, у собеседника которого имя username ("" —
+// без имени).
+func linkTelegramAs(t *testing.T, s *Store, user, bot string, chat int64, username string) TelegramLink {
 	t.Helper()
 	ctx := context.Background()
 	code := linkCode(user)
 	if _, err := s.IssueTelegramLinkCode(ctx, user, code, telegramTestTime, telegramTestTime.Add(10*time.Minute)); err != nil {
 		t.Fatalf("issue link code for %s: %v", user, err)
 	}
-	link, err := s.ConfirmTelegramLink(ctx, TelegramLinkConfirmation{BotUsername: bot, Code: code, ChatID: chat, TelegramUserID: chat, Now: telegramTestTime})
+	link, err := s.ConfirmTelegramLink(ctx, TelegramLinkConfirmation{BotUsername: bot, Code: code, ChatID: chat, TelegramUserID: chat, Username: username, Now: telegramTestTime})
 	if err != nil {
 		t.Fatalf("confirm link of %s: %v", user, err)
 	}

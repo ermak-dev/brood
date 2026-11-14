@@ -8,19 +8,23 @@ package server
 // the link code response included.
 // GET shows the bot the link uses, the state and its reason, the
 // subscriptions, the linked chat and whether a link code waits; a user who
-// never set anything gets the empty state. DELETE removes the own bot and the
-// chat link. A link code is server-made, crypto/rand of 256 bits in URL-safe
-// base64, valid for telegramLinkCodeTTL. Every write rechecks the session in
-// its transaction. Only a getMe refusal of the token itself (401, 404) is a
-// rejected token; any other refusal, such as 429, and an answer not from the
-// Bot API are "try again later". No code is issued through a stopped
-// installation bot.
+// never set anything gets the empty state. The linked chat carries the
+// Telegram username of its sender from the link row (#294): the one of the
+// link code, then of the latest message or button press of the chat, so it
+// survives a restart; a username the store would refuse counts as none.
+// DELETE removes the own bot and the chat link. A link code is server-made,
+// crypto/rand of 256 bits in URL-safe base64, valid for telegramLinkCodeTTL.
+// Every write rechecks the session in its transaction. Only a getMe refusal
+// of the token itself (401, 404) is a rejected token; any other refusal, such
+// as 429, and an answer not from the Bot API are "try again later". No code
+// is issued through a stopped installation bot.
 
 import (
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -440,20 +444,79 @@ func TestTelegramLinkCodeIsRefusedWhileTheInstallationBotIsStopped(t *testing.T)
 }
 
 // Профиль показывает имя, которое собеседник привязанного чата носил в
-// последнем сообщении; DELETE его забывает.
+// последнем сообщении или нажатии кнопки, из строки привязки; собеседник,
+// снявший имя, остаётся без имени; DELETE имя снимает.
 func TestTelegramProfileShowsTheLatestUsernameOfTheLinkedChat(t *testing.T) {
 	h := newTelegramHarness(t, "", nil)
 	alice, aliceID := h.member("alice")
 	h.setBot(alice, aliceID, aliceBotToken)
 	h.linkChat(alice, aliceBotToken, 555, "anton")
-	h.deliver(aliceBotToken, privateMessage(555, "anton_renamed", "hello"))
-	_, data, _ := h.do(alice, "GET", "/api/me/telegram", "", nil)
-	if chat, _ := data["chat"].(map[string]any); chat["username"] != "anton_renamed" {
-		t.Fatalf("linked chat after a rename: %v", data["chat"])
+	username := func() any {
+		_, data, _ := h.do(alice, "GET", "/api/me/telegram", "", nil)
+		chat, _ := data["chat"].(map[string]any)
+		return chat["username"]
 	}
+	h.deliver(aliceBotToken, privateMessage(555, "anton_renamed", "hello"))
+	if got := username(); got != "anton_renamed" || h.link(aliceID).TelegramUsername != "anton_renamed" {
+		t.Fatalf("linked chat after a rename: %v, link %+v", got, h.link(aliceID))
+	}
+	// Нажатие кнопки ответа и кнопки подтверждения несёт того же собеседника.
+	for i, data := range []string{"stale", telegramConfirmPrefix + "stale"} {
+		name := fmt.Sprintf("anton_pressed_%d", i)
+		press := callbackPress(fmt.Sprintf("press-%d", i), 555, 1, data)
+		press["callback_query"].(map[string]any)["from"].(map[string]any)["username"] = name
+		h.deliver(aliceBotToken, press)
+		if got := username(); got != name {
+			t.Fatalf("linked chat after a press of %q: %v", data, got)
+		}
+	}
+	h.deliver(aliceBotToken, privateMessage(555, "", "hello"))
+	if got := username(); got != nil || h.link(aliceID).TelegramUsername != "" {
+		t.Fatalf("linked chat after the username was removed: %v", got)
+	}
+	h.deliver(aliceBotToken, privateMessage(555, "anton", "hello"))
 	resp, data, _ := h.do(alice, "DELETE", "/api/me/telegram", h.csrf(alice), nil)
 	expectStatus(t, "DELETE", resp, data, http.StatusOK)
-	if name := h.srv.telegram.contact(aliceID, 555); name != "" {
+	if name := h.link(aliceID).TelegramUsername; name != "" {
 		t.Fatalf("DELETE kept the Telegram username %q of the unlinked chat", name)
+	}
+}
+
+// Имя собеседника лежит в строке привязки: после перезапуска сервера профиль
+// показывает его, хотя чат боту больше не писал.
+func TestTelegramProfileUsernameSurvivesARestart(t *testing.T) {
+	dbPath := t.TempDir() + "/brood.db"
+	api := newTestBotAPI(t)
+	first := startTelegramHarnessAt(t, dbPath, api, "", "", nil)
+	alice, aliceID := first.member("alice")
+	first.setBot(alice, aliceID, aliceBotToken)
+	first.linkChat(alice, aliceBotToken, 555, "anton")
+	first.http.Close()
+	if err := first.srv.Close(); err != nil {
+		t.Fatal(err)
+	}
+	h := startTelegramHarnessAt(t, dbPath, api, "", "", nil)
+	_, data, _ := h.do(h.signIn("alice"), "GET", "/api/me/telegram", "", nil)
+	if chat, _ := data["chat"].(map[string]any); data["state"] != "linked" || chat["username"] != "anton" {
+		t.Fatalf("linked chat after a restart: %v", data)
+	}
+}
+
+// Имя, которое хранилище не примет, привязку не срывает: чат привязан без
+// имени, а следующее сообщение с годным именем его приносит.
+func TestTelegramLinkTakesAMalformedUsernameAsNone(t *testing.T) {
+	h := newTelegramHarness(t, "", nil)
+	alice, aliceID := h.member("alice")
+	h.setBot(alice, aliceID, aliceBotToken)
+	h.linkChat(alice, aliceBotToken, 555, "anton-dashed")
+	if link := h.link(aliceID); link.State != "linked" || link.TelegramUsername != "" {
+		t.Fatalf("link of a sender with a malformed username = %+v", link)
+	}
+	if sent := h.api.sentTo(aliceBotToken, 555); len(sent) != 1 || sent[0] != telegramReplyLinked {
+		t.Fatalf("replies to the link = %q, want the linked reply", sent)
+	}
+	h.deliver(aliceBotToken, privateMessage(555, "anton", "hello"))
+	if link := h.link(aliceID); link.TelegramUsername != "anton" {
+		t.Fatalf("link after a usable username = %+v", link)
 	}
 }

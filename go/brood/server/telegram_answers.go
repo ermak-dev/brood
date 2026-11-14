@@ -95,7 +95,7 @@ func (p *telegramPoller) handleCallback(ctx context.Context, q *telegram.Callbac
 	if err != nil || !chat.linked() {
 		return
 	}
-	p.bots.noteContact(chat.userID, &q.From)
+	p.noteSender(ctx, chat, &q.From)
 	text := p.press(ctx, chat.userID, m.Chat.ID, q.From.ID, q.Data)
 	_ = p.client.AnswerCallbackQuery(ctx, q.ID, telegramClipText(text, telegramCallbackTextLimit))
 }

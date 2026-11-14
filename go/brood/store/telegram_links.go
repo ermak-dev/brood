@@ -64,7 +64,10 @@ var (
 // link code waits. Events are the subscribed notification kinds.
 // DefaultSwarmID is the swarm the chat's commands use when they name none
 // (/use, #284), empty without one; whether the user still reads it is checked
-// where it is used.
+// where it is used. TelegramUsername is the Telegram username of the linked
+// chat's sender (#294), without @: the one the confirmed link code came with,
+// then the latest one an update of the link brought (NoteTelegramUsername);
+// empty for a sender without one and whenever the chat is not linked.
 type TelegramLink struct {
 	UserID            string
 	HasBotToken       bool
@@ -76,19 +79,23 @@ type TelegramLink struct {
 	LinkCodeExpiresAt string
 	Events            []string
 	DefaultSwarmID    string
+	TelegramUsername  string
 	UpdatedAt         string
 }
 
 // TelegramLinkConfirmation is a link code a bot received in a private chat:
 // ChatID equals TelegramUserID, the sender. BotUsername names the user's own
-// bot that received it, in any case; empty means the installation bot. Now is
-// the moment the code arrived, checked against its expiry; a zero Now is
-// refused, not taken as a moment before every expiry.
+// bot that received it, in any case; empty means the installation bot.
+// Username is the sender's Telegram username, empty without one; a name
+// ValidTelegramUsername refuses is refused. Now is the moment the code
+// arrived, checked against its expiry; a zero Now is refused, not taken as a
+// moment before every expiry.
 type TelegramLinkConfirmation struct {
 	BotUsername    string
 	Code           string
 	ChatID         int64
 	TelegramUserID int64
+	Username       string
 	Now            time.Time
 }
 
@@ -97,7 +104,7 @@ type TelegramLinkConfirmation struct {
 const telegramLinkView = `SELECT u.id, l.bot_token IS NOT NULL, coalesce(l.bot_username, ''),
 	coalesce(l.chat_id, 0), coalesce(l.telegram_user_id, 0), coalesce(l.state, 'unlinked'),
 	coalesce(l.reason, ''), coalesce(l.link_code_expires_at, ''), l.events, coalesce(l.default_swarm_id, ''),
-	coalesce(l.updated_at, '')
+	coalesce(l.telegram_username, ''), coalesce(l.updated_at, '')
 	FROM users u LEFT JOIN user_telegram_links l ON l.user_id = u.id WHERE u.id = ?`
 
 // GetTelegramLink returns the user's Telegram link; a user who never set one
@@ -107,7 +114,7 @@ func (s *Store) GetTelegramLink(ctx context.Context, userID string) (TelegramLin
 	var events sql.NullString
 	err := s.conn(ctx).QueryRowContext(ctx, telegramLinkView, userID).Scan(&link.UserID, &link.HasBotToken,
 		&link.BotUsername, &link.ChatID, &link.TelegramUserID, &link.State, &link.Reason,
-		&link.LinkCodeExpiresAt, &events, &link.DefaultSwarmID, &link.UpdatedAt)
+		&link.LinkCodeExpiresAt, &events, &link.DefaultSwarmID, &link.TelegramUsername, &link.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TelegramLink{}, fmt.Errorf("%w: user %q", ErrNotFound, userID)
 	}
@@ -290,14 +297,18 @@ func telegramCodeLive(expires string, now time.Time) (bool, error) {
 
 // ConfirmTelegramLink links the private chat that sent a valid link code
 // through the bot the link uses, and opens the link's telegram session in the
-// same transaction. The code is single-use. A zero Now or a chat that is not
-// private (its id is not the positive id of the sender): ErrTelegramInvalid.
+// same transaction, keeping the sender's username. The code is single-use. A
+// zero Now, a chat that is not private (its id is not the positive id of the
+// sender) or a malformed username: ErrTelegramInvalid.
 // A chat linked to another user: ErrTelegramChatTaken; any code refusal:
 // ErrTelegramLinkCode. A refusal writes nothing, even inside a caller's
 // transaction that goes on after it.
 func (s *Store) ConfirmTelegramLink(ctx context.Context, in TelegramLinkConfirmation) (TelegramLink, error) {
 	if !telegramWord(in.Code, 256) || in.Now.IsZero() || in.ChatID <= 0 || in.ChatID != in.TelegramUserID {
 		return TelegramLink{}, fmt.Errorf("%w: a link code, the moment it arrived and a private chat whose id is its sender's are required", ErrTelegramInvalid)
+	}
+	if in.Username != "" && !ValidTelegramUsername(in.Username) {
+		return TelegramLink{}, errTelegramUsername
 	}
 	var link TelegramLink
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -334,8 +345,8 @@ func (s *Store) ConfirmTelegramLink(ctx context.Context, in TelegramLinkConfirma
 		if err != nil {
 			return err
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = 'linked', reason = NULL, chat_id = ?, telegram_user_id = ?, session_hash = ?, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
-			in.ChatID, in.TelegramUserID, session, nowRFC3339(), userID)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = 'linked', reason = NULL, chat_id = ?, telegram_user_id = ?, telegram_username = ?, session_hash = ?, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
+			in.ChatID, in.TelegramUserID, telegramUsernameValue(in.Username), session, nowRFC3339(), userID)
 		if IsUniqueViolation(err) {
 			return ErrTelegramChatTaken
 		}
@@ -585,6 +596,52 @@ func (s *Store) SetTelegramSwarm(ctx context.Context, userID, swarmID string, au
 	return link, nil
 }
 
+// NoteTelegramUsername keeps the Telegram username that an update of the
+// user's linked chat carries; "" means the sender has none now. session is
+// the telegram session the update came under (TelegramChatSession): an
+// update of an earlier link of the chat, or of a link that is no longer live,
+// is ErrTelegramUnlinked and writes nothing. The same name writes nothing
+// either, so a caller may note the name of every update. A name
+// ValidTelegramUsername refuses: ErrTelegramInvalid.
+func (s *Store) NoteTelegramUsername(ctx context.Context, userID, session, username string) error {
+	if username != "" && !ValidTelegramUsername(username) {
+		return errTelegramUsername
+	}
+	// Имя приходит с каждым обновлением чата, а меняется редко: то же имя
+	// узнаётся чтением, без блокировки записи базы.
+	var current sql.NullString
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT telegram_username FROM user_telegram_links WHERE user_id = ? AND state = 'linked' AND session_hash = ?`,
+		userID, session).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrTelegramUnlinked
+	}
+	if err != nil || current.String == username {
+		return err
+	}
+	// Запись повторяет условие живой привязки: отвязка между чтением и
+	// записью имени не оставит.
+	result, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET telegram_username = ?, updated_at = ? WHERE user_id = ? AND state = 'linked' AND session_hash = ?`,
+		telegramUsernameValue(username), nowRFC3339(), userID, session)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrTelegramUnlinked
+	}
+	return nil
+}
+
+// errTelegramUsername: имя собеседника не той формы.
+var errTelegramUsername = fmt.Errorf("%w: a Telegram username is 1 to 32 Latin letters, digits and underscores without @", ErrTelegramInvalid)
+
+// telegramUsernameValue — значение колонки имени собеседника: NULL у
+// собеседника без имени.
+func telegramUsernameValue(username string) sql.NullString {
+	return sql.NullString{String: username, Valid: username != ""}
+}
+
 // TelegramSessionActive reports whether the user's link is live for an update
 // that botUsername received from chatID, sent by telegramUserID: the link was
 // made through that bot (botUsername is the user's own bot in any case, empty
@@ -668,14 +725,15 @@ func (s *Store) ensureTelegramLink(ctx context.Context, userID string) error {
 }
 
 // dropTelegramLink снимает привязку: state unlinked или error с причиной,
-// без чата, кода и сессии. Ссылка на сессию снимается до её удаления, поэтому
-// sessions_telegram_revoke строку не находит и причину не подменяет.
+// без чата, имени собеседника, кода и сессии. Ссылка на сессию снимается до
+// её удаления, поэтому sessions_telegram_revoke строку не находит и причину не
+// подменяет.
 func (s *Store) dropTelegramLink(ctx context.Context, userID, state string, reason any) error {
 	var session sql.NullString
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT session_hash FROM user_telegram_links WHERE user_id = ?`, userID).Scan(&session); err != nil {
 		return err
 	}
-	if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = ?, reason = ?, chat_id = NULL, telegram_user_id = NULL, session_hash = NULL, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
+	if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = ?, reason = ?, chat_id = NULL, telegram_user_id = NULL, telegram_username = NULL, session_hash = NULL, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
 		state, reason, nowRFC3339(), userID); err != nil {
 		return err
 	}
@@ -705,6 +763,16 @@ func telegramWord(value string, limit int) bool {
 // to a bot name the store never sees, such as the installation bot's.
 func TelegramBotName(name string) bool {
 	return name != "" && len(name) <= 64 && strings.IndexFunc(name, func(r rune) bool {
+		return !(r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
+	}) < 0
+}
+
+// ValidTelegramUsername reports whether name is a Telegram username of a
+// chat's sender as the store keeps it: 1 to 32 Latin letters, digits and
+// underscores, without @. A caller applies the same rule to a sender's
+// username before it reaches the store, as it does with TelegramBotName.
+func ValidTelegramUsername(name string) bool {
+	return name != "" && len(name) <= 32 && strings.IndexFunc(name, func(r rune) bool {
 		return !(r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
 	}) < 0
 }

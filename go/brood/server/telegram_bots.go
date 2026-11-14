@@ -169,13 +169,6 @@ func telegramBackoff(failures int) time.Duration {
 	return min(d, telegramBackoffMax)
 }
 
-// telegramContact — собеседник привязанного чата, каким его видел поллер:
-// хранилище имени пользователя Telegram не держит.
-type telegramContact struct {
-	telegramUserID int64
-	username       string
-}
-
 // telegramBots — поллеры ботов сервера и то, что они знают в памяти.
 type telegramBots struct {
 	store  *store.Store
@@ -199,8 +192,7 @@ type telegramBots struct {
 	mu sync.Mutex
 	// offsets — offset getUpdates по id бота: перезапуск поллера в этом
 	// процессе продолжает очередь, а не берёт её с начала.
-	offsets  map[int64]int64
-	contacts map[string]telegramContact
+	offsets map[int64]int64
 	// installChats — чаты, привязанные через бот установки, и их
 	// пользователи; права перепроверяет TelegramSessionActive.
 	installChats map[int64]string
@@ -231,7 +223,6 @@ func newTelegramBots(st *store.Store, cfg Config, opts telegramOptions) *telegra
 		opts:         opts.withDefaults(),
 		pollers:      map[string]*telegramPoller{},
 		offsets:      map[int64]int64{},
-		contacts:     map[string]telegramContact{},
 		installChats: map[int64]string{},
 		halted:       map[string][32]byte{},
 		kick:         make(chan struct{}, 1),
@@ -507,30 +498,11 @@ func (b *telegramBots) setOffset(botID, offset int64) {
 	b.offsets[botID] = offset
 }
 
-// noteContact запоминает собеседника привязанного чата пользователя.
-func (b *telegramBots) noteContact(userID string, from *telegram.User) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.contacts[userID] = telegramContact{telegramUserID: from.ID, username: from.Username}
-}
-
-// contact — имя пользователя Telegram привязанного чата, если поллер его
-// видел у того же собеседника.
-func (b *telegramBots) contact(userID string, telegramUserID int64) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if c, ok := b.contacts[userID]; ok && c.telegramUserID == telegramUserID {
-		return c.username
-	}
-	return ""
-}
-
-// forget забывает, что поллеры знали о пользователе, снявшем свой бот и
-// привязку: собеседника и остановленный токен.
+// forget забывает остановленный токен пользователя, снявшего свой бот и
+// привязку.
 func (b *telegramBots) forget(userID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	delete(b.contacts, userID)
 	delete(b.halted, userID)
 }
 
@@ -793,7 +765,7 @@ func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 		return
 	}
 	if chat.linked() {
-		p.bots.noteContact(chat.userID, m.From)
+		p.noteSender(ctx, chat, m.From)
 		switch {
 		case !command:
 			p.reply(ctx, chat.chatID, p.textReply(ctx, chat.userID, m))
@@ -843,7 +815,7 @@ func (p *telegramPoller) handlePress(ctx context.Context, q *telegram.CallbackQu
 	if err != nil || !chat.linked() {
 		return
 	}
-	p.bots.noteContact(chat.userID, &q.From)
+	p.noteSender(ctx, chat, &q.From)
 	press := p.bots.commands.press(chat, q.Data)
 	// Ответ нажатию — до действия: Telegram ждёт его, пока крутит кнопку.
 	_ = p.client.AnswerCallbackQuery(ctx, q.ID, press.answer)
@@ -871,6 +843,24 @@ func (p *telegramPoller) chatOwner(ctx context.Context, chatID, from int64) (tel
 	return chat, err
 }
 
+// noteSender пишет в привязку имя пользователя Telegram отправителя
+// обновления, пришедшего под живой привязкой chat (#294): собеседник мог
+// сменить или снять его после прошлого обновления. То же имя хранилище не
+// пишет; сбой записи обновлению не мешает.
+func (p *telegramPoller) noteSender(ctx context.Context, chat telegramChat, from *telegram.User) {
+	_ = p.bots.store.NoteTelegramUsername(ctx, chat.userID, chat.session, telegramSenderName(from))
+}
+
+// telegramSenderName — имя пользователя Telegram отправителя для привязки.
+// Имя, которое хранилище не примет (store.ValidTelegramUsername), считается
+// отсутствующим: привязка и обновление из-за него не срываются.
+func telegramSenderName(from *telegram.User) string {
+	if store.ValidTelegramUsername(from.Username) {
+		return from.Username
+	}
+	return ""
+}
+
 // linkedElsewhere: свой бот уже привязан к другому чату. Бот установки
 // служит многим пользователям, и непривязанный чат может привязаться всегда.
 func (p *telegramPoller) linkedElsewhere(ctx context.Context) (bool, error) {
@@ -884,15 +874,16 @@ func (p *telegramPoller) linkedElsewhere(ctx context.Context) (bool, error) {
 	return link.State == "linked", nil
 }
 
-// confirm подтверждает код привязки хранилищем и отвечает в чат.
+// confirm подтверждает код привязки хранилищем вместе с именем отправителя и
+// отвечает в чат.
 func (p *telegramPoller) confirm(ctx context.Context, m *telegram.Message, code string) {
 	link, err := p.bots.store.ConfirmTelegramLink(ctx, store.TelegramLinkConfirmation{
-		BotUsername: p.botUsername, Code: code, ChatID: m.Chat.ID, TelegramUserID: m.From.ID, Now: p.bots.opts.now(),
+		BotUsername: p.botUsername, Code: code, ChatID: m.Chat.ID, TelegramUserID: m.From.ID,
+		Username: telegramSenderName(m.From), Now: p.bots.opts.now(),
 	})
 	text := telegramReplyLinked
 	switch {
 	case err == nil:
-		p.bots.noteContact(link.UserID, m.From)
 		if p.userID == "" {
 			p.bots.linkInstallationChat(link.ChatID, link.UserID)
 		}
