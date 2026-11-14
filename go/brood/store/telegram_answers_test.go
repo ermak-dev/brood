@@ -18,9 +18,10 @@ import (
 // notification in the chat of the user's current link. The messages an
 // answer edits are the sent notifications that opened the request, of every
 // user whose live link was made before the notification was queued, each
-// with whether its user may read the swarm now: a message sent through an
-// earlier link may lie in another chat or bot, where its number names another
-// message.
+// with whether its user may read the swarm now and whether it was sent with
+// the reply field (force_reply, #298), whose markup Telegram does not edit: a
+// message sent through an earlier link may lie in another chat or bot, where
+// its number names another message.
 // IMPLEMENTATION: BeginTelegramAttempt (telegram_outbox.go),
 // UserTelegramNotification, TelegramRequestOfMessage and
 // TelegramRequestMessages (telegram_answers.go).
@@ -186,5 +187,34 @@ func TestRequestMessagesAreTheSentOnesInTheCurrentLinkWithTheReadRight(t *testin
 	// Другой запрос своих сообщений не делит.
 	if messages, err := s.TelegramRequestMessages(ctx, "one", "another"); err != nil || len(messages) != 0 {
 		t.Fatalf("messages of another request = %+v, %v", messages, err)
+	}
+}
+
+// Сообщение, ушедшее с полем ответа (force_reply, #298), Telegram не правит:
+// исход отправки помнит его, и сообщения запроса говорят, какое из них такое.
+// Право управлять роем после отправки этого не меняет: поле ответа — свойство
+// ушедшего сообщения, а не нынешних прав.
+func TestRequestMessagesTellWhichCarryTheReplyField(t *testing.T) {
+	ctx := context.Background()
+	s, req := answersStore(t)
+	field := map[string]bool{"u": true, "e": true, "v": false}
+	for _, user := range []string{"u", "e", "v"} {
+		n := attemptOf(t, s, user, "request_opened")
+		settle(t, s, n.ID, TelegramOutcome{State: "sent", MessageID: n.ID + 100, ForceReply: field[user]})
+	}
+	mustNil(t, s.SetSwarmMember(ctx, "one", "e", "viewer"))
+	messages, err := s.TelegramRequestMessages(ctx, "one", req.ID)
+	mustNil(t, err)
+	got := map[string]bool{}
+	for _, m := range messages {
+		got[m.UserID] = m.ForceReply
+	}
+	if !reflect.DeepEqual(got, field) {
+		t.Fatalf("request messages with the reply field = %v, want %v", got, field)
+	}
+	var stored int
+	mustNil(t, s.db.QueryRow(`SELECT count(*) FROM telegram_outbox WHERE force_reply = 1`).Scan(&stored))
+	if stored != 2 {
+		t.Fatalf("%d notifications recorded with the reply field, want 2", stored)
 	}
 }

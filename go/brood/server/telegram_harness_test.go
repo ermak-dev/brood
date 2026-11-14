@@ -4,7 +4,9 @@ package server
 // поллеров (#281): боты по токену, очередь обновлений с подтверждением по
 // offset, long poll до timeout запроса, запись getUpdates и sendMessage, а
 // для кнопок ответа (#283) и подтверждений команд (#284) — клавиатур,
-// нажатий, editMessageReplyMarkup и answerCallbackQuery.
+// нажатий, editMessageReplyMarkup и answerCallbackQuery, для поля ответа
+// (#298) — force_reply. Правку разметки сообщения с полем ответа поддельный
+// Bot API отвергает, как настоящий (fakeBot.editable).
 
 import (
 	"bytes"
@@ -43,15 +45,55 @@ type fakePoll struct {
 }
 
 type fakeSent struct {
-	ChatID int64  `json:"chat_id"`
-	Text   string `json:"text"`
-	// Markup — inline-клавиатура сообщения, nil — без неё.
-	Markup *telegram.InlineKeyboardMarkup `json:"reply_markup"`
+	ChatID int64
+	Text   string
+	// Markup — inline-клавиатура сообщения, nil — без неё; ForceReply — поле
+	// ответа (force_reply, #298), nil — без него. Обе — из reply_markup.
+	Markup     *telegram.InlineKeyboardMarkup
+	ForceReply *telegram.ForceReply
 	// Document и Name — файл sendDocument; Text у него — подпись.
-	Document string `json:"-"`
-	Name     string `json:"-"`
+	Document string
+	Name     string
 	// ID — номер сообщения, который ответил поддельный Bot API.
-	ID int64 `json:"-"`
+	ID int64
+}
+
+// fakeMessageBody разбирает JSON sendMessage: чат, текст и reply_markup.
+func fakeMessageBody(body []byte) (fakeSent, error) {
+	var wire struct {
+		ChatID int64           `json:"chat_id"`
+		Text   string          `json:"text"`
+		Markup json.RawMessage `json:"reply_markup"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return fakeSent{}, err
+	}
+	s := fakeSent{ChatID: wire.ChatID, Text: wire.Text}
+	return s, s.readMarkup(wire.Markup)
+}
+
+// readMarkup разбирает reply_markup raw: inline-клавиатуру или поле ответа;
+// пусто — без разметки. force_reply не true — не поле ответа: Bot API ждёт
+// true.
+func (s *fakeSent) readMarkup(raw []byte) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var m struct {
+		InlineKeyboard [][]telegram.InlineKeyboardButton `json:"inline_keyboard"`
+		ForceReply     bool                              `json:"force_reply"`
+		Placeholder    string                            `json:"input_field_placeholder"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	if m.InlineKeyboard != nil {
+		s.Markup = &telegram.InlineKeyboardMarkup{InlineKeyboard: m.InlineKeyboard}
+	}
+	if m.ForceReply {
+		s.ForceReply = &telegram.ForceReply{Placeholder: m.Placeholder}
+	}
+	return nil
 }
 
 // fakeAnswer — answerCallbackQuery: id нажатия и текст уведомления.
@@ -75,9 +117,11 @@ type fakeBot struct {
 	nextID   int64
 	polls    []fakePoll
 	sent     []fakeSent
-	// answers и edits — принятые ответы на нажатия и правки клавиатур.
+	// answers и edits — принятые ответы на нажатия и правки клавиатур;
+	// refused — правки, которые Bot API отверг по своему правилу (editable).
 	answers  []fakeAnswer
 	edits    []fakeEdit
+	refused  []fakeEdit
 	inflight int
 	// meCalls — сколько раз спросили getMe.
 	meCalls int
@@ -125,6 +169,19 @@ func (a *fakeBotAPI) addBot(token, username string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.bots[token] = &fakeBot{id: id, username: username, nextID: 1000}
+}
+
+// editable: Bot API правит разметку сообщения правки e. Правит он только
+// сообщения без разметки или с inline-клавиатурой (раздел «Updating
+// messages»), и правку сообщения, ушедшего с полем ответа (force_reply),
+// отвергает. Сообщение, которого бот не отправлял, правило не трогает: его
+// правку решает сценарий. Вызывается под a.mu.
+func (b *fakeBot) editable(e fakeEdit) bool {
+	if e.MessageID < 1 || int(e.MessageID) > len(b.sent) {
+		return true
+	}
+	s := b.sent[e.MessageID-1]
+	return s.ChatID != e.ChatID || s.ForceReply == nil
 }
 
 func (a *fakeBotAPI) bot(token string) *fakeBot {
@@ -196,6 +253,14 @@ func (a *fakeBotAPI) edits(token string) []fakeEdit {
 	return append([]fakeEdit(nil), a.bot(token).edits...)
 }
 
+// refusedEdits — правки бота token, которые Bot API отверг: сообщение ушло с
+// полем ответа (editable).
+func (a *fakeBotAPI) refusedEdits(token string) []fakeEdit {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]fakeEdit(nil), a.bot(token).refused...)
+}
+
 func (a *fakeBotAPI) inflight(token string) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -256,8 +321,8 @@ func (a *fakeBotAPI) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		a.getUpdates(w, r, b, p)
 	case "sendMessage":
-		var s fakeSent
-		if err := json.Unmarshal(body, &s); err != nil {
+		s, err := fakeMessageBody(body)
+		if err != nil {
 			a.t.Errorf("sendMessage body %q: %v", body, err)
 		}
 		a.mu.Lock()
@@ -292,8 +357,16 @@ func (a *fakeBotAPI) serve(w http.ResponseWriter, r *http.Request) {
 			a.t.Errorf("editMessageReplyMarkup body %q: %v", body, err)
 		}
 		a.mu.Lock()
-		edit := b.edit
+		edit, editable := b.edit, b.editable(e)
+		if !editable {
+			b.refused = append(b.refused, e)
+			a.notify()
+		}
 		a.mu.Unlock()
+		if !editable {
+			fakeRefuse(w, http.StatusBadRequest, "Bad Request: message can't be edited")
+			return
+		}
 		if edit != nil && edit(w, e) {
 			return
 		}
@@ -341,10 +414,8 @@ func fakeDocumentForm(r *http.Request, body []byte) (fakeSent, bool) {
 		return fakeSent{}, false
 	}
 	s.Text = strings.Join(form.Value["caption"], "")
-	if markup := strings.Join(form.Value["reply_markup"], ""); markup != "" {
-		if err := json.Unmarshal([]byte(markup), &s.Markup); err != nil {
-			return fakeSent{}, false
-		}
+	if err := s.readMarkup([]byte(strings.Join(form.Value["reply_markup"], ""))); err != nil {
+		return fakeSent{}, false
 	}
 	files := form.File["document"]
 	if len(files) != 1 {

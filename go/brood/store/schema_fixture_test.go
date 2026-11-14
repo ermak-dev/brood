@@ -66,7 +66,9 @@ func frozenSchemaVersions(t *testing.T) []int {
 // sent, failed, unconfirmed из восстановления при запуске и sent, которое
 // удалил срок хранения последним, поэтому sqlite_sequence ушёл дальше
 // последнего номера. С версии 30 у привязки root рой по умолчанию s (/use,
-// #284), с версии 31 у её собеседника имя root_tg (#294).
+// #284), с версии 31 у её собеседника имя root_tg (#294). С версии 32 ещё
+// sent вопрос актора, ушедший с полем ответа (force_reply, #298), записанный
+// исходом отправки хранилища.
 func seedSchemaFixture(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
@@ -108,6 +110,9 @@ func seedSchemaFixture(t *testing.T) *Store {
 	mustNil(t, s.RecoverTelegramOutbox(ctx))
 	inFlight := queueNotification(t, s, "root", "step_failed")
 	outboxSteps(t, s, inFlight, `attempts = 1`)
+	field := queueNotification(t, s, "root", "actor_question")
+	outboxSteps(t, s, field, `attempts = 1`)
+	mustNil(t, s.SettleTelegramAttempt(ctx, field, TelegramOutcome{State: "sent", MessageID: 1003, ForceReply: true}))
 	retained := queueNotification(t, s, "root", "actor_question")
 	outboxSteps(t, s, retained, `attempts = 1`, `state = 'sent', settled_attempts = 1, telegram_message_id = 1002`)
 	_, err = s.db.Exec(`DELETE FROM telegram_outbox WHERE id = ?`, retained)
@@ -328,7 +333,8 @@ func requireIntact(t *testing.T, db *sql.DB) {
 // вернуть.
 func requireOutboxFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
-	rows, err := db.Query(`SELECT state || ':' || attempts || '/' || settled_attempts FROM telegram_outbox ORDER BY id`)
+	rows, err := db.Query(`SELECT state || ':' || attempts || '/' || settled_attempts || CASE WHEN force_reply = 1 THEN ':force_reply' ELSE '' END
+		FROM telegram_outbox ORDER BY id`)
 	mustNil(t, err)
 	var shapes []string
 	for rows.Next() {
@@ -339,7 +345,7 @@ func requireOutboxFixture(t *testing.T, db *sql.DB) {
 	mustNil(t, rows.Err())
 	rows.Close()
 	sort.Strings(shapes)
-	if want := []string{"failed:1/1", "pending:0/0", "pending:1/0", "sent:1/1", "unconfirmed:1/1"}; !reflect.DeepEqual(shapes, want) {
+	if want := []string{"failed:1/1", "pending:0/0", "pending:1/0", "sent:1/1", "sent:1/1:force_reply", "unconfirmed:1/1"}; !reflect.DeepEqual(shapes, want) {
 		t.Fatalf("fixture notifications = %v, want %v", shapes, want)
 	}
 	var sequence, last int64

@@ -2,7 +2,8 @@ package server
 
 // FEATURE: Answers to operator requests from Telegram (#283, epic #278).
 // SPEC: a request notification reaches an owner or editor with answer
-// controls (option buttons, Yes and No, a reply or /answer for text) and a
+// controls (option buttons, Yes and No, a reply or /answer for text, the text
+// request message opening the reply field with force_reply, #298) and a
 // viewer without them; options Telegram cannot show as buttons leave the
 // notification without buttons, not unsent. A press, a reply to a text
 // request message or /answer is recorded by the same store method as
@@ -19,9 +20,15 @@ package server
 // Telegram or the panel, the request messages of those who read the swarm
 // show one status button that names who answered and when, through the bot
 // each was sent by, and the message of one who no longer reads it only loses
-// its buttons; a message Telegram no longer lets the bot edit is not an
-// error. A request answered while its notification was in flight gets its
-// status right after the send, once per message. /answer without a pending
+// its buttons; a message Telegram no longer lets the bot edit is not an error
+// and is not retried. A text request message with the reply field keeps no
+// status button: Telegram edits only messages without markup or with an
+// inline keyboard, so the sender, which remembers the messages sent with the
+// reply field, sends it no edit at all, after an answer, after a late reply
+// to the closed request or after the send; the request_answered notification
+// and the bot's reply to the answer carry the state. A request answered
+// while its notification was in flight gets its status right after the send,
+// once per message. /answer without a pending
 // text request is a short refusal with its reason, and plain text that
 // answers nothing gets the way to answer.
 // IMPLEMENTATION: telegram_answers.go, telegram_buttons.go,
@@ -75,11 +82,28 @@ type answersHarness struct {
 	alice, bob, carol string
 	worker            store.ManagedActor
 	presses           atomic.Int64
+	// edits — сколько правок сообщений запроса кончилось (telegramOptions.edited).
+	editsMu sync.Mutex
+	edits   map[requestEdit]int
+}
+
+// requestEdit — правка сообщений запроса request: only — номер уведомления у
+// сверки после его отправки, 0 — у правки после ответа.
+type requestEdit struct {
+	request string
+	only    int64
 }
 
 func newAnswersHarness(t *testing.T) *answersHarness {
 	t.Helper()
-	a := &answersHarness{}
+	a := &answersHarness{edits: map[requestEdit]int{}}
+	edited := func(o *telegramOptions) {
+		o.edited = func(_, request string, only int64) {
+			a.editsMu.Lock()
+			defer a.editsMu.Unlock()
+			a.edits[requestEdit{request, only}]++
+		}
+	}
 	a.telegramHarness = startTelegramHarness(t, newTestBotAPI(t), "", installBotToken, func(ctx context.Context, st *store.Store) {
 		a.alice = seedMirror(t, ctx, st)
 		a.bob = createTelegramUser(t, ctx, st, "bob")
@@ -95,7 +119,7 @@ func newAnswersHarness(t *testing.T) *answersHarness {
 		linkInStore(t, ctx, st, a.bob, editorChat)
 		linkInStore(t, ctx, st, a.carol, viewerChat)
 		a.worker = seedWorker(t, ctx, st)
-	})
+	}, edited)
 	// Reconcile managed-акторов без PVE записал бы worker ошибкой: проверки
 	// держат его живым сами.
 	a.srv.managed.stopReconcile()
@@ -142,8 +166,14 @@ func (a *answersHarness) openNode() store.SwarmRequest {
 // ask открывает вопрос актора worker вида kind.
 func (a *answersHarness) ask(kind string, options ...store.RequestOption) store.SwarmRequest {
 	a.t.Helper()
+	return a.askWith(kind, "", options...)
+}
+
+// askWith открывает вопрос актора worker вида kind с материалом material.
+func (a *answersHarness) askWith(kind, material string, options ...store.RequestOption) store.SwarmRequest {
+	a.t.Helper()
 	req, err := a.srv.store.OpenActorRequest(context.Background(), store.ActorRequestInput{SwarmID: "s1", ActorUID: a.worker.UID, ActorIncarnation: a.worker.Incarnation,
-		Kind: kind, Question: "Which database?", Options: options})
+		Kind: kind, Question: "Which database?", Context: material, Options: options})
 	if err != nil {
 		a.t.Fatal(err)
 	}
@@ -315,6 +345,59 @@ func (a *answersHarness) statusShownVia(token string, chat int64, m requestMessa
 	})
 }
 
+// reconciled ждёт, пока кончатся сверки после отправки уведомлений messages
+// запроса req. Сверка правит сообщение, если прочла запрос уже закрытым:
+// проверка, которая считает правки ответа, ждёт сверок до ответа, иначе
+// приняла бы правку поздней сверки за повтор.
+func (a *answersHarness) reconciled(req store.SwarmRequest, messages ...requestMessage) {
+	a.t.Helper()
+	for _, m := range messages {
+		a.waitEdit(requestEdit{req.ID, m.id}, "the edit after the send of notification "+strconv.FormatInt(m.id, 10)+" is done")
+	}
+}
+
+// answerEdited ждёт, пока кончатся times правок сообщений запроса req после
+// ответа: правит их каждый ответ, и ответ на уже закрытый запрос тоже.
+// Повтор отказанной правки был бы её частью: после неё, когда сверки
+// кончились до ответа (reconciled), число правок окончательное.
+func (a *answersHarness) answerEdited(req store.SwarmRequest, times int) {
+	a.t.Helper()
+	a.waitEdits(requestEdit{req.ID, 0}, times, "the edit after the answer is done "+strconv.Itoa(times)+" times")
+}
+
+// waitEdit ждёт, пока кончится правка e.
+func (a *answersHarness) waitEdit(e requestEdit, what string) {
+	a.t.Helper()
+	a.waitEdits(e, 1, what)
+}
+
+// waitEdits ждёт, пока правка e кончится times раз.
+func (a *answersHarness) waitEdits(e requestEdit, times int, what string) {
+	a.t.Helper()
+	telegramEventually(a.t, what, func() bool {
+		a.editsMu.Lock()
+		defer a.editsMu.Unlock()
+		return a.edits[e] >= times
+	})
+}
+
+// untouched: бот установки не слал сообщению m чата chat правок разметки —
+// ни принятых, ни отвергнутых Bot API. Проверка после конца правок, которые
+// могли бы его тронуть (reconciled, answerEdited).
+func (a *answersHarness) untouched(chat int64, m requestMessage) {
+	a.t.Helper()
+	var refused []fakeEdit
+	for _, e := range a.api.refusedEdits(installBotToken) {
+		if e.ChatID == chat && e.MessageID == m.message {
+			refused = append(refused, e)
+		}
+	}
+	if edits := a.editsOf(chat, m.message); len(edits) != 0 || len(refused) != 0 {
+		a.t.Fatalf("message %d in chat %d got edits %+v and refused edits %+v, want none: Telegram does not edit the markup of a message with the reply field",
+			m.message, chat, edits, refused)
+	}
+}
+
 // answeredBy проверяет, что запрос id отвечен user с исходом и текстом.
 func (a *answersHarness) answeredBy(id, user, outcome, response string) store.SwarmRequest {
 	a.t.Helper()
@@ -346,17 +429,130 @@ func TestManagersGetAnswerButtonsAndAViewerDoesNot(t *testing.T) {
 			m.sent.Markup.InlineKeyboard[1][0].Text != "Hold" || m.sent.Markup.InlineKeyboard[1][0].CallbackData != telegramAnswerData(m.id, 1) {
 			t.Fatalf("manager's request message: %+v", m.sent)
 		}
+		if m.sent.ForceReply != nil {
+			t.Fatalf("manager's node request opens the reply field: %+v", m.sent)
+		}
 	}
 	viewer := a.sentRequest(a.carol, req)
-	if viewer.sent.Markup != nil || strings.Contains(viewer.sent.Text, "button") {
+	if viewer.sent.Markup != nil || viewer.sent.ForceReply != nil || strings.Contains(viewer.sent.Text, "button") {
 		t.Fatalf("viewer's request message offers controls: %+v", viewer.sent)
 	}
 	question := a.ask("text")
-	if m := a.sentRequest(a.carol, question); m.sent.Markup != nil || strings.Contains(m.sent.Text, "/answer") {
-		t.Fatalf("viewer's text question offers /answer: %+v", m.sent)
+	if m := a.sentRequest(a.carol, question); m.sent.Markup != nil || m.sent.ForceReply != nil || strings.Contains(m.sent.Text, "/answer") {
+		t.Fatalf("viewer's text question offers /answer or the reply field: %+v", m.sent)
 	}
-	if m := a.sentRequest(a.alice, question); m.sent.Markup != nil || !strings.Contains(m.sent.Text, "/answer "+strconv.FormatInt(m.id, 10)+" ") {
-		t.Fatalf("owner's text question: %+v", m.sent)
+	// Owner и editor получают поле ответа (force_reply): клиент Telegram сам
+	// открывает reply на сообщение запроса.
+	for _, user := range []string{a.alice, a.bob} {
+		m := a.sentRequest(user, question)
+		if m.sent.Markup != nil || !strings.Contains(m.sent.Text, "/answer "+strconv.FormatInt(m.id, 10)+" ") {
+			t.Fatalf("manager's text question: %+v", m.sent)
+		}
+		if m.sent.ForceReply == nil || m.sent.ForceReply.Placeholder != "Answer to request "+strconv.FormatInt(m.id, 10) {
+			t.Fatalf("manager's text question does not open the reply field of its request: %+v", m.sent)
+		}
+	}
+}
+
+// Длинный текстовый запрос уходит документом, и поле ответа открывает и
+// документ: reply на него отвечает так же, как на сообщение. Viewer поля
+// ответа не получает и у документа.
+func TestLongTextRequestDocumentOpensTheReplyFieldOfManagers(t *testing.T) {
+	a := newAnswersHarness(t)
+	question := a.askWith("text", strings.Repeat("Line of the build log.\n", 700))
+	for _, user := range []string{a.alice, a.bob} {
+		m := a.sentRequest(user, question)
+		if m.sent.Name == "" || m.sent.Markup != nil {
+			t.Fatalf("manager's long text question is not a document without buttons: %+v", m.sent)
+		}
+		if m.sent.ForceReply == nil || m.sent.ForceReply.Placeholder != "Answer to request "+strconv.FormatInt(m.id, 10) {
+			t.Fatalf("manager's long text question does not open the reply field of its request: %+v", m.sent)
+		}
+	}
+	viewer := a.sentRequest(a.carol, question)
+	if viewer.sent.Name == "" || viewer.sent.Markup != nil || viewer.sent.ForceReply != nil {
+		t.Fatalf("viewer's long text question: %+v", viewer.sent)
+	}
+}
+
+// Reply на сообщение с полем ответа записывается ответом на запрос (#283), и
+// состояние приносит ответ бота. Разметку такого сообщения Telegram не
+// правит, и правка после ответа ему ничего не шлёт: ни после ответа, ни после
+// позднего reply на закрытый запрос, который правит сообщения запроса снова.
+// Сообщение viewer, ушедшее без поля ответа, получает кнопку состояния.
+func TestForceReplyMessageIsAnsweredByAPlainReplyAndNeverEdited(t *testing.T) {
+	a := newAnswersHarness(t)
+	text := a.ask("text")
+	mine, editor, viewer := a.sentRequest(a.alice, text), a.sentRequest(a.bob, text), a.sentRequest(a.carol, text)
+	if mine.sent.ForceReply == nil || editor.sent.ForceReply == nil {
+		t.Fatalf("managers' text request messages do not open the reply field: %+v, %+v", mine.sent, editor.sent)
+	}
+	a.reconciled(text, mine, editor, viewer)
+	reply := a.send(ownerChat, privateReply(ownerChat, mine.message, "use sqlite"))
+	state := telegramRequestState(a.answeredBy(text.ID, a.alice, "", "use sqlite"), "alice")
+	if reply != state {
+		t.Fatalf("reply to the force reply message = %q, want %q", reply, state)
+	}
+	a.statusShown(viewerChat, viewer, state)
+	a.answerEdited(text, 1)
+	// Поле ответа редактора ещё открыто: его reply на отвеченный запрос
+	// получает состояние, ничего не пишет и правит сообщения запроса снова.
+	if late := a.send(editorChat, privateReply(editorChat, editor.message, "use postgres")); late != state {
+		t.Fatalf("late reply to the answered request = %q, want %q", late, state)
+	}
+	a.answeredBy(text.ID, a.alice, "", "use sqlite")
+	a.answerEdited(text, 2)
+	a.untouched(ownerChat, mine)
+	a.untouched(editorChat, editor)
+}
+
+// Ответ, пришедший, пока уведомление текстового запроса было в полёте:
+// сверка после отправки правит сообщение, ушедшее без поля ответа (viewer и
+// то, что собрано уже после ответа), и не шлёт правки сообщению с полем
+// ответа, которую Telegram отверг бы.
+func TestTextRequestAnsweredDuringItsSendEditsOnlyMessagesWithoutTheReplyField(t *testing.T) {
+	ctx := context.Background()
+	a := newAnswersHarness(t)
+	// Отправки держатся, пока тест не ответит; ждётся та, что несёт поле
+	// ответа: её сообщение собрано, пока запрос был открыт.
+	release, inFlight := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	a.api.scriptSend(installBotToken, func(w http.ResponseWriter, r *http.Request, s fakeSent) bool {
+		if s.ForceReply != nil {
+			once.Do(func() { close(inFlight) })
+		}
+		select {
+		case <-release:
+			return false
+		case <-r.Context().Done():
+			return true
+		}
+	})
+	text := a.ask("text")
+	waitClosed(t, "a request message with the reply field is in flight", inFlight)
+	if _, err := a.srv.store.AnswerSwarmRequest(ctx, store.SwarmAnswer{SwarmID: "s1", RequestID: text.ID, UserID: a.alice, Response: "use sqlite"}, func(context.Context) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	a.api.scriptSend(installBotToken, nil)
+	state := telegramRequestState(a.request(text.ID), "alice")
+	field := 0
+	for user, chat := range map[string]int64{a.alice: ownerChat, a.bob: editorChat, a.carol: viewerChat} {
+		m := a.sentRequest(user, text)
+		a.reconciled(text, m)
+		if m.sent.ForceReply != nil {
+			field++
+			a.untouched(chat, m)
+			continue
+		}
+		a.statusShown(chat, m, state)
+		if edits := a.editsOf(chat, m.message); len(edits) != 1 {
+			t.Errorf("the message in chat %d was edited %d times, want once: %+v", chat, len(edits), edits)
+		}
+	}
+	// Сообщение, которого ждал тест, собрано до ответа и ушло с полем ответа.
+	if field == 0 {
+		t.Fatal("no request message in flight carried the reply field")
 	}
 }
 
@@ -427,7 +623,12 @@ func TestReplyToATextRequestMessageAnswersIt(t *testing.T) {
 	if want := telegramRequestState(answered, "alice"); reply != want {
 		t.Fatalf("reply answer = %q, want %q", reply, want)
 	}
-	a.statusShown(ownerChat, mine, "Answered by alice at ")
+	// Состояние на сообщении показывает viewer: сообщение owner ушло с полем
+	// ответа, и его разметку Telegram не правит.
+	a.statusShown(viewerChat, viewer, "Answered by alice at ")
+	a.reconciled(text, mine)
+	a.answerEdited(text, 1)
+	a.untouched(ownerChat, mine)
 }
 
 // Чат без живой привязки не отвечает на запросы: снятая привязка и отозванная
@@ -646,12 +847,18 @@ func TestActorQuestionsOfEachKindAreAnsweredFromTelegram(t *testing.T) {
 
 	text := a.ask("text")
 	m = a.sentRequest(a.alice, text)
+	viewer := a.sentRequest(a.carol, text)
 	reply := a.say(ownerChat, "/answer "+strconv.FormatInt(m.id, 10)+" use sqlite\nwith WAL")
 	answered := a.answeredBy(text.ID, a.alice, "", "use sqlite\nwith WAL")
 	if want := telegramRequestState(answered, "alice"); reply != want {
 		t.Fatalf("/answer reply = %q, want %q", reply, want)
 	}
-	a.statusShown(ownerChat, m, "Answered by alice at ")
+	// Сообщение owner ушло с полем ответа, и правка его не трогает; кнопку
+	// состояния получает сообщение viewer.
+	a.statusShown(viewerChat, viewer, "Answered by alice at ")
+	a.reconciled(text, m)
+	a.answerEdited(text, 1)
+	a.untouched(ownerChat, m)
 }
 
 // Telegram повторяет нажатие (порция после перезапуска поллера): тот же
@@ -753,6 +960,7 @@ func TestPanelAnswerEditsTheTelegramMessagesOfReaders(t *testing.T) {
 	a := newAnswersHarness(t)
 	req := a.openNode()
 	mine, editor, viewer := a.sentRequest(a.alice, req), a.sentRequest(a.bob, req), a.sentRequest(a.carol, req)
+	a.reconciled(req, mine, editor, viewer)
 	// Сообщение, которое Telegram править больше не даёт, — не ошибка:
 	// ответ панели проходит, и остальные сообщения правятся.
 	var refused atomic.Int32
@@ -770,8 +978,7 @@ func TestPanelAnswerEditsTheTelegramMessagesOfReaders(t *testing.T) {
 	answered := a.answeredBy(req.ID, a.alice, "success", "")
 	a.statusShown(ownerChat, mine, telegramRequestState(answered, "alice"))
 	a.statusShown(viewerChat, viewer, telegramRequestState(answered, "alice"))
-	telegramEventually(t, "the edit of the editor's message is tried", func() bool { return refused.Load() > 0 })
-	time.Sleep(100 * time.Millisecond)
+	a.answerEdited(req, 1)
 	if refused.Load() != 1 {
 		t.Fatalf("the refused edit was tried %d times, want once: no retry", refused.Load())
 	}

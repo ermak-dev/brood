@@ -5,7 +5,11 @@ package server
 // carries answer controls while the request is open: a choice gets one
 // button per option, a confirm gets Yes and No, a text request names a reply
 // and the /answer command with the notification number, in the caption too
-// when the text goes as a document. A choice whose options Telegram would
+// when the text goes as a document, and opens the reply field (force_reply,
+// #298) on the message or the document, so a plain reply in the chat answers
+// the request; the placeholder of the field names the request by the same
+// number as /answer. A message carries one markup: buttons or the reply
+// field, never both. A choice whose options Telegram would
 // refuse as buttons (a blank label, more options than buttons) gets none and
 // says to answer in brood. A viewer, a closed request and every other kind
 // get none. callback_data carries only the notification
@@ -80,6 +84,28 @@ func TestChoiceKeyboardHasAButtonPerOptionWithoutTheOptionInItsData(t *testing.T
 	}
 	if got := telegramRequestKeyboard(9, actorRequestOf("text")); got != nil {
 		t.Fatalf("text request keyboard = %+v, want none", got)
+	}
+}
+
+// Текстовый запрос открывает поле ответа: клиент Telegram сам начинает reply
+// на сообщение запроса. Подсказка пустого поля называет запрос тем же
+// номером, что /answer в тексте сообщения; запрос ответа выбирает сообщение,
+// на которое сделан reply, а не подсказка. Запрос с кнопками поля не
+// открывает.
+func TestOnlyATextRequestOpensTheReplyField(t *testing.T) {
+	if got := telegramAnswerField(7, actorRequestOf("text")); !reflect.DeepEqual(got, &telegram.ForceReply{Placeholder: "Answer to request 7"}) {
+		t.Fatalf("text request reply field = %+v", got)
+	}
+	// Bot API держит подсказку в 64 знаках, и самый длинный номер в них
+	// помещается.
+	if got := telegramAnswerField(math.MaxInt64, actorRequestOf("text")); got == nil || telegram.TextLength(got.Placeholder) > 64 {
+		t.Fatalf("reply field of the largest notification number = %+v", got)
+	}
+	node := *nodeRequestFacts().request
+	for name, r := range map[string]store.SwarmRequest{"node": node, "choice": actorRequestOf("choice"), "confirm": actorRequestOf("confirm")} {
+		if got := telegramAnswerField(7, r); got != nil {
+			t.Errorf("%s request reply field = %+v, want none", name, got)
+		}
 	}
 }
 
@@ -194,26 +220,38 @@ func TestNoticeOffersAnswerControlsOnlyToAManagerOfAnOpenRequest(t *testing.T) {
 	closed := nodeRequestFacts()
 	closed.request.State = "answered"
 	if notice := renderTelegramNotice(manager, closed, ""); notice.markup != nil {
-		t.Fatalf("answered request offers buttons: %+v", notice.markup)
+		t.Fatalf("answered request offers controls: %+v", notice.markup)
 	}
 	answered := manager
 	answered.Kind = "request_answered"
 	if notice := renderTelegramNotice(answered, open, ""); notice.markup != nil {
-		t.Fatalf("request_answered offers buttons: %+v", notice.markup)
+		t.Fatalf("request_answered offers controls: %+v", notice.markup)
 	}
-	for kind, hint := range map[string]string{
-		"choice":  "answer with a button below",
-		"confirm": "answer with a button below",
-		"text":    "send /answer 7 <your answer>",
+	// Закрытый к отправке текстовый запрос поля ответа не открывает.
+	closedText := actorRequestOf("text")
+	closedText.State = "answered"
+	closedQuestion := store.TelegramNotification{ID: 7, Kind: "actor_question", Event: store.TelegramEvent{Swarm: "s", Request: "r2"}, Manager: true}
+	if notice := renderTelegramNotice(closedQuestion, telegramFacts{swarm: "build", actor: "builder-1", request: &closedText}, ""); notice.markup != nil {
+		t.Fatalf("answered text question opens the reply field: %+v", notice.markup)
+	}
+	// Разметка у сообщения одна: кнопки выбора и confirm или поле ответа
+	// текстового запроса.
+	for kind, want := range map[string]struct {
+		hint   string
+		markup telegram.ReplyMarkup
+	}{
+		"choice":  {"answer with a button below", telegramRequestKeyboard(7, actorRequestOf("choice"))},
+		"confirm": {"answer with a button below", telegramRequestKeyboard(7, actorRequestOf("confirm"))},
+		"text":    {"send /answer 7 <your answer>", &telegram.ForceReply{Placeholder: "Answer to request 7"}},
 	} {
 		f := telegramFacts{swarm: "build", actor: "builder-1"}
 		request := actorRequestOf(kind)
 		f.request = &request
 		question := store.TelegramNotification{ID: 7, Kind: "actor_question", Event: store.TelegramEvent{Swarm: "s", Request: "r2"}, Manager: true}
 		notice := renderTelegramNotice(question, f, "")
-		contains(t, "manager's "+kind+" question", notice.text, hint)
-		if !reflect.DeepEqual(notice.markup, telegramRequestKeyboard(7, request)) {
-			t.Errorf("manager's %s question markup = %+v", kind, notice.markup)
+		contains(t, "manager's "+kind+" question", notice.text, want.hint)
+		if !reflect.DeepEqual(notice.markup, want.markup) {
+			t.Errorf("manager's %s question markup = %+v, want %+v", kind, notice.markup, want.markup)
 		}
 		question.Manager = false
 		if notice := renderTelegramNotice(question, f, ""); notice.markup != nil || strings.Contains(notice.text, "/answer") {
@@ -251,9 +289,14 @@ func TestLongTextRequestNamesHowToAnswerInTheCaption(t *testing.T) {
 		t.Fatalf("caption of %d characters", telegram.TextLength(notice.doc.Caption))
 	}
 	contains(t, "manager's caption", notice.doc.Caption, `Swarm "build"`, "/answer 7 <your answer>", "attached", "https://brood.example/#/swarms/s")
+	// Reply на документ отвечает так же, как на сообщение: поле ответа
+	// открывается и у него.
+	if want := (&telegram.ForceReply{Placeholder: "Answer to request 7"}); !reflect.DeepEqual(notice.markup, want) {
+		t.Fatalf("manager's long text request markup = %+v, want the reply field %+v", notice.markup, want)
+	}
 	question.Manager = false
-	if notice := renderTelegramNotice(question, f, "https://brood.example"); notice.doc == nil || strings.Contains(notice.doc.Caption, "/answer") {
-		t.Fatalf("viewer's caption offers /answer: %+v", notice.doc)
+	if notice := renderTelegramNotice(question, f, "https://brood.example"); notice.doc == nil || notice.markup != nil || strings.Contains(notice.doc.Caption, "/answer") {
+		t.Fatalf("viewer's document offers /answer or the reply field: %+v, %+v", notice.doc, notice.markup)
 	}
 }
 

@@ -10,10 +10,11 @@ import (
 // telegram. CHECK и триггеры держат правила и при записи мимо кода:
 // транзакционная проверка в Go — первая линия, схема — вторая.
 // Регистрация — schemaModules ("telegram") и verifyTelegramSchema; шаги
-// 28→29, 29→30 и 30→31 — schemaMigrations (migration.go). Шаг 28→29 создаёт
-// таблицы и триггер отзыва текстом версии 29 (telegramSchemaV29): живой DDL с
-// версии 30 несёт рой по умолчанию, с версии 31 — имя собеседника и триггер,
-// который его снимает, и следующие шаги добавляют их сами
+// 28→29, 29→30, 30→31 и 31→32 — schemaMigrations (migration.go). Шаг 28→29
+// создаёт таблицы и триггеры текстом версии 29 (telegramSchemaV29): живой DDL
+// с версии 30 несёт рой по умолчанию, с версии 31 — имя собеседника и
+// триггер отзыва, который его снимает, с версии 32 — поле ответа outbox и
+// ограждение, которое его держит, и следующие шаги добавляют их сами
 // (TestEachMigrationStepYieldsTheNextFrozenVersion).
 
 // sessionKindColumn — вид серверной сессии (#279): web — вход браузера по
@@ -170,7 +171,47 @@ const sessionTelegramRevokeV29 = `CREATE TRIGGER sessions_telegram_revoke BEFORE
 // payload — данные сообщения. id — rowid в порядке вставки; AUTOINCREMENT
 // не отдаёт номер удалённого уведомления (telegramOutboxNoDelete) новому, а
 // явный номер держит telegramOutboxFreshID.
+//
+// force_reply — сообщение ушло с полем ответа (#298): 1 бывает только у sent
+// и пишется вместе с исходом. Bot API правит разметку только у сообщений без
+// неё или с inline-клавиатурой, и правка после ответа такому сообщению не
+// шлётся. Право управлять роем, от которого поле зависит, читается при
+// попытке и не хранится, поэтому исход помнит само поле. Колонку добавляет
+// ALTER шага 31→32 (telegramForceReplyStep): текст повторяет то, что ALTER
+// оставляет в sqlite_master, колонка сразу за последней колонкой, перед
+// ограничениями таблицы.
 const telegramOutboxSchema = `CREATE TABLE telegram_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('request_opened', 'request_answered', 'answer_delivery', 'pass_started', 'pass_finished', 'step_failed', 'actor_question')),
+    ref TEXT NOT NULL CHECK (length(ref) > 0),
+    payload TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'sent', 'failed', 'unconfirmed')),
+    attempts INTEGER NOT NULL CHECK (attempts >= 0),
+    settled_attempts INTEGER NOT NULL CHECK (settled_attempts >= 0),
+    telegram_message_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL, ` + telegramForceReplyDef + `,
+    CHECK ((state = 'sent') = (telegram_message_id IS NOT NULL)),
+    CHECK (attempts - settled_attempts IN (0, 1)),
+    CHECK (state = 'pending' OR settled_attempts > 0),
+    CHECK (attempts = settled_attempts OR state IN ('pending', 'unconfirmed'))
+)`
+
+// telegramForceReplyDef — определение колонки поля ответа: его текст ALTER
+// шага 31→32 вставляет в CREATE TABLE как есть. ALTER проверяет CHECK и на
+// прежних строках, у которых поле 0.
+const telegramForceReplyDef = `force_reply INTEGER NOT NULL DEFAULT 0 CHECK (force_reply IN (0, 1) AND (force_reply = 0 OR state = 'sent'))`
+
+// telegramForceReplyStep — шаг 31→32: колонка поля ответа без перестройки
+// таблицы и ограждение отправленного, которое держит и её. Прежние сообщения
+// ушли без поля ответа.
+const telegramForceReplyStep = `ALTER TABLE telegram_outbox ADD COLUMN ` + telegramForceReplyDef +
+	`;DROP TRIGGER telegram_outbox_fence;` + telegramOutboxFence
+
+// telegramOutboxSchemaV29 — замороженный текст outbox версий 29–31: им шаг
+// 28→29 создаёт таблицу, а поле ответа добавляет шаг 31→32.
+const telegramOutboxSchemaV29 = `CREATE TABLE telegram_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('request_opened', 'request_answered', 'answer_delivery', 'pass_started', 'pass_finished', 'step_failed', 'actor_question')),
@@ -205,8 +246,14 @@ const telegramOutboxInsert = `CREATE TRIGGER telegram_outbox_insert BEFORE INSER
 
 // telegramOutboxFence: уведомление (адресат, вид, ссылка, данные, момент
 // создания) не меняется, попытки не убывают, а отправленное не
-// переписывается ничем: повтор дал бы в чате второе сообщение.
-const telegramOutboxFence = `CREATE TRIGGER telegram_outbox_fence BEFORE UPDATE ON telegram_outbox WHEN NEW.id IS NOT OLD.id OR NEW.user_id IS NOT OLD.user_id OR NEW.kind IS NOT OLD.kind OR NEW.ref IS NOT OLD.ref OR NEW.payload IS NOT OLD.payload OR NEW.created_at IS NOT OLD.created_at OR NEW.attempts < OLD.attempts OR NEW.settled_attempts < OLD.settled_attempts OR (OLD.state = 'sent' AND (NEW.state IS NOT OLD.state OR NEW.attempts IS NOT OLD.attempts OR NEW.telegram_message_id IS NOT OLD.telegram_message_id OR NEW.updated_at IS NOT OLD.updated_at)) BEGIN SELECT RAISE(ABORT, 'telegram notification is immutable'); END`
+// переписывается ничем: повтор дал бы в чате второе сообщение, а снятое или
+// приписанное поле ответа — правку, которую Telegram отвергнет, или правку,
+// которой не будет.
+const telegramOutboxFence = `CREATE TRIGGER telegram_outbox_fence BEFORE UPDATE ON telegram_outbox WHEN NEW.id IS NOT OLD.id OR NEW.user_id IS NOT OLD.user_id OR NEW.kind IS NOT OLD.kind OR NEW.ref IS NOT OLD.ref OR NEW.payload IS NOT OLD.payload OR NEW.created_at IS NOT OLD.created_at OR NEW.attempts < OLD.attempts OR NEW.settled_attempts < OLD.settled_attempts OR (OLD.state = 'sent' AND (NEW.state IS NOT OLD.state OR NEW.attempts IS NOT OLD.attempts OR NEW.telegram_message_id IS NOT OLD.telegram_message_id OR NEW.updated_at IS NOT OLD.updated_at OR NEW.force_reply IS NOT OLD.force_reply)) BEGIN SELECT RAISE(ABORT, 'telegram notification is immutable'); END`
+
+// telegramOutboxFenceV29 — замороженный текст ограждения версий 29–31, до
+// поля ответа: им шаг 28→29 создаёт триггер, а шаг 31→32 его пересоздаёт.
+const telegramOutboxFenceV29 = `CREATE TRIGGER telegram_outbox_fence BEFORE UPDATE ON telegram_outbox WHEN NEW.id IS NOT OLD.id OR NEW.user_id IS NOT OLD.user_id OR NEW.kind IS NOT OLD.kind OR NEW.ref IS NOT OLD.ref OR NEW.payload IS NOT OLD.payload OR NEW.created_at IS NOT OLD.created_at OR NEW.attempts < OLD.attempts OR NEW.settled_attempts < OLD.settled_attempts OR (OLD.state = 'sent' AND (NEW.state IS NOT OLD.state OR NEW.attempts IS NOT OLD.attempts OR NEW.telegram_message_id IS NOT OLD.telegram_message_id OR NEW.updated_at IS NOT OLD.updated_at)) BEGIN SELECT RAISE(ABORT, 'telegram notification is immutable'); END`
 
 // telegramOutboxAttempts: попытка отмечается до отправки и закрывается
 // исходом. Новая попытка начинается только у строки без попытки в полёте и
@@ -250,9 +297,9 @@ const telegramOutboxNoDelete = `CREATE TRIGGER telegram_outbox_no_delete BEFORE 
 // не держит.
 const telegramOutboxFreshID = `CREATE TRIGGER telegram_outbox_fresh_id AFTER INSERT ON telegram_outbox WHEN NEW.id <= (SELECT seq FROM sqlite_sequence WHERE name = 'telegram_outbox') BEGIN SELECT RAISE(ABORT, 'telegram notification id is not new'); END`
 
-// telegramObjects — индексы и триггеры outbox в порядке создания. Триггер
-// отзыва сессии создаётся последним, своим текстом версии
-// (telegramSchemaWith).
+// telegramObjects — индексы и триггеры outbox в порядке создания. Ограждение
+// отправленного создаётся на своём месте, а триггер отзыва сессии —
+// последним, оба своим текстом версии (telegramSchemaWith).
 var telegramObjects = []struct{ kind, name, sql string }{
 	{"index", "telegram_outbox_pending", telegramOutboxPending},
 	{"index", "telegram_outbox_user", telegramOutboxUser},
@@ -268,21 +315,27 @@ var telegramObjects = []struct{ kind, name, sql string }{
 // telegramFullSchema — таблицы, индекс и триггеры Telegram. Колонка вида
 // сессии входит в schema.sql свежей базы, а в мигрированную — шагом 28→29.
 func telegramFullSchema() string {
-	return telegramSchemaWith(userTelegramLinksSchema, sessionTelegramRevoke)
+	return telegramSchemaWith(userTelegramLinksSchema, telegramOutboxSchema, telegramOutboxFence, sessionTelegramRevoke)
 }
 
 // telegramSchemaV29 — DDL Telegram шага 28→29: таблица привязок без роя по
-// умолчанию и имени собеседника, триггер отзыва без имени, прочее — текст
-// реестра, который с версии 29 не менялся.
+// умолчанию и имени собеседника, outbox без поля ответа и его ограждение,
+// триггер отзыва без имени, прочее — текст реестра, который с версии 29 не
+// менялся.
 func telegramSchemaV29() string {
-	return telegramSchemaWith(userTelegramLinksSchemaV29, sessionTelegramRevokeV29)
+	return telegramSchemaWith(userTelegramLinksSchemaV29, telegramOutboxSchemaV29, telegramOutboxFenceV29, sessionTelegramRevokeV29)
 }
 
 // telegramSchemaWith — таблица привязок links, outbox, индексы и триггеры
-// outbox, затем триггер отзыва сессии revoke.
-func telegramSchemaWith(links, revoke string) string {
-	statements := links + ";" + telegramOutboxSchema
+// outbox с ограждением отправленного fence, затем триггер отзыва сессии
+// revoke.
+func telegramSchemaWith(links, outbox, fence, revoke string) string {
+	statements := links + ";" + outbox
 	for _, object := range telegramObjects {
+		if object.name == "telegram_outbox_fence" {
+			statements += ";" + fence
+			continue
+		}
 		statements += ";" + object.sql
 	}
 	return statements + ";" + revoke
