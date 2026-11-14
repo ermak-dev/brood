@@ -196,6 +196,68 @@ def git_remote_egress(hosts, resolver):
     return proxmox_egress({f"https://{host}" for host in hosts}, resolver, GIT_REMOTES)
 
 
+# TelegramDefaultOrigin — публичный Bot API, тот же, что у сервера по умолчанию
+# (go/brood/telegram.DefaultBaseURL, #281).
+TELEGRAM_API = "BROOD_TELEGRAM_API"
+TELEGRAM_DEFAULT_ORIGIN = "https://api.telegram.org"
+
+
+def telegram_http_origin(raw, setting=TELEGRAM_API):
+    """Настройка Bot API -> (host, port). Отличие от https_origin: локальный
+    сервер Bot API установки задаётся HTTP origin на loopback (#281), и такой
+    адрес egress не требует. Чистая функция."""
+    try:
+        if not isinstance(raw, str) or not raw.isascii() or any(c.isspace() or ord(c) < 32 for c in raw):
+            raise ValueError
+        url = urlsplit(raw)
+        if url.username is not None or url.password is not None or url.path or "?" in raw \
+                or "#" in raw or "%" in raw or "\\" in raw or url.netloc.endswith(":") \
+                or not 1 <= (url.port or (443 if url.scheme == "https" else 80)) <= 65535 or url.port == 0:
+            raise ValueError
+        if url.scheme not in ("https", "http") or not url.hostname:
+            raise ValueError
+        try:
+            address = ipaddress.ip_address(url.hostname)
+        except ValueError:
+            if url.scheme != "https":
+                # HTTP допустим только на loopback (localhost или адрес):
+                # локальный сервер Bot API установки (#281).
+                if not (url.hostname == "localhost" or url.hostname.startswith("127.")):
+                    raise ValueError
+            if len(url.hostname) > 253 or any(not re.fullmatch(
+                    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                    for label in url.hostname.rstrip(".").split(".")):
+                raise ValueError from None
+            return url.hostname, url.port or 443
+        # IP-адрес: HTTPS с любым адресом (host задал оператор), HTTP — только
+        # loopback: локальный сервер Bot API установки (#281).
+        if url.scheme == "https" or address.is_loopback:
+            return url.hostname, url.port or (443 if url.scheme == "https" else 80)
+        raise ValueError
+    except (ValueError, TypeError):
+        raise RuntimeError(f"{setting} must contain the public HTTPS Bot API origin "
+                           "or an HTTP origin on loopback") from None
+
+
+def telegram_egress(raw, resolver, setting=TELEGRAM_API):
+    """Настройка Bot API (None или "" -> публичный origin по умолчанию) ->
+    egress правила сервера. HTTP на loopback правил не даёт: сервер
+    установки достигается внутри кластера. Правила пересчитываются каждой
+    выкладкой: kindnet не умеет FQDN, и смена адреса Telegram между
+    выкладками останавливает уведомления до следующей выкладки (#286,
+    docs/TELEGRAM.md)."""
+    raw = raw if isinstance(raw, str) and raw else TELEGRAM_DEFAULT_ORIGIN
+    host, port = telegram_http_origin(raw, setting)
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return []
+    except ValueError:
+        pass
+    if urlsplit(raw).scheme != "https":
+        return []
+    return proxmox_egress({f"https://{host}" + (f":{port}" if port != 443 else "")}, resolver, setting)
+
+
 def approved_images(raw):
     try:
         images = json.loads(raw)
@@ -469,6 +531,10 @@ class Deploy:
             # Сервер получает значение целиком: полный контракт и токены — его, не deploy.
             environment[GIT_REMOTES] = git_raw
         git_rules = git_remote_egress(git_hosts, self.resolver)
+        telegram_raw = self.get(TELEGRAM_API)
+        if telegram_raw:
+            environment[TELEGRAM_API] = telegram_raw
+        telegram_rules = telegram_egress(telegram_raw, self.resolver)
         domain = actor_git_domain(self.get(ACTOR_GIT_DOMAIN))
         if domain:
             environment[ACTOR_GIT_DOMAIN] = domain
@@ -540,7 +606,8 @@ class Deploy:
                 env_data, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
             deployment = next(obj for obj in objects if obj["kind"] == "Deployment")
             deployment["spec"]["template"]["metadata"]["annotations"] = {"brood.dev/server-env-sha256": checksum}
-            objects[-1]["spec"]["egress"].extend([*api_rules, *pve_rules, *actor_rules, *git_rules])
+            objects[-1]["spec"]["egress"].extend(
+                [*api_rules, *pve_rules, *actor_rules, *git_rules, *telegram_rules])
             if proxy_url:
                 objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
                     "metadata": {"name": "brood-go-cliproxy", "namespace": "brood", "labels": OWNER.copy()},

@@ -531,11 +531,13 @@ class GoDeploymentTests(unittest.TestCase):
     def test_git_remotes_reach_server_secret_and_open_exact_https_egress(self):
         raw = json.dumps(REMOTES)
         answers = {"git.example.test": [answer("203.0.113.7")],
-                   "lan.example.test": [answer("192.168.10.20"), answer("fd00::20")]}
+                   "lan.example.test": [answer("192.168.10.20"), answer("fd00::20")],
+                   "api.telegram.org": [answer("149.154.167.220")]}
         resolver = Mock(side_effect=lambda host, port, **kwargs: answers[host])
         objects = self.capture_release({"BROOD_GIT_REMOTES": raw}, resolver=resolver, forbidden=(GIT_TOKEN, GIT_USER))
         self.assertCountEqual(resolver.call_args_list, [
-            call(host, 443, type=socket.SOCK_STREAM) for host in ("git.example.test", "lan.example.test")])
+            call(host, 443, type=socket.SOCK_STREAM)
+            for host in ("git.example.test", "lan.example.test", "api.telegram.org")])
         secret = next(o for o in objects if o["metadata"]["name"] == "brood-go-env")
         self.assertEqual(base64.b64decode(secret["data"]["BROOD_GIT_REMOTES"]).decode("utf-8"), raw)
         deployment = next(o for o in objects if o["kind"] == "Deployment")
@@ -545,9 +547,10 @@ class GoDeploymentTests(unittest.TestCase):
         baseline = next(o for o in render("localhost:5002/brood-go@sha256:" + "a" * 64)
                         if o["kind"] == "NetworkPolicy")
         policy = next(o for o in objects if o["kind"] == "NetworkPolicy" and o["metadata"]["name"] == "brood-go")
-        self.assertEqual(policy["spec"]["egress"], baseline["spec"]["egress"] + [
+        self.assertCountEqual((json.dumps(rule, sort_keys=True) for rule in policy["spec"]["egress"]),
+                              (json.dumps(rule, sort_keys=True) for rule in baseline["spec"]["egress"] + [
             {"to": [{"ipBlock": {"cidr": cidr}}], "ports": [{"port": 443, "protocol": "TCP"}]}
-            for cidr in ("192.168.10.20/32", "203.0.113.7/32", "fd00::20/128")])
+            for cidr in ("149.154.167.220/32", "192.168.10.20/32", "203.0.113.7/32", "fd00::20/128")]))
         released = json.dumps(objects)
         for value in (GIT_TOKEN, GIT_USER, raw):
             self.assertNotIn(value, released)
@@ -616,6 +619,11 @@ class GoDeploymentTests(unittest.TestCase):
         deploy = self.deploy(settings)
         if resolver is not None:
             deploy.resolver = resolver
+        else:
+            # Выкладка резолвит и публичный Bot API (#286): без своего
+            # резолвера тесты отвечают одним безопасным адресом.
+            deploy.resolver = Mock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "",
+                                                  ("149.154.167.220", 443, 0, 0))])
         applied = []
 
         def output(*args):
@@ -836,7 +844,17 @@ class GoDeploymentTests(unittest.TestCase):
                 for key in settings:
                     self.assertNotIn(key, json.dumps(obj))
             if obj["kind"] == "NetworkPolicy":
-                self.assertEqual(obj, next(o for o in baseline if o["kind"] == "NetworkPolicy"))
+                # Правила Telegram (#286) добавляются при выкладке поверх
+                # базового манифеста: сверяем базовую часть без их cidr.
+                want = json.loads(json.dumps(next(o for o in baseline if o["kind"] == "NetworkPolicy")))
+                got = json.loads(json.dumps(obj))
+                telegram = {"149.154.167.220/32", "149.154.166.110/32", "2001:67c:4e8:f004::9/128"}
+                for policy in (want, got):
+                    policy["spec"]["egress"] = [rule for rule in policy["spec"]["egress"]
+                                                if rule.get("to", [{}])[0].get("ipBlock", {}).get("cidr") not in telegram]
+                self.maxDiff = None
+                self.assertEqual(got, want)
+
         self.assertFalse(any(o["kind"] in ("Actor", "WorkerPool", "StatefulSet") for o in applied))
 
     def test_partial_proxmox_settings_refuse_before_native_calls(self):
@@ -890,11 +908,15 @@ class GoDeploymentTests(unittest.TestCase):
         answers = [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fd00::12", 8006, 0, 0)),
                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.23.4.5", 8006)),
                    (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.23.4.5", 8006))]
-        with patch.object(go_server.socket, "getaddrinfo", return_value=answers) as resolver:
-            first = self.capture_release(settings)
-            second = self.capture_release({**settings, "BROOD_PROXMOX_RELAY_SECRET": "rotated-relay-" * 4})
-        self.assertEqual(resolver.call_count, 2)
-        resolver.assert_called_with("pve.invalid", 8006, type=socket.SOCK_STREAM)
+        def dns(host, port, **kwargs):
+            return answers if host == "pve.invalid" else [answer("149.154.167.220")]
+        resolver = Mock(side_effect=dns)
+        first = self.capture_release(settings, resolver=resolver)
+        second = self.capture_release({**settings, "BROOD_PROXMOX_RELAY_SECRET": "rotated-relay-" * 4},
+                                      resolver=resolver)
+        self.assertEqual(resolver.call_count, 4)
+        resolver.assert_any_call("pve.invalid", 8006, type=socket.SOCK_STREAM)
+        resolver.assert_any_call("api.telegram.org", 443, type=socket.SOCK_STREAM)
         baseline = next(o for o in render("localhost:5002/brood-go@sha256:" + "a" * 64)
                         if o["kind"] == "NetworkPolicy")
         for objects in (first, second):
@@ -902,7 +924,7 @@ class GoDeploymentTests(unittest.TestCase):
             self.assertEqual(policy["spec"]["podSelector"], {"matchLabels": {"app": "brood-go"}})
             self.assertEqual(policy["spec"]["egress"], baseline["spec"]["egress"] + [
                 {"to": [{"ipBlock": {"cidr": ip}}], "ports": [{"port": 8006, "protocol": "TCP"}]}
-                for ip in ("10.23.4.5/32", "fd00::12/128")])
+                for ip in ("10.23.4.5/32", "fd00::12/128")] + [{"to": [{"ipBlock": {"cidr": "149.154.167.220/32"}}], "ports": [{"port": 443, "protocol": "TCP"}]}])
             deployment = next(o for o in objects if o["kind"] == "Deployment")
             pod = deployment["spec"]["template"]["spec"]
             self.assertNotIn("hostNetwork", pod)
@@ -952,7 +974,11 @@ class GoDeploymentTests(unittest.TestCase):
             infrastructure.side_effect = RuntimeError("stop after validation")
             with self.assertRaisesRegex(RuntimeError, "stop after validation"):
                 deploy.run()
-        resolver.assert_called_once_with("pve.invalid", 443, type=socket.SOCK_STREAM)
+        resolver.assert_any_call("pve.invalid", 443, type=socket.SOCK_STREAM)
+        # Telegram Bot API резолвится тем же швом (#286): публичный origin по
+        # умолчанию, отдельный вызов рядом с Proxmox endpoints.
+        resolver.assert_any_call("api.telegram.org", 443, type=socket.SOCK_STREAM)
+        self.assertEqual(len(resolver.call_args_list), 2)
         for address in ("127.0.0.1", "0.0.0.0", "224.0.0.1", "169.254.1.2", "::1", "::", "ff02::1", "fe80::1", "::ffff:127.0.0.1"):
             resolver.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))]
             with self.subTest(address=address), self.assertRaisesRegex(RuntimeError, "BROOD_PROXMOX_POOLS"):
@@ -1037,9 +1063,15 @@ class GoDeploymentTests(unittest.TestCase):
                     deploy.cluster.shell.output.assert_not_called()
 
     def test_config_only_does_not_resolve_or_open_api_egress(self):
-        with patch.object(go_server.socket, "getaddrinfo", side_effect=AssertionError("unexpected DNS")):
-            objects = self.capture_release({"BROOD_PROXMOX_POOLS": '{"lab":{"endpoint":"https://pve.invalid:8006"}}',
-                                            "BROOD_PROXMOX_TOKENS": '{"lab":"token"}'})
-        self.assertEqual(next(o for o in objects if o["kind"] == "NetworkPolicy"),
-                         next(o for o in render("localhost:5002/brood-go@sha256:" + "a" * 64)
-                              if o["kind"] == "NetworkPolicy"))
+        # Выкладка резолвит только публичный Bot API (#286); его правило
+        # вычитается из сравнения с базовым манифестом.
+        resolver = Mock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("149.154.167.220", 443, 0, 0))])
+        objects = self.capture_release({"BROOD_PROXMOX_POOLS": '{"lab":{"endpoint":"https://pve.invalid:8006"}}',
+                                        "BROOD_PROXMOX_TOKENS": '{"lab":"token"}'}, resolver=resolver)
+        policy = next(o for o in objects if o["kind"] == "NetworkPolicy")
+        want = json.loads(json.dumps(next(o for o in render("localhost:5002/brood-go@sha256:" + "a" * 64)
+                                          if o["kind"] == "NetworkPolicy")))
+        want["spec"]["egress"].append({"to": [{"ipBlock": {"cidr": "149.154.167.220/32"}}],
+                                       "ports": [{"port": 443, "protocol": "TCP"}]})
+        self.assertEqual(policy, want)
+        resolver.assert_called_once_with("api.telegram.org", 443, type=socket.SOCK_STREAM)
