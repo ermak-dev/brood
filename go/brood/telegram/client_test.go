@@ -4,11 +4,13 @@ package telegram
 // SPEC: getMe, getUpdates, sendMessage, sendDocument, editMessageReplyMarkup
 // and answerCallbackQuery reach <base>/bot<token>/<method> by POST, encode
 // their parameters as the Bot API documents them and decode only the fields
-// brood uses. sendMessage turns link previews off: Telegram would fetch the
-// URLs of mirrored text, tokens in them included. The bot token is an
-// argument of NewClient apart from Config; the base URL is a setting with the
-// public API as default; the transport takes no proxy from the environment. A
-// local refusal never reaches the server.
+// brood uses. sendMessage and sendDocument carry an inline keyboard or a
+// force reply (#298), editMessageReplyMarkup only an inline keyboard; a nil
+// markup of either kind is none. sendMessage turns link previews off:
+// Telegram would fetch the URLs of mirrored text, tokens in them included.
+// The bot token is an argument of NewClient apart from Config; the base URL
+// is a setting with the public API as default; the transport takes no proxy
+// from the environment. A local refusal never reaches the server.
 
 import (
 	"bytes"
@@ -290,6 +292,106 @@ func TestSendMessageAcceptsKeyboardLimits(t *testing.T) {
 	}
 	if int(hits.Load()) != len(cases) {
 		t.Fatalf("server saw %d requests, want %d", hits.Load(), len(cases))
+	}
+}
+
+const forceReplyJSON = `{"force_reply":true,"input_field_placeholder":"Your answer"}`
+
+// A force reply asks the Telegram client to open a reply to the message: the
+// Bot API takes force_reply true and an optional input field placeholder.
+func TestSendMessageWithForceReply(t *testing.T) {
+	var want string
+	c, _ := fakeBot(t, func(w http.ResponseWriter, r request) {
+		expect(t, r, "sendMessage")
+		sameJSON(t, r.body, want)
+		result(w, message(14, "Which database?"))
+	})
+	for _, tc := range []struct {
+		reply *ForceReply
+		json  string
+	}{
+		{&ForceReply{Placeholder: "Your answer"}, forceReplyJSON},
+		{&ForceReply{}, `{"force_reply":true}`},
+	} {
+		want = `{"chat_id":777,"text":"Which database?","link_preview_options":{"is_disabled":true},"reply_markup":` + tc.json + `}`
+		if m, err := c.SendMessage(context.Background(), 777, "Which database?", tc.reply); err != nil || m.MessageID != 14 {
+			t.Fatalf("SendMessage with %+v = %+v, %v", tc.reply, m, err)
+		}
+	}
+}
+
+func TestSendDocumentWithForceReply(t *testing.T) {
+	c, _ := fakeBot(t, func(w http.ResponseWriter, r request) {
+		expect(t, r, "sendDocument")
+		fields, _, _ := multipartFields(t, r)
+		sameJSON(t, []byte(fields["reply_markup"]), forceReplyJSON)
+		result(w, message(16, ""))
+	})
+	m, err := c.SendDocument(context.Background(), 777, Document{Name: "request-16.txt", Content: []byte("material"), Caption: "Which database?"}, &ForceReply{Placeholder: "Your answer"})
+	if err != nil || m.MessageID != 16 {
+		t.Fatalf("SendDocument = %+v, %v", m, err)
+	}
+}
+
+// A nil pointer of either kind is no markup: a caller passes the keyboard it
+// built, nil when it built none, and the message goes without reply_markup.
+func TestNilMarkupOfEitherKindIsNoMarkup(t *testing.T) {
+	c, hits := fakeBot(t, func(w http.ResponseWriter, r request) {
+		switch r.method {
+		case "sendMessage":
+			sameJSON(t, r.body, `{"chat_id":777,"text":"hi","link_preview_options":{"is_disabled":true}}`)
+		case "sendDocument":
+			if fields, _, _ := multipartFields(t, r); !reflect.DeepEqual(fields, map[string]string{"chat_id": "777"}) {
+				t.Errorf("fields %v", fields)
+			}
+		}
+		result(w, message(15, "hi"))
+	})
+	var noKeyboard *InlineKeyboardMarkup
+	var noReply *ForceReply
+	for name, markup := range map[string]ReplyMarkup{"nil keyboard": noKeyboard, "nil force reply": noReply} {
+		if _, err := c.SendMessage(context.Background(), 777, "hi", markup); err != nil {
+			t.Errorf("SendMessage with a %s: %v", name, err)
+		}
+		if _, err := c.SendDocument(context.Background(), 777, Document{Name: "report.txt", Content: []byte("report")}, markup); err != nil {
+			t.Errorf("SendDocument with a %s: %v", name, err)
+		}
+	}
+	if hits.Load() != 4 {
+		t.Fatalf("server saw %d requests, want 4", hits.Load())
+	}
+}
+
+// The placeholder is 1 to 64 characters of UTF-8, counted as the Bot API
+// counts them (TextLength); a bad one never reaches the server. The limit is
+// spelled out, not taken from the package constants.
+func TestForceReplyPlaceholderLimits(t *testing.T) {
+	c, hits := fakeBot(t, func(w http.ResponseWriter, r request) { result(w, message(1, "x")) })
+	doc := Document{Name: "request.txt", Content: []byte("material")}
+	for name, placeholder := range map[string]string{
+		"blank placeholder":                  " \t",
+		"placeholder over 64 characters":     strings.Repeat("p", 65),
+		"surrogate pairs over 64 characters": strings.Repeat(astral, 32) + "p",
+		"placeholder not UTF-8":              "\xff",
+	} {
+		_, err := c.SendMessage(context.Background(), 777, "hi", &ForceReply{Placeholder: placeholder})
+		localRefusal(t, "message with a "+name, err)
+		_, err = c.SendDocument(context.Background(), 777, doc, &ForceReply{Placeholder: placeholder})
+		localRefusal(t, "document with a "+name, err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("local refusals reached the server %d times", hits.Load())
+	}
+	for name, placeholder := range map[string]string{
+		"64 characters":      strings.Repeat("p", 64),
+		"32 surrogate pairs": strings.Repeat(astral, 32),
+	} {
+		if _, err := c.SendMessage(context.Background(), 777, "hi", &ForceReply{Placeholder: placeholder}); err != nil {
+			t.Errorf("placeholder of %s: %v", name, err)
+		}
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("server saw %d requests, want 2", hits.Load())
 	}
 }
 

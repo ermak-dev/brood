@@ -31,6 +31,7 @@ const (
 	maxCallbackData = 64
 	maxAnswerText   = 200
 	maxQueryID      = 256
+	maxPlaceholder  = 64
 )
 
 // pollKinds are the update kinds the package parses. Telegram keeps the list
@@ -153,18 +154,19 @@ func NextOffset(current int64, updates []Update) int64 {
 }
 
 // SendMessage sends plain text, at most MessageLimit characters (TextLength),
-// with an optional inline keyboard. A longer text is split (SplitText) or
-// sent as a document. The message has no link preview: Telegram would fetch
-// the URLs of the text for one, and mirrored text may hold URLs with tokens.
-// An uncertain failure may have delivered the message.
-func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, markup *InlineKeyboardMarkup) (Message, error) {
+// with an optional inline keyboard or force reply. A longer text is split
+// (SplitText) or sent as a document. The message has no link preview:
+// Telegram would fetch the URLs of the text for one, and mirrored text may
+// hold URLs with tokens. An uncertain failure may have delivered the message.
+func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, markup ReplyMarkup) (Message, error) {
 	if chatID == 0 {
 		return Message{}, invalid("no chat")
 	}
 	if err := checkText("message text", text, MessageLimit); err != nil {
 		return Message{}, err
 	}
-	if err := markup.check(); err != nil {
+	reply, err := replyMarkup(markup)
+	if err != nil {
 		return Message{}, err
 	}
 	// Превью ссылки Telegram строит, сам открывая URL из текста, а в
@@ -173,20 +175,20 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, mar
 		IsDisabled bool `json:"is_disabled"`
 	}
 	params := struct {
-		ChatID      int64                 `json:"chat_id"`
-		Text        string                `json:"text"`
-		LinkPreview linkPreview           `json:"link_preview_options"`
-		ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
-	}{chatID, text, linkPreview{IsDisabled: true}, markup}
+		ChatID      int64       `json:"chat_id"`
+		Text        string      `json:"text"`
+		LinkPreview linkPreview `json:"link_preview_options"`
+		ReplyMarkup any         `json:"reply_markup,omitempty"`
+	}{chatID, text, linkPreview{IsDisabled: true}, reply}
 	return sent("sendMessage", func(out *Message) error {
 		return c.callJSON(ctx, "sendMessage", params, 0, out)
 	})
 }
 
 // SendDocument uploads doc as a file with an optional caption of at most
-// CaptionLimit characters and an inline keyboard. An uncertain failure may
-// have delivered the document.
-func (c *Client) SendDocument(ctx context.Context, chatID int64, doc Document, markup *InlineKeyboardMarkup) (Message, error) {
+// CaptionLimit characters and an inline keyboard or force reply. An uncertain
+// failure may have delivered the document.
+func (c *Client) SendDocument(ctx context.Context, chatID int64, doc Document, markup ReplyMarkup) (Message, error) {
 	if chatID == 0 {
 		return Message{}, invalid("no chat")
 	}
@@ -201,10 +203,11 @@ func (c *Client) SendDocument(ctx context.Context, chatID int64, doc Document, m
 			return Message{}, err
 		}
 	}
-	if err := markup.check(); err != nil {
+	reply, err := replyMarkup(markup)
+	if err != nil {
 		return Message{}, err
 	}
-	body, contentType, err := documentForm(chatID, doc, markup)
+	body, contentType, err := documentForm(chatID, doc, reply)
 	if err != nil {
 		return Message{}, invalid("cannot encode the document")
 	}
@@ -225,16 +228,17 @@ func sent(method string, send func(*Message) error) (Message, error) {
 	return m, nil
 }
 
-// documentForm encodes sendDocument parameters as multipart/form-data.
-func documentForm(chatID int64, doc Document, markup *InlineKeyboardMarkup) ([]byte, string, error) {
+// documentForm encodes sendDocument parameters as multipart/form-data; reply
+// is the encoded reply_markup, nil for none.
+func documentForm(chatID int64, doc Document, reply any) ([]byte, string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	fields := [][2]string{{"chat_id", strconv.FormatInt(chatID, 10)}}
 	if doc.Caption != "" {
 		fields = append(fields, [2]string{"caption", doc.Caption})
 	}
-	if markup != nil {
-		b, err := json.Marshal(markup)
+	if reply != nil {
+		b, err := json.Marshal(reply)
 		if err != nil {
 			return nil, "", err
 		}
@@ -324,6 +328,41 @@ func checkText(what, text string, limit int) error {
 		return invalid("%s exceeds %d characters", what, limit)
 	}
 	return nil
+}
+
+// replyMarkup checks m and returns its reply_markup value, nil for no markup.
+func replyMarkup(m ReplyMarkup) (any, error) {
+	if m == nil {
+		return nil, nil
+	}
+	return m.encode()
+}
+
+func (m *InlineKeyboardMarkup) encode() (any, error) {
+	if m == nil {
+		return nil, nil
+	}
+	if err := m.check(); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// encode refuses a placeholder Telegram would refuse: when set, it is 1 to 64
+// characters of UTF-8.
+func (f *ForceReply) encode() (any, error) {
+	if f == nil {
+		return nil, nil
+	}
+	if f.Placeholder != "" {
+		if err := checkText("input field placeholder", f.Placeholder, maxPlaceholder); err != nil {
+			return nil, err
+		}
+	}
+	return struct {
+		ForceReply  bool   `json:"force_reply"`
+		Placeholder string `json:"input_field_placeholder,omitempty"`
+	}{true, f.Placeholder}, nil
 }
 
 // check refuses a keyboard Telegram would refuse. A keyboard needs a row: a
