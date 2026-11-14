@@ -3521,7 +3521,7 @@
       "token_save": "Save token",
       "token_saved": "Bot {{bot}} saved.",
       "events_title": "Notifications",
-      "events_hint": "What comes to the linked chat. The panel cannot change subscriptions yet: the server has no API to write them (#295).",
+      "events_hint": "What comes to the linked chat. A switch saves the change right away.",
       "events": {
         "request_opened": "Operator request opened",
         "request_answered": "Operator request answered",

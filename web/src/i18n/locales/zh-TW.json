@@ -3545,7 +3545,7 @@
       "token_save": "儲存權杖",
       "token_saved": "機器人 {{bot}} 已儲存。",
       "events_title": "通知",
-      "events_hint": "會傳送到已綁定聊天的內容。面板暫時無法變更訂閱：伺服器尚無寫入訂閱的 API（#295）。",
+      "events_hint": "會傳送到已綁定聊天的內容。切換開關會立即儲存變更。",
       "events": {
         "request_opened": "新的操作員請求",
         "request_answered": "操作員請求已回答",

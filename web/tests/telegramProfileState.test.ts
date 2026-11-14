@@ -10,8 +10,10 @@
 // own clock, a skewed browser clock does not. The countdown is in whole
 // minutes on the server clock, which the Date of a reply gives. The page
 // polls only while a code waits. Subscriptions list the known kinds in the
-// server's order and keep kinds of a newer server. A token is checked for the
-// shape BotFather issues before it is sent.
+// server's order and keep kinds of a newer server; a switch sends the full
+// set (#296), known kinds in the server's order, each once, with the kinds of
+// a newer server still on. A token is checked for the shape BotFather issues
+// before it is sent.
 import { describe, expect, spyOn, test } from 'bun:test';
 import {
   TELEGRAM_EVENTS,
@@ -27,6 +29,7 @@ import {
   serverClockOffset,
   subscriptionRows,
   telegramTone,
+  toggledEvents,
   tokenDraft,
   tokenProblem,
   waitsForStart,
@@ -228,6 +231,42 @@ describe('subscriptions', () => {
     const rows = subscriptionRows(['request_opened', 'swarm_deleted']);
     expect(rows.at(-1)).toEqual({ kind: 'swarm_deleted', on: true, known: false });
     expect(rows).toHaveLength(TELEGRAM_EVENTS.length + 1);
+  });
+});
+
+describe('subscription switch', () => {
+  test('turning a kind on gives the full set in the server order', () => {
+    expect(toggledEvents(['step_failed'], 'request_opened', true)).toEqual([
+      'request_opened',
+      'step_failed',
+    ]);
+  });
+
+  test('turning a kind off leaves the others, and the last one off leaves none', () => {
+    expect(toggledEvents([...TELEGRAM_EVENTS], 'pass_started', false)).toEqual(
+      TELEGRAM_EVENTS.filter((kind) => kind !== 'pass_started')
+    );
+    expect(toggledEvents(['step_failed'], 'step_failed', false)).toEqual([]);
+  });
+
+  test('a kind is sent once, however often the set names it', () => {
+    expect(toggledEvents(['request_opened', 'request_opened'], 'request_opened', true)).toEqual([
+      'request_opened',
+    ]);
+    // Известные виды панель берёт из своего словаря, поэтому повтор доходит
+    // до схлопывания только у видов сервера новее.
+    expect(toggledEvents(['swarm_deleted', 'swarm_deleted'], 'step_failed', true)).toEqual([
+      'step_failed',
+      'swarm_deleted',
+    ]);
+  });
+
+  test('kinds of a newer server stay subscribed, after the known ones', () => {
+    expect(toggledEvents(['swarm_deleted', 'request_opened'], 'step_failed', true)).toEqual([
+      'request_opened',
+      'step_failed',
+      'swarm_deleted',
+    ]);
   });
 });
 
