@@ -20,7 +20,11 @@ package server
 // poller of the old bot; an own bot that is the installation bot gets no
 // second poller. DELETE unlinks a chat of the installation bot too. A chat the
 // pollers hold as linked is rechecked by the store on every message, so a
-// revocation silences it before the next reconcile. A write reconciles the
+// revocation silences it before the next reconcile. A chat the installation
+// bot links while a reconcile runs is heard right after the link reply, also
+// when that reconcile read the database before the link, with the chat
+// unlinked or linked to another user; once the chat is unlinked, the next
+// reconcile forgets it. A write reconciles the
 // pollers before it answers, also when its client left after the commit;
 // when the reconcile fails, PUT and POST /link are an internal error and
 // DELETE still stops the poller of the removed bot. Saving the same token
@@ -770,6 +774,99 @@ func TestTelegramRevokedChatIsNotHeardBeforeTheNextReconcile(t *testing.T) {
 			h.deliver(tc.token, privateMessage(666, "bobby", "/status"))
 			if got := h.api.sentTo(tc.token, 666); !slices.Equal(got, []string{telegramUnknownReply("status")}) {
 				t.Fatalf("a revoked chat still gets replies: %q", got)
+			}
+		})
+	}
+}
+
+// Сверка, прочитавшая базу до привязки чата через бот установки и
+// записавшая набор после неё, чат не теряет (#300): команда только что
+// привязанного чата слышна сразу после ответа о привязке, а не после
+// следующей сверки. Так и тогда, когда прочитанный набор держал этот чат за
+// прежним пользователем: привязка поллера новее набора. Чат, отвязанный
+// потом, следующая сверка забывает.
+func TestTelegramReconcileKeepsAChatLinkedWhileItRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// earlier — пользователь, к которому чат привязан до сверки; пусто —
+		// чат ничей.
+		earlier string
+	}{
+		{"unlinked chat", ""},
+		{"chat of another user", "alice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			// Сверка только по просьбе: набор меняют лишь сверки теста и та, о
+			// которой просит привязка.
+			var during atomic.Pointer[func()]
+			h := startTelegramHarness(t, newTestBotAPI(t), "", installBotToken, nil, func(o *telegramOptions) {
+				o.reconcile = time.Hour
+				o.reconciling = func() {
+					if f := during.Load(); f != nil {
+						(*f)()
+					}
+				}
+			})
+			bob, bobID := h.member("bob")
+			telegramEventually(t, "the installation bot is polled", func() bool { return len(h.api.polls(installBotToken)) > 0 })
+			// Прежнего пользователя привязывает хранилище, и сверка уже держит
+			// чат за ним: его называет и набор, который прочтёт сверка теста.
+			var earlierID string
+			if tc.earlier != "" {
+				var earlier *http.Client
+				earlier, earlierID = h.member(tc.earlier)
+				h.confirmInStore("", h.issueCode(earlier)["code"].(string), 666)
+				if err := h.srv.telegram.sync(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if got := h.srv.telegram.installationChat(666); got != earlierID {
+					t.Fatalf("the reconcile holds the chat for %q", got)
+				}
+			}
+			code := h.issueCode(bob)["code"].(string)
+			// Сверка, о которой просит привязка, читает базу уже после неё; до
+			// проверки она стоит, чтобы её набор не скрыл потерю.
+			held := make(chan struct{})
+			var release sync.Once
+			free := func() { release.Do(func() { close(held) }) }
+			t.Cleanup(free)
+			var reads atomic.Int32
+			link := func() {
+				if reads.Add(1) > 1 {
+					<-held
+					return
+				}
+				if earlierID != "" {
+					if _, err := h.srv.store.UnlinkTelegram(ctx, earlierID); err != nil {
+						t.Fatal(err)
+					}
+				}
+				h.deliver(installBotToken, privateMessage(666, "bobby", "/start "+code))
+			}
+			during.Store(&link)
+			if err := h.srv.telegram.sync(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.link(bobID); got.State != "linked" || got.ChatID != 666 {
+				t.Fatalf("link during the reconcile: %+v", got)
+			}
+			h.deliver(installBotToken, privateMessage(666, "bobby", "/status"))
+			got := h.api.sentTo(installBotToken, 666)
+			free()
+			if !slices.Equal(got, []string{telegramReplyLinked, telegramUnknownReply("status")}) {
+				t.Fatalf("replies to the chat linked during a reconcile: %q", got)
+			}
+			// Привязка была до этой сверки, и её снимок счёта уже не старше
+			// привязки: прочитанный набор без чата его снимает.
+			if _, err := h.srv.store.UnlinkTelegram(ctx, bobID); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.srv.telegram.sync(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.srv.telegram.installationChat(666); got != "" {
+				t.Fatalf("the reconcile keeps the unlinked chat for %q", got)
 			}
 		})
 	}
