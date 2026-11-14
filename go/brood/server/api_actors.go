@@ -337,6 +337,7 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 		if !s.nativeReadBound(w, r, sw) {
 			return
 		}
+		r = r.WithContext(s.webCommandContext(r, user.ID))
 		s.handleManagedActor(w, r, user.ID, sw, a)
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {

@@ -215,20 +215,20 @@ func TestTelegramActorLinkEndedBeforeThePressRunsNothing(t *testing.T) {
 	}
 }
 
-// Запись жизненного цикла сессию чата сама не проверяет (#299): привязка,
-// которая умерла, пока шла команда, её не останавливает, и чат узнаёт, что
-// действие могло случиться, а не молчание.
+// Отозванная до записи сессия запрещает намерение (#299). Адаптер пока
+// предупреждает об умершей привязке даже при отказе жизненного цикла.
 func TestTelegramActorChangeOverALinkThatEndedSaysItMayHaveTakenEffect(t *testing.T) {
 	f := telegramActorSetup(t)
 	ask := f.chat.confirmation("/actor alpha coding stop")
+	before := f.actor(t)
 	var hooks hookErrors
 	f.ts.srv.telegram.commands.beforeWrite = f.unlink(&hooks)
 	got := f.chat.press("q1", ask, 0).only(t)
 	hooks.check(t)
 	expectText(t, "stop over an ended link", got,
 		`This chat is no longer linked to your brood account: the stop of actor "coding" in swarm "alpha" may have taken effect. Check the actor in brood.`)
-	if a := f.actor(t); a.Desired != "stopped" {
-		t.Fatalf("actor after the command = %+v", a)
+	if a := f.actor(t); a.Desired != before.Desired || a.Revision != before.Revision || a.OperationID != before.OperationID {
+		t.Fatalf("revoked chat changed the actor: %+v -> %+v", before, a)
 	}
 }
 

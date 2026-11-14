@@ -166,6 +166,18 @@ func (s *Server) commandPreflight(ctx context.Context, user store.User, scope st
 	return nil, nil
 }
 
+// webCommandContext привязывает запись намерения к исходной живой веб-сессии.
+func (s *Server) webCommandContext(r *http.Request, userID string) context.Context {
+	return context.WithValue(r.Context(), commandSessionAuthorityKey{}, func(ctx context.Context) bool {
+		cookie, err := r.Cookie(auth.CookieSession)
+		if err != nil {
+			return false
+		}
+		id, _, err := auth.NewSessions(s.store, 0).Load(ctx, cookie.Value, time.Now())
+		return err == nil && id == userID
+	})
+}
+
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
@@ -193,14 +205,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(auth.CookieSession); err == nil {
 		caller += fmt.Sprintf(":%x", sha256.Sum256([]byte(cookie.Value)))
 	}
-	commandContext := context.WithValue(r.Context(), commandSessionAuthorityKey{}, func(ctx context.Context) bool {
-		cookie, err := r.Cookie(auth.CookieSession)
-		if err != nil {
-			return false
-		}
-		id, _, err := auth.NewSessions(s.store, 0).Load(ctx, cookie.Value, time.Now())
-		return err == nil && id == user.ID
-	})
+	commandContext := s.webCommandContext(r, user.ID)
 	result, err := s.executeOperatorCommand(commandContext, user.ID, scope, caller, inv)
 	if err != nil {
 		if result.Outcome == "unconfirmed" || result.Outcome == "unknown" {

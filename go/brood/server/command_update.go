@@ -132,27 +132,31 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: a.Name, action: "update", actor: a, parent: parent, operationID: store.NewID()}
 	err := s.admitWorkload(userID, sw.ID, op)
 	saved := op.saved
+	durable := err == nil
 	if err != nil {
 		// Отказ мог случиться и после записи намерения: PVE принял остановку,
 		// а запись её UPID не удалась, или не записалась отметка отправки
 		// Stop. Ответ называет состояние базы, а не копию в памяти.
 		// Записанное намерение — неизвестный исход или ждущий Stop, иначе —
 		// обычный отказ.
-		current, getErr := s.store.GetManagedActor(context.WithoutCancel(ctx), a.UID)
-		if getErr == nil && current.OperationID != op.operationID {
+		if op.intent.UID == "" {
 			return command.Result{}, actorCommandError(err)
 		}
-		saved = current
-		if getErr != nil {
-			// Состояние не прочитать: ответ называет только намерение.
-			saved = store.ManagedActor{UID: a.UID, Name: a.Name, Incarnation: a.Incarnation, OperationID: op.operationID}
+		current, getErr := s.store.GetManagedActor(context.WithoutCancel(ctx), a.UID)
+		if getErr == nil && current.OperationID == op.intent.OperationID {
+			saved = current
+			durable = true
+		} else {
+			// Precommit snapshot сохраняет только ID попытки: ни commit, ни
+			// незапрошенный Stop он не доказывает, даже с прежним маркером.
+			saved = op.intent
 		}
 	}
 	// Stop, отказавший до записи (#275) или не дошедший до отметки отправки
 	// (#277), PVE не получал: намерение записано, и reconcile запрашивает
 	// остановку каждым проходом. Это принятие, а не неизвестный исход, даже
 	// если сам запрос кончился ошибкой.
-	if stopNotRequested(saved) {
+	if durable && stopNotRequested(saved) {
 		last := ""
 		if detail := saved.Diagnostic(); detail != "" {
 			last = " (last attempt failed: " + detail + ")"
@@ -171,8 +175,12 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 		default:
 			detail = "no task was confirmed"
 		}
+		intentStatus := fmt.Sprintf("intent %s durability is unconfirmed", saved.OperationID)
+		if durable {
+			intentStatus = fmt.Sprintf("intent %s is retained and is not retried automatically", saved.OperationID)
+		}
 		result := updateResult(saved, before.id, target, "unknown", "")
-		return result, fmt.Errorf("actor %q update outcome is unknown: the stop of the controlled restart from guest release %s to %s has no confirmed and recorded Proxmox task (%s); intent %s is retained and is not retried automatically; reconcile the allocation before another lifecycle change", a.Name, before.id, target, detail, saved.OperationID)
+		return result, fmt.Errorf("actor %q update outcome is unknown: the stop of the controlled restart from guest release %s to %s has no confirmed and recorded Proxmox task (%s); %s; reconcile the allocation before another lifecycle change", a.Name, before.id, target, detail, intentStatus)
 	}
 	return updateResult(saved, before.id, target, "accepted", fmt.Sprintf("actor %q update accepted (uid %s): a controlled restart in the retained container from guest release %s to %s; the profile's template and resources do not change; the restart is asynchronous, not a completion or readiness confirmation; current state: %s", a.Name, a.UID, before.id, target, saved.Phase)), nil
 }
