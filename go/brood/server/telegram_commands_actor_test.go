@@ -11,11 +11,11 @@ package server
 // viewer is refused before any confirmation. A confirmation of /actor holds
 // the actor and its generation: a press after the actor was reset or
 // replaced does nothing. The link is checked before the catalog command and
-// after it: a link that ended before runs nothing and gets no reply; a link
-// that ended while the command ran is told that it may have taken effect,
-// as is an unknown outcome; the command deadline is not taken for an
-// unlink. A command runs within the command timeout: a Substrate that does
-// not answer holds the poller no longer. /start <swarm> <goal> starts a new
+// after it: a link that ended before the intent write is refused without
+// changing the actor or replying; a link that ended after an accepted intent
+// is told that it may have taken effect, as is an unknown outcome; the
+// command deadline is not taken for an unlink. A command runs within the
+// command timeout: a Substrate that does not answer holds the poller no longer. /start <swarm> <goal> starts a new
 // pass on the pinned workflow at the HEAD of the project repository after
 // its confirmation, through the same server method as POST
 // /api/swarms/{id}/start, and hands its first step to the step dispatcher as
@@ -30,6 +30,7 @@ import (
 	"context"
 	"net/http"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -215,20 +216,81 @@ func TestTelegramActorLinkEndedBeforeThePressRunsNothing(t *testing.T) {
 	}
 }
 
-// Отозванная до записи сессия запрещает намерение (#299). Адаптер пока
-// предупреждает об умершей привязке даже при отказе жизненного цикла.
-func TestTelegramActorChangeOverALinkThatEndedSaysItMayHaveTakenEffect(t *testing.T) {
+// BUG: Адаптер отвечает уже отвязанному чату, хотя запись жизненного цикла отказана (#299).
+// HYPOTHESIS: Ветка telegramLinkEnded не различает отказ до намерения и исполненную команду;
+// отказ preflight не перепроверяет привязку, а удалённый пользователь выглядит ошибкой хранилища.
+// SOLUTION: Привязка проверяется при любом выходе каталога; отсутствие пользователя до
+// исполнения — отказ в полномочии. Отвязанный чат не получает отказ, принятое намерение сохраняет предупреждение.
+// RESULT: FIXED — до намерения нет ответа и записи; после принятия предупреждение остаётся.
+// STATUS: FIXED
+func TestTelegramActorLinkEndedBeforeIntentChangesNothingAndGetsNoReply(t *testing.T) {
+	for _, action := range []string{"stop", "start", "update", "reset"} {
+		for _, revoke := range []string{"unlink", "sessions", "disabled", "deleted"} {
+			t.Run(action+"/"+revoke, func(t *testing.T) {
+				f := telegramActorSetup(t)
+				if action == "start" {
+					ask := f.chat.confirmation("/actor alpha coding stop")
+					f.chat.press("stop", ask, 0).only(t)
+					settleActor(t, f.ts, f.uid, actorStopped)
+				}
+				if action == "update" {
+					f.ts.srv.artifactsDir = writeGuestArtifacts(t)
+					guestReleaseHub(f.ts, reportsRelease(oldRelease))
+				}
+				if revoke == "deleted" {
+					ctx := context.Background()
+					bob, err := f.ts.srv.store.GetUserByUsername(ctx, "bob")
+					if err != nil {
+						t.Fatal(err)
+					}
+					// Удаление редактора допустимо: рой принадлежит другому участнику.
+					if err := f.ts.srv.store.SetSwarmMember(ctx, f.swarm, bob.ID, "owner"); err != nil {
+						t.Fatal(err)
+					}
+					if err := f.ts.srv.store.SetSwarmMember(ctx, f.swarm, f.aliceID, "editor"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				ask := f.chat.confirmation("/actor alpha coding " + action)
+				before := f.actor(t)
+				writes := lifecycleProviderWrites(f.pve)
+				var hooks hookErrors
+				f.ts.srv.telegram.commands.beforeWrite = func() {
+					if revoke == "unlink" {
+						f.unlink(&hooks)()
+					} else if revoke == "disabled" {
+						hooks.add(f.ts.srv.store.SetUserDisabled(context.Background(), f.aliceID, true))
+					} else if revoke == "deleted" {
+						hooks.add(f.ts.srv.store.DeleteUserWithoutSwarms(context.Background(), f.aliceID))
+					} else {
+						_, err := f.ts.srv.store.DeleteSessionsOfUser(context.Background(), f.aliceID)
+						hooks.add(err)
+					}
+				}
+				got := f.chat.press("q1", ask, 0)
+				hooks.check(t)
+				after := f.actor(t)
+				if len(got.sent) != 0 || !reflect.DeepEqual(after, before) || lifecycleProviderWrites(f.pve) != writes {
+					t.Fatalf("revoked chat got a reply or changed lifecycle: sent=%+v revision=%d -> %d writes=%v -> %v", got.sent, before.Revision, after.Revision, writes, lifecycleProviderWrites(f.pve))
+				}
+			})
+		}
+	}
+}
+
+func TestTelegramActorLinkEndedAfterIntentStillNamesPossibleEffect(t *testing.T) {
 	f := telegramActorSetup(t)
 	ask := f.chat.confirmation("/actor alpha coding stop")
-	before := f.actor(t)
 	var hooks hookErrors
-	f.ts.srv.telegram.commands.beforeWrite = f.unlink(&hooks)
+	f.pve.mu.Lock()
+	f.pve.afterStop = f.unlink(&hooks)
+	f.pve.mu.Unlock()
 	got := f.chat.press("q1", ask, 0).only(t)
 	hooks.check(t)
-	expectText(t, "stop over an ended link", got,
+	expectText(t, "stop accepted before unlink", got,
 		`This chat is no longer linked to your brood account: the stop of actor "coding" in swarm "alpha" may have taken effect. Check the actor in brood.`)
-	if a := f.actor(t); a.Desired != before.Desired || a.Revision != before.Revision || a.OperationID != before.OperationID {
-		t.Fatalf("revoked chat changed the actor: %+v -> %+v", before, a)
+	if a := f.actor(t); a.Desired != "stopped" {
+		t.Fatalf("the accepted stop was lost: %+v", a)
 	}
 }
 
