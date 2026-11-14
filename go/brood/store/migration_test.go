@@ -380,9 +380,10 @@ func TestMigrateV28DatabaseToCurrent(t *testing.T) {
 	}
 }
 
-// withDefaultSwarmStep: строки базы после шага 29→30: у привязок Telegram в
-// конце рой по умолчанию NULL, прочие строки те же.
-func withDefaultSwarmStep(rows map[string][]string) map[string][]string {
+// withLinkColumnStep: строки базы после шага, который добавляет колонку
+// привязок Telegram с NULL у прежних строк: 29→30 — рой по умолчанию, 30→31 —
+// имя собеседника. Прочие строки те же.
+func withLinkColumnStep(rows map[string][]string) map[string][]string {
 	out := maps.Clone(rows)
 	var links []string
 	for _, row := range rows["user_telegram_links"] {
@@ -421,7 +422,7 @@ func TestMigrateV29DatabaseToCurrent(t *testing.T) {
 	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
 		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
 	}
-	if after, want := databaseRows(t, s.db), withDefaultSwarmStep(before); !reflect.DeepEqual(after, want) {
+	if after, want := databaseRows(t, s.db), withLinkColumnStep(withLinkColumnStep(before)); !reflect.DeepEqual(after, want) {
 		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
 	}
 	requireIntact(t, s.db)
@@ -436,6 +437,63 @@ func TestMigrateV29DatabaseToCurrent(t *testing.T) {
 	}
 	if _, err := s.db.Exec(`INSERT INTO user_telegram_links (user_id, state, events, updated_at, default_swarm_id) VALUES ('u', 'unlinked', '[]', 'now', 'missing')`); err == nil || !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
 		t.Fatalf("default swarm foreign key after migration: %v", err)
+	}
+}
+
+// TestMigrateV30DatabaseToCurrent: шаг 30→31 добавляет
+// user_telegram_links.telegram_username (#294) и заменяет триггер отзыва
+// сессии telegram, который теперь снимает и имя. Итог совпадает со свежей
+// базой объект в объект; прежние привязки остаются как были, без имени: его
+// приносит следующее сообщение чата. На мигрированной базе имя пишется,
+// отзыв сессии снимает его вместе с привязкой, а CHECK держит его форму.
+func TestMigrateV30DatabaseToCurrent(t *testing.T) {
+	ctx := context.Background()
+	path := loadSchemaFixture(t, 30)
+	raw := rawDatabase(t, path)
+	requireIntact(t, raw)
+	before := databaseRows(t, raw)
+	raw.Close()
+	if len(before["user_telegram_links"]) != 3 {
+		t.Fatalf("the v30 fixture has no links to migrate: %v", before["user_telegram_links"])
+	}
+
+	s, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("v30 database refused: %v", err)
+	}
+	defer s.Close()
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatalf("migrated version = %d, %v; want %d", version, err, schemaVersion)
+	}
+	fresh := newTestStore(t)
+	if got, want := schemaObjects(t, s.db), schemaObjects(t, fresh.db); !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated schema differs from a fresh one:\n got %q\nwant %q", got, want)
+	}
+	if after, want := databaseRows(t, s.db), withLinkColumnStep(before); !reflect.DeepEqual(after, want) {
+		t.Fatalf("migration changed rows:\n got %v\nwant %v", after, want)
+	}
+	requireIntact(t, s.db)
+	link, err := s.GetTelegramLink(ctx, "root")
+	if err != nil || link.State != "linked" || link.ChatID != 4242 || link.DefaultSwarmID != "s" || link.TelegramUsername != "" {
+		t.Fatalf("root link after migration = %+v, %v", link, err)
+	}
+	session, err := s.TelegramChatSession(ctx, "root", "root_brood_bot", 4242, 4242)
+	if err != nil || session == "" {
+		t.Fatalf("root session after migration = %q, %v", session, err)
+	}
+	mustNil(t, s.NoteTelegramUsername(ctx, "root", session, "root_tg"))
+	if link, err := s.GetTelegramLink(ctx, "root"); err != nil || link.TelegramUsername != "root_tg" {
+		t.Fatalf("username on the migrated database = %+v, %v", link, err)
+	}
+	if _, err := s.DeleteSessionsOfUser(ctx, "root"); err != nil {
+		t.Fatalf("revocation of a link with a username on the migrated database: %v", err)
+	}
+	if link, err := s.GetTelegramLink(ctx, "root"); err != nil || link.State != "error" || link.Reason != telegramSessionRevoked || link.TelegramUsername != "" {
+		t.Fatalf("revocation on the migrated database = %+v, %v", link, err)
+	}
+	if _, err := s.db.Exec(`UPDATE user_telegram_links SET telegram_username = 'ed_tg' WHERE user_id = 'ed'`); err == nil || !strings.Contains(err.Error(), "CHECK constraint failed") {
+		t.Fatalf("username check after migration: %v", err)
 	}
 }
 

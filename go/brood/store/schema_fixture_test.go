@@ -66,7 +66,7 @@ func frozenSchemaVersions(t *testing.T) []int {
 // sent, failed, unconfirmed из восстановления при запуске и sent, которое
 // удалил срок хранения последним, поэтому sqlite_sequence ушёл дальше
 // последнего номера. С версии 30 у привязки root рой по умолчанию s (/use,
-// #284).
+// #284), с версии 31 у её собеседника имя root_tg (#294).
 func seedSchemaFixture(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
@@ -89,7 +89,7 @@ func seedSchemaFixture(t *testing.T) *Store {
 	mustNil(t, s.CreateSession(ctx, Session{TokenHash: "fixture-web-session", UserID: "u", ExpiresAt: &expires, Data: []byte(`{"csrf":"fixture"}`)}))
 	_, err := s.SetTelegramBot(ctx, "root", "100:fixture-token", "root_brood_bot", "")
 	mustNil(t, err)
-	linkTelegram(t, s, "root", "root_brood_bot", 4242)
+	linkTelegramAs(t, s, "root", "root_brood_bot", 4242, "root_tg")
 	_, err = s.SetTelegramSwarm(ctx, "root", "s", allow)
 	mustNil(t, err)
 	_, err = s.IssueTelegramLinkCode(ctx, "ed", linkCode("fixture"), telegramTestTime, telegramTestTime.Add(time.Hour))
