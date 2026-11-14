@@ -248,9 +248,26 @@ func (s *Store) gitlabCurrentBinding(ctx context.Context, project string) (GitLa
 
 // CreateGitLabGrant grants an exact current actor incarnation; no role inheritance.
 // The granting human must currently own the swarm or be an administrator.
-// Grants cannot be extended or edited: revoke and explicitly create another.
+// A supplied ID is a stable, globally unique request identity (1-128 ASCII
+// letters, digits, underscores, or hyphens). Exact active retries recheck current
+// authority and return the original record. Changed payloads and revoked retries
+// conflict. Empty IDs retain one-shot creation for trusted internal callers.
+// Grants cannot be extended or edited: revoke and explicitly create another ID.
 func (s *Store) CreateGitLabGrant(ctx context.Context, human string, g GitLabGrant) (GitLabGrant, error) {
+	if g.ID == "" {
+		g.ID = NewID()
+	} else if len(g.ID) > 128 || strings.Trim(g.ID, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
+		return GitLabGrant{}, ErrGitLabDenied
+	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
+		old, err := s.GetGitLabGrant(ctx, g.ID)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		exists := err == nil
+		if exists && (old.Principal != g.Principal || old.HumanID != human || old.BindingRevision != g.BindingRevision || old.Read != g.Read || old.Create != g.Create || old.Propose != g.Propose || !old.ExpiresAt.Equal(g.ExpiresAt) || old.Revoked) {
+			return ErrGitLabConflict
+		}
 		if !g.ExpiresAt.After(time.Now()) || g.ExpiresAt.Year() > 2261 || (!g.Read && !g.Create && !g.Propose) {
 			return ErrGitLabDenied
 		}
@@ -267,7 +284,10 @@ func (s *Store) CreateGitLabGrant(ctx context.Context, human string, g GitLabGra
 		if b.Revision != g.BindingRevision {
 			return ErrGitLabDenied
 		}
-		g.ID = NewID()
+		if exists {
+			g = old
+			return nil
+		}
 		g.HumanID = human
 		g.Revoked = false
 		g.Revision = 1
