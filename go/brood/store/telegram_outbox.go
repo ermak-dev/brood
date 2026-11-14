@@ -62,6 +62,16 @@ const telegramSwarmReader = `w.state <> 'deleted' AND (u.is_admin = 1
 	OR (EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = w.project_id AND pm.user_id = u.id)
 		AND EXISTS (SELECT 1 FROM swarm_members m WHERE m.swarm_id = w.id AND m.user_id = u.id)))`
 
+// telegramSwarmManager: пользователь u вправе управлять роем w — то же
+// правило, что у ответа на запрос (requireSwarmManager) и у управления роем в
+// app: рой активен, и пользователь — администратор либо участник проекта с
+// ролью owner или editor в рое. Отключённого пользователя отсекает
+// telegramLiveLink. Только такому получателю уведомление предлагает кнопки
+// ответа (#283); право ответа перепроверяет транзакция ответа.
+const telegramSwarmManager = `w.state = 'active' AND (u.is_admin = 1
+	OR (EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = w.project_id AND pm.user_id = u.id)
+		AND EXISTS (SELECT 1 FROM swarm_members m WHERE m.swarm_id = w.id AND m.user_id = u.id AND m.role IN ('owner', 'editor'))))`
+
 // telegramSubscribed: привязка l подписана на вид, который даёт выражение
 // SQL kind.
 func telegramSubscribed(kind string) string {
@@ -136,6 +146,10 @@ type TelegramNotification struct {
 	// OwnBot tells that the chat is linked through the user's own bot;
 	// otherwise through the installation bot.
 	OwnBot bool
+	// Manager tells that the recipient may manage the swarm of the event at
+	// the attempt: only such a recipient is offered answer buttons (#283).
+	// The answer itself checks the right again in its transaction.
+	Manager bool
 }
 
 // TelegramOutcome is what the sender learned of an attempt.
@@ -151,14 +165,16 @@ type TelegramOutcome struct {
 }
 
 // telegramHead читает голову очереди пользователя и то, кому её можно
-// отправить: живая привязка, подписка на вид, право читать рой события.
+// отправить: живая привязка, подписка на вид, право читать рой события, и
+// вправе ли получатель управлять роем (кнопки ответа, #283).
 // json_extract падает на строке не JSON, и тогда голову не прочла бы ни одна
 // попытка: рой события ищется только в валидном JSON, CASE вычисляется лениво.
 const telegramHead = `SELECT o.id, o.kind, o.ref, o.payload, o.attempts, o.settled_attempts, o.created_at,
 	coalesce(l.chat_id, 0), coalesce(l.bot_token IS NOT NULL, 0),
 	CASE WHEN ` + telegramLiveLink + ` THEN 1 ELSE 0 END,
 	CASE WHEN l.user_id IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(l.events) e WHERE e.value = o.kind) THEN 1 ELSE 0 END,
-	CASE WHEN ` + telegramSwarmReader + ` THEN 1 ELSE 0 END
+	CASE WHEN ` + telegramSwarmReader + ` THEN 1 ELSE 0 END,
+	CASE WHEN ` + telegramSwarmManager + ` THEN 1 ELSE 0 END
 	FROM telegram_outbox o JOIN users u ON u.id = o.user_id
 	LEFT JOIN user_telegram_links l ON l.user_id = o.user_id
 	LEFT JOIN swarms w ON w.id = CASE WHEN json_valid(o.payload) THEN json_extract(o.payload, '$.swarm') END
@@ -184,7 +200,7 @@ func (s *Store) BeginTelegramAttempt(ctx context.Context, userID string, install
 		var settled int64
 		var live, subscribed, reader bool
 		err := s.conn(ctx).QueryRowContext(ctx, telegramHead, userID).Scan(&n.ID, &n.Kind, &n.Ref, &payload, &n.Attempts,
-			&settled, &n.CreatedAt, &n.ChatID, &n.OwnBot, &live, &subscribed, &reader)
+			&settled, &n.CreatedAt, &n.ChatID, &n.OwnBot, &live, &subscribed, &reader, &n.Manager)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: telegram queue of user %q is empty", ErrNotFound, userID)
 		}

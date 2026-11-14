@@ -221,22 +221,38 @@ func (s *Server) swarmRequestDeliver(w http.ResponseWriter, r *http.Request) {
 // вместе с продвижением графа, затем после коммита ответ уходит актору.
 // Повтор потерянного ответа доставляет только ещё не начатую доставку.
 func (s *Server) answerSwarmRequest(r *http.Request, user store.User, answer store.SwarmAnswer) (store.SwarmRequest, string, error) {
-	req, err := s.store.AnswerSwarmRequest(r.Context(), answer, func(ctx context.Context) bool {
+	req, err := s.answerRequest(r.Context(), answer, func(ctx context.Context) bool {
 		return secretRequestSession(ctx, s, r, user.ID)
 	})
 	if err != nil {
 		return store.SwarmRequest{}, "", err
-	}
-	if req.Origin == "node" {
-		// Ответ мог ввести граф в actor-узел: его инструкцию доставляет
-		// диспетчер шагов (#212) после коммита ответа.
-		s.steps.kick(req.SwarmID)
 	}
 	if req.Delivery != "pending" {
 		return req, "", nil
 	}
 	req, reason := s.deliverSwarmAnswer(r.Context(), user, req, false)
 	return req, reason, nil
+}
+
+// answerRequest записывает ответ и запускает его последствия после коммита
+// — общий путь панели, CLI и Telegram (#283). authorize проверяет сессию
+// вызывающего в транзакции ответа: cookie панели или сессию telegram
+// привязанного чата; права пользователя answer.UserID там же проверяет
+// хранилище. Доставку ответа актору вызывающий начинает сам: панель ждёт её
+// исход, поллер Telegram — нет.
+func (s *Server) answerRequest(ctx context.Context, answer store.SwarmAnswer, authorize func(context.Context) bool) (store.SwarmRequest, error) {
+	req, err := s.store.AnswerSwarmRequest(ctx, answer, authorize)
+	if err != nil {
+		return store.SwarmRequest{}, err
+	}
+	if req.Origin == "node" {
+		// Ответ мог ввести граф в actor-узел: его инструкцию доставляет
+		// диспетчер шагов (#212) после коммита ответа.
+		s.steps.kick(req.SwarmID)
+	}
+	// Кнопки ответа уходят из сообщений Telegram, где запрос ещё открыт.
+	s.sender.requestClosed(req.SwarmID, req.ID)
+	return req, nil
 }
 
 // deliverSwarmAnswer доставляет записанный ответ спросившему актору.

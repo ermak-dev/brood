@@ -6,7 +6,8 @@ package server
 // ответ запроса, задача прохода и причина отказа шага не меняются после
 // записи). Текст простой, без parse_mode:
 // вопрос и материал актора идут как есть, без разметки, которую Telegram
-// стал бы разбирать.
+// стал бы разбирать. Уведомление открытого запроса получателю, который вправе
+// управлять роем, несёт кнопки ответа (#283, telegram_buttons.go).
 
 import (
 	"net/url"
@@ -31,10 +32,12 @@ type telegramFacts struct {
 }
 
 // telegramNotice — сообщение уведомления: текст, а когда он длиннее
-// предела сообщения Bot API, — один документ с полным текстом и подписью.
+// предела сообщения Bot API, — один документ с полным текстом и подписью;
+// markup — кнопки ответа, nil — без них.
 type telegramNotice struct {
-	text string
-	doc  *telegram.Document
+	text   string
+	doc    *telegram.Document
+	markup *telegram.InlineKeyboardMarkup
 }
 
 // telegramDocumentNote — подпись документа говорит, где полный текст.
@@ -43,7 +46,14 @@ const telegramDocumentNote = "The full text is in the attached file."
 // renderTelegramNotice собирает сообщение уведомления n по фактам f. origin
 // — origin панели (BROOD_PANEL_ORIGIN); пусто — сообщение без ссылки.
 func renderTelegramNotice(n store.TelegramNotification, f telegramFacts, origin string) telegramNotice {
+	answerable := telegramAnswerable(n, f)
+	var markup *telegram.InlineKeyboardMarkup
+	if answerable {
+		markup = telegramRequestKeyboard(n.ID, *f.request)
+	}
 	head, sections := telegramNoticeBody(n.Kind, n.Event, f)
+	hint := telegramNoticeHint(n, f, answerable, markup != nil)
+	sections = append(sections, hint)
 	link := ""
 	if origin != "" {
 		// Сервер отдаёт панель только в корне, а страницу выбирает фрагмент:
@@ -62,9 +72,14 @@ func renderTelegramNotice(n store.TelegramNotification, f telegramFacts, origin 
 	}
 	text := strings.Join(parts, "\n\n")
 	if telegram.TextLength(text) <= telegram.MessageLimit {
-		return telegramNotice{text: text}
+		return telegramNotice{text: text, markup: markup}
 	}
 	tail := "\n\n" + telegramDocumentNote
+	if answerable && hint != "" {
+		// Тот, кто вправе ответить, узнаёт из подписи, как: номер для /answer
+		// не прячется в файле.
+		tail = "\n\n" + hint + tail
+	}
 	if link != "" {
 		tail += "\n\n" + link
 	}
@@ -73,7 +88,36 @@ func renderTelegramNotice(n store.TelegramNotification, f telegramFacts, origin 
 		Name:    "brood-notification-" + strconv.FormatInt(n.ID, 10) + ".txt",
 		Content: []byte(text),
 		Caption: telegramClipText(caption, telegram.CaptionLimit),
-	}}
+	}, markup: markup}
+}
+
+// telegramAnswerable: уведомление открывает запрос, он ещё открыт, и
+// получатель вправе управлять роем в момент попытки — ему уведомление
+// предлагает ответить. Viewer кнопок не получает; ответ всё равно
+// перепроверяет права в своей транзакции.
+func telegramAnswerable(n store.TelegramNotification, f telegramFacts) bool {
+	return n.Manager && f.request != nil && f.request.State == "open" && telegramOpensRequest(n.Kind)
+}
+
+// telegramNoticeHint — последний раздел уведомления открытого запроса: как
+// ответить. Тому, кто вправе ответить (answerable), — кнопками (buttons —
+// они есть), reply или /answer, а выбору, который Telegram кнопками не
+// покажет, — в brood. Прочим вопрос актора называет ожидание, а не велит
+// отвечать; узловой запрос и прочие виды подсказки не несут.
+func telegramNoticeHint(n store.TelegramNotification, f telegramFacts, answerable, buttons bool) string {
+	switch {
+	case !telegramOpensRequest(n.Kind) || f.request == nil:
+		return ""
+	case !answerable && n.Kind == "actor_question":
+		return telegramAnswerHint(f.request)
+	case !answerable:
+		return ""
+	case n.Kind == "actor_question":
+		return telegramManagerHint(n.ID, f.request, buttons)
+	case buttons:
+		return "Choose an option: answer with a button below."
+	}
+	return "Choose an option in brood: Telegram cannot show these options as buttons."
 }
 
 // telegramNoticeBody — первая строка уведомления вида kind и его разделы.
@@ -85,7 +129,7 @@ func telegramNoticeBody(kind string, ev store.TelegramEvent, f telegramFacts) (s
 			telegramRequestSections(f.request)
 	case "actor_question":
 		return swarm + "actor " + f.actor + " asks the operator.",
-			append(telegramRequestSections(f.request), telegramAnswerHint(f.request))
+			telegramRequestSections(f.request)
 	case "request_answered":
 		return swarm + f.answeredBy + " answered the request of " + telegramAsker(ev, f) + ".",
 			[]string{telegramQuestion(f.request), telegramAnswer(f.request)}
@@ -159,6 +203,21 @@ func telegramAnswerHint(r *store.SwarmRequest) string {
 		return "The actor waits for a yes or no in brood."
 	}
 	return "The actor waits for a text answer in brood."
+}
+
+// telegramManagerHint — как ответить на вопрос актора тому, кто вправе:
+// кнопкой (buttons — они есть, иначе в brood), reply или /answer с номером
+// уведомления notification.
+func telegramManagerHint(notification int64, r *store.SwarmRequest, buttons bool) string {
+	switch {
+	case r.Kind == "choice" && buttons:
+		return "The actor waits for one of the options: answer with a button below."
+	case r.Kind == "choice":
+		return "The actor waits for one of the options: answer in brood, Telegram cannot show them as buttons."
+	case r.Kind == "confirm":
+		return "The actor waits for a yes or no: answer with a button below."
+	}
+	return "The actor waits for a text answer: reply to this message or send /answer " + strconv.FormatInt(notification, 10) + " <your answer>."
 }
 
 func telegramQuestion(r *store.SwarmRequest) string {

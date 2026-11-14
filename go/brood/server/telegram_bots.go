@@ -11,7 +11,8 @@ package server
 // поллер без связи с ним.
 //
 // Поллер только принимает обновления: /start <код> из личного чата
-// подтверждает привязку, привязанный чат на неизвестную команду получает
+// подтверждает привязку, привязанный чат отвечает на запросы кнопками, reply
+// и /answer (#283, telegram_answers.go), на неизвестную команду получает
 // справку. Уведомления идут через outbox (#282, telegram_sender.go). Пакет
 // молчит: исход поллера виден в состоянии привязки и в профиле.
 
@@ -64,7 +65,7 @@ const (
 	telegramReplyChatTaken     = "This chat is linked to another brood account. Unlink it there first."
 	telegramReplyLinkFailed    = "brood could not link this chat right now. Try again later."
 	telegramReplyStart         = "To link this chat, issue a link code in your brood profile and send it here as /start <code>."
-	telegramReplyHelp          = "brood takes no commands in this chat yet. Manage the link in your brood profile."
+	telegramReplyHelp          = "In this chat brood answers requests: press a button of a request, or answer a text request with a reply to its message or with /answer <number> <text>. Manage the link in your brood profile."
 )
 
 // Причины ошибки привязки, которые пишут поллер и сверка. К причинам 401 и
@@ -211,6 +212,11 @@ type telegramBots struct {
 
 	kick chan struct{}
 	wg   sync.WaitGroup
+
+	// answers — путь ответа сервера (#283); answering ждёт доставки ответов
+	// актору, которые начали поллеры.
+	answers   telegramAnswers
+	answering sync.WaitGroup
 }
 
 func newTelegramBots(st *store.Store, cfg Config, opts telegramOptions) *telegramBots {
@@ -280,10 +286,13 @@ func (b *telegramBots) run(ctx context.Context) {
 	}
 }
 
-// close ждёт остановки всех поллеров; время жизни отменил Server.Close.
+// close ждёт остановки всех поллеров и доставок ответов, которые они
+// начали; время жизни отменил Server.Close. Доставку начинает только живой
+// поллер, а поллеры к этому моменту остановлены.
 func (b *telegramBots) close() {
 	if b != nil {
 		b.wg.Wait()
+		b.answering.Wait()
 	}
 }
 
@@ -749,17 +758,26 @@ func telegramClip(s string, limit int) string {
 
 // handle разбирает одно обновление. Только личный чат человека: группа,
 // канал, бот и сообщение от имени чата игнорируются без ответа. Привязанный
-// чат получает справку на команды. Пока чат не привязан, действует только
-// /start: с кодом — подтверждение, без кода — подсказка. Свой бот,
-// привязанный к другому чату, чужим чатам не отвечает вовсе. Сбой чтения
-// базы пропускает обновление без ответа.
+// чат отвечает на запросы кнопкой, reply на сообщение запроса и /answer, на
+// прочие команды получает справку, на прочий текст — подсказку, как
+// ответить. Пока чат не привязан, действует только /start: с кодом —
+// подтверждение, без кода — подсказка; нажатие кнопки и текст
+// игнорируются. Свой бот, привязанный к другому чату, чужим чатам не
+// отвечает вовсе. Сбой чтения базы пропускает обновление без ответа.
 func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
+	if u.Malformed {
+		return
+	}
+	if u.CallbackQuery != nil {
+		p.handleCallback(ctx, u.CallbackQuery)
+		return
+	}
 	m := u.Message
-	if u.Malformed || m == nil || m.From == nil || m.From.IsBot || !m.Chat.Private() || m.Chat.ID <= 0 || m.Chat.ID != m.From.ID {
+	if m == nil || m.From == nil || m.From.IsBot || !m.Chat.Private() || m.Chat.ID <= 0 || m.Chat.ID != m.From.ID {
 		return
 	}
 	name, arg, command := telegramCommand(m.Text)
-	owner, linked, err := p.chatOwner(ctx, m)
+	owner, linked, err := p.chatOwner(ctx, m.Chat.ID, m.From.ID)
 	if err != nil {
 		return
 	}
@@ -767,8 +785,11 @@ func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 		p.bots.noteContact(owner, m.From)
 		switch {
 		case !command:
+			p.reply(ctx, m.Chat.ID, p.textReply(ctx, owner, m))
 		case name == "start":
 			p.reply(ctx, m.Chat.ID, telegramReplyAlreadyLinked)
+		case name == "answer":
+			p.reply(ctx, m.Chat.ID, p.answerCommand(ctx, owner, m))
 		default:
 			p.reply(ctx, m.Chat.ID, telegramReplyHelp)
 		}
@@ -798,18 +819,18 @@ func telegramCommand(text string) (name, arg string, ok bool) {
 	return name, strings.Join(fields[1:], " "), true
 }
 
-// chatOwner находит пользователя, к которому привязан чат сообщения через
-// этот бот, и проверяет привязку хранилищем: бот, чат, собеседник, сессия и
+// chatOwner находит пользователя, к которому привязан чат chat через этот
+// бот, и проверяет привязку хранилищем: бот, чат, собеседник from, сессия и
 // включённый пользователь.
-func (p *telegramPoller) chatOwner(ctx context.Context, m *telegram.Message) (string, bool, error) {
+func (p *telegramPoller) chatOwner(ctx context.Context, chat, from int64) (string, bool, error) {
 	userID := p.userID
 	if userID == "" {
-		userID = p.bots.installationChat(m.Chat.ID)
+		userID = p.bots.installationChat(chat)
 		if userID == "" {
 			return "", false, nil
 		}
 	}
-	active, err := p.bots.store.TelegramSessionActive(ctx, userID, p.botUsername, m.Chat.ID, m.From.ID)
+	active, err := p.bots.store.TelegramSessionActive(ctx, userID, p.botUsername, chat, from)
 	return userID, active, err
 }
 

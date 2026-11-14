@@ -130,6 +130,8 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.steps = newStepDispatcher(srv)
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
+	// Поллер отвечает на запросы путём ответа сервера (#283).
+	srv.telegram.answers = srv
 	srv.sender = newTelegramSender(st, cfg, opts.telegram)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {

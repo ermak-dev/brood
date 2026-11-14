@@ -5,7 +5,8 @@ package server
 // отправитель после коммита берёт очередь каждого пользователя: свой
 // работник на пользователя, строго по порядку id и одна отправка за раз.
 // Попытка отмечается в базе до sendMessage, исход записывается после:
-//   - Telegram принял сообщение — sent с номером сообщения (его правит #283);
+//   - Telegram принял сообщение — sent с номером сообщения: его правит ответ
+//     на запрос (#283);
 //   - запрос заведомо не ушёл (нет соединения, 429) — та же строка снова
 //     голова очереди, после паузы, сколько бы попыток ни было: порядок
 //     очереди держит её, пока Telegram не ответит; failed — только
@@ -23,6 +24,11 @@ package server
 // откатить потеря питания (synchronous=NORMAL), и тогда сообщение уйдёт
 // снова. Набор работников сверяется с очередями базы по таймеру. Пакет
 // молчит: исход виден в outbox.
+//
+// После ответа на запрос отправитель правит его отправленные сообщения
+// (requestClosed, #283): кнопки ответа уступают кнопке состояния. Правка —
+// лучшая попытка без outbox и повтора: сообщение, которое Telegram править
+// не даёт, — не ошибка.
 
 import (
 	"context"
@@ -81,6 +87,11 @@ type telegramSender struct {
 	mu      sync.Mutex
 	workers map[string]bool
 	wg      sync.WaitGroup
+	// ctx — время жизни сервера для правок сообщений; closed — остановка
+	// началась, новых правок нет; editing ждёт начатые.
+	ctx     context.Context
+	closed  bool
+	editing sync.WaitGroup
 }
 
 func newTelegramSender(st *store.Store, cfg Config, opts telegramOptions) *telegramSender {
@@ -98,15 +109,24 @@ func newTelegramSender(st *store.Store, cfg Config, opts telegramOptions) *teleg
 // попытки прежнего процесса восстановление уже записало unconfirmed
 // (newFromStore), до первой попытки этого.
 func (t *telegramSender) start(ctx context.Context) {
+	t.mu.Lock()
+	t.ctx = ctx
+	t.mu.Unlock()
 	t.wg.Add(1)
 	go t.run(ctx)
 }
 
-// close ждёт работников: исход последней попытки записан до закрытия базы.
+// close ждёт работников и правки сообщений: исход последней попытки записан
+// до закрытия базы, и правка базу уже не читает.
 func (t *telegramSender) close() {
-	if t != nil {
-		t.wg.Wait()
+	if t == nil {
+		return
 	}
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
+	t.wg.Wait()
+	t.editing.Wait()
 }
 
 func (t *telegramSender) run(ctx context.Context) {
@@ -176,6 +196,12 @@ func (t *telegramSender) work(ctx context.Context, userID string) {
 			// запишет восстановление при следующем запуске, а повторить её
 			// ограждение не даст; или попытку уже закрыл другой.
 			return
+		}
+		if outcome.State == "sent" && telegramOpensRequest(n.Kind) {
+			// Ответ мог прийти, пока сообщение было в полёте: правка после
+			// ответа его ещё не видела отправленным. Открытый запрос правка
+			// не трогает.
+			t.editLater(n.Event.Swarm, n.Event.Request, n.ID)
 		}
 		if !outcome.Requeue {
 			failures = 0
@@ -340,24 +366,104 @@ func (t *telegramSender) facts(ctx context.Context, kind string, ev store.Telegr
 		}
 	}
 	if req.AnsweredBy != "" {
-		f.answeredBy = req.AnsweredBy
-		if u, err := t.store.GetUser(ctx, req.AnsweredBy); err == nil {
-			f.answeredBy = u.Username
-			if u.DisplayName != nil && *u.DisplayName != "" {
-				f.answeredBy = *u.DisplayName
-			}
-		}
+		f.answeredBy = telegramUserName(ctx, t.store, req.AnsweredBy)
 	}
 	return f, nil
 }
 
+// telegramUserName — имя пользователя для чата: отображаемое имя, без него
+// логин; удалённый пользователь называется своим id.
+func telegramUserName(ctx context.Context, st *store.Store, userID string) string {
+	u, err := st.GetUser(ctx, userID)
+	switch {
+	case err != nil:
+		return userID
+	case u.DisplayName != nil && *u.DisplayName != "":
+		return *u.DisplayName
+	}
+	return u.Username
+}
+
 // send отправляет сообщение уведомления в чат одним сообщением Bot API:
-// текстом или документом.
+// текстом или документом, с кнопками ответа, если они есть.
 func (n telegramNotice) send(ctx context.Context, c *telegram.Client, chatID int64) (telegram.Message, error) {
 	if n.doc != nil {
-		return c.SendDocument(ctx, chatID, *n.doc, nil)
+		return c.SendDocument(ctx, chatID, *n.doc, n.markup)
 	}
-	return c.SendMessage(ctx, chatID, n.text, nil)
+	return c.SendMessage(ctx, chatID, n.text, n.markup)
+}
+
+// telegramOpensRequest: уведомление вида kind открывает запрос и несёт его
+// кнопки.
+func telegramOpensRequest(kind string) bool {
+	return kind == "request_opened" || kind == "actor_question"
+}
+
+// requestClosed правит после ответа сообщения запроса: кнопки ответа
+// уступают кнопке состояния (editRequest). Правка идёт в своей горутине и
+// ответа не задерживает.
+func (t *telegramSender) requestClosed(swarmID, requestID string) {
+	t.editLater(swarmID, requestID, 0)
+}
+
+// editLater начинает правку сообщений запроса; only — правка одного
+// уведомления, 0 — всех. После начала остановки правок нет.
+func (t *telegramSender) editLater(swarmID, requestID string, only int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.ctx == nil || t.closed || t.ctx.Err() != nil {
+		return
+	}
+	t.editing.Add(1)
+	go func(ctx context.Context) {
+		defer t.editing.Done()
+		t.editRequest(ctx, swarmID, requestID, only)
+	}(t.ctx)
+}
+
+// editRequest заменяет кнопки отправленных сообщений закрытого запроса
+// кнопкой состояния: кто и когда ответил или что запрос отменён. Открытый
+// запрос не правится. Сообщения выбирает хранилище: отправленные в чат
+// нынешней привязки получателя (TelegramRequestMessages), с кнопками или
+// без, — кнопки получил тот, кто управлял роем в момент отправки, а не
+// сейчас. Кнопку состояния получает тот, кто читает рой сейчас, и viewer
+// тоже; у того, кто рой больше не читает, кнопки ответа снимаются без
+// состояния. Отказ Telegram (и «не изменено» у сообщения без кнопок), сбой
+// сети и сбой чтения базы правку этого сообщения пропускают без повтора: это
+// лучшая попытка, а нажатие на оставшуюся кнопку покажет состояние запроса и
+// поправит её.
+func (t *telegramSender) editRequest(ctx context.Context, swarmID, requestID string, only int64) {
+	req, err := t.store.GetSwarmRequest(ctx, swarmID, requestID)
+	if err != nil || req.State == "open" {
+		return
+	}
+	messages, err := t.store.TelegramRequestMessages(ctx, swarmID, requestID)
+	if err != nil {
+		return
+	}
+	state := telegramRequestState(req, telegramUserName(ctx, t.store, req.AnsweredBy))
+	bots := telegramBotClients{config: t.client}
+	defer bots.close()
+	for _, m := range messages {
+		if only != 0 && m.ID != only {
+			continue
+		}
+		token := t.install
+		if m.OwnBot {
+			if token, err = t.store.TelegramBotToken(ctx, m.UserID, ""); err != nil {
+				continue
+			}
+		}
+		client, err := bots.client(token)
+		if err != nil {
+			continue
+		}
+		var markup *telegram.InlineKeyboardMarkup
+		if m.Reader {
+			markup = telegramStatusKeyboard(m.ID, state)
+		}
+		_ = client.EditMessageReplyMarkup(ctx, m.ChatID, m.MessageID, markup)
+	}
 }
 
 // telegramBotClients — клиент Bot API работника: один на токен, новый при
