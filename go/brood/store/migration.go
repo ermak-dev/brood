@@ -46,6 +46,9 @@ var schemaMigrations = []schemaMigration{
 	// 30: рой по умолчанию привязки Telegram (/use, #284); у прежних
 	// привязок его нет.
 	{from: 29, sql: telegramDefaultSwarmColumn},
+	// 31: имя собеседника привязки Telegram и триггер отзыва, который его
+	// снимает (#294); у прежних привязок имени нет.
+	{from: 30, sql: telegramUsernameStep},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).

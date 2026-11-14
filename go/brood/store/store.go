@@ -59,7 +59,12 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // 30: рой по умолчанию привязки Telegram user_telegram_links.default_swarm_id
 // (/use, #284). Колонку добавляет ALTER TABLE шага 29→30, и текст таблицы в
 // реестре Telegram повторяет то, что ALTER оставляет в sqlite_master.
-const schemaVersion = 30
+// 31: имя пользователя Telegram собеседника привязки
+// user_telegram_links.telegram_username (#294) и триггер
+// sessions_telegram_revoke, который снимает его с привязкой. Колонку
+// добавляет ALTER TABLE шага 30→31 так же, как default_swarm_id, а триггер
+// шаг пересоздаёт.
+const schemaVersion = 31
 
 //go:embed schema.sql
 var currentSchema string
