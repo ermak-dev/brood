@@ -8,11 +8,12 @@ package server
 // маршрута POST /api/commands (commandPreflight). Своей логики решений у
 // адаптера нет: он разбирает команду, проверяет право до подтверждения
 // (чтобы не просить нажатия ради отказа) и переводит итог в текст.
-// Окончательно право и сессию проверяет запись — кроме изменений акторов:
-// запись жизненного цикла сессию чата не читает (как и веб-сессию POST
-// /api/commands; проверка в самой записи — #299), поэтому /actor проверяет
-// привязку перед командой каталога и после неё, а чат, чья привязка умерла,
-// пока шла команда, узнаёт, что действие могло случиться.
+// Окончательно право и сессию проверяет запись: жизненный цикл актора
+// проверяет полномочие сессии команды после namespace и в транзакции
+// намерения (#299). Привязка, умершая до записи, ничего не меняет и при
+// отказе в полномочии ответа не получает. /actor также проверяет привязку
+// после команды: умершая после принятия намерения узнаёт, что оно могло
+// подействовать; отзыв не отменяет уже принятое намерение.
 //
 // Рой, который пользователь не читает, не найден, как в API. Отказ несёт
 // публичную причину отказа под ним (#276) или фиксированный текст; текст
@@ -648,7 +649,7 @@ func (c *telegramCommands) actors(ctx context.Context, chat telegramChat, text s
 	if err != nil {
 		return telegramReply{}, err
 	}
-	result, link, err := c.catalog(ctx, chat, sw.ID, inv)
+	result, _, link, err := c.catalog(ctx, chat, sw.ID, inv)
 	switch {
 	case link == telegramLinkEnded:
 		return telegramReply{}, nil
@@ -913,12 +914,17 @@ func (c *telegramCommands) actor(ctx context.Context, chat telegramChat, text st
 			return refusal
 		}
 		c.writing()
-		result, link, err := c.catalog(ctx, chat, sw.ID, inv)
+		result, intent, link, err := c.catalog(ctx, chat, sw.ID, inv)
 		the := "the " + action + " of actor " + actor + " in swarm " + sw.label()
+		// Только явное доказательство отсутствия нового намерения разрешает
+		// молчать. Пустой результат или класс ошибки не отменяют commit и PVE.
 		switch {
+		case link == telegramLinkEnded && intent == lifecycleNoIntent:
+			// Нового намерения нет: отвечать уже отвязанному чату нельзя.
+			return ""
 		case link == telegramLinkEnded:
 			return "This chat is no longer linked to your brood account: " + the + " may have taken effect. Check the actor in brood."
-		case link == telegramLinkUnchecked || unknownOutcome(result):
+		case link == telegramLinkUnchecked || unknownOutcome(result) || intent == lifecycleIntentUnknown || intent == lifecycleIntentPossible || (err != nil && intent != lifecycleNoIntent):
 			return "The outcome of " + the + " is unknown: it may have taken effect. Check the actor in brood before you try again."
 		case err != nil:
 			return c.catalogRefusal(verb, doing, err)
@@ -986,34 +992,45 @@ const (
 // catalog исполняет команду каталога inv в рое swarmID от имени пользователя
 // чата тем же путём, что POST /api/commands/{tool}: проверки маршрута
 // (commandPreflight) и исполнитель каталога; полномочие сессии команды —
-// сессия чата (его читают команды сессии гостя, запись жизненного цикла
-// его не читает). После исполненной команды привязка проверяется снова, как
-// веб-сессия (validProxySession): итог и ошибка возвращаются вместе с ней, и
+// сессия чата (его читают команды сессии гостя и запись жизненного цикла).
+// При любом выходе, включая отказ preflight, привязка проверяется снова,
+// как веб-сессия (validProxySession): итог и ошибка возвращаются вместе с ней, и
 // вызывающий не показывает итог чату, чья привязка умерла или не проверена.
-func (c *telegramCommands) catalog(ctx context.Context, chat telegramChat, swarmID string, inv command.Invocation) (command.Result, telegramLink, error) {
+// intent — доказательство записи нового намерения, не догадка по результату.
+// Preflight не пишет намерения; после него доказательство даёт сам исполнитель.
+func (c *telegramCommands) catalog(ctx context.Context, chat telegramChat, swarmID string, inv command.Invocation) (result command.Result, intent lifecycleIntentEvidence, link telegramLink, err error) {
+	// Отказ preflight тоже мог пережить привязку: проверяем её при любом
+	// выходе, а не только после вызова исполнителя.
+	defer func() {
+		live, checkErr := c.stillLinked(ctx, chat)
+		switch {
+		case checkErr != nil:
+			slog.Error("telegram command failed", "command", inv.Name, "err", checkErr.Error())
+			link = telegramLinkUnchecked
+		case !live:
+			link = telegramLinkEnded
+		}
+	}()
 	s := c.server
 	user, err := s.store.GetUser(ctx, chat.userID)
+	if errors.Is(err, store.ErrNotFound) {
+		// Удалённый пользователь больше не даёт полномочий команде;
+		// это отказ до исполнения, а не неизвестный исход записи.
+		return command.Result{}, lifecycleNoIntent, telegramLinkKept, app.ErrNotAllowed
+	}
 	if err != nil {
-		return command.Result{}, telegramLinkKept, err
+		return command.Result{}, lifecycleNoIntent, telegramLinkKept, err
 	}
 	refusal, failure := s.commandPreflight(ctx, user, swarmID, inv)
 	if failure != nil {
-		return command.Result{}, telegramLinkKept, failure
+		return command.Result{}, lifecycleNoIntent, telegramLinkKept, failure
 	}
 	if refusal != nil {
-		return command.Result{}, telegramLinkKept, refusal
+		return command.Result{}, lifecycleNoIntent, telegramLinkKept, refusal
 	}
 	commandContext := context.WithValue(ctx, commandSessionAuthorityKey{}, c.session(chat))
-	result, err := s.executeOperatorCommand(commandContext, user.ID, swarmID, "user:"+user.ID+":telegram", inv)
-	live, checkErr := c.stillLinked(ctx, chat)
-	switch {
-	case checkErr != nil:
-		slog.Error("telegram command failed", "command", inv.Name, "err", checkErr.Error())
-		return result, telegramLinkUnchecked, err
-	case !live:
-		return result, telegramLinkEnded, err
-	}
-	return result, telegramLinkKept, err
+	result, intent, err = s.executeOperatorCommandWithEvidence(commandContext, user.ID, swarmID, "user:"+user.ID+":telegram", inv)
+	return result, intent, telegramLinkKept, err
 }
 
 // catalogRefusal — отказ команды каталога словами: публичная причина
