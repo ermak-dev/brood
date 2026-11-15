@@ -5,7 +5,9 @@
 
 Координаты берутся из origin рабочей копии brood, а не из настройки: проект
 в трекере и проект в git -- один проект, и второе место правды однажды
-разойдётся с первым. `.env` переопределяет (`GITLAB_SITE`, `GITLAB_PROJECT`),
+разойдётся с первым. В gateway-клоне локальный brood.origin хранит канонический
+origin, а remote origin остаётся транспортом. `.env` переопределяет
+(`GITLAB_SITE`, `GITLAB_PROJECT`),
 когда трекер живёт не там, где код.
 
 Секрет один: `GITLAB_TOKEN`, личный токен с правом api, из `.env`.
@@ -50,9 +52,20 @@ TYPES = ("bug", "feature", "refactor", "docs", "ci")
 
 # ─── координаты ──────────────────────────────────────────────────────────
 def origin():
-    """Origin рабочей копии brood. Пусто -- не рабочая копия."""
+    """Канонический origin рабочей копии brood. Пусто -- координат нет."""
+    return _checkout_origin(config.PROJECT)
+
+
+def _checkout_origin(checkout):
+    """Локальный brood.origin гостевого клона, иначе transport origin (#302)."""
     try:
-        return subprocess.run(["git", "-C", config.PROJECT, "remote", "get-url", "origin"],
+        result = subprocess.run(["git", "-C", checkout, "config", "--local", "--get", "brood.origin"],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        if result.returncode != 1:
+            return ""
+        return subprocess.run(["git", "-C", checkout, "remote", "get-url", "origin"],
                               capture_output=True, text=True, check=True).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return ""
@@ -127,9 +140,7 @@ def require_local_project():
         target_port = target.port if target.port is not None else 443
         selected_project = project()
         for checkout in candidates:
-            result = subprocess.run(["git", "-C", checkout, "remote", "get-url", "origin"],
-                                    capture_output=True, text=True)
-            url = result.stdout.strip() if result.returncode == 0 else ""
+            url = _checkout_origin(checkout)
             host, path = parse_origin(url)
             parsed = urllib.parse.urlsplit(url) if _SCHEME.match(url) else None
             scheme = parsed.scheme.lower() if parsed else "ssh"
