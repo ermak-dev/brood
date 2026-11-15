@@ -37,7 +37,7 @@ func TestRealCommandCatalog(t *testing.T) {
 	for _, tc := range []struct {
 		args  []string
 		tools int
-	}{{[]string{"mcp"}, 35}, {[]string{"--guest", "mcp"}, 29}} {
+	}{{[]string{"mcp"}, 29}, {[]string{"--guest", "mcp"}, 23}} {
 		output := f.cli("catalog-state", input, 0, tc.args...)
 		found := false
 		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
@@ -61,9 +61,12 @@ func TestRealCommandCatalog(t *testing.T) {
 				for _, tool := range frame.Result.Tools {
 					counts[tool.Name]++
 				}
-				for _, name := range []string{"pipeline_visit_complete", "gitlab_issue_get", "gitlab_ci_get", "gitlab_mr_create", "gitlab_operation_get", "gitlab_merge_propose", "gitlab_proposal_get"} {
-					if counts[name] != 1 {
-						t.Fatalf("MCP catalog contains %s %d times, want 1", name, counts[name])
+				if counts["pipeline_visit_complete"] != 1 {
+					t.Fatalf("MCP catalog contains pipeline_visit_complete %d times, want 1", counts["pipeline_visit_complete"])
+				}
+				for name := range counts {
+					if strings.HasPrefix(name, "gitlab_") {
+						t.Fatalf("retired provider command %s remains in installed MCP catalog", name)
 					}
 				}
 			}
