@@ -36,6 +36,7 @@ var schemaModules = []schemaModule{
 	{id: "swarm-requests", create: swarmRequestsFullSchema, verify: verifySwarmRequestsSchema},
 	{id: "telegram", create: telegramFullSchema, verify: verifyTelegramSchema},
 	{id: "gitlab", create: gitlabFullSchema, verify: verifyGitLabSchema},
+	{id: "gitlab-proposals", create: gitlabProposalFullSchema, verify: verifyGitLabProposalSchema},
 }
 
 // verifySchemaModules сверяет базу с реестром: и при открытии текущей

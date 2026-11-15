@@ -55,6 +55,7 @@ var schemaMigrations = []schemaMigration{
 	{from: 31, sql: telegramForceReplyStep},
 	// 33: явные GitLab API полномочия; прежние Git credentials их не дают (#302).
 	{from: 32, sql: gitlabFullSchema()},
+	{from: 33, sql: gitlabProposalFullSchema()},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).
