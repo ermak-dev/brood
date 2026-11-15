@@ -513,7 +513,7 @@ func withForceReplyStep(rows map[string][]string) map[string][]string {
 // полномочия API из существующих Git credentials и не трогает прежние строки.
 func withGitLabStep(rows map[string][]string) map[string][]string {
 	out := maps.Clone(rows)
-	for _, table := range []string{"gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals"} {
+	for _, table := range []string{"gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals", "gitlab_proposal_states"} {
 		out[table] = nil
 	}
 	return out

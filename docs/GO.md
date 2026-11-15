@@ -139,8 +139,18 @@ API/команд, клиентских адаптеров и исполнени�
   транзакции, не делает сеть и читает store с переданным ctx; после callback
   store ещё раз проверяет текущую личность, права и сессию. `ClaimGitLabApproval`
   повторяет эти проверки и policy, сверяет snapshot целиком и через CAS
-  одноразово меняет approved на claimed. Expiry, owner/admin revocation или
-  любая смена snapshot отказывают. Generic swarm answer merge не разрешает.
+  одноразово меняет approved на claimed. `CheckGitLabApproval` повторяет текущие
+  права, сессию и policy без потребления решения; исторический approved сам по
+  себе текущую authority не доказывает. Owner/admin может отозвать решение;
+  исходный approver с действующей approval session и текущими management rights
+  может отозвать только собственное ещё действующее approved решение. Чужой editor,
+  consumed claim и неверная revision отказывают. Generic swarm answer merge не разрешает.
+- Миграция 33→34 добавляет terminal `gitlab_proposal_states`: rejected/stale
+  нельзя вернуть в pending; наблюдаемый definitive mismatch отзывает approval
+  в той же транзакции. Snapshot содержит полный bounded CI evidence, target SHA
+  и expiry не позднее grant. `GitLabProposals` применяет текущую SQL-видимость
+  пользователя и swarm filter до LIMIT 100; HTTP adapter всё равно проверяет
+  session и права перед выдачей. Список хранит историю, не execution authority.
 
 Get-методы — внутреннее чтение истории, не авторизация гостя. Grant, journal и
 approval не удаляются и не переписываются под другой личностью; их триггеры

@@ -96,6 +96,10 @@ type GitLabMergeSnapshot struct {
 	PipelineSHA     string
 	TargetBranch    string
 	Squash          bool
+	// Evidence is bounded canonical CI evidence, retained verbatim for policy review.
+	Evidence  string
+	TargetSHA string
+	ExpiresAt int64
 }
 
 // GitLabApproval is a single-use decision on the proposal's immutable snapshot.
@@ -545,7 +549,7 @@ func (s *Store) TransitionGitLabOperation(ctx context.Context, id string, revisi
 		if err != nil {
 			return err
 		}
-		if op.Revision != revision {
+		if op.Revision != revision || op.Kind != "create" {
 			return ErrGitLabConflict
 		}
 		allowed := op.State == "reserved" && (state == "sending" || state == "refused") || op.State == "sending" && (state == "completed" || state == "refused" || state == "unknown")
@@ -582,6 +586,12 @@ func (s *Store) gitlabApprovalIdentity(ctx context.Context, op GitLabOperation, 
 	}
 	if current != op || op.Kind != "propose" || op.State != "reserved" {
 		return "", ErrGitLabDenied
+	}
+	if op.Snapshot.ExpiresAt != 0 {
+		state, err := s.GitLabProposalState(ctx, op.ID)
+		if err != nil || state != "pending" || op.Snapshot.ExpiresAt <= time.Now().UnixNano() {
+			return "", ErrGitLabDenied
+		}
 	}
 	if _, err := s.gitlabCheckGrant(ctx, op.Principal, "propose", op.GrantID); err != nil {
 		return "", err
@@ -632,6 +642,9 @@ func (s *Store) ApproveGitLabMerge(ctx context.Context, id, session string, expi
 		if err != nil {
 			return err
 		}
+		if op.Snapshot.ExpiresAt != 0 && expires.UnixNano() > op.Snapshot.ExpiresAt {
+			return ErrGitLabDenied
+		}
 		if _, err := s.GetGitLabApproval(ctx, id); err == nil {
 			return ErrGitLabConflict
 		} else if !errors.Is(err, ErrNotFound) {
@@ -667,6 +680,29 @@ func (s *Store) GetGitLabApproval(ctx context.Context, id string) (GitLabApprova
 	}
 	a.ExpiresAt = time.Unix(0, expires).UTC()
 	return a, err
+}
+
+// CheckGitLabApproval checks current decision authority without claiming it.
+// This does not verify live GitLab evidence or authorize execution.
+func (s *Store) CheckGitLabApproval(ctx context.Context, id string, policy GitLabApproverPolicy) error {
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		a, err := s.GetGitLabApproval(ctx, id)
+		if err != nil {
+			return err
+		}
+		if a.State != "approved" || !a.ExpiresAt.After(time.Now()) {
+			return ErrGitLabDenied
+		}
+		op, err := s.GetGitLabOperation(ctx, id)
+		if err != nil {
+			return err
+		}
+		human, err := s.gitlabApprovalAuthority(ctx, op, a.SessionHash, policy)
+		if err != nil || human != a.HumanID || !a.ExpiresAt.After(time.Now()) {
+			return ErrGitLabDenied
+		}
+		return nil
+	})
 }
 
 // ClaimGitLabApproval atomically consumes exactly the approved snapshot. This is
@@ -715,7 +751,14 @@ func (s *Store) RevokeGitLabApproval(ctx context.Context, human, id string, revi
 			return err
 		}
 		if err := s.gitlabHuman(ctx, human, op.Principal.ProjectID, op.Principal.SwarmID, true); err != nil {
-			return err
+			a, e := s.GetGitLabApproval(ctx, id)
+			if e != nil || a.HumanID != human || !a.ExpiresAt.After(time.Now()) {
+				return ErrGitLabDenied
+			}
+			current, e := s.gitlabApprovalIdentity(ctx, op, a.SessionHash)
+			if e != nil || current != human {
+				return ErrGitLabDenied
+			}
 		}
 		return gitlabCAS(s.conn(ctx).ExecContext(ctx, `UPDATE gitlab_approvals SET state='revoked',revision=revision+1 WHERE operation_id=? AND revision=? AND state='approved'`, id, revision))
 	})
