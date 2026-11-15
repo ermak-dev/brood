@@ -67,7 +67,7 @@ func TestCoordinationAndTerminalActions(t *testing.T) {
 }
 
 func TestCatalog(t *testing.T) {
-	names := strings.Fields("agents send dispatch pipeline_visit_complete ask_operator tail slash session_history session_terminal add delete stop start restart update recycle wipe reset project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose gitlab_issue_get gitlab_ci_get")
+	names := strings.Fields("agents send dispatch pipeline_visit_complete ask_operator tail slash session_history session_terminal add delete stop start restart update recycle wipe reset project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose gitlab_merge_propose gitlab_proposal_get gitlab_mr_create gitlab_operation_get gitlab_issue_get gitlab_ci_get")
 	specs := command.Specs()
 	if len(specs) != len(names) {
 		t.Fatalf("got %d specs", len(specs))
@@ -161,8 +161,8 @@ func TestStartResetMetadata(t *testing.T) {
 			guest++
 		}
 	}
-	if all != 31 || guest != 25 {
-		t.Fatalf("catalog=%d guest=%d; want 31 and 25", all, guest)
+	if all != 35 || guest != 29 {
+		t.Fatalf("catalog=%d guest=%d; want 35 and 29", all, guest)
 	}
 }
 

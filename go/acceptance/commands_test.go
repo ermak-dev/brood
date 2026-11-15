@@ -37,7 +37,7 @@ func TestRealCommandCatalog(t *testing.T) {
 	for _, tc := range []struct {
 		args  []string
 		tools int
-	}{{[]string{"mcp"}, 31}, {[]string{"--guest", "mcp"}, 25}} {
+	}{{[]string{"mcp"}, 35}, {[]string{"--guest", "mcp"}, 29}} {
 		output := f.cli("catalog-state", input, 0, tc.args...)
 		found := false
 		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
@@ -61,7 +61,7 @@ func TestRealCommandCatalog(t *testing.T) {
 				for _, tool := range frame.Result.Tools {
 					counts[tool.Name]++
 				}
-				for _, name := range []string{"pipeline_visit_complete", "gitlab_issue_get", "gitlab_ci_get"} {
+				for _, name := range []string{"pipeline_visit_complete", "gitlab_issue_get", "gitlab_ci_get", "gitlab_mr_create", "gitlab_operation_get", "gitlab_merge_propose", "gitlab_proposal_get"} {
 					if counts[name] != 1 {
 						t.Fatalf("MCP catalog contains %s %d times, want 1", name, counts[name])
 					}
