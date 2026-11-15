@@ -123,7 +123,7 @@ func TestServeRejectsInvalidAndUnavailableTools(t *testing.T) {
 }
 
 // FEATURE: Guest discovery advertises start/reset with honest hints (#149).
-// SPEC: Guest tools/list has 29 tools; start is neither read-only nor
+// SPEC: Guest tools/list has 23 tools; start is neither read-only nor
 // destructive, reset is destructive.
 func TestGuestDiscoveryStartResetHints(t *testing.T) {
 	var out bytes.Buffer
@@ -133,7 +133,7 @@ func TestGuestDiscoveryStartResetHints(t *testing.T) {
 	}
 	all := responses(t, &out)
 	tools := all[1]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 29 {
+	if len(tools) != 23 {
 		t.Fatalf("guest tools=%d", len(tools))
 	}
 	want := map[string]bool{"start": false, "reset": true}
