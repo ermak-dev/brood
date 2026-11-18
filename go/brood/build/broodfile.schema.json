@@ -776,6 +776,20 @@
                       }
                     }
                   }
+                },
+                {
+                  "if": {
+                    "required": [
+                      "childJoin"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "type": {
+                        "const": "actor"
+                      }
+                    }
+                  }
                 }
               ],
               "properties": {
@@ -784,6 +798,71 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "childJoin": {
+                  "additionalProperties": false,
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "mode": {
+                            "const": "quorum"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ]
+                      },
+                      "then": {
+                        "properties": {
+                          "quorum": {
+                            "minimum": 1
+                          }
+                        },
+                        "required": [
+                          "quorum"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "quorum": {
+                            "minimum": 1
+                          }
+                        },
+                        "required": [
+                          "quorum"
+                        ]
+                      },
+                      "then": {
+                        "properties": {
+                          "mode": {
+                            "const": "quorum"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ]
+                      }
+                    }
+                  ],
+                  "properties": {
+                    "mode": {
+                      "enum": [
+                        "all",
+                        "any",
+                        "quorum"
+                      ],
+                      "type": "string"
+                    },
+                    "quorum": {
+                      "maximum": 64,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "type": "object"
                 },
                 "options": {
                   "items": {
