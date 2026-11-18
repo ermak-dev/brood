@@ -9,28 +9,30 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-func (d *actorDeliveryService) answerReason(ctx context.Context, request store.SwarmRequest) (string, error) {
+func (d *actorDeliveryService) answerView(ctx context.Context, request store.SwarmRequest, view *swarmRequestJSON) error {
 	if request.Origin != "actor" || request.State != "answered" || request.Delivery == "" || request.Delivery == "delivered" {
-		return "", nil
+		return nil
 	}
 	intent, err := d.server.store.GetActorDeliveryForSource(ctx, request.SwarmID, "answer", request.ID)
 	if errors.Is(err, store.ErrNotFound) {
-		return "", nil
+		return nil
 	}
 	if err != nil {
-		return "", err
+		return err
 	}
 	schedule, err := d.server.store.GetActorDeliverySchedule(ctx, intent.ID)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if schedule.Exhausted {
-		return durableAnswerBudget, nil
+		if schedule.UncertainSend {
+			view.Delivery = "unconfirmed"
+		}
+		view.DeliveryError = durableAnswerBudget
+	} else if request.Delivery == "unconfirmed" && !schedule.Confirmed {
+		view.DeliveryError = durableAnswerUnconfirmed
 	}
-	if request.Delivery == "unconfirmed" && !schedule.Confirmed {
-		return durableAnswerUnconfirmed, nil
-	}
-	return "", nil
+	return nil
 }
 
 const actorDeliveryPageSize = 16
@@ -127,10 +129,10 @@ func (d *actorDeliveryService) recoverPage(ctx context.Context, after string, li
 func (d *actorDeliveryService) recoverAnswer(parent context.Context, candidate store.ActorDeliveryCandidate) {
 	s := d.server
 	schedule, err := s.store.GetActorDeliverySchedule(parent, candidate.ID)
-	if err != nil || !schedule.Confirmed && (schedule.Exhausted || d.now().Before(schedule.NotBefore)) {
+	if err != nil || !schedule.Confirmed && (d.now().Before(schedule.NotBefore) || schedule.Exhausted && !schedule.UncertainSend) {
 		return
 	}
-	if !schedule.Confirmed {
+	if !schedule.Confirmed && !schedule.Exhausted {
 		intent, err := s.store.GetActorDelivery(parent, candidate.ID)
 		if err != nil || s.managed.hub == nil || actorDeliveryJournal(s.managed.hub, intent.Input.ActorUID, intent.Input.Incarnation) != intent.Input.JournalID || !s.managed.hub.Connected(intent.Input.ActorUID, intent.Input.Incarnation) {
 			return

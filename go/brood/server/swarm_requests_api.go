@@ -454,11 +454,9 @@ func (s *Server) swarmRequestViews(ctx context.Context, swarmID string, requests
 			v.AnsweredBy = name
 		}
 		if s.actorDelivery != nil {
-			reason, reasonErr := s.actorDelivery.answerReason(ctx, req)
-			if reasonErr != nil {
-				return nil, reasonErr
+			if err := s.actorDelivery.answerView(ctx, req, &v); err != nil {
+				return nil, err
 			}
-			v.DeliveryError = reason
 		}
 		out = append(out, v)
 	}
