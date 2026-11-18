@@ -465,6 +465,29 @@ proxy разрешает только точные одобренные публ
 Private, loopback, link-local, multicast и unspecified targets не становятся
 разрешёнными из-за DNS rebinding. Удаление proxy env актором не снимает nft.
 
+Bootstrap нового гостя умеет выбрать полную policy через
+`BROOD_GUEST_EGRESS_POLICY`: JSON `{"version":1,"rules":[...]}`, где правило
+содержит `protocol` (`http` или `tls`), массив `hostnames` точных ASCII FQDN и
+массив `ports`. Пустой массив правил — явный offline, а не прежний allowlist.
+Настройка взаимоисключается с `BROOD_GUEST_ALLOWED_HOSTS`; неизвестные поля,
+версии, дубликаты и JSON больше 8192 байт дают отказ до эффектов. Лимит совпадает
+с размером одного bootstrap environment value; oversized policy отвергается
+до записи project default или actor snapshot, без обрезания правил. Runtime не может
+подменить выбранные правила host-only fallback. Для TLS CONNECT proxy до
+исходящего dial проверяет ClientHello/SNI и пересылает исходные байты настоящему
+endpoint; сертификат проверяет конечный клиент, терминации TLS в proxy нет.
+
+Настройка проекта публикуется через project sync полем `managed_network`:
+versioned object выбирает policy для новых акторов, `null` явно возвращает
+legacy default. Отсутствующее поле сохраняет текущую настройку. Резервирование
+актора атомарно сохраняет snapshot, который create и start передают без расширения
+legacy-списком; смена project default не меняет существующих акторов. Без явно
+заданной настройки серверная конфигурация остаётся прежней. Старый bootstrap
+не понимает новую переменную и отказывает, а не ослабляет policy; для её rollout
+нужен совместимый одобренный шаблон по правилам #184. Этот слой не разрешает
+private destinations, не меняет host/PVE firewall и не обновляет существующий
+immutable template или актор неявно.
+
 Loopback внутри CT для UID 1000 открыт целиком: TCP и UDP через `lo` к
 `127.0.0.0/8` и `::1` в обе стороны, поэтому `go test ./...` с `httptest`
 и тестами резолвера на эфемерных портах работает в госте (#250). Это не
