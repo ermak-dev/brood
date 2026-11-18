@@ -290,11 +290,20 @@ class GoManifestTests(unittest.TestCase):
         (project / "brood/dev/pins.json").write_text(json.dumps(
             {"CLAUDE_VERSION": "2.1.310",
              "CLAUDE_SHA256": hashlib.sha256(b"\x7fELFclaude-pinned").hexdigest()}))
-        deploy = go_server.Deploy(Mock(), get={"BROOD_SESSION_SECRET": "x" * 32}.get, project=str(project))
+        settings = {"BROOD_SESSION_SECRET": "x" * 32,
+                    "WORKER_POOL_IMAGE": "registry/worker@sha256:" + "b" * 64,
+                    go_server.TELEGRAM_API: "http://127.0.0.1"}
+        deploy = go_server.Deploy(Mock(), get=settings.get, project=str(project),
+                                  resolver=Mock(side_effect=AssertionError("unexpected DNS")))
         calls = []
 
         def output(*argv, cwd=None):
             calls.append(argv)
+            if argv[0] == "docker" and "build" in argv:
+                Path(argv[argv.index("--metadata-file") + 1]).write_text(
+                    json.dumps({"containerimage.digest": "sha256:" + "a" * 64}))
+            if "--ignore-not-found" in argv:
+                return 0, "", ""
             if argv[0] == "curl":
                 Path(argv[argv.index("-o") + 1]).write_bytes(b"\x7fELFclaude-pinned")
             if "go" in argv:
@@ -312,6 +321,74 @@ class GoManifestTests(unittest.TestCase):
         deploy.cluster.shell.output_bytes.side_effect = exec_bytes
         return deploy, calls, root
 
+    # BUG: Отказ подготовки гостевых артефактов происходит уже после apply.
+    # HYPOTHESIS: Сборка и скачивание спрятаны в публикации после rollout.
+    # SOLUTION: Подготовить проверенный поток до snapshot, отправить его после rollout.
+    def test_bootstrap_artifact_preparation_failure_stops_before_apply(self):
+        body = "synthetic untrusted response body"
+        for failed_step, reason in (
+                ("build", "guest bootstrap artifact build failed: bro:"),
+                ("download", r"guest bootstrap claude artifact download failed \(curl exit 22\)"),
+                ("checksum", "guest bootstrap claude artifact SHA-256 mismatch")):
+            with self.subTest(failed_step=failed_step):
+                deploy, _, _ = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
+                shell = deploy.cluster.shell
+                normal_output = shell.output.side_effect
+
+                def output(*argv, **kwargs):
+                    if argv[0] == "env" and failed_step == "build":
+                        return 1, "", "synthetic build failure"
+                    if argv[0] == "curl":
+                        Path(argv[argv.index("-o") + 1]).write_text(body)
+                        return (22 if failed_step == "download" else 0), body, body
+                    return normal_output(*argv, **kwargs)
+
+                shell.output.side_effect = output
+                before_apply = Mock()
+                with patch.object(go_server, "Infrastructure") as infra, \
+                        patch.object(deploy, "_registry_access", return_value=None):
+                    infra.return_value._tls.return_value = {}
+                    infra.return_value._api_egress.return_value = []
+                    with self.assertRaises(RuntimeError) as raised:
+                        deploy.run(before_apply=before_apply)
+
+                before_apply.assert_not_called()
+                for invocation in shell.output.call_args_list:
+                    self.assertNotIn("apply", invocation.args)
+                    self.assertNotIn("rollout", invocation.args)
+                shell.output_bytes.assert_not_called()
+                self.assertRegex(str(raised.exception), reason)
+                self.assertNotIn(body, str(raised.exception))
+
+    def test_foreign_tls_secret_created_during_prepare_stops_before_apply(self):
+        deploy, _, _ = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
+        shell = deploy.cluster.shell
+        normal_output = shell.output.side_effect
+        prepared = False
+
+        def output(*argv, **kwargs):
+            nonlocal prepared
+            if prepared and argv[2:5] == ("get", "secret", "brood-go-tls"):
+                return 0, json.dumps({"metadata": {"labels": {}}}), ""
+            reply = normal_output(*argv, **kwargs)
+            if argv[0] == "curl":
+                prepared = True
+            return reply
+
+        shell.output.side_effect = output
+        before_apply = Mock()
+        with patch.object(go_server, "Infrastructure") as infra, \
+                patch.object(deploy, "_registry_access", return_value=None):
+            infra.return_value._tls.return_value = {}
+            infra.return_value._api_egress.return_value = []
+            with self.assertRaisesRegex(RuntimeError, "refusing foreign secret/brood-go-tls"):
+                deploy.run(before_apply=before_apply)
+        self.assertTrue(prepared)
+        before_apply.assert_not_called()
+        for invocation in shell.output.call_args_list:
+            self.assertNotIn("apply", invocation.args)
+        shell.output_bytes.assert_not_called()
+
     def test_bootstrap_artifact_publish_streams_all_three_binaries(self):
         """#156: после rollout выкладка отдаёт серверу bro/brood-guest/claude
         одним бинарным потоком brood artifacts; отказ любого шага — отказ
@@ -327,7 +404,7 @@ class GoManifestTests(unittest.TestCase):
         deploy, calls, root = self.publisher(
             {"deployment": rolled_out("3"), "replicasets": items(old, new),
              "pods": items(pod("brood-go-old", old, deleting=True), pod("brood-go-new", new))}, exec_bytes)
-        deploy.publish_bootstrap_artifacts(root)
+        deploy.publish_bootstrap_artifacts(deploy.prepare_bootstrap_artifacts(root))
         argv, stream, timeout = streams[0]
         self.assertEqual(argv, ("kubectl", "--context=kind-substrate", "-n", "brood", "exec", "-i",
                                 "pod/brood-go-new", "--", "/brood", "artifacts", "--dir", "/data/artifacts"))
@@ -345,6 +422,10 @@ class GoManifestTests(unittest.TestCase):
         self.assertEqual({a[-1] for a in builds}, {"./cmd/bro", "./cmd/brood-guest"})
         for build in builds:
             self.assertEqual(build[:5], ("env", "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "go"))
+        download, = [a for a in calls if a[0] == "curl"]
+        self.assertEqual(download[download.index("--connect-timeout") + 1], "20")
+        self.assertEqual(download[download.index("--max-time") + 1], "300")
+        self.assertEqual(download[-1], "https://downloads.claude.ai/claude-code-releases/2.1.310/linux-x64/claude")
         # Под выбран после сборки и скачивания, перед самым exec: минута сборки
         # не отделяет выбор от записи.
         reads = [a for a in calls if a[0] == "kubectl"]
@@ -366,8 +447,9 @@ class GoManifestTests(unittest.TestCase):
         deploy, _, root = self.publisher(
             {"deployment": rolled_out("3"), "replicasets": items(new), "pods": items(pod("brood-go-new", new))},
             hanging)
+        stream = deploy.prepare_bootstrap_artifacts(root)
         with self.assertRaises(RuntimeError) as raised:
-            deploy.publish_bootstrap_artifacts(root)
+            deploy.publish_bootstrap_artifacts(stream)
         self.assertEqual(str(raised.exception).split(";")[0],
                          "guest bootstrap artifact publish timed out after 600 s")
         self.assertIn("docs/DEPLOY.md", str(raised.exception))
@@ -383,8 +465,9 @@ class GoManifestTests(unittest.TestCase):
                  "unexpected deployment/brood-go objects")):
             with self.subTest(reason=reason):
                 deploy, _, root = self.publisher(objects, Mock(side_effect=AssertionError("exec without a pod")))
+                stream = deploy.prepare_bootstrap_artifacts(root)
                 with self.assertRaisesRegex(RuntimeError, reason):
-                    deploy.publish_bootstrap_artifacts(root)
+                    deploy.publish_bootstrap_artifacts(stream)
 
     def test_kubernetes_configuration_also_supplies_approved_worker_images(self):
         deployment = next(item for item in render("localhost:5002/brood-go@sha256:" + "a" * 64)
@@ -457,9 +540,9 @@ class GoDeploymentTests(unittest.TestCase):
         deploy = go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout",
                                   resolver=Mock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "",
                                                                ("149.154.167.220", 443))]))
-        # Шаг артефактов (#156) требует реальных бинарей и машины деплоя:
-        # в этих тестах он подменён, собственный тест ниже.
-        deploy.publish_bootstrap_artifacts = lambda root: None
+        # Подготовка и отправка артефактов (#156) проверяются отдельно.
+        deploy.prepare_bootstrap_artifacts = lambda root: b""
+        deploy.publish_bootstrap_artifacts = lambda stream: None
         return deploy
 
     # FEATURE: Ключ модели CLIProxyAPI доставляется только серверу.
