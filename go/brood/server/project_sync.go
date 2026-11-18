@@ -15,6 +15,7 @@ import (
 	"brood.dev/go/brood/gitcredential"
 	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/pipeline"
+	"brood.dev/go/brood/proxmox/egress"
 	"brood.dev/go/brood/store"
 )
 
@@ -60,7 +61,10 @@ func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
 	// следующее чтение пересчитает его.
 	mode, bound := "", false
 	if access, err := s.projectGitAccess(r.Context(), result.ID); err == nil {
-		mode, bound = access.mode(result.Repository), access.bound
+		bound = access.bound
+		if network, err := s.store.ProjectManagedNetwork(r.Context(), result.ID); err == nil {
+			mode = access.modeWithNetwork(result.Repository, network)
+		}
 	}
 	status := http.StatusOK
 	if result.Created {
@@ -126,7 +130,7 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 	if _, err := decoder.Token(); err != io.EOF {
 		return declaration, invalid
 	}
-	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true, "git_credential": true, "workflows": true})
+	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true, "git_credential": true, "workflows": true, "managed_network": true})
 	if err != nil {
 		return declaration, invalid
 	}
@@ -170,6 +174,21 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 			return declaration, invalid
 		}
 		declaration.GitCredential = &reference
+	}
+	if raw, ok := body["managed_network"]; ok {
+		value := ""
+		if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			policy, err := egress.Decode(raw)
+			if err != nil {
+				return declaration, invalid
+			}
+			encoded, err := policy.Encode()
+			if err != nil {
+				return declaration, invalid
+			}
+			value = string(encoded)
+		}
+		declaration.ManagedNetwork = &value
 	}
 	if raw, ok := body["capacity"]; ok {
 		fields, err := syncObject(raw, map[string]bool{"worker_selector": true, "max_swarms": true, "max_actors": true, "max_cpu_millicores": true, "max_memory_bytes": true})

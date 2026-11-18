@@ -34,7 +34,7 @@ const originModeRefusal = "origin must be the project repository with server Git
 
 // originMode пересчитывает режим доступа origin по текущему Git-доступу
 // проекта. Пустой origin режима не имеет.
-func (s *Server) originMode(ctx context.Context, projectID, origin string) (string, error) {
+func (s *Server) originMode(ctx context.Context, projectID, origin, network string) (string, error) {
 	if origin == "" {
 		return "", nil
 	}
@@ -42,18 +42,45 @@ func (s *Server) originMode(ctx context.Context, projectID, origin string) (stri
 	if err != nil {
 		return "", err
 	}
-	return access.mode(origin), nil
+	return access.modeWithNetwork(origin, network), nil
 }
 
 // settledOriginMode is originMode for a response after a committed mutation:
 // a failed read must not turn a successful write into an error, so it reports
 // no mode and the next read recomputes it.
-func (s *Server) settledOriginMode(ctx context.Context, projectID, origin string) string {
-	mode, err := s.originMode(ctx, projectID, origin)
+func (s *Server) settledOriginMode(ctx context.Context, projectID, origin, network string) string {
+	mode, err := s.originMode(ctx, projectID, origin, network)
 	if err != nil {
 		return ""
 	}
 	return mode
+}
+
+func (s *Server) reserveManagedActorOrigin(ctx context.Context, request store.ManagedActor) (store.ManagedActor, error) {
+	var actor store.ManagedActor
+	err := s.store.WithTx(ctx, func(tx context.Context) error {
+		var err error
+		actor, err = s.store.ReserveManagedActor(tx, request)
+		if err != nil {
+			return err
+		}
+		if actor.Origin == "" {
+			return nil
+		}
+		swarm, err := s.store.GetSwarm(tx, actor.SwarmID)
+		if err != nil {
+			return err
+		}
+		mode, err := s.originMode(tx, swarm.ProjectID, actor.Origin, actor.NetworkPolicy)
+		if err != nil {
+			return err
+		}
+		if mode == "" {
+			return &originRefusal{detail: originModeRefusal}
+		}
+		return nil
+	})
+	return actor, err
 }
 
 // resolveActorOrigin выбирает origin нового актора: явный (канонизированный),
@@ -76,7 +103,11 @@ func (s *Server) resolveActorOrigin(ctx context.Context, projectID, requested st
 	if origin == "" {
 		return "", nil
 	}
-	if access.mode(origin) == "" {
+	network, err := s.store.ProjectManagedNetwork(ctx, projectID)
+	if err != nil {
+		return "", err
+	}
+	if access.modeWithNetwork(origin, network) == "" {
 		return "", &originRefusal{detail: originModeRefusal}
 	}
 	return origin, nil

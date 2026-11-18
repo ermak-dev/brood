@@ -40,7 +40,7 @@ func (s *Server) serveGuestWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	mode, err := s.originMode(ctx, g.swarm.ProjectID, g.actor.Origin)
+	mode, err := s.originMode(ctx, g.swarm.ProjectID, g.actor.Origin, g.actor.NetworkPolicy)
 	if err != nil {
 		writeDetail(w, 503, "workspace origin delivery unavailable")
 		return

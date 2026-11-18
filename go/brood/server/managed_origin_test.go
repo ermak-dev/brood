@@ -214,7 +214,7 @@ func TestManagedMasterAddOrigin(t *testing.T) {
 			if err != nil || child.Origin != tc.want || child.ParentUID != master.UID {
 				t.Fatalf("child: %+v %v", child, err)
 			}
-			mode, err := ts.srv.originMode(context.Background(), projectOf(t, ts, master.SwarmID), child.Origin)
+			mode, err := ts.srv.originMode(context.Background(), projectOf(t, ts, master.SwarmID), child.Origin, child.NetworkPolicy)
 			if err != nil || mode != tc.mode {
 				t.Fatalf("child mode %q %v; want %q", mode, err, tc.mode)
 			}
