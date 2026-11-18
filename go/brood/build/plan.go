@@ -535,6 +535,7 @@ func init() {
 		"capacity", projectCapacity,
 		// Ссылка на серверный Git credential проекта (#173): имя, не значение.
 		"git_credential", &schemaNode{typ: "string", maxLen: 63, pattern: patternOptionalName},
+		"managed_network", &schemaNode{typ: "string", maxLen: 63, pattern: patternOptionalName},
 	)}
 	apiVersion := &schemaNode{typ: "string", constV: "brood.dev/v1alpha1", constSet: true}
 	schemaRoot = &schemaNode{
@@ -1455,6 +1456,18 @@ func planProjectConfig(document map[string]any, filename string) (map[string]any
 			return nil, failure(filename, "project.git_credential", -1, "a Git credential reference requires a project repository")
 		}
 		config["git_credential"] = name
+	}
+	if raw, present := declaration["managed_network"]; present {
+		name, _ := raw.(string)
+		if name == "" {
+			config["managed_network"] = nil
+		} else {
+			network, err := planManagedNetwork(document, name)
+			if err != nil {
+				return nil, failure(filename, "project.managed_network", -1, err.Error())
+			}
+			config["managed_network"] = network
+		}
 	}
 	return config, nil
 }
