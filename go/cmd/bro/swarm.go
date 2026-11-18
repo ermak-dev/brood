@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +15,8 @@ import (
 )
 
 func swarmUsage(w io.Writer) {
-	fmt.Fprint(w, `usage: bro swarm roles SWARM [--definition NAME]
+	fmt.Fprint(w, `usage: bro swarm list [--project ID_OR_NAME] [--json]
+       bro swarm roles SWARM [--definition NAME]
        bro swarm bind SWARM ROLE ACTOR
        bro swarm unbind SWARM ROLE
        bro swarm start SWARM --definition NAME (--goal TEXT | --goal-file FILE) [--commit SHA]
@@ -22,6 +24,14 @@ func swarmUsage(w io.Writer) {
 
 Operator-only command. SWARM is a swarm ID or a name unique among accessible
 swarms; ACTOR is a managed actor name or UID of that swarm.
+
+list prints swarms returned by the existing API for every accessible project.
+Deleted swarms are excluded by that API. Output is a table with ID, NAME,
+PROJECT and STATE, or one JSON array
+of objects with id, name, projectId and state (--json, [] when there are no
+swarms). --project ID_OR_NAME lists one project: an exact accessible project
+ID or its exact name, which must not be ambiguous among accessible projects.
+Listing only reads: no mutations.
 
 roles prints the swarm execution, its graph and one row per role of the graph
 or of a binding: ROLE, GRAPH (yes, no, or - without a graph), STATE, ACTOR,
@@ -56,10 +66,12 @@ type swarmOptions struct {
 	action, swarm, role, actor string
 	definition, goal, goalFile string
 	commit                     string
+	project                    string
+	json                       bool
 }
 
 // swarmFlags — флаги bro swarm: что значение называет в отказе и действия,
-// которым флаг разрешён.
+// которым флаг разрешён. Значение, отмеченное пустым value, булево.
 var swarmFlags = map[string]struct {
 	value   string
 	actions []string
@@ -68,6 +80,8 @@ var swarmFlags = map[string]struct {
 	"goal":       {"the goal text", []string{"start"}},
 	"goal-file":  {"a file or -", []string{"start"}},
 	"commit":     {"a commit", []string{"start"}},
+	"project":    {"an ID or name", []string{"list"}},
+	"json":       {"", []string{"list"}},
 }
 
 func parseSwarm(args []string) (swarmOptions, error) {
@@ -88,6 +102,14 @@ func parseSwarm(args []string) (swarmOptions, error) {
 		if _, repeated := flags[name]; repeated {
 			return o, fmt.Errorf("--%s must be specified once", name)
 		}
+		if flag.value == "" {
+			// Булев флаг: значение синтаксисом не задаётся.
+			if inline || value != "" {
+				return o, fmt.Errorf("--%s does not take a value", name)
+			}
+			flags[name] = trueText
+			continue
+		}
 		// Значение, начинающееся с «-», идёт только как --flag=VALUE: иначе
 		// пропущенное значение съело бы следующий флаг.
 		if !inline && i+1 < len(args) && (!strings.HasPrefix(args[i+1], "-") || name == "goal-file" && args[i+1] == "-") {
@@ -100,22 +122,23 @@ func parseSwarm(args []string) (swarmOptions, error) {
 		flags[name] = value
 	}
 	if len(positional) == 0 {
-		return o, errors.New("swarm requires roles, bind, unbind, start or stop")
+		return o, errors.New("swarm requires list, roles, bind, unbind, start or stop")
 	}
 	o.action = positional[0]
-	want := map[string]int{"roles": 2, "bind": 4, "unbind": 3, "start": 2, "stop": 2}[o.action]
+	want := map[string]int{"list": 1, "roles": 2, "bind": 4, "unbind": 3, "start": 2, "stop": 2}[o.action]
 	if want == 0 {
-		return o, errors.New("swarm action must be roles, bind, unbind, start or stop")
+		return o, errors.New("swarm action must be list, roles, bind, unbind, start or stop")
 	}
 	if len(positional) != want {
-		return o, errors.New("usage: bro swarm roles SWARM | bind SWARM ROLE ACTOR | unbind SWARM ROLE | start SWARM | stop SWARM; use bro swarm --help")
+		return o, errors.New("usage: bro swarm list [--project ID_OR_NAME] [--json] | roles SWARM | bind SWARM ROLE ACTOR | unbind SWARM ROLE | start SWARM | stop SWARM; use bro swarm --help")
 	}
-	for _, name := range []string{"definition", "goal", "goal-file", "commit"} {
+	for _, name := range []string{"definition", "goal", "goal-file", "commit", "project", "json"} {
 		if _, set := flags[name]; set && !slices.Contains(swarmFlags[name].actions, o.action) {
 			return o, fmt.Errorf("--%s is not valid for swarm %s", name, o.action)
 		}
 	}
 	o.definition, o.goal, o.goalFile, o.commit = flags["definition"], flags["goal"], flags["goal-file"], flags["commit"]
+	o.project, o.json = flags["project"], flags["json"] == trueText
 	if o.action == "start" {
 		if o.definition == "" {
 			return o, errors.New("swarm start requires --definition NAME")
@@ -124,7 +147,9 @@ func parseSwarm(args []string) (swarmOptions, error) {
 			return o, errors.New("swarm start requires exactly one of --goal TEXT and --goal-file FILE")
 		}
 	}
-	o.swarm = positional[1]
+	if want > 1 {
+		o.swarm = positional[1]
+	}
 	if want > 2 {
 		o.role = positional[2]
 	}
@@ -139,8 +164,11 @@ func parseSwarm(args []string) (swarmOptions, error) {
 	return o, nil
 }
 
+// trueText — отметка установленного булева флага в общем словаре значений.
+const trueText = "true"
+
 // swarm — bro swarm: привязки ролей роя к managed-акторам (#235), запуск
-// прохода с задачей и остановка (#242).
+// прохода с задачей и остановка (#242), список роёв всех проектов (#306).
 func (c command) swarm(ctx context.Context, args []string) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		swarmUsage(c.out)
@@ -149,6 +177,9 @@ func (c command) swarm(ctx context.Context, args []string) error {
 	o, err := parseSwarm(args)
 	if err != nil {
 		return err
+	}
+	if o.action == "list" {
+		return c.swarmList(ctx, o)
 	}
 	// Задача из файла читается до сети: нечитаемый файл не стоит запросов.
 	if o.goalFile != "" {
@@ -228,6 +259,68 @@ func (c command) swarmExecution(ctx context.Context, o swarmOptions) error {
 	}
 	printSwarmExecution(c.out, verb, swarm, execution)
 	return nil
+}
+
+func (c command) swarmList(ctx context.Context, o swarmOptions) error {
+	client, store, err := newClient("", "")
+	if err != nil {
+		return err
+	}
+	projects, err := client.ProjectsList(ctx)
+	if err != nil {
+		return sessionError(err)
+	}
+	if o.project != "" {
+		id, err := resolveProject(projects, o.project)
+		if err != nil {
+			return err
+		}
+		projects = []clientapi.Project{{ID: id}}
+	}
+	type row struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		ProjectID string `json:"projectId"`
+		State     string `json:"state"`
+	}
+	var rows []row
+	for _, project := range projects {
+		swarms, err := client.SwarmsList(ctx, project.ID)
+		if err != nil {
+			return sessionError(err)
+		}
+		for _, swarm := range swarms {
+			rows = append(rows, row{ID: swarm.ID, Name: swarm.Name, ProjectID: project.ID, State: swarm.State})
+		}
+	}
+	if err := store.Save(client.Origin(), client.Stored()); err != nil {
+		return err
+	}
+	if o.json {
+		if rows == nil {
+			rows = []row{}
+		}
+		data, err := json.Marshal(rows)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(c.out, string(data))
+		return nil
+	}
+	if len(rows) == 0 {
+		fmt.Fprintln(c.out, "no swarms")
+		return nil
+	}
+	fmt.Fprintln(c.out, "ID\tNAME\tPROJECT\tSTATE")
+	for _, r := range rows {
+		fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\n", swarmTableCell(r.ID), swarmTableCell(dash(r.Name)), swarmTableCell(r.ProjectID), swarmTableCell(r.State))
+	}
+	return nil
+}
+
+func swarmTableCell(value string) string {
+	quoted := strconv.QuoteToGraphic(value)
+	return quoted[1 : len(quoted)-1]
 }
 
 // readGoalFile читает задачу прохода из файла или, для «-», из stdin: не

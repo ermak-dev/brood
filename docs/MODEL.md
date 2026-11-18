@@ -1260,10 +1260,18 @@ again`). Шаг прохода ему всё равно отказал бы, а 
 работает с тем же API из `bro` по сессии `bro login`:
 
 ```sh
+bro swarm list [--project ID_OR_NAME] [--json]
 bro swarm roles SWARM [--definition NAME]
 bro swarm bind SWARM ROLE ACTOR
 bro swarm unbind SWARM ROLE
 ```
+
+`list` (#306) печатает рои, которые существующий API возвращает для доступных
+проектов; удалённые рои этот API исключает. Вывод — таблица ID, NAME, PROJECT,
+STATE с экранированием управляющих символов или, с `--json`,
+массив объектов `id`, `name`, `projectId`, `state` (пустой список — `[]`);
+`--project` сужает до одного проекта по точному ID или однозначному точному
+имени. Список только читает: правок нет.
 
 `SWARM` — ID или имя, единственное среди доступных роёв; `ACTOR` — имя или
 UID managed-актора роя, `bind` передаёт инкарнацию из списка акторов роя.
