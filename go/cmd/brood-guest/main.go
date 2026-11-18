@@ -20,13 +20,15 @@ import (
 	"syscall"
 	"time"
 
+	"brood.dev/go/brood/proxmox/egress"
 	"brood.dev/go/brood/proxmox/guest"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
 type config struct {
-	hosts []string
-	relay relay.ClientConfig
+	network *egress.Policy
+	hosts   []string
+	relay   relay.ClientConfig
 	// workspace не секретен: origin и режим клона (#147) и Git-идентичность
 	// актора (#249), как их отдал сервер.
 	workspace guest.WorkspaceOrigin
@@ -71,18 +73,19 @@ type dependencies struct {
 	reexec    func(executable string, env []string) error
 	// boot — UID 1000 цель --brood-guest-autostart; autorun — root-цикл,
 	// который её запускает до появления сессии Claude.
-	boot    func(context.Context) error
-	autorun func(context.Context)
-	euid    func() int
-	network func(context.Context) (service, error)
-	start   func(context.Context, []string) (actorRuntime, error)
-	relay   func(context.Context, relay.ClientConfig) error
+	boot        func(context.Context) error
+	autorun     func(context.Context)
+	euid        func() int
+	network     func(context.Context) (service, error)
+	start       func(context.Context, []string) (actorRuntime, error)
+	startPolicy func(context.Context, *egress.Policy) (actorRuntime, error)
+	relay       func(context.Context, relay.ClientConfig) error
 }
 
 func parseConfig(env []string) (config, error) {
 	var c config
-	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true}
-	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true}
+	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true}
+	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true}
 	values := map[string]string{}
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
@@ -119,11 +122,39 @@ func parseConfig(env []string) (config, error) {
 	if err != nil || generation <= 0 || strconv.FormatInt(generation, 10) != values["BROOD_GUEST_GENERATION"] {
 		return c, errors.New("invalid BROOD_GUEST_GENERATION")
 	}
-	if err := json.Unmarshal([]byte(values["BROOD_GUEST_ALLOWED_HOSTS"]), &c.hosts); err != nil {
-		return c, errors.New("invalid BROOD_GUEST_ALLOWED_HOSTS JSON array")
+	selected, hasSelected := values["BROOD_GUEST_EGRESS_POLICY"]
+	legacy, hasLegacy := values["BROOD_GUEST_ALLOWED_HOSTS"]
+	if hasSelected && hasLegacy {
+		return c, errors.New("selected egress policy and legacy hosts cannot be combined")
 	}
-	if _, err := guest.NewPolicy(c.hosts, func(context.Context, string) ([]net.IP, error) { return nil, nil }); err != nil {
-		return c, errors.New("invalid BROOD_GUEST_ALLOWED_HOSTS hostnames")
+	if hasSelected {
+		var err error
+		c.network, err = egress.Decode([]byte(selected))
+		if err != nil {
+			return c, errors.New("invalid BROOD_GUEST_EGRESS_POLICY")
+		}
+		// Только предварительная проверка origin использует имена; runtime
+		// получает полную policy, а не её расширенную host-only проекцию.
+		hosts := map[string]bool{}
+		for _, rule := range c.network.Rules() {
+			for _, host := range rule.Hostnames {
+				hosts[host] = true
+			}
+		}
+		for host := range hosts {
+			c.hosts = append(c.hosts, host)
+		}
+		sort.Strings(c.hosts)
+	} else {
+		if !hasLegacy || legacy == "" {
+			return c, errors.New("BROOD_GUEST_ALLOWED_HOSTS or BROOD_GUEST_EGRESS_POLICY is required")
+		}
+		if err := json.Unmarshal([]byte(legacy), &c.hosts); err != nil {
+			return c, errors.New("invalid BROOD_GUEST_ALLOWED_HOSTS JSON array")
+		}
+		if _, err := guest.NewPolicy(c.hosts, func(context.Context, string) ([]net.IP, error) { return nil, nil }); err != nil {
+			return c, errors.New("invalid BROOD_GUEST_ALLOWED_HOSTS hostnames")
+		}
 	}
 	ca, err := base64.StdEncoding.Strict().DecodeString(values["BROOD_GUEST_CA_PEM_B64"])
 	if err != nil {
@@ -198,6 +229,9 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	return errors.New("guest supervisor must run as root")
 }
 func supervise(parent context.Context, c config, d dependencies) error {
+	if c.stage == "runtime" && c.network != nil && d.startPolicy == nil {
+		return errors.New("guest selected network policy is unavailable")
+	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	// Сеть нужна раньше артефактов (#155): CT получает адрес по DHCP, без
@@ -278,7 +312,12 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		defer boundedClose(git)
 		go func() { git.Wait(); cancel() }()
 	}
-	runtime, err := d.start(ctx, c.hosts)
+	var runtime actorRuntime
+	if c.network != nil {
+		runtime, err = d.startPolicy(ctx, c.network)
+	} else {
+		runtime, err = d.start(ctx, c.hosts)
+	}
 	if err != nil {
 		cancel()
 		boundedClose(network)
@@ -427,6 +466,8 @@ func main() {
 		return guest.StartGitGateway(ctx, cfg)
 	}, origin: guest.RefreshWorkspaceOrigin, euid: os.Geteuid, network: startDHCP, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
+	}, startPolicy: func(ctx context.Context, network *egress.Policy) (actorRuntime, error) {
+		return guest.Start(ctx, guest.Config{Network: network, Dependencies: guest.SystemDependencies()})
 	}, relay: relay.RunClient}
 	err := dispatch(ctx, os.Args[1:], func() []string {
 		env := os.Environ()
