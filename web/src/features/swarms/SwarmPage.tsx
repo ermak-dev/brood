@@ -32,6 +32,7 @@ import { useGraphRefetch, useSwarmPolling } from './useSwarmPolling';
 import { SnapshotFacts, SwarmExecutionControl } from './SwarmControls';
 import { SwarmObjects } from './SwarmObjects';
 import { SwarmRoles } from './SwarmRoles';
+import { SwarmChildren } from './SwarmChildren';
 import { executionAction, snapshotIdentity } from './swarmControl';
 import {
   durationParts,
@@ -163,6 +164,7 @@ function SwarmScreen({ id }: { id: string }) {
       gateNode={asked?.nodeId}
       gate={asked && <RequestCard key={asked.id} model={inbox} request={asked} variant="node" />}
       requests={<RequestInbox model={inbox} onSelectNode={setChosen} />}
+      childTasks={<SwarmChildren swarm={data} />}
       roles={
         <SwarmRoles
           swarm={data}
@@ -214,6 +216,8 @@ export interface SwarmViewProps {
   gate?: ReactNode;
   /** Инбокс запросов оператору: сразу под строкой состояния, выше графа. */
   requests?: ReactNode;
+  /** История дочерних групп и явно подтверждённый abort незапущенной группы. */
+  childTasks?: ReactNode;
   /** Роли графа и их акторы (#241): свёрнуты под графом, перед историей
    * шагов; у роя без графа — под инбоксом. */
   roles?: ReactNode;
@@ -247,6 +251,7 @@ export function SwarmView({
   gateNode,
   gate,
   requests,
+  childTasks,
   roles,
   management,
 }: SwarmViewProps) {
@@ -317,6 +322,7 @@ export function SwarmView({
               </Section>
             </div>
           </div>
+          {childTasks}
           {roles}
           <Section title={t('swarm_page.steps')} hint={t('swarm_page.steps_hint')}>
             <StepHistory
@@ -330,7 +336,12 @@ export function SwarmView({
           </Section>
         </>
       )}
-      {!run && roles}
+      {!run && (
+        <>
+          {childTasks}
+          {roles}
+        </>
+      )}
       {management}
     </div>
   );
@@ -424,7 +435,12 @@ function NowBlock({
     <section className={local.now} aria-label={t('swarm_page.now_label')} data-swarm-now="">
       <div className={local.nowHead}>
         <LoadState loading={loading} error={error} retry={retry}>
-          <ExecutionLine now={now} hasGraph={run !== null} selected={selected} onSelect={onSelect} />
+          <ExecutionLine
+            now={now}
+            hasGraph={run !== null}
+            selected={selected}
+            onSelect={onSelect}
+          />
         </LoadState>
       </div>
       {actions && (
