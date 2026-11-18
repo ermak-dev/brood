@@ -132,6 +132,8 @@ func TestMigrateV34ChildStoragePreservesEveryRow(t *testing.T) {
 	before["swarm_child_tasks"] = nil
 	before["actor_interventions"] = nil
 	before["actor_step_interruptions"] = nil
+	before["project_managed_networks"] = nil
+	before["managed_actor_networks"] = nil
 	if after := databaseRows(t, s.db); !reflect.DeepEqual(after, before) {
 		t.Fatal("v34→v35 changed existing rows or created children")
 	}
