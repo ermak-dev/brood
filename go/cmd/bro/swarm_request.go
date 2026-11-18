@@ -109,8 +109,24 @@ func (c command) swarmRequest(ctx context.Context, args []string) error {
 		fmt.Fprintln(c.out, "ID\tORIGIN\tKIND\tSTATE\tREVISION\tQUESTION")
 		for _, request := range requests {
 			fmt.Fprintf(c.out, "%s\t%s\t%s\t%s\t%d\t%q\n", request.ID, request.Origin, request.Kind, request.State, request.Revision, request.Question)
-			if request.Origin == "policy" && request.Context != "" {
-				fmt.Fprintf(c.out, "policy context: %q\n", request.Context)
+			if request.Context != "" {
+				prefix := "context"
+				if request.Origin == "policy" {
+					prefix = "policy context"
+				}
+				fmt.Fprintf(c.out, "%s: %q\n", prefix, request.Context)
+			}
+			for _, option := range request.Options {
+				fmt.Fprintf(c.out, "option: label=%q outcome=%q\n", option.Label, option.Outcome)
+			}
+			if request.AnsweredAt != nil {
+				fmt.Fprintf(c.out, "answered: at=%q by=%q\n", *request.AnsweredAt, request.AnsweredBy)
+			}
+			if request.Outcome != nil {
+				fmt.Fprintf(c.out, "outcome: %q\n", *request.Outcome)
+			}
+			if request.Response != nil {
+				fmt.Fprintf(c.out, "response: %q\n", *request.Response)
 			}
 		}
 		return nil
