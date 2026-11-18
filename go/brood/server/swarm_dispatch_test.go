@@ -131,6 +131,11 @@ type dispatchServer struct {
 func newDispatchServer(t *testing.T) *dispatchServer {
 	t.Helper()
 	ts, master, worker := coordinationServerSetup(t)
+	return newDispatchServerWithActors(t, ts, master, worker)
+}
+
+func newDispatchServerWithActors(t *testing.T, ts *substrateServer, master, worker store.ManagedActor) *dispatchServer {
+	t.Helper()
 	ctx := context.Background()
 	d := &dispatchServer{substrateServer: ts, t: t, alice: newClient(t), master: master, worker: worker, swarm: master.SwarmID}
 	ts.login(d.alice, "alice", "alice-password-1")

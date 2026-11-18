@@ -141,5 +141,8 @@ func (s *Server) managedNameAvailable(ctx context.Context, atespace, name string
 
 func (s *Server) validManagedView(ctx context.Context, v actorView) bool {
 	uid, generation, err := s.managedViewBinding(ctx, v.swarm, v.actor)
-	return err == nil && uid == v.managedUID && generation == v.generation
+	if err != nil || uid != v.managedUID || generation != v.generation {
+		return false
+	}
+	return v.readOnly || uid == "" || s.authorizeSwarmOwnerIntent(ctx, v.userID, v.swarm) == nil || s.store.CheckActorChildObligations(ctx, uid) == nil
 }

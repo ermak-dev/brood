@@ -21,6 +21,7 @@ const actorViewLimit = 4096
 
 type actorViewKey struct{}
 type actorView struct {
+	readOnly                                                                                      bool
 	managedUID                                                                                    string
 	generation                                                                                    int64
 	token, session, userID, username, swarm, actor, owner, project, atespace, atespaceUID, origin string
@@ -134,6 +135,24 @@ func (s *Server) issueActorView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.managedUID, v.generation = uid, generation
+	mode := r.URL.Query().Get("mode")
+	if mode != "" && mode != "rw" && mode != "ro" || len(r.URL.Query()["mode"]) > 1 {
+		http.Error(w, "terminal mode must be ro or rw", http.StatusBadRequest)
+		return
+	}
+	if uid != "" && mode == "" {
+		serveTerminalModeChoice(w, r)
+		return
+	}
+	v.readOnly = mode == "ro"
+	if v.readOnly && uid == "" {
+		http.Error(w, "read-only snapshots require a managed actor", http.StatusUnprocessableEntity)
+		return
+	}
+	if !s.validManagedView(r.Context(), v) {
+		http.Error(w, "outstanding child work holds the writable terminal; use mode=ro for a read-only snapshot", http.StatusConflict)
+		return
+	}
 	s.views.mu.Lock()
 	for key, old := range s.views.tickets {
 		if !time.Now().Before(old.expires) {
@@ -181,6 +200,10 @@ func (s *Server) actorViewHandler(next http.Handler) http.Handler {
 		}
 		if origin := r.Header.Get("Origin"); origin != "" && origin != "null" && origin != v.origin {
 			http.Error(w, "actor view origin denied", http.StatusForbidden)
+			return
+		}
+		if v.readOnly {
+			s.serveReadonlyActorView(w, r, v, parts[3])
 			return
 		}
 		clone := r.Clone(context.WithValue(r.Context(), actorViewKey{}, v))

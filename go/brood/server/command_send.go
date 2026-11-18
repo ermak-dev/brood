@@ -104,6 +104,9 @@ func (s *Server) deliverToActor(ctx context.Context, swarmID string, resolve fun
 		return command.Result{}, false, err
 	}
 	msg.To = target.Name
+	actors, _ := ctx.Value(actorMessageScopeKey{}).([]string)
+	actors = append(append([]string(nil), actors...), target.UID)
+	ctx = context.WithValue(ctx, messageSubmissionKey{}, messageSubmission{actors: actors, authorize: authorize})
 	response, err := s.managed.deliverMessage(ctx, target.UID, target.Incarnation, msg)
 	// notSent вместе с OK противоречив: доставку подтверждает OK.
 	unsent := err == nil && response.NotSent && !response.OK

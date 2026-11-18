@@ -102,7 +102,7 @@ func TestManagedProxyResolutionAndMachineRoute(t *testing.T) {
 	if _, err := ts.srv.managed.dial(context.Background(), "tcp", forged.Host); err == nil {
 		t.Fatal("relay forwarded arbitrary network target")
 	}
-	request, _ := http.NewRequest("GET", ts.http.URL+"/api/swarms/"+id+"/proxy/actors/terminal/", nil)
+	request, _ := http.NewRequest("GET", ts.http.URL+"/api/swarms/"+id+"/proxy/actors/terminal/?mode=rw", nil)
 	// Avoid following the redirect; the location itself is the scoped ticket.
 	client := *alice
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

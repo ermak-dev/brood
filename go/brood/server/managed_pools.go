@@ -36,6 +36,7 @@ type managedProvider struct {
 	deliverMessage messageDeliverer
 	admission      sync.Mutex
 	lifecycle      sync.Mutex
+	effects        actorEffectGates
 }
 
 type managedPoolJSON struct {

@@ -73,7 +73,8 @@ type Server struct {
 	// deliveries сериализует доставку ответа на запрос роя (#210).
 	deliveries deliveryLocks
 	// steps доставляет инструкции шагов actor-узлов (#212).
-	steps *stepDispatcher
+	steps    *stepDispatcher
+	children *childDispatcher
 	// telegram держит поллеры ботов Telegram (#281).
 	telegram *telegramBots
 	// sender отправляет уведомления outbox Telegram (#282).
@@ -124,6 +125,10 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("actor step recovery failed")
 	}
+	if err := st.RecoverSwarmChildDeliveries(ctx); err != nil {
+		catalog.Close()
+		return nil, errors.New("child delivery recovery failed")
+	}
 	// Уведомление Telegram, чью отправку оборвал прошлый процесс, могло
 	// дойти: unconfirmed без повтора, до первой попытки отправителя (#282).
 	if err := st.RecoverTelegramOutbox(ctx); err != nil {
@@ -132,6 +137,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.steps = newStepDispatcher(srv)
+	srv.children = newChildDispatcher(srv)
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	// Поллер отвечает на запросы путём ответа сервера (#283), а команды
 	// чатов (#284) зовут методы сервера. И то и другое — только из поллеров,
@@ -194,6 +200,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		CurrentUser:     srv.actorViewUser,
 		RequestHook:     srv.actorViewRequest,
 		ResponseHook:    srv.actorViewResponse,
+		BeginUpgrade:    srv.beginManagedTerminal,
 		Upstream:        &managedResolver{server: srv, native: NewSubstrateResolver(srv.ateapi, cfg.AtenetRouter)},
 		DialContext:     srv.managed.dial,
 		UpstreamValid:   srv.managed.validTarget,
@@ -217,6 +224,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.proxy.Start(proxyCtx)
 	srv.managed.start(proxyCtx)
 	srv.steps.start(proxyCtx)
+	srv.children.start(proxyCtx)
 	srv.telegram.start(proxyCtx)
 	srv.sender.start(proxyCtx)
 	return srv, nil
@@ -247,6 +255,7 @@ func (s *Server) Close() error {
 	}
 	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
 	s.steps.close()
+	s.children.close()
 	// Поллеры и отправитель Telegram пишут в базу: остановлены до её
 	// закрытия.
 	s.telegram.close()

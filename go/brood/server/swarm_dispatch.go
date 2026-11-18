@@ -275,7 +275,10 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt) b
 		}
 		return refuse("the step changed before workspace attestation (" + reason + "); no instruction was sent")
 	}
-	resp, err := hub.CallSession(ctx, a.Actor.UID, a.Actor.Incarnation, relay.SessionRequest{Operation: relay.WorkspaceAttestOperation, Arguments: args, Caller: stepMessageSender(a.SwarmID)})
+	callCtx := s.managed.fenceSessionOpen(ctx, a.Lease, func(ctx context.Context) error {
+		return s.store.CheckActorStepAttestation(ctx, a)
+	})
+	resp, err := hub.CallSession(callCtx, a.Actor.UID, a.Actor.Incarnation, relay.SessionRequest{Operation: relay.WorkspaceAttestOperation, Arguments: args, Caller: stepMessageSender(a.SwarmID)})
 	if err != nil || resp.Outcome == "unknown" || resp.Outcome == "unconfirmed" {
 		confirmed = false
 		d.settle(ctx, a, true, "workspace attestation outcome is unknown; workspace operation "+a.RequestID+" stays reserved until an operator releases it; no instruction was sent")

@@ -26,7 +26,7 @@ func TestManagedTerminalRejectsNativeNameCollision(t *testing.T) {
 	}
 	client := *alice
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, err := client.Get(ts.http.URL + "/api/swarms/" + id + "/proxy/actors/collision/")
+	response, err := client.Get(ts.http.URL + "/api/swarms/" + id + "/proxy/actors/collision/?mode=rw")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestManagedTerminalRejectsNativeNameCollision(t *testing.T) {
 		conn.Close()
 		t.Error("ambiguous target dialed")
 	}
-	response, err = client.Get(ts.http.URL + "/api/swarms/" + id + "/proxy/actors/collision/")
+	response, err = client.Get(ts.http.URL + "/api/swarms/" + id + "/proxy/actors/collision/?mode=rw")
 	if err != nil {
 		t.Fatal(err)
 	}

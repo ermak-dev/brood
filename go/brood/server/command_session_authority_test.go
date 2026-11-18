@@ -56,8 +56,11 @@ func TestControlLeaseRecheckedAfterConnectivity(t *testing.T) {
 		}
 	}}
 	inv := coordinationInvocation("slash", map[string]any{"name": "worker", "command": "/status"})
-	if _, err := ts.srv.executeOperatorSessionCommand(ctx, "other-admin", master.SwarmID, "user:other-admin", inv); err == nil || called {
-		t.Fatalf("foreign task lease ignored after connectivity: %v called=%v", err, called)
+	if _, err := ts.srv.executeOperatorSessionCommand(ctx, "other-admin", master.SwarmID, "user:other-admin", inv); err != nil || !called {
+		t.Fatalf("explicit administrator control denied after connectivity: %v called=%v", err, called)
+	}
+	if held, err := ts.srv.store.ShowDispatchLease(ctx, sw.ProjectID, sw.ID, worker.UID); err != nil || held != claim {
+		t.Fatalf("owner intervention lost automatic task reservation: %+v %v", held, err)
 	}
 }
 

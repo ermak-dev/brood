@@ -118,14 +118,19 @@ func (o *managedWorkloadOperation) authorizeIntent(ctx context.Context) error {
 		}
 		userID = user.ID
 	}
-	user, err := o.server.store.GetUser(ctx, userID)
+	return o.server.authorizeSwarmManagerIntent(ctx, userID, o.swarm.ID)
+}
+
+// authorizeSwarmManagerIntent reads management authority in the caller's transaction.
+func (s *Server) authorizeSwarmManagerIntent(ctx context.Context, userID, swarmID string) error {
+	user, err := s.store.GetUser(ctx, userID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && user.Disabled) {
 		return app.ErrNotAllowed
 	}
 	if err != nil {
 		return err
 	}
-	swarm, err := o.server.store.GetSwarm(ctx, o.swarm.ID)
+	swarm, err := s.store.GetSwarm(ctx, swarmID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && swarm.State != string(app.StateActive)) {
 		return app.ErrNotAllowed
 	}
@@ -133,14 +138,14 @@ func (o *managedWorkloadOperation) authorizeIntent(ctx context.Context) error {
 		return err
 	}
 	if !user.IsAdmin {
-		member, err := o.server.store.IsMember(ctx, swarm.ProjectID, userID)
+		member, err := s.store.IsMember(ctx, swarm.ProjectID, userID)
 		if err != nil {
 			return err
 		}
 		if !member {
 			return app.ErrNotAllowed
 		}
-		role, err := o.server.store.GetSwarmRole(ctx, swarm.ID, userID)
+		role, err := s.store.GetSwarmRole(ctx, swarm.ID, userID)
 		if errors.Is(err, store.ErrNotFound) || (err == nil && role != app.RoleOwner && role != app.RoleEditor) {
 			return app.ErrNotAllowed
 		}
@@ -152,6 +157,39 @@ func (o *managedWorkloadOperation) authorizeIntent(ctx context.Context) error {
 		return app.ErrNotAllowed
 	}
 	return ctx.Err()
+}
+
+func (s *Server) authorizeSwarmOwnerIntent(ctx context.Context, userID, swarmID string) error {
+	if err := s.authorizeSwarmManagerIntent(ctx, userID, swarmID); err != nil {
+		return err
+	}
+	user, err := s.store.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.IsAdmin {
+		return nil
+	}
+	role, err := s.store.GetSwarmRole(ctx, swarmID, userID)
+	if err != nil || role != app.RoleOwner {
+		return app.ErrNotAllowed
+	}
+	return nil
+}
+
+func (o *managedWorkloadOperation) beginLifecycle(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
+	userID := o.userID
+	if userID == "" {
+		if user, ok := auth.UserFromContext(ctx); ok {
+			userID = user.ID
+		}
+	}
+	if o.parent == nil && o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID) == nil {
+		return o.server.store.BeginOwnerManagedActorOperation(ctx, a, o.intentID(), o.action, userID, func(ctx context.Context) error {
+			return o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID)
+		})
+	}
+	return o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
 }
 
 func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmission, error) {
@@ -310,6 +348,10 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		// Avoid publishing a transient running phase for a task-only start that
 		// is immediately being deleted. Both local transitions commit together,
 		// before submitting the new provider write.
+		release, err := m.effects.acquire(o.context, a.UID)
+		if err != nil {
+			return err
+		}
 		err = o.server.store.WithTx(o.context, func(ctx context.Context) error {
 			// Права, сессия и намерение — один snapshot: отзыв до транзакции
 			// запрещает запись даже после успешной внешней проверки.
@@ -339,14 +381,17 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 				// только остановленной CT, ни второй Start ей не нужны.
 				// Намерение start сразу согласовано наблюдением, а running
 				// опубликует только проверка готовности гостя.
-				a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
+				a, err = o.beginLifecycle(ctx, a)
 				if err == nil {
 					a, err = m.confirmStartRunning(ctx, a)
 				}
 			case o.action == "start":
-				a, err = m.beginStart(ctx, a, o.intentID())
+				a, err = o.beginLifecycle(ctx, a)
+				if err == nil {
+					a, err = m.saveObservation(ctx, a, "stopped", "", "")
+				}
 			default:
-				a, err = o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
+				a, err = o.beginLifecycle(ctx, a)
 				if err == nil && a.Stage == "stop" && observed == "stopped" {
 					// Эта stop-стадия создана в текущей транзакции и ещё не
 					// отправлена провайдеру. Владение и stopped уже
@@ -364,6 +409,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 			}
 			return err
 		})
+		release()
 		if err != nil {
 			if errors.Is(err, store.ErrPoolUnavailable) || errors.Is(err, store.ErrRevisionConflict) || errors.Is(err, app.ErrNotAllowed) {
 				return err
