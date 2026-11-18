@@ -101,6 +101,20 @@ func childRelayWithSession(t *testing.T, d *dispatchServer, session func(context
 			t.Fatal("guest did not authenticate")
 		}
 	}
+	if byUID[d.master.UID] == nil || byUID[d.worker.UID] == nil {
+		t.Fatal("expected one authenticated relay client for each fixture actor")
+	}
+	// Client authentication can finish before the hub registers the peer.
+	ready := func() bool {
+		return hub.Connected(d.master.UID, d.master.Incarnation) && hub.Connected(d.worker.UID, d.worker.Incarnation)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !ready() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready() {
+		t.Fatal("relay hub did not register both fixture actors")
+	}
 	return byUID[d.master.UID], byUID[d.worker.UID], received
 }
 
