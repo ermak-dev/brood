@@ -22,6 +22,8 @@ func swarmUsage(w io.Writer) {
        bro swarm start SWARM --definition NAME (--goal TEXT | --goal-file FILE) [--commit SHA]
        bro swarm stop SWARM
        bro swarm status SWARM [--json]
+       bro swarm requests SWARM [--all]
+       bro swarm answer SWARM REQUEST [--outcome VALUE] [--response TEXT] [--revision N]
 
 Operator-only command. SWARM is a swarm ID or a name unique among accessible
 swarms; ACTOR is a managed actor name or UID of that swarm.
@@ -173,6 +175,9 @@ const trueText = "true"
 func (c command) swarm(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "status" {
 		return c.swarmStatus(ctx, args[1:])
+	}
+	if len(args) > 0 && (args[0] == "requests" || args[0] == "answer") {
+		return c.swarmRequest(ctx, args)
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		swarmUsage(c.out)
