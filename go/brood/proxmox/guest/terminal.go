@@ -167,8 +167,22 @@ func (c *TerminalController) Handle(ctx context.Context, req relay.SessionReques
 		if mode != "ro" && mode != "rw" {
 			return terminalFailure("terminal mode must be ro or rw")
 		}
-		if len(c.attachments) >= 4 {
+		active := 0
+		oldestClosed := ""
+		for tid, a := range c.attachments {
+			if !a.closed {
+				active++
+			} else if oldestClosed == "" || a.last.Before(c.attachments[oldestClosed].last) {
+				oldestClosed = tid
+			}
+		}
+		if active >= 4 {
 			return terminalFailure("terminal attachment limit reached")
+		}
+		// Закрытый TID нужен только для replay close, а не для квоты живых
+		// подключений. Ограниченный cache не вытесняет активных writers.
+		if len(c.attachments) >= 64 && oldestClosed != "" {
+			delete(c.attachments, oldestClosed)
 		}
 		tid, err := randomTerminalID()
 		if err != nil {

@@ -108,6 +108,7 @@ func number(n float64) *float64 { return &n }
 
 var catalog = []Spec{
 	agentsSpec, sendSpec, dispatchSpec, pipelineVisitCompleteSpec, askOperatorSpec, tailSpec, slashSpec,
+	childCreateSpec, childGetSpec, childJoinSpec, childCancelSpec, childCompleteSpec,
 	sessionHistorySpec, sessionTerminalSpec, addSpec, deleteSpec,
 	stopSpec, startSpec, restartSpec, updateSpec, recycleSpec, wipeSpec, resetSpec,
 	projectAddSpec, projectLimitSpec, landingSpec, nodeSpec,
