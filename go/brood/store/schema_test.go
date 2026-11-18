@@ -43,7 +43,7 @@ func TestOpenCurrentSchema(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"command_project_details", "coordination_claims", "gitlab_approvals", "gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_proposal_states", "managed_actors", "managed_connections", "managed_pools", "pipeline_sources", "project_capacity", "project_git_credential_refs", "project_git_credentials", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "sqlite_sequence", "swarm_members", "swarm_requests", "swarm_role_bindings", "swarm_steps", "swarms", "telegram_outbox", "user_telegram_links", "users", "workflow_definitions", "workflow_revision_counters"}
+	want := []string{"actor_interventions", "actor_step_interruptions", "command_project_details", "coordination_claims", "gitlab_approvals", "gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_proposal_states", "managed_actors", "managed_connections", "managed_pools", "pipeline_sources", "project_capacity", "project_git_credential_refs", "project_git_credentials", "project_members", "project_repositories", "project_secret_files", "project_secret_revisions", "project_secret_vars", "projects", "sessions", "sqlite_sequence", "swarm_child_joins", "swarm_child_tasks", "swarm_members", "swarm_requests", "swarm_role_bindings", "swarm_steps", "swarms", "telegram_outbox", "user_telegram_links", "users", "workflow_definitions", "workflow_revision_counters"}
 	if !reflect.DeepEqual(tables, want) {
 		t.Fatalf("tables = %v, want %v (no migration ledger)", tables, want)
 	}
@@ -188,7 +188,7 @@ func TestSchemaModulesCoverExpectedTables(t *testing.T) {
 			seen[table] = true
 		}
 	}
-	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "project_git_credentials", "project_git_credential_refs", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "swarm_role_bindings", "swarm_requests", "user_telegram_links", "telegram_outbox", "gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals", "gitlab_proposal_states"}
+	want := []string{"users", "projects", "project_members", "swarms", "sessions", "swarm_members", "project_capacity", "managed_pools", "managed_actors", "managed_connections", "coordination_claims", "command_project_details", "project_secret_revisions", "project_secret_files", "project_secret_vars", "project_repositories", "project_git_credentials", "project_git_credential_refs", "swarm_steps", "workflow_definitions", "workflow_revision_counters", "pipeline_sources", "swarm_role_bindings", "swarm_requests", "user_telegram_links", "telegram_outbox", "gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals", "gitlab_proposal_states", "swarm_child_joins", "swarm_child_tasks", "actor_interventions", "actor_step_interruptions"}
 	for _, table := range want {
 		if !seen[table] {
 			t.Errorf("table %s is missing from schemaModules DDL", table)

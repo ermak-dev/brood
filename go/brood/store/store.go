@@ -69,7 +69,8 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // ALTER TABLE шага 31→32, ограждение отправленного держит и её.
 // 33: явные GitLab API bindings, grants, журнал эффектов и merge approvals (#302).
 // 34: необратимые terminal состояния typed GitLab proposals (#302).
-const schemaVersion = 34
+// 35: дочерние задачи точного шага/прохода с bounded join и ограждениями (#289).
+const schemaVersion = 35
 
 //go:embed schema.sql
 var currentSchema string

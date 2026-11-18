@@ -473,6 +473,10 @@ func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected
 // operation of the same incarnation whose first stage is stop, and it is also
 // refused while the actor's swarm runs a pipeline pass (guardActorPipeline).
 func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expected int64, operationID, operation string) (ManagedActor, error) {
+	return s.beginManagedActorOperation(ctx, uid, expected, operationID, operation, false)
+}
+
+func (s *Store) beginManagedActorOperation(ctx context.Context, uid string, expected int64, operationID, operation string, owner bool) (ManagedActor, error) {
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {
 		a, err := s.GetManagedActor(ctx, uid)
@@ -502,15 +506,15 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 			result = a
 			return nil
 		}
-		if operation == "update" {
+		if operation == "update" && !owner {
 			// Шаг и проход называем раньше аренды: прерывает их именно
 			// перезапуск.
 			if err := s.guardActorPipeline(ctx, a); err != nil {
 				return err
 			}
 		}
-		if operation == "start" || operation == "stop" || operation == "delete" || operation == "reset" || operation == "update" {
-			if err := s.guardActorCoordination(ctx, a); err != nil {
+		if !owner && (operation == "start" || operation == "stop" || operation == "delete" || operation == "reset" || operation == "update") {
+			if err := s.guardActorCoordinationForIntent(ctx, a, operation); err != nil {
 				return err
 			}
 		}

@@ -85,8 +85,20 @@ func (s *Store) swarmActorName(ctx context.Context, swarmID string, a Coordinati
 }
 
 func (s *Store) guardActorCoordination(ctx context.Context, a ManagedActor) error {
-	if _, err := s.CurrentActorOperation(ctx, a.UID); err == nil {
-		return newCoordinationConflict("workspace operation is active or unconfirmed")
+	return s.guardActorCoordinationForIntent(ctx, a, "")
+}
+
+func (s *Store) guardActorCoordinationForIntent(ctx context.Context, a ManagedActor, intent string) error {
+	if err := s.guardChildLifecycle(ctx, a.UID); err != nil {
+		return err
+	}
+	if op, err := s.CurrentActorOperation(ctx, a.UID); err == nil {
+		// Явный stop отзывает живой browser stream, но не освобождает slot.
+		// Desired=stopped в той же транзакции запрещает новые child claims.
+		// Неизвестный эффект и hold прежней инкарнации не обходятся этим путём.
+		if intent != "stop" || op.Operation != "terminal_stream" || op.State != "inflight" || op.Generation != a.Incarnation {
+			return newCoordinationConflict("workspace operation is active or unconfirmed")
+		}
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
