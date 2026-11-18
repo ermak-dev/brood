@@ -414,7 +414,7 @@ class ExistingInstallTests(IsolatedTestCase):
         from pathlib import Path
         from brood.dev.deploy import go_server
 
-        for fail in (False, True):
+        for failure in (None, "snapshot", "rollout"):
             events = []
             get = {**VALUES, "WORKER_POOL_IMAGES": json.dumps({"gvisor": "registry/worker@sha256:" + "b" * 64}),
                    "BROOD_RELEASE_SHA": "c" * 40}.get
@@ -428,27 +428,46 @@ class ExistingInstallTests(IsolatedTestCase):
                         json.dumps({"containerimage.digest": "sha256:" + "a" * 64}))
                 if "apply" in args:
                     events.append("apply")
+                if "rollout" in args:
+                    events.append("rollout")
+                    if failure == "rollout":
+                        return 1, "", "mock rollout failure"
                 return 0, "", ""
+
+            def prepare(root):
+                events.append("prepare")
+                return b"prepared artifacts"
 
             def backup(image):
                 self.assertEqual(image, IMAGE)
                 events.append("backup")
-                if fail:
+                if failure == "snapshot":
                     raise RuntimeError("snapshot failed")
+
+            def publish(stream):
+                self.assertEqual(stream, b"prepared artifacts")
+                events.append("publish")
 
             cluster.shell.output.side_effect = output
             deploy = go_server.Deploy(cluster, get=get,
                                       resolver=Mock(return_value=[(2, 1, 6, "", ("149.154.167.220", 443))]))
-            with patch.object(go_server, "Infrastructure") as infra, patch.object(deploy, "_registry_access", return_value=None), patch.object(deploy, "publish_bootstrap_artifacts"):
+            with self.subTest(failure=failure), patch.object(go_server, "Infrastructure") as infra, \
+                    patch.object(deploy, "_registry_access", return_value=None), \
+                    patch.object(deploy, "prepare_bootstrap_artifacts", side_effect=prepare), \
+                    patch.object(deploy, "publish_bootstrap_artifacts", side_effect=publish):
                 infra.return_value._tls.return_value = {}
                 infra.return_value._api_egress.return_value = []
-                if fail:
-                    with self.assertRaisesRegex(RuntimeError, "snapshot failed"):
+                if failure:
+                    with self.assertRaisesRegex(RuntimeError, f"{failure} failed"):
                         deploy.run(before_apply=backup)
-                    self.assertEqual(events, ["build", "backup"])
                 else:
                     self.assertEqual(deploy.run(before_apply=backup), IMAGE)
-                    self.assertEqual(events, ["build", "backup", "apply"])
+                expected = ["build", "prepare", "backup"]
+                if failure != "snapshot":
+                    expected.extend(["apply", "rollout"])
+                if not failure:
+                    expected.append("publish")
+                self.assertEqual(events, expected)
 
     # FEATURE: existing-режим переносит BROOD_GIT_REMOTES тем же Secret и rollout.
     # SPEC: snapshot до apply, ключ и secretKeyRef в release, следующий preflight
@@ -476,7 +495,8 @@ class ExistingInstallTests(IsolatedTestCase):
 
         cluster.shell.output.side_effect = output
         deploy = go_server.Deploy(cluster, get=get, resolver=Mock(return_value=[(2, 1, 6, "", ("192.168.10.20", 443))]))
-        deploy.publish_bootstrap_artifacts = lambda root: None
+        deploy.prepare_bootstrap_artifacts = lambda root: b""
+        deploy.publish_bootstrap_artifacts = lambda stream: None
         with patch.object(go_server, "Infrastructure") as infra, patch.object(deploy, "_registry_access", return_value=None):
             infra.return_value._tls.return_value = {}
             infra.return_value._api_egress.return_value = []
@@ -2894,6 +2914,25 @@ class GenerationFenceAndLeaseTests(IsolatedTestCase):
             with self.assertRaises(RuntimeError) as failure:
                 deploy.run()
         self.assertNotIn("snapshot", str(failure.exception))
+
+    def test_bootstrap_preparation_failure_releases_the_existing_mode_lease(self):
+        deploy, _, kube = CrashLoopRecoveryTests.real_flow(self.suite, healthy=True)
+        before = list(kube.events)
+
+        def broken(*, before_apply):
+            self.assertIsNotNone(kube.objects.get(self.LEASE))
+            raise RuntimeError("guest bootstrap claude artifact SHA-256 mismatch")
+
+        with patch.object(public, "GoDeploy") as go:
+            go.return_value.run.side_effect = broken
+            with self.assertRaisesRegex(RuntimeError, "guest bootstrap claude artifact SHA-256 mismatch") as failure:
+                deploy.run()
+        self.assertNotIn("snapshot", str(failure.exception))
+        self.assertEqual(kube.events, before)
+        self.assertIsNone(kube.objects.get(self.LEASE))
+        self.assertIn("delete", kube.lease_events)
+        deploy.apply_edge.assert_not_called()
+        deploy.probe.assert_not_called()
 
 
 # FEATURE: Database snapshots on the owned PVC are retained, not accumulated (#247).

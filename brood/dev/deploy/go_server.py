@@ -497,6 +497,24 @@ class Deploy:
             raise RuntimeError("cannot read configured WORKER_POOL_IMAGES from Go deployment") from None
         return approved_images(raw)
 
+    def _require_owned_release_targets(self):
+        for kind, name in (("deployment", "brood-go"), ("service", "brood-go"),
+                           ("pvc", "brood-go-data"), ("secret", "brood-go-env"), ("secret", "brood-go-tls"),
+                           ("role", "brood-go-pod-diagnostics"), ("rolebinding", "brood-go-pod-diagnostics"),
+                           ("networkpolicy", "brood-go"), ("networkpolicy", "brood-go-cliproxy")):
+            code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
+                "get", kind, name, "-n", "brood", "--ignore-not-found", "-o", "json")
+            if code:
+                raise RuntimeError(f"cannot check ownership of {kind}/{name}")
+            if out.strip():
+                try:
+                    labels = json.loads(out)["metadata"].get("labels", {})
+                    owned = all(labels.get(k) == v for k, v in OWNER.items())
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    raise RuntimeError(f"cannot check ownership of {kind}/{name}: invalid JSON") from None
+                if not owned:
+                    raise RuntimeError(f"refusing foreign {kind}/{name}")
+
     def run(self, before_apply=None):
         secret = self.get("BROOD_SESSION_SECRET")
         if not secret or len(secret) < 32:
@@ -558,22 +576,7 @@ class Deploy:
         self.cluster.check()
         infrastructure._namespace_is_ours()
         workers = self._worker_images()
-        for kind, name in (("deployment", "brood-go"), ("service", "brood-go"),
-                           ("pvc", "brood-go-data"), ("secret", "brood-go-env"), ("secret", "brood-go-tls"),
-                           ("role", "brood-go-pod-diagnostics"), ("rolebinding", "brood-go-pod-diagnostics"),
-                           ("networkpolicy", "brood-go"), ("networkpolicy", "brood-go-cliproxy")):
-            code, out, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}",
-                "get", kind, name, "-n", "brood", "--ignore-not-found", "-o", "json")
-            if code:
-                raise RuntimeError(f"cannot check ownership of {kind}/{name}")
-            if out.strip():
-                try:
-                    labels = json.loads(out)["metadata"].get("labels", {})
-                    owned = all(labels.get(k) == v for k, v in OWNER.items())
-                except (AttributeError, KeyError, TypeError, ValueError):
-                    raise RuntimeError(f"cannot check ownership of {kind}/{name}: invalid JSON") from None
-                if not owned:
-                    raise RuntimeError(f"refusing foreign {kind}/{name}")
+        self._require_owned_release_targets()
         api_rules = infrastructure._api_egress()
         registry = self._registry_access()
         with tempfile.TemporaryDirectory(prefix="brood-go-deploy-") as directory:
@@ -622,6 +625,10 @@ class Deploy:
             path = root / "release.json"
             path.touch(mode=0o600)
             path.write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": objects}))
+            stream = self.prepare_bootstrap_artifacts(root)
+            # Повторяем проверку владения после долгой подготовки, до передачи apply.
+            infrastructure._namespace_is_ours()
+            self._require_owned_release_targets()
             if before_apply is not None:
                 before_apply(image)
             code, _, _ = self.cluster.shell.output("kubectl", f"--context={local.CONTEXT}", "apply", "-f", str(path))
@@ -631,15 +638,11 @@ class Deploy:
                                                    "rollout", "status", "deployment/brood-go", "--timeout=300s")
             if code:
                 raise RuntimeError("Go deployment rollout failed: " + err[-2000:])
-            self.publish_bootstrap_artifacts(root)
+            self.publish_bootstrap_artifacts(stream)
             return image
 
-    def publish_bootstrap_artifacts(self, root):
-        """Артефакты бутстрапа песочницы (#156): bro из релизной кросс-сборки,
-        brood-guest собирает машина деплоя локальным go, claude по пинам;
-        публикация через kubectl exec в PVC сервера. Образ сервера scratch —
-        поток «имя NUL байты NUL» разбирает сам бинарь (brood artifacts).
-        Отдельный метод: тесты подменяют его вместе с shell."""
+    def prepare_bootstrap_artifacts(self, root):
+        """Готовит поток до snapshot и apply: ошибка сборки или скачивания не начинает rollout."""
         work = root / "bootstrap-artifacts"
         work.mkdir()
         pins = json.loads((self.project / "brood/dev/pins.json").read_text())
@@ -657,18 +660,28 @@ class Deploy:
             if code or not (work / name).is_file():
                 raise RuntimeError(f"guest bootstrap artifact build failed: {name}: " + err[-2000:])
         claude = work / "claude"
-        code, _, err = self.cluster.shell.output("curl", "-fsSL", "-o", str(claude),
+        code, _, _ = self.cluster.shell.output("curl", "--disable", "-fsSL",
+            "--connect-timeout", "20", "--max-time", "300", "-o", str(claude),
             f"https://downloads.claude.ai/claude-code-releases/{pins['CLAUDE_VERSION']}/linux-x64/claude")
-        if code or hashlib.sha256(claude.read_bytes()).hexdigest() != pins["CLAUDE_SHA256"]:
-            raise RuntimeError("guest bootstrap claude artifact download failed")
+        if code:
+            raise RuntimeError(f"guest bootstrap claude artifact download failed (curl exit {code})")
+        try:
+            claude_bytes = claude.read_bytes()
+        except OSError:
+            raise RuntimeError("guest bootstrap claude artifact could not be read for SHA-256 verification") from None
+        if hashlib.sha256(claude_bytes).hexdigest() != pins["CLAUDE_SHA256"]:
+            raise RuntimeError("guest bootstrap claude artifact SHA-256 mismatch")
         # Запись «имя NUL размер NUL байты»: ELF содержит нули, поэтому длина
         # задаётся явно, а не разделителем после байтов.
-        stream = b"".join(
-            name.encode() + b"\0" + str((work / name).stat().st_size).encode() + b"\0"
-            + (work / name).read_bytes()
-            for name in ("bro", "brood-guest", "claude"))
-        # Под выбирается после сборки, перед самым exec: минута сборки не
-        # отделяет выбор от записи.
+        chunks = []
+        for name in ("bro", "brood-guest", "claude"):
+            binary = claude_bytes if name == "claude" else (work / name).read_bytes()
+            chunks.extend((name.encode() + b"\0" + str(len(binary)).encode() + b"\0", binary))
+        return b"".join(chunks)
+
+    def publish_bootstrap_artifacts(self, stream):
+        """Публикует готовый поток в PVC через brood artifacts после rollout."""
+        # Под выбирается перед самым exec, без подготовки артефактов между ними.
         target = self.publish_target()
         try:
             code, _, err = self.cluster.shell.output_bytes(
