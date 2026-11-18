@@ -81,11 +81,31 @@ func (m *managedProvider) deliverViaHub(ctx context.Context, toUID string, toGen
 	if m.hub == nil {
 		return relay.MessageResponse{}, fmt.Errorf("relay hub unavailable")
 	}
+	var release func()
+	if submission, ok := ctx.Value(messageSubmissionKey{}).(messageSubmission); ok {
+		var err error
+		release, err = m.effects.acquire(ctx, submission.actors...)
+		if err != nil {
+			return relay.MessageResponse{NotSent: true, Verdict: "Message submission was cancelled before opening the guest channel."}, nil
+		}
+		defer func() {
+			if release != nil {
+				release()
+			}
+		}()
+		if err := submission.authorize(ctx); err != nil {
+			return relay.MessageResponse{NotSent: true, Verdict: "Message is no longer authorized; no guest channel was opened."}, nil
+		}
+	}
 	frame, err := json.Marshal(req)
 	if err != nil {
 		return relay.MessageResponse{}, err
 	}
 	conn, err := m.hub.DialMessage(ctx, toUID, toGeneration, frame)
+	if release != nil {
+		release()
+		release = nil
+	}
 	if err != nil {
 		return relay.MessageResponse{}, err
 	}

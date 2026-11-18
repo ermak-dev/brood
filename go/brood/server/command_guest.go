@@ -55,6 +55,10 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 				return relay.SwarmResponse{Text: stepReportRefusal, Outcome: "refused"}
 			case errors.Is(err, app.ErrNotAllowed):
 				return relay.SwarmResponse{Text: "pipeline completion not authorized", Outcome: "refused"}
+			case errors.Is(err, store.ErrPipelineVisitInterrupted):
+				return relay.SwarmResponse{Text: "Owner intervention interrupted this step; explicit reconciliation is required before completion.", Outcome: "refused"}
+			case errors.Is(err, store.ErrSwarmChildConflict):
+				return relay.SwarmResponse{Text: "child obligations gate this parent; use child_join to compute and complete its result", Outcome: "refused"}
 			case errors.Is(err, app.ErrConflict), errors.Is(err, store.ErrPipelineVisitConflict):
 				return relay.SwarmResponse{Text: "pipeline completion conflict", Outcome: "refused"}
 			default:
@@ -64,6 +68,8 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 		// Исход мог ввести граф в следующий actor-узел (#212).
 		m.server.steps.kick(from.SwarmID)
 		return relay.SwarmResponse{OK: true, Text: "pipeline visit completed", Outcome: "completed"}
+	case "child_create", "child_get", "child_join", "child_cancel", "child_complete":
+		return m.childCommand(ctx, from, inv)
 	case "ask_operator":
 		return m.askOperator(ctx, from, inv)
 	case "profile":

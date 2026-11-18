@@ -432,6 +432,19 @@ func TestStartResetRefuseHeldCoordination(t *testing.T) {
 				}
 				call := lifecycleCallers(ts, alice, master)[via]
 				effects := providerEffectsOf(pve)
+				if via == "operator" {
+					if ok, text, _ := call(t, "reset", `{"name":"worker","confirm":true}`); !ok {
+						t.Fatalf("owner reset denied by automatic hold: %s", text)
+					}
+					if hold == "dispatch" {
+						if claim, err := ts.srv.store.ShowDispatchLease(ctx, sw.ProjectID, sw.ID, worker.UID); err != nil || claim.RequestID != "held" {
+							t.Fatalf("owner reset lost dispatch history: %+v %v", claim, err)
+						}
+					} else if _, err := ts.srv.store.CurrentActorOperation(ctx, worker.UID); err != nil {
+						t.Fatalf("owner reset lost workspace evidence: %v", err)
+					}
+					return
+				}
 				if ok, text, _ := call(t, "reset", `{"name":"worker","confirm":true}`); ok {
 					t.Fatalf("reset with held %s: %s", hold, text)
 				}

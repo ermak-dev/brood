@@ -129,7 +129,7 @@ func TestManagedRealRelayActorViewHTTPUpgradeAndRevocation(t *testing.T) {
 	ts.srv.managed.clients[a.PoolUID] = pve
 	client := *alice
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, err := client.Get(ts.http.URL + "/api/swarms/" + id + "/proxy/actors/terminal/")
+	response, err := client.Get(ts.http.URL + "/api/swarms/" + id + "/proxy/actors/terminal/?mode=rw")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,12 @@ func TestManagedRealRelayActorViewHTTPUpgradeAndRevocation(t *testing.T) {
 	if response.StatusCode != 200 || !strings.Contains(string(data), "<title>driftty — Terminal</title>") || response.Header.Get("Set-Cookie") != "" || !strings.Contains(response.Header.Get("Content-Security-Policy"), "sandbox allow-scripts") {
 		t.Fatalf("managed HTTP isolation failed: status=%d body bytes=%d headers=%#v", response.StatusCode, len(data), response.Header)
 	}
-	wsConfig, err := websocket.NewConfig("ws"+strings.TrimPrefix(ts.http.URL+location+"ws", "http"), ts.http.URL)
+	viewPath, query, hasQuery := strings.Cut(location, "?")
+	wsURL := ts.http.URL + viewPath + "ws"
+	if hasQuery {
+		wsURL += "?" + query
+	}
+	wsConfig, err := websocket.NewConfig("ws"+strings.TrimPrefix(wsURL, "http"), ts.http.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

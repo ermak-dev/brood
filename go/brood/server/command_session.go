@@ -39,26 +39,31 @@ func sessionCommandTarget(inv command.Invocation, fallback string) (string, bool
 	return args.Name, mutate, nil
 }
 
-func (m *managedProvider) callCommandSession(ctx context.Context, target store.ManagedActor, caller string, inv command.Invocation, authorize func() error) (result command.Result, err error) {
+func (m *managedProvider) callCommandSession(ctx context.Context, target store.ManagedActor, caller string, inv command.Invocation, authorize func() error, reserve func(context.Context) (store.ActorOperation, error)) (result command.Result, err error) {
 	hub, ok := m.hub.(sessionRelay)
 	if !ok {
 		return result, command.Refuse(nil, "recipient session relay is unavailable")
 	}
 	confirmed := true
-	if inv.Name == "restart" || inv.Name == "wipe" || inv.Name == "recycle" {
+	var held *store.ActorOperation
+	defer func() {
+		if held == nil {
+			return
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		finishErr := m.server.store.FinishActorOperation(cleanup, *held, confirmed)
+		if finishErr != nil || !confirmed {
+			result.Outcome = "unconfirmed"
+			err = fmt.Errorf("workspace operation %s outcome is unconfirmed; reservation retained; inspect before explicit recovery or retry", held.OperationID)
+		}
+	}()
+	if reserve == nil && (inv.Name == "restart" || inv.Name == "wipe" || inv.Name == "recycle") {
 		op, acquireErr := m.server.store.AcquireActorOperation(ctx, target.UID, target.Incarnation, store.NewID(), caller, inv.Name)
 		if acquireErr != nil {
 			return result, command.Refusef(app.ErrConflict, "actor workspace operation is held or conflicts with coordination")
 		}
-		defer func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			finishErr := m.server.store.FinishActorOperation(cleanup, op, confirmed)
-			if finishErr != nil || !confirmed {
-				result.Outcome = "unconfirmed"
-				err = fmt.Errorf("workspace operation %s outcome is unconfirmed; reservation retained; inspect before explicit recovery or retry", op.OperationID)
-			}
-		}()
+		held = &op
 	}
 	if !m.hub.Connected(target.UID, target.Incarnation) {
 		return result, command.Refuse(nil, "recipient session relay is unavailable")
@@ -67,6 +72,16 @@ func (m *managedProvider) callCommandSession(ctx context.Context, target store.M
 		if err := authorize(); err != nil {
 			return result, err
 		}
+	}
+	if reserve != nil {
+		op, acquireErr := reserve(ctx)
+		if acquireErr != nil {
+			return result, coordinationRefusal(acquireErr)
+		}
+		held = &op
+	}
+	if held != nil && !held.Owner {
+		ctx = m.fenceSessionOpen(ctx, *held, nil)
 	}
 	confirmed = false
 	reply, rpcErr := hub.CallSession(ctx, target.UID, target.Incarnation, relay.SessionRequest{Operation: inv.Name, Arguments: inv.Arguments, Caller: caller})
@@ -85,6 +100,14 @@ func (m *managedProvider) callCommandSession(ctx context.Context, target store.M
 }
 
 func (s *Server) authorizeSessionCoordination(ctx context.Context, target store.ManagedActor, sourceUID string, generation int64, userID, operation string) error {
+	// Общая граница mutating session-команд для оператора и гостя: slash и
+	// terminal input не являются неявным recovery обходом child hold.
+	if err := s.store.CheckActorChildObligations(ctx, target.UID); err != nil {
+		if errors.Is(err, store.ErrCoordinationConflict) {
+			return command.Refuse(app.ErrConflict, "outstanding child obligations hold this actor; cancel unsent children or reconcile running children before mutating its session")
+		}
+		return app.ErrConflict
+	}
 	claims, err := s.store.ActorCoordinationClaims(ctx, target.UID)
 	if err != nil {
 		return app.ErrConflict
@@ -134,7 +157,27 @@ func (m *managedProvider) executeGuestSessionCommand(ctx context.Context, from s
 		}
 		return ctx.Err()
 	}
-	result, err := m.callCommandSession(ctx, target, fmt.Sprintf("actor:%s:%d", from.UID, from.Incarnation), inv, before)
+	caller := fmt.Sprintf("actor:%s:%d", from.UID, from.Incarnation)
+	var reserve func(context.Context) (store.ActorOperation, error)
+	if mutate && (inv.Name == "slash" || inv.Name == "session_terminal") {
+		reserve = func(ctx context.Context) (store.ActorOperation, error) {
+			return m.server.store.AcquireActorSessionOperation(ctx, target, store.NewID(), caller, inv.Name, store.CoordinationActor{UID: from.UID, Generation: from.Incarnation}, from.DelegatorID, func(ctx context.Context) error {
+				current, _, err := m.authorizeCommandActorDurable(ctx, from)
+				if err != nil {
+					return err
+				}
+				user, err := m.server.store.GetUser(ctx, current.DelegatorID)
+				if err != nil || user.Disabled || !user.IsAdmin || current.Role != "master" || current.DelegatorID != from.DelegatorID {
+					return app.ErrNotAllowed
+				}
+				if err := m.server.authorizeSwarmManagerIntent(ctx, current.DelegatorID, current.SwarmID); err != nil {
+					return err
+				}
+				return m.masterOwns(ctx, current, target)
+			})
+		}
+	}
+	result, err := m.callCommandSession(ctx, target, caller, inv, before, reserve)
 	fresh, authErr := m.authorizeCommandTarget(ctx, from, name, mutate)
 	if authErr != nil || fresh.UID != target.UID || fresh.Incarnation != target.Incarnation {
 		return command.Result{}, app.ErrNotAllowed
@@ -198,7 +241,8 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 	if err != nil || sw.AtespaceUID == nil || target.AtespaceUID != *sw.AtespaceUID {
 		return command.Result{}, app.ErrNotFound
 	}
-	if mutate {
+	owner := s.authorizeSwarmOwnerIntent(ctx, userID, swarmID) == nil
+	if mutate && !owner {
 		if err := s.authorizeSessionCoordination(ctx, target, "", 0, userID, inv.Name); err != nil {
 			return command.Result{}, err
 		}
@@ -207,7 +251,7 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 		if err := s.operatorSessionAuthority(ctx, userID, swarmID, target); err != nil {
 			return err
 		}
-		if mutate {
+		if mutate && !owner {
 			if err := s.authorizeSessionCoordination(ctx, target, "", 0, userID, inv.Name); err != nil {
 				return err
 			}
@@ -217,7 +261,27 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 		}
 		return ctx.Err()
 	}
-	result, err := s.managed.callCommandSession(ctx, target, caller, inv, before)
+	var reserve func(context.Context) (store.ActorOperation, error)
+	if mutate && (inv.Name == "slash" || inv.Name == "session_terminal") {
+		reserve = func(ctx context.Context) (store.ActorOperation, error) {
+			return s.store.AcquireActorSessionOperation(ctx, target, store.NewID(), caller, inv.Name, store.CoordinationActor{}, userID, func(ctx context.Context) error {
+				return s.authorizeSwarmManagerIntent(ctx, userID, swarmID)
+			})
+		}
+	}
+	if mutate && owner {
+		reserve = func(ctx context.Context) (store.ActorOperation, error) {
+			release, err := s.managed.effects.acquire(ctx, target.UID)
+			if err != nil {
+				return store.ActorOperation{}, err
+			}
+			defer release()
+			return s.store.AcquireOwnerActorOperation(ctx, target, store.NewID(), caller, inv.Name, userID, func(ctx context.Context) error {
+				return s.authorizeSwarmOwnerIntent(ctx, userID, swarmID)
+			})
+		}
+	}
+	result, err := s.managed.callCommandSession(ctx, target, caller, inv, before, reserve)
 	if authErr := before(); authErr != nil {
 		return command.Result{}, authErr
 	}

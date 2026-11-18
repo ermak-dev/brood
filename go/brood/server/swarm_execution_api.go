@@ -55,6 +55,9 @@ type swarmExecutionJSON struct {
 func (s *Server) mountSwarmExecutionAPI() {
 	s.mux.HandleFunc("POST /api/swarms/{id}/start", s.handleSwarmStart)
 	s.mux.HandleFunc("POST /api/swarms/{id}/stop", s.handleSwarmStop)
+	s.mux.HandleFunc("GET /api/swarms/{id}/children", s.handleChildHistoryList)
+	s.mux.HandleFunc("GET /api/swarms/{id}/children/{sequence}", s.handleChildHistoryGet)
+	s.mux.HandleFunc("POST /api/swarms/{id}/children/{sequence}/abort", s.handleChildAbort)
 }
 
 // visibleSwarmUser пропускает дальше только видящего рой: постороннему рой
@@ -151,6 +154,21 @@ func (s *Server) stopSwarm(ctx context.Context, swarmID, userID string, authoriz
 	if err := s.requireSwarmView(swarmID, userID); err != nil {
 		return store.Swarm{}, err
 	}
+	if s.managed != nil {
+		actors, err := s.store.ListManagedActors(ctx, swarmID)
+		if err != nil {
+			return store.Swarm{}, err
+		}
+		ids := make([]string, 0, len(actors))
+		for _, actor := range actors {
+			ids = append(ids, actor.UID)
+		}
+		release, err := s.managed.effects.acquire(ctx, ids...)
+		if err != nil {
+			return store.Swarm{}, err
+		}
+		defer release()
+	}
 	return s.store.StopSwarm(ctx, swarmID, userID, authorize)
 }
 
@@ -241,6 +259,8 @@ func swarmExecutionRefusal(err error) (status int, reason string, ok bool) {
 	switch {
 	case errors.As(err, &head):
 		return head.status, head.Error(), true
+	case errors.Is(err, store.ErrSwarmChildConflict):
+		return http.StatusConflict, "outstanding child obligations require explicit reconciliation before automatic progression", true
 	case errors.Is(err, store.ErrSwarmRequestDenied):
 		return http.StatusForbidden, "swarm management denied", true
 	case errors.Is(err, store.ErrWorkflowDefinitionMissing):
