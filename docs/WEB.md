@@ -725,6 +725,24 @@ actor-view ticket. Обязательный CSP sandbox без `allow-same-origi
 HTML актора полномочий панели. Ticket привязан к сессии, рою и актору;
 его нельзя писать в access logs. Модель отзыва — `docs/GO.md`.
 
+Managed terminal без `mode` сначала показывает выбор режима. Сам просмотр
+этой страницы не прерывает работу. Явный `mode=rw` открывает прежний driftty;
+owner/admin может подключаться и при child hold. Перед отправкой upstream сервер
+журналирует вмешательство и отмечает затронутую попытку `unconfirmed` (#289).
+По границе #311 точная операция и текущие полномочия проверяются под effect gate
+перед первой записью запроса. Gate покрывает write/flush, не ожидание handshake
+или весь WebSocket. Доказанный отказ до submission может завершить reservation;
+после начала submission сбой handshake, выдачи клиенту 101, HTTP refusal или
+disconnect оставляет неопределённость и hold. Автоматического timeout, resend
+или снятия hold нет; dispatch release журнал не очищает.
+Reservation запрещает конфликтующее автоматическое планирование, не действия
+owner: он может снова явно подключиться, ввести input, остановить или reset актора.
+Чужая личность и отозванная сессия прежних прав не получают.
+Для проверки без writer оператор может открыть исходный
+actor proxy URL с `?mode=ro`: ticket показывает readonly plain-text screen snapshot
+через session RPC, refresh читает снова. Это не live driftty; ticket не может быть
+повышен query или WebSocket Upgrade. Права остаются прежними manage-swarm.
+
 UI проверяется в браузере против настоящего Go API, включая обычного
 пользователя. Отдельно отмечаются инфраструктурные fake и ненастроенные
 backends. Статус ошибочного provision не подменяется успешным созданием роя.

@@ -246,6 +246,26 @@ HTML получает обязательный CSP sandbox без `allow-same-or
 Относительные assets/WebSocket идут только в рамках ticket. Для такого
 проверенного соединения proxy согласует upstream Origin/Host с ttyd.
 
+Managed terminal без `mode` показывает выбор режима без побочного эффекта.
+Явный `mode=rw` разрешает writable stream текущему owner/admin даже при child hold;
+перед отправкой upstream фиксируется журнал вмешательства и `unconfirmed`
+затронутой попытки. По границе #311 точная операция и текущие полномочия
+проверяются под effect gate непосредственно перед первой записью запроса;
+gate освобождается после write/flush, не держится при ожидании ответа или весь
+WebSocket. Доказанный отказ до submission может завершить reservation;
+после начала submission сбой handshake, выдачи клиенту 101, HTTP refusal или
+disconnect оставляет `unconfirmed` и hold. Reservation исключает автоматический
+child enqueue/dispatch, но не новый явный owner input, reconnect, stop или reset.
+Автоматического timeout, resend или снятия hold нет; dispatch release журнал
+не очищает. Для прерванных попыток нужна отдельная явная сверка.
+Релиз #289 вводит итоговую схему 35 миграцией 34→35 без пересоздания базы.
+Замороженные версии 26–34 и их миграции неизменны; последующие изменения схемы
+требуют новой версии и миграции.
+Readonly `?mode=ro` на исходном URL выдаёт неизменяемый ticket для plain-text
+screen snapshots через session_terminal open ro/read/close, без ttyd writer;
+параметры и Upgrade не повышают его до writable. Это отдельный режим инспекции,
+не live stream и не расширение ролей доступа. Подробности — `docs/MODEL.md`.
+
 Logout, блокировка, исключение из проекта и передача владельца отзывают
 доступ. Уже открытое соединение закрывается проверкой не позднее 60 секунд.
 Чтения native-объектов сверяют сохранённый UID namespace до RPC и перед
