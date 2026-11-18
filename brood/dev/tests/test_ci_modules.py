@@ -41,8 +41,15 @@ exec "$@"
 '''
 
 
+STAT = r'''#!/bin/sh
+set -eu
+[ "$*" = '-f -c %T /bt' ]
+printf '%s\n' "$SCRATCH_FS"
+'''
+
+
 class CIModuleDownloadTests(unittest.TestCase):
-    def run_ci(self, mode, fail_check=""):
+    def run_ci(self, mode, fail_check="", scratch_fs="tmpfs"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".ci").mkdir()
@@ -52,10 +59,13 @@ class CIModuleDownloadTests(unittest.TestCase):
                 'export GOMODCACHE="$work/modules"\nmkdir "$GOMODCACHE"\n')
             tools = root / "tools"
             tools.mkdir()
-            scripts = {"go": GO, "timeout": TIMEOUT, "sleep": "#!/bin/sh\nexit 0\n",
+            scripts = {"go": GO, "timeout": TIMEOUT, "stat": STAT, "sleep": "#!/bin/sh\nexit 0\n",
                        "tar": "#!/bin/sh\nexit 0\n", "make": '''#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> "$MAKE_CALLS"
+if [ "$*" = test ]; then
+    [ "${TMPDIR:-}" = /bt ] && [ "${GOTMPDIR:-}" = /bt ] || exit 8
+fi
 [ "$*" != "$FAIL_CHECK" ] || exit 7
 '''}
             for name, body in scripts.items():
@@ -64,7 +74,8 @@ printf '%s\\n' "$*" >> "$MAKE_CALLS"
                 executable.chmod(0o755)
             env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                    "GO_MODE": mode, "FAIL_CHECK": fail_check, "GO_CALLS": str(root / "go-calls"),
-                   "MAKE_CALLS": str(root / "make-calls"), "TIMEOUT_CALLS": str(root / "timeouts")}
+                   "MAKE_CALLS": str(root / "make-calls"), "TIMEOUT_CALLS": str(root / "timeouts"),
+                   "SCRATCH_FS": scratch_fs}
             result = subprocess.run(["bash", ".ci/go-test.sh", "--inside"], cwd=root, env=env,
                                     capture_output=True, text=True, timeout=10)
 
@@ -94,6 +105,13 @@ printf '%s\\n' "$*" >> "$MAKE_CALLS"
         self.assertEqual(result.returncode, 7)
         self.assertEqual(len(calls), 2)
         self.assertEqual(checks, ["fmt-check", "vet", "test"])
+
+    def test_missing_tmpfs_never_runs_go_tests_on_disk(self):
+        result, calls, checks, _ = self.run_ci("recover", scratch_fs="overlayfs")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Go test scratch must be a container tmpfs", result.stderr)
+        self.assertEqual(calls, ["mod download", "mod download"])
+        self.assertEqual(checks, ["fmt-check", "vet"])
 
     def test_job_budget_contains_bounded_bootstrap_and_all_checks(self):
         configuration = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text())
