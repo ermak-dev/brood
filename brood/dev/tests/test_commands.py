@@ -40,7 +40,7 @@ class DevCommandsTests(unittest.TestCase):
         self.assertEqual(set(tree["mr"]), {"show", "merge"})
         self.assertEqual(set(tree["bug"]), {"close", "comment", "edit", "epic", "evidence",
                                             "labels", "list", "new", "relabel", "show", "start"})
-        self.assertEqual(set(tree["ci"]), {"cancel", "lint", "list", "log", "retry",
+        self.assertEqual(set(tree["ci"]), {"artifact", "cancel", "lint", "list", "log", "retry",
                                            "runners", "set", "show", "vars", "why"})
 
     def test_ci_route(self):

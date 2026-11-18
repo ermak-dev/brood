@@ -14,10 +14,13 @@ origin, а remote origin остаётся транспортом. `.env` пер�
 """
 import contextlib
 import contextvars
+import hashlib
 import http.client
 import json
+import os
 import re
 import subprocess
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -327,6 +330,110 @@ def trace(jid):
     JSON, а сырой вывод раннера с \\r секций."""
     raw = request("GET", base() + f"/jobs/{int(jid)}/trace", f"/jobs/{int(jid)}/trace")
     return screen_lines(raw.decode(errors="replace")) if raw else ""
+
+
+def _artifact_endpoint(jid, path):
+    jid = str(jid).lstrip("0")
+    if not re.fullmatch(r"[1-9][0-9]*", jid):
+        raise RuntimeError("invalid job ID: expected a positive decimal integer")
+    if (not isinstance(path, str) or re.search(r"[\x00-\x1f\x7f-\x9f\\]", path)
+            or any(part in ("", ".", "..") for part in path.split("/"))):
+        raise RuntimeError("invalid artifact path: expected a relative file path without dot segments")
+    try:
+        return f"/jobs/{jid}/artifacts/{urllib.parse.quote(path, safe='/')}"
+    except UnicodeEncodeError:
+        raise RuntimeError("invalid artifact path: expected UTF-8 text") from None
+
+
+def _artifact_output(output):
+    try:
+        output = os.fspath(output)
+    except TypeError:
+        raise RuntimeError("invalid output: expected a file path") from None
+    if (not isinstance(output, str) or "\x00" in output
+            or os.path.basename(output) in ("", ".", "..")):
+        raise RuntimeError("invalid output: expected a file path")
+    try:
+        parent = os.path.realpath(os.path.dirname(output) or ".", strict=True)
+    except (OSError, ValueError):
+        raise RuntimeError("invalid output: destination directory is unavailable") from None
+    output = os.path.join(parent, os.path.basename(output))
+    if os.path.lexists(output):
+        raise RuntimeError("output already exists")
+    return output
+
+
+class _NoArtifactRedirect(urllib.request.HTTPRedirectHandler):
+    def http_error_302(self, req, fp, code, msg, headers):
+        # Передаём отказ стандартному обработчику, не разбирая Location.
+        return None
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
+
+
+def _open_artifact(endpoint):
+    try:
+        req = urllib.request.Request(base() + endpoint, method="GET")
+        req.add_unredirected_header(*auth_header())
+        return urllib.request.build_opener(_NoArtifactRedirect()).open(req, timeout=TIMEOUT)
+    except urllib.error.HTTPError as error:
+        with error:
+            # Тело и Location могут содержать секреты; читаем только код.
+            reason = ": redirect refused" if 300 <= error.code < 400 else ""
+            raise RuntimeError(f"GitLab artifact request returned HTTP {error.code}{reason}") from None
+    except (OSError, http.client.HTTPException, ValueError):
+        raise RuntimeError("GitLab artifact request failed") from None
+
+
+def _stream_artifact(response, scratch, digest):
+    if response.status != 200:
+        raise RuntimeError(f"GitLab artifact request returned HTTP {response.status}")
+    sizes = response.headers.get_all("Content-Length", [])
+    length = sizes[0].strip() if sizes else None
+    if sizes and (len(sizes) != 1 or not re.fullmatch(r"[0-9]+", length)):
+        raise RuntimeError("GitLab artifact has an invalid Content-Length")
+    if length is None and digest is None:
+        raise RuntimeError("GitLab artifact has no Content-Length; provide --sha256")
+    received = 0
+    while True:
+        try:
+            chunk = response.read(64 * 1024)
+        except (OSError, http.client.HTTPException, ValueError):
+            raise RuntimeError("incomplete response while downloading GitLab artifact") from None
+        if not chunk:
+            break
+        scratch.write(chunk)
+        received += len(chunk)
+        if digest is not None:
+            digest.update(chunk)
+    # Ограниченный read() может вернуть EOF без ошибки при коротком теле.
+    if length is not None and (length.lstrip("0") or "0") != str(received):
+        raise RuntimeError("incomplete response while downloading GitLab artifact")
+
+
+def download_artifact(jid, path, output, sha256=None):
+    """Скачать один файл по ID джобы; опубликовать только целый файл."""
+    endpoint = _artifact_endpoint(jid, path)
+    output = _artifact_output(output)
+    if sha256 is not None and (not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256)):
+        raise RuntimeError("invalid SHA-256: expected 64 hexadecimal digits")
+    digest = hashlib.sha256() if sha256 is not None else None
+    try:
+        scratch = tempfile.NamedTemporaryFile(dir=os.path.dirname(output), prefix=".brood-artifact-", delete=False)
+        try:
+            with scratch, _open_artifact(endpoint) as response:
+                _stream_artifact(response, scratch, digest)
+            if digest is not None and digest.hexdigest() != sha256.lower():
+                raise RuntimeError("GitLab artifact SHA-256 mismatch")
+            # link публикует закрытый файл атомарно и не заменяет даже симлинк.
+            os.link(scratch.name, output)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(scratch.name)
+    except FileExistsError:
+        raise RuntimeError("output already exists") from None
+    except OSError:
+        raise RuntimeError("could not write artifact output; check the destination directory and free space") from None
 
 
 def lint(content):
