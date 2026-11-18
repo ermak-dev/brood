@@ -9,9 +9,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"brood.dev/go/brood/proxmox/egress"
 )
 
 // DialContext receives a validated literal IP, never a hostname.
@@ -83,12 +86,23 @@ func (p *Proxy) target(r *http.Request) (string, string, error) {
 			port = "80"
 		}
 	}
-	if port != "80" && port != "443" {
-		return "", "", errors.New("port is not approved")
-	}
 	h, err := canonicalHost(host)
 	if err != nil {
 		return "", "", err
+	}
+	if p.policy.network == nil {
+		if port != "80" && port != "443" {
+			return "", "", errors.New("port is not approved")
+		}
+	} else {
+		number, err := strconv.Atoi(port)
+		protocol := egress.HTTP
+		if r.Method == http.MethodConnect {
+			protocol = egress.TLS
+		}
+		if err != nil || strconv.Itoa(number) != port || !p.policy.network.Allows(protocol, h, number) {
+			return "", "", errors.New("destination protocol or port is not approved")
+		}
 	}
 	return h, port, nil
 }
@@ -141,7 +155,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	address := net.JoinHostPort(ips[0].String(), port)
 	if r.Method == http.MethodConnect {
-		p.connect(w, r, address)
+		if p.policy.network != nil {
+			p.connectTLS(w, r, address, host)
+		} else {
+			p.connect(w, r, address)
+		}
 		return
 	}
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 15 * time.Second, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return p.dial(ctx, "tcp", address) }}
@@ -204,12 +222,18 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, address string) 
 	if err := buffer.Flush(); err != nil {
 		return
 	}
+	forwardTunnel(r.Context(), client, upstream, buffer)
+}
+
+func forwardTunnel(ctx context.Context, client, upstream net.Conn, reader io.Reader) {
+	_ = client.SetDeadline(time.Now().Add(12 * time.Hour))
+	_ = upstream.SetDeadline(time.Now().Add(12 * time.Hour))
 	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(upstream, buffer); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(upstream, reader); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(client, upstream); done <- struct{}{} }()
 	select {
 	case <-done:
-	case <-r.Context().Done():
+	case <-ctx.Done():
 	}
 	_ = client.Close()
 	_ = upstream.Close()
