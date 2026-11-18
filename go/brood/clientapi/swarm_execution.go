@@ -106,6 +106,7 @@ var swarmExecutionRefusals = []string{
 	"invalid swarm start: expected {definition, goal, commit?} with a definition name and a goal",
 	"swarm management denied",
 	"swarm not found",
+	"outstanding child obligations require explicit reconciliation before automatic progression",
 }
 
 var swarmExecutionRefusalPrefixes = []string{

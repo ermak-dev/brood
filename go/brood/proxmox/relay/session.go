@@ -157,11 +157,30 @@ func (h *Hub) CallSession(parent context.Context, uid string, generation int64, 
 		err      error
 	}
 	result := make(chan opened)
+	openCtx, openCancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer openCancel()
 	go func() {
-		ch, requests, err := p.conn.OpenChannel(sessionChannel, data)
+		var ch ssh.Channel
+		var requests <-chan *ssh.Request
+		unlock, err := openSessionGuard(openCtx)
+		if err == nil {
+			// У SSH нет отмены channel-open. Только на время открытия
+			// отмена закрывает peer, чтобы зависший гость не держал gate
+			// бесконечно. Ожидание результата не разрывает общий relay.
+			closed := make(chan struct{})
+			stopOpening := context.AfterFunc(openCtx, func() {
+				p.conn.Close()
+				close(closed)
+			})
+			ch, requests, err = p.conn.OpenChannel(sessionChannel, data)
+			if !stopOpening() {
+				<-closed
+			}
+			unlock()
+		}
 		select {
 		case result <- opened{ch, requests, err}:
-		case <-ctx.Done():
+		case <-openCtx.Done():
 			if ch != nil {
 				ch.Close()
 			}
@@ -169,8 +188,8 @@ func (h *Hub) CallSession(parent context.Context, uid string, generation int64, 
 		}
 	}()
 	select {
-	case <-ctx.Done():
-		return SessionResponse{}, ctx.Err()
+	case <-openCtx.Done():
+		return SessionResponse{}, openCtx.Err()
 	case r := <-result:
 		defer release()
 		if r.err != nil {

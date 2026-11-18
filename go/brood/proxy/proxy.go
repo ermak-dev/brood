@@ -126,6 +126,27 @@ type AuditEvent struct {
 // Audit — приёмник событий аудита; nil — аудит выключен.
 type Audit func(event AuditEvent)
 
+// UpgradeOutcome describes submission, not completion of upstream effects.
+type UpgradeOutcome uint8
+
+const (
+	// UpgradeNotSubmitted proves that no upstream request write was attempted.
+	UpgradeNotSubmitted UpgradeOutcome = iota
+	// UpgradeSubmissionUnknown means a write may have reached upstream. Neither
+	// an HTTP refusal nor a failed client handshake proves absence of effects.
+	UpgradeSubmissionUnknown
+)
+
+// UpgradeReservation fences a writable upgrade at its final submission boundary.
+type UpgradeReservation struct {
+	// BeforeSubmit runs after dialing, immediately before the first request write.
+	// Its release function is called after the write/flush attempt, before waiting
+	// for any response or streaming bytes. An error prevents submission.
+	BeforeSubmit func() (release func(), err error)
+	// Finish runs after both connections close, including pre-submit failures.
+	Finish func(UpgradeOutcome)
+}
+
 // Config — зависимости и настройки прокси.
 type Config struct {
 	// DialContext optionally routes plain HTTP and upgrades to a managed provider.
@@ -135,6 +156,8 @@ type Config struct {
 	RequestHook func(out, original *http.Request)
 	// ResponseHook applies server-controlled policy before any headers are sent.
 	ResponseHook func(original *http.Request, response *http.Response) error
+	// BeginUpgrade reserves provider-specific mutation authority before upgrade I/O.
+	BeginUpgrade func(*http.Request) (UpgradeReservation, error)
 	// RouterTLS supplies projected mTLS credentials for HTTPS ingress.
 	RouterTLS *TLSFiles
 	// Revalidate checks the original session on long-lived requests.
@@ -656,6 +679,19 @@ func (p *Proxy) servePlain(w http.ResponseWriter, r *http.Request, user Identity
 // serveUpgrade — WebSocket: ручной мост с хайджеком обеих сторон,
 // регистрацией в реестре переоценки и двойным закрытием.
 func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, actor string, base *url.URL) {
+	outcome := UpgradeNotSubmitted
+	var reservation UpgradeReservation
+	if p.cfg.BeginUpgrade != nil {
+		var err error
+		reservation, err = p.cfg.BeginUpgrade(r)
+		if err != nil {
+			http.Error(w, "actor stream conflicts with active work or current authority", http.StatusConflict)
+			return
+		}
+		if reservation.Finish != nil {
+			defer func() { reservation.Finish(outcome) }()
+		}
+	}
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "connection upgrade is not supported", http.StatusInternalServerError)
@@ -698,12 +734,26 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 	defer p.untrack(lc)
 	_ = serverConn.SetDeadline(time.Now().Add(p.cfg.ResponseHeaderTimeout))
 	serverBuf := bufio.NewReadWriter(bufio.NewReader(serverConn), bufio.NewWriter(serverConn))
-	if err := upReq.Write(serverBuf); err != nil {
-		writeRawResponse(clientBuf, http.StatusBadGateway, "cannot write to actor upstream")
-		return
-	}
-	if err := serverBuf.Flush(); err != nil {
-		writeRawResponse(clientBuf, http.StatusBadGateway, "cannot write to actor upstream")
+	if err := func() error {
+		if reservation.BeforeSubmit != nil {
+			release, err := reservation.BeforeSubmit()
+			if err != nil {
+				return err
+			}
+			if release != nil {
+				defer release()
+			}
+		}
+		if err := r.Context().Err(); err != nil {
+			return err
+		}
+		outcome = UpgradeSubmissionUnknown
+		if err := upReq.Write(serverBuf); err != nil {
+			return err
+		}
+		return serverBuf.Flush()
+	}(); err != nil {
+		writeRawResponse(clientBuf, http.StatusBadGateway, "cannot submit to actor upstream")
 		return
 	}
 	upResp, err := http.ReadResponse(serverBuf.Reader, upReq)

@@ -95,6 +95,9 @@ func TestSwarmExecutionRefusalReasons(t *testing.T) {
 	}{
 		{"swarm management denied", true},
 		{"swarm not found", true},
+		{"outstanding child obligations require explicit reconciliation before automatic progression", true},
+		{"outstanding child obligations require explicit reconciliation before automatic progression: synthetic-secret-sentinel", false},
+		{"outstanding child obligations require explicit reconciliation before automatic progression\nsynthetic-secret-sentinel", false},
 		{"invalid swarm start: expected {definition, goal, commit?} with a definition name and a goal", true},
 		{"invalid swarm goal: the goal is empty", true},
 		{"swarm state conflict: execution is running; start requires idle, succeeded, failed or stopped", true},

@@ -1,7 +1,7 @@
 package command_test
 
 // FEATURE: Shared command catalog for CLI and MCP adapters.
-// SPEC: Exactly 29 tools (23 guest-visible), generated schemas, strict bounded validation, canonical parity.
+// SPEC: Exactly 34 tools (28 guest-visible), generated schemas, strict bounded validation, canonical parity.
 // IMPLEMENTATION: Per-command declarations share schema generation and argument validation.
 // RESULT: IMPLEMENTED — catalog, rejection cases, defaults, and exact numeric parity pass.
 // STATUS: DONE
@@ -67,7 +67,7 @@ func TestCoordinationAndTerminalActions(t *testing.T) {
 }
 
 func TestCatalog(t *testing.T) {
-	names := strings.Fields("agents send dispatch pipeline_visit_complete ask_operator tail slash session_history session_terminal add delete stop start restart update recycle wipe reset project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose")
+	names := strings.Fields("agents send dispatch pipeline_visit_complete ask_operator tail slash child_create child_get child_join child_cancel child_complete session_history session_terminal add delete stop start restart update recycle wipe reset project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose")
 	specs := command.Specs()
 	if len(specs) != len(names) {
 		t.Fatalf("got %d specs", len(specs))
@@ -161,8 +161,8 @@ func TestStartResetMetadata(t *testing.T) {
 			guest++
 		}
 	}
-	if all != 29 || guest != 23 {
-		t.Fatalf("catalog=%d guest=%d; want 29 and 23", all, guest)
+	if all != 34 || guest != 28 {
+		t.Fatalf("catalog=%d guest=%d; want 34 and 28", all, guest)
 	}
 }
 
