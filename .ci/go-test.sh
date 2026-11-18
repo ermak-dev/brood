@@ -8,6 +8,7 @@ if [[ "${1:-}" != "--inside" ]]; then
     image="$(python3 -I -c 'import json; print(json.load(open("brood/dev/pins.json"))["PYTHON_IMAGE"])')"
     exec docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" \
         --env HOME=/tmp --volume "$PWD:/src" --workdir /src \
+        --tmpfs /bt:rw,nodev,nosuid,exec,mode=1777,size=2g \
         "$image" bash .ci/go-test.sh --inside
 fi
 
@@ -28,7 +29,14 @@ for attempt in 1 2 3; do
 done
 make fmt-check
 make vet
-make test
+# Use the same short, private path for Go scratch and test process temp files.
+# The toolchain can use GOTMPDIR for tests even when TMPDIR is set separately.
+if [[ "$(stat -f -c %T /bt)" != tmpfs ]]; then
+    printf '%s\n' 'Go test scratch must be a container tmpfs' >&2
+    exit 1
+fi
+printf '%s\n' 'Go test scratch: container tmpfs (TMPDIR and GOTMPDIR)'
+TMPDIR=/bt GOTMPDIR=/bt make test
 make build
 make cross
 for arch in amd64 arm64; do
