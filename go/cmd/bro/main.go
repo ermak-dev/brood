@@ -101,6 +101,8 @@ commands:
   swarm roles|bind|unbind SWARM   list and change swarm role bindings to actors
   swarm start|stop SWARM          start a swarm pass with its goal, stop it
   swarm status SWARM [--json]     read durable swarm execution without changing it
+  swarm requests SWARM [--all]    list operator requests
+  swarm answer SWARM REQUEST     record an operator answer
   pipeline <sub> FILE             validate, plan or render a pipeline document
   mcp                           serve catalog tools over stdio
   <catalog command>             execute a scoped orchestration command
