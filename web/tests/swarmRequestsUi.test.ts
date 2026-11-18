@@ -535,8 +535,10 @@ describe('after the answer', () => {
         }),
       })
     );
-    const fold = html.indexOf(`>${t.history_count.replace('{{count}}', '1')}</summary>`);
+    const fold = html.indexOf(`>${t.cancelled_count.replace('{{count}}', '1')}</summary>`);
     expect(fold).toBeGreaterThan(0);
+    expect(html.slice(fold)).toContain('data-state="cancelled"');
+    expect(html.slice(fold)).not.toContain('data-state="answered"');
     const before = html.slice(0, html.lastIndexOf('<details', fold));
     expect(before).toMatch(new RegExp(`role="status"[^>]*>${t.sent}<`));
     expect(visibleText(before)).toContain('Approve');
