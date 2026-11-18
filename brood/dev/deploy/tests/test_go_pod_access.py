@@ -11,6 +11,11 @@ from brood.dev.deploy.go_server import Deploy, OWNER, manifests
 
 
 class GoPodAccessTests(unittest.TestCase):
+    def setUp(self):
+        dns = patch("socket.getaddrinfo", side_effect=AssertionError("live DNS is forbidden in deploy tests"))
+        dns.start()
+        self.addCleanup(dns.stop)
+
     def test_application_manifests_include_owned_read_only_role(self):
         objects = manifests("localhost:5002/brood-go@sha256:" + "a" * 64,
                             {"gvisor": "localhost:5002/worker@sha256:" + "b" * 64})
@@ -46,4 +51,5 @@ class GoPodAccessTests(unittest.TestCase):
         with patch("brood.dev.deploy.go_server.Infrastructure") as infrastructure:
             infrastructure.return_value._tls.return_value = {"tls.crt": "cert", "tls.key": "key"}
             with self.assertRaisesRegex(RuntimeError, "refusing foreign role/brood-go-pod-diagnostics"):
-                Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout").run()
+                Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout",
+                       resolver=Mock(return_value=[(2, 1, 6, "", ("149.154.167.220", 443))])).run()
