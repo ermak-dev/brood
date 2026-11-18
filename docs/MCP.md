@@ -74,8 +74,10 @@ MCP-настройки сохраняются. Namespace инструменто�
 ## Каталог и адаптация mop
 
 Источник сравнения — `~/mop` на commit `e8f04f26`: 25 инструментов.
-Brood добавляет `start`, `reset`, `pipeline_visit_complete` и `ask_operator`:
-у оператора 29 инструментов, в гостевом MCP — 23. Перенос не подключает Brood к старой установке mop. Nomad job,
+Brood добавляет `start`, `reset`, `pipeline_visit_complete`, `ask_operator`
+и пять команд дочерних задач #289:
+в общем каталоге 34 инструмента, в гостевом MCP — 28. Перенос не подключает
+Brood к старой установке mop. Nomad job,
 узел, контейнер PVE, пул Brood и native Worker — разные сущности.
 
 | Команда bro | Инструмент | Контракт Brood |
@@ -84,6 +86,11 @@ Brood добавляет `start`, `reset`, `pipeline_visit_complete` и `ask_ope
 | `send` | `send` | Сообщение и квитанция доставки, не ответ модели |
 | `ask operator` | `ask_operator` | Вопрос актора оператору своего роя (#210); ответ приходит сообщением оператора и граф не продвигает. Выполняет только гостевой путь |
 | `pipeline visit complete` | `pipeline_visit_complete` | Исход шага актора (`success`/`fail`) и необязательный `report` (#233): что сделано и где результат, до 16384 байт текста без управляющих символов, кроме перевода строки и табуляции. Отчёт хранится на шаге один раз и показывается оператору в узловом запросе следом. Выполняет только гостевой путь |
+| `child create` | `child_create` | Текущий делегированный master резервирует ребёнка своего graph step по роли и request ID. Узел задаёт childJoin all/any/quorum (по умолчанию all), родитель — total. Точный повтор не отправляет заново. Только существующие workers, без provision и workspace attestation |
+| `child get` | `child_get` | Текущие точные parent/executor читают состояние, delivery, исход и полный bounded report своего ребёнка. Успех чтения не означает выполнения |
+| `child join` | `child_join` | Readiness и outstanding obligations; ожидание до 15 секунд. Только после нуля обязательств сервер вычисляет исход/отчёт родителя и переводит graph step. Ранний any/quorum running-детей не освобождает |
+| `child cancel` | `child_cancel` | Только queued либо доказанный not_sent. Sending/delivered/unconfirmed не отменяются; внешние эффекты не изображаются откаченными |
+| `child complete` | `child_complete` | Только exact executor сообщает независимый исход/report по child ID и request ID; номер graph step и личность исполнителя аргументами не выбираются |
 | `dispatch` | `dispatch` | Явная аренда allocation своего worker с request ID; send/show/release |
 | `tail` | `tail` | Ограниченный снимок headless VT состояния PTY |
 | `slash` | `slash` | Белый список команд в доказанную сессию |
@@ -383,6 +390,67 @@ Landing — advisory-токен всего проекта, не разрешен
 Проверка SQLite и внешнее RPC не являются одной распределённой транзакцией.
 Неизвестные исходы требуют сверки, а не автоматического повторения.
 
+### Дочерние задачи
+
+`child_*` исполняются только гостевым путём; оператор не выдаёт себя за actor.
+Parent identity берётся из relay. `parent_sequence` и `parent_request_id`
+выбирают только точную попытку этого вызывающего актора в его рое и проходе;
+`request_id` ребёнка — 1–128 ASCII букв, цифр, `_` или `-`. Task — непустой текст
+до 4096 байт, report — до 16384 байт по прежним правилам actor report. Родитель
+создаёт ровно объявленный `total` (1–64), одинаковый во всех create. Mode/quorum
+задаёт actor-узел снимка графа прохода: `childJoin: {mode: any}` или
+`childJoin: {mode: quorum, quorum: 2}`. Без policy/mode действует all. Quorum должен
+быть от 1 до total. Прежние аргументы create `mode` и `quorum` принимаются ради
+совместимости, но игнорируются: гость не переопределяет policy узла. Оставшиеся
+обязательства всегда retain; аргумента автоматической отмены нет.
+
+```sh
+bro --guest child create --parent-sequence 5 --parent-request-id PARENT --request-id tests --role tests --task "Run the project tests" --total 2
+bro --guest child create --parent-sequence 5 --parent-request-id PARENT --request-id review --role review --task "Review the change" --total 2
+bro --guest child get --child-id CHILD
+bro --guest child join --parent-sequence 5 --parent-request-id PARENT --wait-seconds 15
+bro --guest child complete --child-id CHILD --request-id tests --outcome success --report "Tests passed; result is on the task branch"
+```
+
+Первые create идут от родителя, complete — от адресованного worker. Роль
+планирования — явная привязка человека плюс действующая admin-делегация master;
+просто role binding полномочий не даёт. Это dispatcher roles path: допускается
+worker оператора, привязанный им к роли. У raw `dispatch` остаётся ограничение
+на workers, добавленных вызывающим master; child task не выдаёт родителю
+lifecycle/session-control прав на worker оператора.
+
+Разные роли на одном worker не означают параллельную ёмкость: FIFO держит на нём
+не больше одной running child task, остальные ждут. Lifecycle, workspace control,
+новая конфликтующая автоматическая координация отказывают, пока есть обязательства.
+Явный owner/admin Stop или session control разрешены с журналом вмешательства и
+сохранением uncertain эффектов; parent нельзя завершить generic
+`pipeline_visit_complete` в обход join.
+Readiness `ready_success` при any/quorum — не разрешение продвинуть parent при
+`open>0`. `joined=true` означает подтверждённое продвижение этим вызовом; pending
+ответ — bounded snapshot, а не обещание об отсутствии будущего результата.
+Полные отчёты не собираются в ответ join: его frame остаётся bounded; оригиналы
+читаются отдельно через get, агрегат хранится в отчёте graph step с явными
+пометками сокращённых частей.
+
+`child_create` принимает намерение (`accepted`), не обещает доставки. Фиксация
+`sending` предшествует relay; квитанция даёт `delivered`, `notSent` — `not_sent`,
+потерянный ответ — `unconfirmed`. Startup переводит незавершённый sending в
+unconfirmed и не повторяет сеть. Точный create retry никогда не resend и не
+восстанавливает cancelled задачу; при неопределённой доставке его `OK=false`,
+outcome unconfirmed, и модель видит причину и сохранённое состояние. Нет надежды
+на будущую дедупликацию #291. Неоднозначная ошибка записи/commit или отменённый
+wait тоже возвращает unconfirmed, а не ложное «ничего не случилось». Прервать
+ожидание join не означает отменить ребёнка.
+
+Явный owner/admin abort неполной неисполненной группы — отдельный web endpoint
+с CSRF, текущей web session и revision/confirm
+([Model](MODEL.md), «Исполнитель дочерних задач»); дополнительной installation policy
+нет. Панель показывает историю детей и подтверждённый abort. Автоматического
+восстановления нет. Running/uncertain работа остаётся до настоящего отчёта либо
+отдельной сверки. Здесь описан исходный #289 для постоянных workers, не более
+поздние ephemeral #292 или policy #290. Сверка внешних эффектов и возобновление
+owner-прерванного исполнения пока не реализованы; живая приёмка #288 не заявлена.
+
 ## Приватная сессия
 
 Сервер разрешает target по имени только внутри роя, сохраняет UID и
@@ -407,7 +475,10 @@ config home, foreground TTY и точный PID/start/epoch текущего PTY
 буквальный UTF-8 ввод до 4096 байт, не base64. `close` отсоединяет только
 подключение, не останавливает Claude или PTY holder. Disconnect уничтожает metadata.
 
-Максимум четыре подключения, idle TTL 60 секунд, writer TTL 30 секунд.
+Максимум четыре живых подключения, idle TTL 60 секунд, writer TTL 30 секунд.
+Закрытые TID не занимают эту квоту; bounded metadata cache (до 64 записей)
+сохраняет close replay до TTL либо вытеснения старейшего закрытого TID. Вытеснение
+не открывает TID заново и не разрешает повтор ввода; активные writers не вытесняются.
 Slash и workspace mutations используют тот же writer gate. Белый список
 slash: `/model`, `/clear`, `/compact`, `/rc`, `/status`, `Escape`; текст с
 управляющими символами или произвольными аргументами не превращается в shell.

@@ -283,7 +283,11 @@ SA и уже встреченных principals, не превращение ло
   прохода. Повторный запуск с другим определением или при repository
   проекта, отличном от origin роя, — 409 `swarm graph is pinned: `.
 - `POST /api/swarms/{id}/stop` — без тела, те же права; 200 — то же тело,
-  `goal` — задача остановленного прохода.
+  `goal` — задача остановленного прохода. При незавершённых детях только
+  owner/administrator может заморозить диспетчер с журналом `pass_stop`:
+  родитель остаётся `unconfirmed`, дети и их holds не отменяются. Новый
+  автоматический проход до сверки — 409 с причиной
+  `outstanding child obligations require explicit reconciliation before automatic progression`.
 
 Отказы запуска ничего не пишут. 400 `invalid swarm start: expected
 {definition, goal, commit?} with a definition name and a goal` — тело не
@@ -316,12 +320,51 @@ login сессии; рой — по ID или имени, как у `bro swarm r
 отказывает до запроса, если задача длиннее 4096 байт; остальные правила
 задачи проверяет сервер. Из тела отказа `clientapi` берёт причину, только
 если это одна строка без управляющих символов до 1024 байт, равная `invalid
-swarm start: ...`, `swarm management denied` или `swarm not found`, либо
+swarm start: ...`, `swarm management denied`, `swarm not found` или
+`outstanding child obligations require explicit reconciliation before automatic progression`, либо
 начинающаяся с фиксированной части причины с подробностью: `invalid swarm
 goal: `, `workflow definition is not in the project catalog: `, `swarm state
 conflict: `, `swarm graph is pinned: `, `workflow graph is not executable: `,
 `swarm source is invalid: `, `swarm source changed during start: `, `cannot
 resolve the project branch: `, `role "`.
+
+## История дочерних групп
+
+Human API #289 требует текущую login-сессию и право видеть рой. Членство в
+проекте без роли этого роя не даёт доступ; скрытый рой — 404, анонимный запрос
+— 401. Ответы имеют `Cache-Control: no-store`. Чтение не выдаёт гостевые права,
+не снимает holds и не зависит от готовности или текущей инкарнации старого актора.
+
+- `GET /api/swarms/{id}/children[?before=N&limit=N]` — `items` и `nextBefore`.
+  Порядок — убывание parent sequence; `before=0` или отсутствие cursor означает
+  начало, иначе sequence строго меньше cursor. `limit` по умолчанию 25, диапазон
+  1–100; cursor — неотрицательный int64. `nextBefore=0` — конец истории.
+  Неизвестные, повторные, пустые или некорректные параметры — 400.
+- Metadata группы: `parentSequence`, `pass`, `parentUid`, `parentIncarnation`,
+  `mode`, `total`, `quorum`, `state`, `revision`, `interrupted`, `registered`,
+  `open`, `started`. `open` включает отсутствующие ожидаемые слоты, у aborted
+  группы — 0. `started` считает running/completed детей, а не доказывает внешний
+  эффект. Payload и отчёты не входят в страницы metadata.
+- `GET /api/swarms/{id}/children/{sequence}` — те же поля, `readiness`,
+  `abortedBy`/`abortedAt` при наличии и массив `children`. Sequence — положительный
+  int64, query parameters не поддерживаются: неверный запрос — 400,
+  отсутствующая группа своего роя — 404.
+- Ребёнок: `id`, `requestId`, `role`, `executorUid`, `executorIncarnation`,
+  `state`, `delivery`, `deliveryDetail` при наличии, `task`, `outcome`/`report`
+  при наличии, `revision`, `createdAt`, `finishedAt` при наличии. Исходные task и
+  report возвращаются без переписывания. В контракте нет session hashes,
+  credential references или внутренних principal-объектов.
+
+`readiness` — результат оценки join, не утверждение, что родитель успешно
+завершён. `interrupted=true` сохраняет неопределённость и после позднего отчёта.
+Исторические UID/incarnation не подменяются актуальными после reset.
+
+`POST /api/swarms/{id}/children/{sequence}/abort` принимает только
+`{"revision":1,"confirm":true}` с текущими owner/admin web session и CSRF.
+Разрешена лишь неполная группа без running/completed детей, при точной revision;
+отказ CAS или неподходящее состояние — 409. Viewer может читать историю, но
+получает 403 на abort. Сохранённые policy, payload и cancelled записи не удаляются.
+Это не API сверки или отмены неизвестного внешнего эффекта.
 
 ## Привязка ролей роя к акторам
 
