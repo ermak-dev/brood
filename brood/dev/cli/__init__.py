@@ -3,6 +3,7 @@
   brood dev setup  create venv/ with the dependencies and the development settings in .env
   brood dev bug    project tracker: GitLab issues, one issue per unit of work
   brood dev ci     pipelines, job logs, lint and runners: GitLab CI from the terminal
+  brood dev mr     project merge requests: read or explicitly squash merge through GitLab
   brood dev test   run Python unittest tests without a server runtime
 
 The tracker's coordinates come from the git origin of the brood working copy,
@@ -14,7 +15,7 @@ from brood.dev.cli._common import usage
 
 def dispatch(argv, run):
     """Общий параметр проекта обрабатывается до выбора командлета."""
-    if len(argv) < 2 or argv[1] not in ("bug", "ci"):
+    if len(argv) < 2 or argv[1] not in ("bug", "ci", "mr"):
         return run(argv)
     result = argv[:2]
     selected = None
