@@ -136,6 +136,9 @@ func (d *actorDeliveryService) attempt(ctx context.Context, intent store.ActorDe
 			return "duplicate", s.store.ReconcileActorDelivery(ctx, intent.ID, authorize)
 		}
 	}
+	if intent.Input.SourceKind == "answer" && len(history) >= store.MaxActorDeliveryAttempts {
+		return "", store.ErrActorDeliveryBudget
+	}
 	if err := d.authority(ctx, intent, authorize, true); err != nil {
 		return "", err
 	}
@@ -221,6 +224,14 @@ func (d *actorDeliveryService) answer(ctx context.Context, user store.User, curr
 		return current, "delivery retry is waiting for persisted backoff", true
 	}
 	if errors.Is(err, store.ErrActorDeliveryBudget) {
+		book, cancel := bookkeeping(ctx)
+		defer cancel()
+		updated, recordErr := s.store.ReconcileExhaustedActorDeliveryAnswer(book, intent.ID, d.now().UTC(), local)
+		if recordErr == nil {
+			current = updated
+		} else if !errors.Is(recordErr, store.ErrActorDeliveryDenied) && !errors.Is(recordErr, store.ErrActorDeliveryConflict) && !errors.Is(recordErr, context.Canceled) {
+			requestLogger(book).Error("exhausted swarm answer delivery was not reconciled", "request", current.ID, "err", recordErr.Error())
+		}
 		return current, durableAnswerBudget, true
 	}
 	if err == nil && (outcome == "delivered" || outcome == "duplicate") {
