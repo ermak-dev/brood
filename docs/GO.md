@@ -59,6 +59,7 @@ Substrate закреплён в `go.mod` на публичной версии
 
 - `store`: SQLite, текущая схема, транзакции, readonly inspection и согласованные snapshots.
 - `projectsecret`: ограниченные данные проектных секретов и общие проверки; доставка — `docs/SECRETS.md`.
+- `proxmox/egress`: неизменяемая точная policy managed-гостя по HTTP/TLS, ASCII hostname и порту; только stdlib. Пустая policy означает offline. Guest proxy проверяет выбранные правила до DNS/dial; TLS CONNECT сначала проверяет SNI, затем пересылает исходный ClientHello без терминации TLS. Проверка публичности DNS-адресов сохраняется. Bootstrap поддерживает версионированный `BROOD_GUEST_EGRESS_POLICY` вместо legacy `BROOD_GUEST_ALLOWED_HOSTS`; неизвестные поля/версии, дубликаты и смешение двух настроек отвергаются. Supervisor получает полную policy, включая явный offline, до запуска приложения. Сервер передаёт закреплённый при admission snapshot; отсутствие project policy сохраняет прежний host-only режим.
 - `gitorigin`: каноническая форма и режим HTTPS Git origin актора, без сети и credentials; шлюз — `docs/PROXMOX.md`.
 - `gitidentity`: Git-идентичность актора для коммитов из имени актора и домена установки, без Git и сети; доставка гостю — `docs/PROXMOX.md`.
 - `actormodel`: модели Claude Code акторов из настроек установки и проверка формы имени, без настроек, Claude Code и сети; доставка гостю — `docs/PROXMOX.md`.
@@ -265,6 +266,36 @@ Readonly `?mode=ro` на исходном URL выдаёт неизменяем�
 screen snapshots через session_terminal open ro/read/close, без ttyd writer;
 параметры и Upgrade не повышают его до writable. Это отдельный режим инспекции,
 не live stream и не расширение ролей доступа. Подробности — `docs/MODEL.md`.
+
+### Снимок managed egress
+
+Миграция 35→36 (#302) добавляет только `project_managed_networks` и
+`managed_actor_networks` с ограждениями immutable snapshot. Прежние строки и
+frozen версии 26–35 не меняются; старому актору без snapshot всегда соответствует
+legacy policy, независимо от последующих настроек проекта. Резервирование нового
+UID атомарно сохраняет текущую policy своего проекта; переданное вызывающим
+кодом значение не подменяет настройку. List/get и дальнейшие операции читают
+snapshot, а не текущий project default. Изменение и очистка default относятся
+только к новым акторам. Encoder и decoder ограничивают versioned JSON
+8192 байтами — лимитом одного значения bootstrap environment Proxmox. Слишком
+большая policy не сохраняется, прежняя настройка проекта остаётся неизменной.
+
+Настройка входит в существующую авторизованную транзакцию project sync:
+отсутствующее поле сохраняет значение, пустое явно выбирает legacy для будущих
+акторов, а versioned JSON с пустыми rules выбирает offline. Изменение требует
+тех же текущих административных прав, что и остальные изменяемые свойства
+project sync; idempotent sync участника не расширяет его права. Snapshot остаётся
+после удаления identity и не допускает повторного использования UID. На этом
+слое настройка публикуется через `PUT /api/projects/sync` полем
+`managed_network` (versioned object либо явный `null` для legacy). Broodfile
+`project.managed_network` ссылается на именованную сеть; пустая ссылка очищает
+будущий default, а отсутствие поля сохраняет его. Create и каждый start передают
+ровно actor snapshot через
+`BROOD_GUEST_EGRESS_POLICY`, без одновременного legacy allowlist. Origin admission
+и runtime/list/get используют тот же snapshot для direct HTTPS, а текущий
+серверный Git-доступ по-прежнему определяет gateway. Последняя проверка origin
+и запись actor/snapshot идут в одной SQLite-транзакции до PVE-записи. Это не
+разрешение менять сеть существующих акторов неявно.
 
 Logout, блокировка, исключение из проекта и передача владельца отзывают
 доступ. Уже открытое соединение закрывается проверкой не позднее 60 секунд.
