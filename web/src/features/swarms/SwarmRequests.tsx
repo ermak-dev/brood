@@ -46,6 +46,14 @@ export function RequestInbox({
     model.handledHere,
     model.retriedHere
   );
+  const answeredCount = history.filter((request) => request.state === 'answered').length;
+  const cancelledCount = history.filter((request) => request.state === 'cancelled').length;
+  const historySummary = [
+    answeredCount > 0 ? t('swarm_requests.history_count', { count: answeredCount }) : '',
+    cancelledCount > 0 ? t('swarm_requests.cancelled_count', { count: cancelledCount }) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const card = (request: SwarmRequest) => (
     <li key={request.id}>
       <RequestCard model={model} request={request} onSelectNode={onSelectNode} />
@@ -93,9 +101,7 @@ export function RequestInbox({
         )}
         {history.length > 0 && (
           <details className={local.history}>
-            <summary className={local.historySummary}>
-              {t('swarm_requests.history_count', { count: history.length })}
-            </summary>
+            <summary className={local.historySummary}>{historySummary}</summary>
             <ol className={local.list}>{history.map(card)}</ol>
           </details>
         )}

@@ -3286,6 +3286,7 @@
     "open_count": "{{count}} 个待处理",
     "none_open": "没有待处理的请求。",
     "history_count": "已回答 {{count}} 个",
+    "cancelled_count": "已取消 {{count}} 个",
     "undelivered_count": "{{count}} 个未送达",
     "attention_title": "送达需要处理",
     "attention_hint": "Actor 未收到这些回答，或送达未确认。在送达成功之前，它们会一直显示在这里。",

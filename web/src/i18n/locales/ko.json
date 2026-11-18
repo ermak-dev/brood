@@ -3289,6 +3289,7 @@
     "open_count": "열림 {{count}}개",
     "none_open": "열린 요청이 없습니다.",
     "history_count": "답변됨 {{count}}개",
+    "cancelled_count": "취소됨 {{count}}개",
     "undelivered_count": "미전달 {{count}}개",
     "attention_title": "확인이 필요한 전달",
     "attention_hint": "액터가 이 답변을 받지 못했거나 전달이 확인되지 않았습니다. 전달이 성공할 때까지 여기에 남습니다.",
