@@ -241,14 +241,19 @@ func (m *managedProvider) client(p store.ManagedPool) (proxmoxAPI, error) {
 	return client, nil
 }
 
-// managedGuestHosts is the immutable public egress policy of claude-proxmox.
-// Exact names only: actor input and the installation's private origin never
-// expand this list. Guest policy independently rejects private DNS answers.
+// managedGuestHosts is the legacy public egress policy of claude-proxmox.
+// Selected policies replace it rather than extending it. Actor input and the
+// installation's private origin never expand either policy.
 const managedGuestHosts = `["api.anthropic.com","claude.ai","console.anthropic.com","platform.claude.com","downloads.claude.ai","github.com","api.github.com","codeload.github.com","raw.githubusercontent.com","objects.githubusercontent.com","release-assets.githubusercontent.com","gitlab.com","registry.npmjs.org","npmjs.org","www.npmjs.com","nodejs.org","bun.sh","bun.com","pypi.org","files.pythonhosted.org","proxy.golang.org","sum.golang.org","storage.googleapis.com","go.dev","dl.google.com","crates.io","index.crates.io","static.crates.io","static.rust-lang.org","sh.rustup.rs","deb.debian.org","security.debian.org","archive.ubuntu.com","security.ubuntu.com"]`
 
 func (m *managedProvider) createSpec(a store.ManagedActor) proxmox.CTSpec {
 	origin := strings.TrimSuffix(m.registry.publicOrigin, "/")
-	return proxmox.CTSpec{VMID: a.CTID, Hostname: "brood-" + a.UID, Template: a.Template.URI, Owner: managedOwned(a).Owner, Cores: int(a.Resources.CPUMillicores / 1000), MemoryMiB: int(a.Resources.MemoryBytes / mib), DiskGiB: int(a.Resources.DiskBytes / gib), Env: proxmox.BootstrapEnv{"BROOD_GUEST_ACTOR_UID": a.UID, "BROOD_GUEST_GENERATION": managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_URL": "wss" + strings.TrimPrefix(origin, "https") + "/api/proxmox/guest/" + a.UID + "/" + managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_TOKEN": guestToken(m.registry.relaySecret, a.UID, a.Incarnation), "BROOD_GUEST_CA_PEM_B64": base64.StdEncoding.EncodeToString([]byte(m.publicCA)), "BROOD_GUEST_ALLOWED_HOSTS": managedGuestHosts, "BROOD_GUEST_RELAY_HOST_KEY": strings.TrimSpace(m.hub.HostKey())}}
+	spec := proxmox.CTSpec{VMID: a.CTID, Hostname: "brood-" + a.UID, Template: a.Template.URI, Owner: managedOwned(a).Owner, Cores: int(a.Resources.CPUMillicores / 1000), MemoryMiB: int(a.Resources.MemoryBytes / mib), DiskGiB: int(a.Resources.DiskBytes / gib), Env: proxmox.BootstrapEnv{"BROOD_GUEST_ACTOR_UID": a.UID, "BROOD_GUEST_GENERATION": managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_URL": "wss" + strings.TrimPrefix(origin, "https") + "/api/proxmox/guest/" + a.UID + "/" + managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_TOKEN": guestToken(m.registry.relaySecret, a.UID, a.Incarnation), "BROOD_GUEST_CA_PEM_B64": base64.StdEncoding.EncodeToString([]byte(m.publicCA)), "BROOD_GUEST_ALLOWED_HOSTS": managedGuestHosts, "BROOD_GUEST_RELAY_HOST_KEY": strings.TrimSpace(m.hub.HostKey())}}
+	if a.NetworkPolicy != "" {
+		delete(spec.Env, "BROOD_GUEST_ALLOWED_HOSTS")
+		spec.Env["BROOD_GUEST_EGRESS_POLICY"] = a.NetworkPolicy
+	}
+	return spec
 }
 
 func (m *managedProvider) saveObservation(ctx context.Context, a store.ManagedActor, phase, upid, detail string) (store.ManagedActor, error) {
@@ -1071,7 +1076,7 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNa
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, managedActorJSON(a, p, sw.AtespaceName, access.mode(a.Origin)))
+		out = append(out, managedActorJSON(a, p, sw.AtespaceName, access.modeWithNetwork(a.Origin, a.NetworkPolicy)))
 	}
 	return out, nil
 }

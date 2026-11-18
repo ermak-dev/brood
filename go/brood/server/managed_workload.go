@@ -282,7 +282,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if o.parent != nil {
 			parentUID = o.parent.UID
 		}
-		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
+		a, err = o.server.reserveManagedActorOrigin(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
 		if err != nil {
 			return err
 		}
@@ -461,7 +461,7 @@ func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, user
 		managedAPIError(w, r, err)
 		return
 	}
-	writeJSON(w, 201, managedActorJSON(a, pool, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin)))
+	writeJSON(w, 201, managedActorJSON(a, pool, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin, a.NetworkPolicy)))
 }
 
 // createManaged is shared by human creation and UID-bound delegated creation.
@@ -528,7 +528,7 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if r.Method == http.MethodGet {
-		mode, err := s.originMode(r.Context(), sw.ProjectID, a.Origin)
+		mode, err := s.originMode(r.Context(), sw.ProjectID, a.Origin, a.NetworkPolicy)
 		if err != nil {
 			managedAPIError(w, r, err)
 			return
@@ -564,5 +564,5 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		w.WriteHeader(202)
 		return
 	}
-	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin)))
+	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin, op.saved.NetworkPolicy)))
 }
