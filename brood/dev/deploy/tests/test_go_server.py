@@ -443,13 +443,20 @@ class GoManifestTests(unittest.TestCase):
 
 
 class GoDeploymentTests(unittest.TestCase):
+    def setUp(self):
+        dns = patch("socket.getaddrinfo", side_effect=AssertionError("live DNS is forbidden in deploy tests"))
+        dns.start()
+        self.addCleanup(dns.stop)
+
     def deploy(self, settings=None):
         cluster = Mock()
         workers = {"gvisor": "localhost:5002/ateworker-gvisor@sha256:" + "b" * 64}
         values = {"BROOD_SESSION_SECRET": "x" * 32, "WORKER_POOL_IMAGES": json.dumps(workers),
                   "BROOD_RELEASE_SHA": "c" * 40}
         values.update(settings or {})
-        deploy = go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout")
+        deploy = go_server.Deploy(cluster, get=lambda key: values.get(key, ""), project="/checkout",
+                                  resolver=Mock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "",
+                                                               ("149.154.167.220", 443))]))
         # Шаг артефактов (#156) требует реальных бинарей и машины деплоя:
         # в этих тестах он подменён, собственный тест ниже.
         deploy.publish_bootstrap_artifacts = lambda root: None

@@ -24,7 +24,9 @@ class IsolatedTestCase(unittest.TestCase):
 
     def run(self, result=None):
         with tempfile.TemporaryDirectory(prefix="brood-deploy-lock-test-") as data:
-            with patch.dict(os.environ, {"XDG_DATA_HOME": data}):
+            with patch.dict(os.environ, {"XDG_DATA_HOME": data}), patch(
+                "socket.getaddrinfo", side_effect=AssertionError("live DNS is forbidden in deploy tests")
+            ):
                 return super().run(result)
 
     def track(self, install):
@@ -435,7 +437,8 @@ class ExistingInstallTests(IsolatedTestCase):
                     raise RuntimeError("snapshot failed")
 
             cluster.shell.output.side_effect = output
-            deploy = go_server.Deploy(cluster, get=get)
+            deploy = go_server.Deploy(cluster, get=get,
+                                      resolver=Mock(return_value=[(2, 1, 6, "", ("149.154.167.220", 443))]))
             with patch.object(go_server, "Infrastructure") as infra, patch.object(deploy, "_registry_access", return_value=None), patch.object(deploy, "publish_bootstrap_artifacts"):
                 infra.return_value._tls.return_value = {}
                 infra.return_value._api_egress.return_value = []
