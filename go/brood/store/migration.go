@@ -56,6 +56,8 @@ var schemaMigrations = []schemaMigration{
 	// 33: явные GitLab API полномочия; прежние Git credentials их не дают (#302).
 	{from: 32, sql: gitlabFullSchema()},
 	{from: 33, sql: gitlabProposalFullSchema()},
+	// 35: пустые дочерние задачи; существующие шаги и проходы не меняются (#289).
+	{from: 34, sql: swarmChildrenFullSchema()},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).

@@ -164,6 +164,9 @@ func (s *Store) validateCoordinationOwner(ctx context.Context, c CoordinationCla
 }
 
 func (s *Store) validateCoordinationActor(ctx context.Context, c CoordinationClaim, a CoordinationActor) error {
+	if err := s.guardChildLifecycle(ctx, a.UID); err != nil {
+		return err
+	}
 	var valid bool
 	err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_actors a JOIN swarms s ON s.id=a.swarm_id WHERE a.uid=? AND a.incarnation=? AND a.swarm_id=? AND s.project_id=? AND a.atespace_uid=s.atespace_uid AND a.phase NOT IN ('deleting','deleted') AND a.desired='running' AND NOT EXISTS(SELECT 1 FROM coordination_claims c WHERE c.kind='workspace' AND c.slot=a.uid))`, a.UID, a.Generation, c.SwarmID, c.ProjectID).Scan(&valid)
 	if err != nil {

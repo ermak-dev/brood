@@ -151,6 +151,13 @@ func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(co
 		if activeExecution(w.Execution) {
 			return fmt.Errorf("%w: execution is %s; start requires idle, succeeded, failed or stopped", ErrSwarmExecutionState, w.Execution)
 		}
+		unfinished, err := s.hasUnfinishedSwarmChildren(ctx, w.ID)
+		if err != nil {
+			return err
+		}
+		if unfinished {
+			return ErrSwarmChildConflict
+		}
 		plan, err := s.planPass(ctx, w, in)
 		if err != nil {
 			return err
@@ -181,7 +188,9 @@ func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(co
 // reached the actor; an inflight or unconfirmed step keeps its state, because
 // the actor's outcome is unknown, and can no longer complete. Actors, their
 // workspaces and role bindings are not touched. Stopping idle, succeeded,
-// failed or stopped execution is refused with the state named.
+// failed or stopped execution is refused with the state named. With unfinished
+// children, only an owner/admin may freeze dispatch: the intervention and parent
+// uncertainty are journaled without cancelling children or releasing their holds.
 func (s *Store) StopSwarm(ctx context.Context, swarmID, userID string, authorize func(context.Context) bool) (Swarm, error) {
 	var stopped Swarm
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -191,6 +200,15 @@ func (s *Store) StopSwarm(ctx context.Context, swarmID, userID string, authorize
 		}
 		if !activeExecution(w.Execution) {
 			return fmt.Errorf("%w: execution is %s; stop requires running or waiting", ErrSwarmExecutionState, w.Execution)
+		}
+		children, err := s.hasUnfinishedSwarmChildren(ctx, swarmID)
+		if err != nil {
+			return err
+		}
+		if children {
+			if err := s.interruptChildrenForPassStop(ctx, w, userID); err != nil {
+				return err
+			}
 		}
 		now := nowRFC3339()
 		// Момент остановки становится моментом исполнения роя (#268): шаг,

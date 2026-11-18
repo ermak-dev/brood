@@ -15,6 +15,9 @@ import (
 // ErrPipelineVisitConflict indicates that a visit can no longer be answered.
 var ErrPipelineVisitConflict = errors.New("pipeline visit is no longer awaiting an answer")
 
+// ErrPipelineVisitInterrupted requires explicit reconciliation before progression.
+var ErrPipelineVisitInterrupted = fmt.Errorf("%w: owner intervention interrupted this step; explicit reconciliation is required", ErrPipelineVisitConflict)
+
 // ErrStepReportInvalid: the actor's step report is not plain bounded text.
 var ErrStepReportInvalid = errors.New("invalid step report")
 
@@ -318,6 +321,16 @@ func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyR
 		}
 		if request != requestID || actor != actorUID || inc != incarnation {
 			return ErrPipelineVisitConflict
+		}
+		interrupted, err := s.interruptedStep(ctx, swarmID, sequence)
+		if err != nil {
+			return err
+		}
+		if interrupted {
+			return ErrPipelineVisitInterrupted
+		}
+		if err := s.checkChildParentResult(ctx, swarmID, sequence, outcome, report); err != nil {
+			return err
 		}
 		if w.Source != nil {
 			// Commit прохода шага, а не роя (#229): поздний исход шага
