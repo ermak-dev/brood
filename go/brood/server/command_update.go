@@ -94,11 +94,24 @@ func (s *Server) updateActor(ctx context.Context, userID string, sw app.Swarm, p
 		}
 		return command.Result{}, command.Refusef(app.ErrConflict, "update refused: actor %q is %s, not running; update restarts only a running, reconciled actor", a.Name, a.Phase)
 	}
-	// Шаг в работе, аренда и landing — до вызова гостя: занятому актору
-	// отказ без побочных запросов. Намерение повторит проверку в своей
-	// транзакции.
-	if err := s.store.CheckActorUpdate(ctx, a); err != nil {
-		return command.Result{}, actorCommandError(err)
+	// Только положительные текущие полномочия owner или delegated master
+	// позволяют прервать automatic holds. Сам intent заново проверит scope
+	// и сохранит interrupted evidence в своей транзакции.
+	explicit := s.authorizeSwarmOwnerIntent(ctx, userID, sw.ID) == nil
+	if parent != nil {
+		current, err := s.managed.authorizeCommandTarget(ctx, *parent, a.Name, true)
+		if err != nil {
+			return command.Result{}, actorCommandError(err)
+		}
+		if current.UID != a.UID || current.Incarnation != a.Incarnation || current.Revision != a.Revision {
+			return command.Result{}, actorCommandError(store.ErrRevisionConflict)
+		}
+		explicit = true
+	}
+	if !explicit {
+		if err := s.store.CheckActorUpdate(ctx, a); err != nil {
+			return command.Result{}, actorCommandError(err)
+		}
 	}
 	// Без проверенного манифеста bootstrap #184 откажет fail closed, и
 	// перезапуск оставил бы актора остановленным.

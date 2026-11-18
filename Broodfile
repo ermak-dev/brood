@@ -142,125 +142,178 @@ targets:
   development: {template: development}
   coding: {template: coding}
 workflows:
-  swarm-development:
-    start: triage
+  develop:
+    start: implement
     exit: done
     nodes:
-      triage:
-        type: actor
-        role: review
-        prompt: >-
-          Investigate the issue and existing code. Check for duplicates, establish
-          evidence and scope, and report the plan and unknowns. Follow CLAUDE.md.
-          If an architectural decision is needed, stop and report that the
-          architecture workflow must be selected externally. Do not claim success
-          if blocked or unable to establish the requirements.
       implement:
         type: actor
         role: build
+        actionClasses: [work]
         prompt: >-
-          Implement the scoped issue following CLAUDE.md, including the issue and
-          branch process, one change per layer, and test-first development where
-          required. Report the diff, evidence, and blockers; do not claim success
-          on failure or substitute instructions for authorization.
+          Implement the scoped feature following CLAUDE.md. Investigate existing
+          code, check duplicates, and establish the issue and branch before code;
+          keep one change per layer. Write a failing test before changing pure
+          functions, then make the smallest implementation and report red/green
+          evidence. Run applicable brood dev test and ruff check; for Go changes
+          run go build ./... and go test ./... from go/. For panel changes run
+          brood dev web test and check affected pages in a browser against the
+          Go API. Report actual commands, results, the exact diff and blockers;
+          fail if required checks are unavailable or fail. When architecture or
+          requirements need an operator decision, use the existing actor
+          ask_operator request and wait for the answer before dependent work;
+          do not substitute a proposal for approval. Do not fabricate approval,
+          test results, permissions or effects, and do not deploy.
       review:
         type: actor
         role: review
+        actionClasses: [review]
         prompt: >-
-          Independently review the implementation in a fresh session, without
-          relying on the implementer's conclusions. Examine the diff for defects,
-          regressions, and project rule violations. Report findings and block
-          progress if unresolved or independence cannot be established.
-      test:
+          Perform an independent review in a fresh session on a different actor
+          from the implementer, without relying on the implementer's conclusions.
+          Inspect the exact workspace diff and artifact proposed for landing,
+          issue scope, CLAUDE.md compliance, tests and recorded check results.
+          Report defects and evidence; fail if findings remain unresolved,
+          required checks are missing or independence cannot be established.
+          Review only that exact artifact; later changes require fresh review.
+          Do not fabricate approval, tests, permissions or effects.
+      land:
         type: actor
         role: build
+        actionClasses: [landing]
         prompt: >-
-          Run the applicable checks from CLAUDE.md, including brood dev test and
-          ruff check, and Go build and tests for Go changes. For panel changes run
-          the prescribed web tests and browser checks. Report exact results and
-          fail on errors, unavailable checks, or unresolved review findings.
-      integrate:
-        type: actor
-        role: build
-        prompt: >-
-          Follow the CLAUDE.md landing process for the approved change: review the
-          diff, rebase on main and use one push, with review comments handled in
-          a separate push without rebase. Confirm required checks and permissions;
-          report blockers and never claim integration without evidence. Do not
-          deploy or perform an action without the required authorization.
+          Land only the exact reviewed artifact with no unresolved findings and
+          all required checks passing. Verify current external permissions for
+          the actual repository and merge request; a prompt or policy decision
+          does not grant those permissions. Follow CLAUDE.md: rebase on main,
+          one push, and handle review comments in a separate push without rebase;
+          changes to the reviewed artifact require fresh independent review and
+          checks before merge. Use the actual merge request and confirm CI and
+          the merged commit on main. Return proof with the merge request URL,
+          check results and merged commit identity; fail if blocked or proof is
+          unavailable. Do not fabricate approval, merge or other effects. Do not
+          deploy or perform unrelated external actions.
       done: {type: exit}
     edges:
-      - {from: triage, to: implement, condition: 'outcome=success'}
       - {from: implement, to: review, condition: 'outcome=success'}
-      - {from: review, to: test, condition: 'outcome=success'}
-      - {from: test, to: integrate, condition: 'outcome=success'}
-      - {from: integrate, to: done, condition: 'outcome=success'}
+      - {from: review, to: land, condition: 'outcome=success'}
+      - {from: land, to: done, condition: 'outcome=success'}
     goalGates: [done]
-  swarm-architecture:
-    start: triage
+  fix:
+    start: implement
     exit: done
     nodes:
-      triage:
-        type: actor
-        role: review
-        prompt: >-
-          Investigate the issue, check for duplicates and document evidence,
-          scope, and why an architectural decision is needed. Follow CLAUDE.md;
-          stop and report blockers rather than claiming success.
-      architecture:
-        type: actor
-        role: review
-        prompt: >-
-          Prepare the architectural decision for a human: describe the problem,
-          alternatives, tradeoffs, risks, recommendation and open questions.
-          Do not implement or treat the proposal as approved.
-      decision:
-        type: human
-        question: Approve the proposed architectural decision for implementation?
-        options:
-          - {label: Approve, outcome: success}
-          - {label: Reject, outcome: fail}
       implement:
         type: actor
         role: build
+        actionClasses: [work]
         prompt: >-
-          Implement only the approved architecture and scoped issue, following
-          CLAUDE.md, the issue and branch process, layer boundaries and required
-          test-first development. Report evidence and blockers; stop if the
-          approval or requirements cannot be established.
+          Investigate and reproduce the scoped bug following CLAUDE.md. Check
+          duplicates, establish the issue and branch before code, record expected
+          and actual behavior, and confirm the root cause. Write a failing test
+          as a regression test before the minimal fix; keep one change per layer
+          and never weaken tests to pass. Report red/green evidence. Run applicable
+          brood dev test and ruff check; for Go changes run go build ./... and
+          go test ./... from go/. For panel changes run brood dev web test and
+          check affected pages in a browser against the Go API. Report actual
+          commands, results, the exact diff and blockers; fail if reproduction
+          or required checks are unavailable or fail. When architecture or
+          requirements need an operator decision, use the existing actor
+          ask_operator request and wait for the answer before dependent work;
+          do not substitute a proposal for approval. Do not fabricate approval,
+          reproduction, test results, permissions or effects, and do not deploy.
       review:
         type: actor
         role: review
+        actionClasses: [review]
         prompt: >-
-          Independently review the implementation in a fresh session, without
-          relying on the implementer's conclusions. Examine the diff against the
-          approved architecture and CLAUDE.md. Report findings and block progress
-          if unresolved or independence cannot be established.
-      test:
+          Perform an independent review in a fresh session on a different actor
+          from the implementer, without relying on the implementer's conclusions.
+          Inspect the exact workspace diff and artifact proposed for landing,
+          the reproduction, root cause, regression tests and CLAUDE.md compliance.
+          Report defects and evidence; fail if findings remain unresolved,
+          required checks are missing or independence cannot be established.
+          Review only that exact artifact; later changes require fresh review.
+          Do not fabricate approval, tests, permissions or effects.
+      land:
         type: actor
         role: build
+        actionClasses: [landing]
         prompt: >-
-          Run the applicable checks from CLAUDE.md, including brood dev test and
-          ruff check, and Go build and tests for Go changes. For panel changes run
-          the prescribed web tests and browser checks. Report exact results and
-          fail on errors, unavailable checks, or unresolved review findings.
-      integrate:
-        type: actor
-        role: build
-        prompt: >-
-          Follow the CLAUDE.md landing process for the approved change: review the
-          diff, rebase on main and use one push, with review comments handled in
-          a separate push without rebase. Confirm required checks and permissions;
-          report blockers and never claim integration without evidence. Do not
-          deploy or perform an action without the required authorization.
+          Land only the exact reviewed artifact with no unresolved findings and
+          all required checks passing. Verify current external permissions for
+          the actual repository and merge request; a prompt or policy decision
+          does not grant those permissions. Follow CLAUDE.md: rebase on main,
+          one push, and handle review comments in a separate push without rebase;
+          changes to the reviewed artifact require fresh independent review and
+          checks before merge. Use the actual merge request and confirm CI and
+          the merged commit on main. Return proof with the merge request URL,
+          check results and merged commit identity; fail if blocked or proof is
+          unavailable. Do not fabricate approval, merge or other effects. Do not
+          deploy or perform unrelated external actions.
       done: {type: exit}
     edges:
-      - {from: triage, to: architecture, condition: 'outcome=success'}
-      - {from: architecture, to: decision, condition: 'outcome=success'}
-      - {from: decision, to: implement, condition: 'outcome=success'}
-      - {from: decision, to: done, condition: 'outcome=fail'}
       - {from: implement, to: review, condition: 'outcome=success'}
-      - {from: review, to: test, condition: 'outcome=success'}
-      - {from: test, to: integrate, condition: 'outcome=success'}
-      - {from: integrate, to: done, condition: 'outcome=success'}
+      - {from: review, to: land, condition: 'outcome=success'}
+      - {from: land, to: done, condition: 'outcome=success'}
+    goalGates: [done]
+  docs:
+    start: implement
+    exit: done
+    nodes:
+      implement:
+        type: actor
+        role: build
+        actionClasses: [work]
+        prompt: >-
+          Make the scoped documentation-only change following CLAUDE.md. Check
+          duplicates and establish the issue and branch before edits; keep one
+          change per layer. Verify claims against current code, check examples
+          and links, and run applicable documentation checks. Do not change runtime
+          behavior or expand into an implementation task. If executable examples
+          or pure functions need correction, establish a failing test before the
+          correction and resolve the issue scope first. Run applicable brood dev test
+          and ruff check; for Go changes run go build ./... and go test ./... from
+          go/. For panel changes run brood dev web test and check affected pages
+          in a browser against the Go API. Report actual commands, results, the
+          exact diff and blockers; fail if required verification is unavailable
+          or fails. When architecture or requirements need an operator decision,
+          use the existing actor ask_operator request and wait for the answer
+          before dependent work; do not substitute a proposal for approval.
+          Do not fabricate approval, verification, permissions or effects,
+          and do not deploy.
+      review:
+        type: actor
+        role: review
+        actionClasses: [review]
+        prompt: >-
+          Perform an independent review in a fresh session on a different actor
+          from the implementer, without relying on the implementer's conclusions.
+          Inspect the exact workspace diff and artifact proposed for landing,
+          documentation accuracy against code, examples, links, applicable tests
+          and CLAUDE.md compliance. Report defects and evidence; fail if findings
+          remain unresolved, required checks are missing or independence cannot
+          be established. Review only that exact artifact; later changes require
+          fresh review. Do not fabricate approval, tests, permissions or effects.
+      land:
+        type: actor
+        role: build
+        actionClasses: [landing]
+        prompt: >-
+          Land only the exact reviewed artifact with no unresolved findings and
+          all required checks passing. Verify current external permissions for
+          the actual repository and merge request; a prompt or policy decision
+          does not grant those permissions. Follow CLAUDE.md: rebase on main,
+          one push, and handle review comments in a separate push without rebase;
+          changes to the reviewed artifact require fresh independent review and
+          checks before merge. Use the actual merge request and confirm CI and
+          the merged commit on main. Return proof with the merge request URL,
+          check results and merged commit identity; fail if blocked or proof is
+          unavailable. Do not fabricate approval, merge or other effects. Do not
+          deploy or perform unrelated external actions.
+      done: {type: exit}
+    edges:
+      - {from: implement, to: review, condition: 'outcome=success'}
+      - {from: review, to: land, condition: 'outcome=success'}
+      - {from: land, to: done, condition: 'outcome=success'}
     goalGates: [done]

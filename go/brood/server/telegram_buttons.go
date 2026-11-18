@@ -168,7 +168,7 @@ func telegramStatusKeyboard(notification int64, state string) *telegram.InlineKe
 // или no у confirm. У текстового запроса и индекса вне вариантов ответа нет.
 func telegramButtonAnswer(r store.SwarmRequest, option int) (outcome, response string, ok bool) {
 	switch {
-	case r.Kind == "confirm" && r.Origin == "actor" && option >= 0 && option <= 1:
+	case r.Kind == "confirm" && (r.Origin == "actor" || r.Origin == "policy") && option >= 0 && option <= 1:
 		return "", []string{"yes", "no"}[option], true
 	case r.Kind != "choice" || option < 0 || option >= len(r.Options):
 		return "", "", false

@@ -284,7 +284,9 @@ func TestManagedClusterCollisionAndConfirmedReuse(t *testing.T) {
 	}
 }
 func TestManagedDamagedSchemaRefusedWithoutMutation(t *testing.T) {
-	for _, change := range []string{`DROP INDEX managed_actors_live_ctid`, `DROP TABLE managed_actors`, `DROP TRIGGER managed_swarm_delete_guard`, `ALTER TABLE managed_actors DROP COLUMN stage`, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion+1), `ALTER TABLE managed_actors DROP COLUMN role`, `ALTER TABLE managed_actors DROP COLUMN delegator_id`, `ALTER TABLE managed_actors DROP COLUMN parent_uid`, `ALTER TABLE managed_connections DROP COLUMN runtime_config`} {
+	// CHECK и allocation-guard ссылаются на actor-поля: rename оставляет валидный
+	// SQLite DDL с отсутствующим каноническим именем, а DROP отказал бы до Open.
+	for _, change := range []string{`DROP TRIGGER managed_actor_class_update_guard`, `DROP TRIGGER managed_actor_class_replace_guard`, `DROP TRIGGER ephemeral_role_insert_guard`, `DROP TRIGGER ephemeral_role_update_guard`, `ALTER TABLE managed_actors RENAME COLUMN actor_class TO missing_actor_class`, `DROP INDEX managed_actors_live_ctid`, `DROP TABLE managed_actors`, `DROP TRIGGER managed_swarm_delete_guard`, `ALTER TABLE managed_actors RENAME COLUMN stage TO missing_stage`, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion+1), `ALTER TABLE managed_actors RENAME COLUMN role TO missing_role`, `ALTER TABLE managed_actors RENAME COLUMN delegator_id TO missing_delegator_id`, `ALTER TABLE managed_actors RENAME COLUMN parent_uid TO missing_parent_uid`, `ALTER TABLE managed_connections DROP COLUMN runtime_config`} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			path := filepath.Join(t.TempDir(), "db.sqlite3")

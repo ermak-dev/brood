@@ -270,6 +270,9 @@ func (m *managedProvider) executeLanding(ctx context.Context, from store.Managed
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
 		if args.Action == "take" {
+			if err := m.server.refuseEvalEffect(tx, from.SwarmID, "actor-executed landing take"); err != nil {
+				return command.Refuse(nil, err.Error())
+			}
 			holder, e = m.server.store.TakeLandingToken(tx, coordinationClaim(from, sw, args.RequestID))
 			if e != nil {
 				return e

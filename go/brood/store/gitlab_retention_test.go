@@ -18,7 +18,8 @@ func TestRetiredGitLabHistorySurvivesMigrationAndRepeatedOpen(t *testing.T) {
 			path := loadSchemaFixture(t, version)
 			raw := rawDatabase(t, path)
 			seedRetiredGitLabHistory(t, raw, version)
-			before := databaseRows(t, raw)
+			before := withPersistentActorClass(databaseRows(t, raw))
+			before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 			mustNil(t, raw.Close())
 
 			for reopen := range 2 {

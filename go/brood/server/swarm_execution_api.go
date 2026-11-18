@@ -53,8 +53,13 @@ type swarmExecutionJSON struct {
 // доставка ответа — отдельные маршруты (#210); инструкцию шага доставляет
 // диспетчер после коммита запуска (#212), отдельного маршрута у неё нет.
 func (s *Server) mountSwarmExecutionAPI() {
+	s.mux.HandleFunc("POST /api/swarms/{id}/eval", s.handleSwarmEvalBind)
+	s.mux.HandleFunc("GET /api/swarms/{id}/eval", s.handleSwarmEvalGet)
+	s.mux.HandleFunc("POST /api/swarms/{id}/eval/start", s.handleSwarmEvalStart)
 	s.mux.HandleFunc("POST /api/swarms/{id}/start", s.handleSwarmStart)
 	s.mux.HandleFunc("POST /api/swarms/{id}/stop", s.handleSwarmStop)
+	s.mux.HandleFunc("/api/swarms/{id}/passes/{pass}", s.handleSwarmPassTrace)
+	s.mux.HandleFunc("/api/swarms/{id}/passes/{pass}/compare", s.handleSwarmPassComparison)
 	s.mux.HandleFunc("GET /api/swarms/{id}/children", s.handleChildHistoryList)
 	s.mux.HandleFunc("GET /api/swarms/{id}/children/{sequence}", s.handleChildHistoryGet)
 	s.mux.HandleFunc("POST /api/swarms/{id}/children/{sequence}/abort", s.handleChildAbort)
@@ -63,11 +68,15 @@ func (s *Server) mountSwarmExecutionAPI() {
 // visibleSwarmUser пропускает дальше только видящего рой: постороннему рой
 // скрыт как 404. Право управлять проверяет хранилище в транзакции записи.
 func (s *Server) visibleSwarmUser(w http.ResponseWriter, r *http.Request) (store.User, bool) {
+	return s.visibleSwarmIDUser(w, r, r.PathValue("id"))
+}
+
+func (s *Server) visibleSwarmIDUser(w http.ResponseWriter, r *http.Request, swarmID string) (store.User, bool) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return store.User{}, false
 	}
-	visible, err := s.app.Can(user.ID, app.ActionViewSwarm, app.SwarmRes(r.PathValue("id")))
+	visible, err := s.app.Can(user.ID, app.ActionViewSwarm, app.SwarmRes(swarmID))
 	if err != nil {
 		apiError(w, r, err)
 		return store.User{}, false
@@ -114,6 +123,11 @@ func (s *Server) handleSwarmStart(w http.ResponseWriter, r *http.Request) {
 // отсутствующий. Диспетчер шагов будит вызывающий после своего ответа.
 func (s *Server) startSwarmPass(ctx context.Context, in store.SwarmStart, authorize func(context.Context) bool) (store.Swarm, error) {
 	if err := s.requireSwarmView(in.SwarmID, in.UserID); err != nil {
+		return store.Swarm{}, err
+	}
+	if _, err := s.store.GetSwarmEvalBinding(ctx, in.SwarmID); err == nil {
+		return store.Swarm{}, store.ErrSwarmEvalConflict
+	} else if !errors.Is(err, store.ErrNotFound) {
 		return store.Swarm{}, err
 	}
 	if err := startGoalError(in.Goal); err != nil {
@@ -267,7 +281,7 @@ func swarmExecutionRefusal(err error) (status int, reason string, ok bool) {
 		return http.StatusNotFound, err.Error(), true
 	case errors.Is(err, store.ErrNotFound):
 		return http.StatusNotFound, "swarm not found", true
-	case errors.Is(err, store.ErrSwarmExecutionState), errors.Is(err, store.ErrSwarmGraphPinned), errors.Is(err, store.ErrSwarmSourceChanged), errors.As(err, &fit):
+	case errors.Is(err, store.ErrSwarmEvalConflict), errors.Is(err, store.ErrSwarmExecutionState), errors.Is(err, store.ErrSwarmGraphPinned), errors.Is(err, store.ErrSwarmSourceChanged), errors.As(err, &fit):
 		return http.StatusConflict, err.Error(), true
 	case errors.Is(err, store.ErrWorkflowGraphInvalid), errors.Is(err, store.ErrSwarmSourceInvalid), errors.Is(err, store.ErrSwarmGoalInvalid):
 		return http.StatusUnprocessableEntity, err.Error(), true

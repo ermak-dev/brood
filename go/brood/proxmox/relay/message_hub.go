@@ -29,6 +29,10 @@ func serveMessage(router MessageRouter, fromUID string, ch ssh.NewChannel) {
 		ch.Reject(ssh.Prohibited, err.Error())
 		return
 	}
+	if req.DeliveryID != "" || req.JournalID != "" || req.Replay {
+		ch.Reject(ssh.Prohibited, "delivery IDs are reserved for server instructions")
+		return
+	}
 	stream, reqs, err := ch.Accept()
 	if err != nil {
 		return
@@ -106,14 +110,30 @@ func (h *Hub) DialMessage(ctx context.Context, uid string, generation int64, fra
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	request, err := decodeMessageFrame(frame)
+	if err != nil {
+		return nil, err
+	}
+	requiresDedup := request.DeliveryID != ""
 	p := h.session(uid, generation)
 	if p == nil {
 		return nil, errUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	h.mu.Lock()
 	if h.closed || h.peers[p.id] != p || p.streams >= MaxStreams {
 		h.mu.Unlock()
 		return nil, errUnavailable
+	}
+	if requiresDedup && p.messageJournalID == "" {
+		h.mu.Unlock()
+		return nil, ErrMessageDedupUnsupported
+	}
+	if requiresDedup && p.messageJournalID != request.JournalID {
+		h.mu.Unlock()
+		return nil, ErrDeliveryJournalChanged
 	}
 	p.streams++
 	h.mu.Unlock()
@@ -127,7 +147,21 @@ func (h *Hub) DialMessage(ctx context.Context, uid string, generation int64, fra
 	openCtx, openCancel := context.WithTimeout(context.Background(), handshakeTimeout)
 	defer openCancel()
 	go func() {
-		ch, req, err := p.conn.OpenChannel(messageChannel, frame)
+		var ch ssh.Channel
+		var req <-chan *ssh.Request
+		var err error
+		if requiresDedup && p.messageJournalID == "" {
+			err = ErrMessageDedupUnsupported
+		} else if requiresDedup && p.messageJournalID != request.JournalID {
+			err = ErrDeliveryJournalChanged
+		} else if !h.currentPeer(p) {
+			err = errUnavailable
+		} else {
+			err = ctx.Err()
+			if err == nil {
+				ch, req, err = p.conn.OpenChannel(messageChannel, frame)
+			}
+		}
 		select {
 		case out <- result{ch, req, err}:
 		case <-openCtx.Done():
@@ -146,6 +180,15 @@ func (h *Hub) DialMessage(ctx context.Context, uid string, generation int64, fra
 	case r := <-out:
 		if r.err != nil {
 			release()
+			if errors.Is(r.err, ErrMessageDedupUnsupported) {
+				return nil, ErrMessageDedupUnsupported
+			}
+			if errors.Is(r.err, ErrDeliveryJournalChanged) {
+				return nil, ErrDeliveryJournalChanged
+			}
+			if errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
+				return nil, r.err
+			}
 			return nil, errUnavailable
 		}
 		go ssh.DiscardRequests(r.req)

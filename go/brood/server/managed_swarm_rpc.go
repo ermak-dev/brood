@@ -68,6 +68,9 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 	if err != nil || swarm.State != "active" || swarm.AtespaceUID == nil || *swarm.AtespaceUID != from.AtespaceUID {
 		return refused
 	}
+	if req.Tool == relay.CompletionReceiptAckTool {
+		return m.acknowledgePipelineCompletion(ctx, from, req)
+	}
 	if len(req.Arguments) != 0 {
 		inv, err := command.ParseTool(req.Tool, req.Arguments)
 		spec, ok := command.Lookup(req.Tool)

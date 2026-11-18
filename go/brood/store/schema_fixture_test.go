@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"brood.dev/go/brood/workflowpolicy"
 )
 
 // Замороженные базы версий схемы (#274): testdata/schema-<N>.sql содержит DDL и
@@ -75,6 +77,7 @@ func seedSchemaFixture(t *testing.T) *Store {
 	s, node := requestStore(t)
 	answered := actorRequest(t, s, "text", nil)
 	mustNil(t, answer(s, answered, "u", "", "use sqlite"))
+	seedLegacyDeliveryHistoryFixture(t, s, answered)
 	if _, err := s.RecordSwarmRequestDelivery(ctx, "s", answered.ID, "unconfirmed"); err != nil {
 		t.Fatal(err)
 	}
@@ -86,10 +89,35 @@ func seedSchemaFixture(t *testing.T) *Store {
 	mustNil(t, s.SetProjectRepository(ctx, "one", startOrigin))
 	publish(t, s, "one", map[string]string{"approve": startApprove})
 	mustStart(t, s, "approve")
+	_, err := s.ReserveManagedActor(ctx, managedRequest("fixture-context-actor", "one", 303))
+	mustNil(t, err)
+	_, err = s.OpenActorRequest(ctx, ActorRequestInput{SwarmID: "one", ActorUID: "fixture-context-actor", ActorIncarnation: 1, Kind: "text", Question: "Retain this explicit pass context for future migrations."})
+	mustNil(t, err)
 	mustNil(t, answer(s, openNodeRequestOf(t, s, 1), "u", "success", "approved"))
+	seedSwarmEvalFixture(t, s)
+	seedManagedClassFixture(t, s, "fixture-context-actor")
+	seedEphemeralChildQueueFixture(t, s)
+	seedEphemeralChildAttestationFixture(t, s)
+	seedEphemeralChildRegistrationFixture(t, s)
+	seedEphemeralChildDeliveryFixture(t, s)
+	seedEphemeralChildResultSealFixture(t, s)
+	intent, err := s.GetEphemeralChildIntentForActor(ctx, "fixture-allocated-worker", 1)
+	mustNil(t, err)
+	_, err = s.BeginEphemeralChildCleanup(ctx, intent.ID, childAllow)
+	mustNil(t, err)
+	seedEphemeralChildFailureFixture(t, s)
+	seedOwnerDerivedLineageFixture(t, s)
+	seedEphemeralChildExecutorFailureFixture(t, s)
+	failedIntent, err := s.GetEphemeralChildIntentForActor(ctx, "fixture-server-failed-worker", 1)
+	mustNil(t, err)
+	_, err = s.JoinSwarmChildren(ctx, failedIntent.Parent, childAllow)
+	mustNil(t, err)
+	_, err = s.BeginEphemeralChildCleanup(ctx, failedIntent.ID, childAllow)
+	mustNil(t, err)
+	seedEphemeralChildCancelCleanupFixture(t, s)
 	expires := telegramTestTime.Add(30 * 24 * time.Hour)
 	mustNil(t, s.CreateSession(ctx, Session{TokenHash: "fixture-web-session", UserID: "u", ExpiresAt: &expires, Data: []byte(`{"csrf":"fixture"}`)}))
-	_, err := s.SetTelegramBot(ctx, "root", "100:fixture-token", "root_brood_bot", "")
+	_, err = s.SetTelegramBot(ctx, "root", "100:fixture-token", "root_brood_bot", "")
 	mustNil(t, err)
 	linkTelegramAs(t, s, "root", "root_brood_bot", 4242, "root_tg")
 	_, err = s.SetTelegramSwarm(ctx, "root", "s", allow)
@@ -116,6 +144,14 @@ func seedSchemaFixture(t *testing.T) *Store {
 	retained := queueNotification(t, s, "root", "actor_question")
 	outboxSteps(t, s, retained, `attempts = 1`, `state = 'sent', settled_attempts = 1, telegram_message_id = 1002`)
 	_, err = s.db.Exec(`DELETE FROM telegram_outbox WHERE id = ?`, retained)
+	mustNil(t, err)
+	_, err = s.SetProjectWorkflowPolicy(ctx, "root", "one", 0, []workflowpolicy.Rule{{ID: "schema-review", Actions: []string{"schema"}, Require: workflowpolicy.IndependentReview, ReviewRole: "review"}}, allow)
+	mustNil(t, err)
+	_, err = s.SetProjectWorkflowPolicy(ctx, "root", "one", 1, nil, allow)
+	mustNil(t, err)
+	ownerUser, err := s.GetUser(ctx, "u")
+	mustNil(t, err)
+	_, err = s.SetProjectOwner(ctx, "root", "one", 0, ownerUser.Username, allow)
 	mustNil(t, err)
 	return s
 }

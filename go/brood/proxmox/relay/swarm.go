@@ -179,7 +179,7 @@ func (h *Hub) serveSwarmRequests(p *peer, requests <-chan *ssh.Request) {
 			_ = req.Reply(false, nil)
 			continue
 		}
-		input, ok := DecodeSwarmRequest(req.Payload)
+		input, ok := decodeSupervisorSwarmRequest(req.Payload)
 		h.mu.Lock()
 		handler := h.swarm
 		h.mu.Unlock()
@@ -207,7 +207,7 @@ func swarmCaller(conn ssh.Conn, session context.Context) SwarmCaller {
 	slots := make(chan struct{}, MaxMessagesInFlight)
 	return func(ctx context.Context, req SwarmRequest) SwarmResponse {
 		failed := SwarmResponse{Text: "swarm service unavailable or request refused"}
-		if !validSwarmRequest(req) || ctx.Err() != nil || session.Err() != nil {
+		if !validSupervisorSwarmRequest(req) || ctx.Err() != nil || session.Err() != nil {
 			return failed
 		}
 		data, err := json.Marshal(req)

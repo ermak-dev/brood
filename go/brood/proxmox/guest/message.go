@@ -167,6 +167,9 @@ func DeliverMessage(ctx context.Context, req relay.MessageRequest) relay.Message
 	if os.Geteuid() != 0 {
 		return messageNotSent("message delivery requires guest supervisor")
 	}
+	if req.DeliveryID != "" || req.JournalID != "" || req.Replay {
+		return messageNotSent("durable delivery requires the negotiated journal handler")
+	}
 	ctx, cancel := context.WithTimeout(ctx, helperTimeout(req.WaitSec))
 	defer cancel()
 	data, err := json.Marshal(req)

@@ -31,6 +31,10 @@ type ClientConfig struct {
 	CAPEM      []byte `json:"-"`
 	HostKey    string
 	DialTarget func(context.Context) (net.Conn, error) `json:"-"`
+	// MessageDeduplication advertises a durable handler on this connection only.
+	// Set it only after the supervisor journal and handler are ready.
+	MessageDeduplication bool   `json:"messageDeduplication,omitempty"`
+	MessageJournalID     string `json:"messageJournalId,omitempty"`
 	// HandleMessage receives server-authorized swarm messages. It must honor
 	// cancellation and never dial actor-supplied socket paths as root.
 	HandleMessage  func(context.Context, MessageRequest) MessageResponse `json:"-"`
@@ -60,6 +64,12 @@ type clientOptions struct {
 }
 
 func options(c ClientConfig) (*clientOptions, error) {
+	if c.MessageDeduplication && c.HandleMessage == nil {
+		return nil, errors.New("message deduplication requires a message handler")
+	}
+	if c.MessageDeduplication && !validMessageJournalID(c.MessageJournalID) || !c.MessageDeduplication && c.MessageJournalID != "" {
+		return nil, errors.New("message deduplication requires an explicit retained journal identity")
+	}
 	if !validUID(c.ActorUID) || c.Generation <= 0 || !validToken(c.Token) || c.DialTarget == nil {
 		return nil, errors.New("invalid guest relay configuration")
 	}
@@ -97,6 +107,10 @@ func options(c ClientConfig) (*clientOptions, error) {
 	}
 	wc.TlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: u.Hostname()}
 	wc.Header.Set("Authorization", "Bearer "+c.Token)
+	if c.MessageDeduplication {
+		wc.Header.Set(messageProtocolHeader, messageDedupProtocol)
+		wc.Header.Set(messageJournalHeader, c.MessageJournalID)
+	}
 	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget, c.HandleMessage, c.OnSwarmSession, c.Session, c.SessionFactory}, nil
 }
 

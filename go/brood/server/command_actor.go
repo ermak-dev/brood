@@ -185,6 +185,11 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	if err = m.authorizeMaster(ctx, from); err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
+	if inv.Name == "stop" || inv.Name == "reset" || inv.Name == "delete" || inv.Name == "update" {
+		if err := m.server.refuseEvalEffect(ctx, from.SwarmID, "actor-executed lifecycle "+inv.Name); err != nil {
+			return command.Result{}, command.Refuse(nil, err.Error())
+		}
+	}
 	if inv.Name == "add" {
 		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
 		if err != nil || pool.Template != from.Template || pool.SourceFingerprint != from.SourceFingerprint {

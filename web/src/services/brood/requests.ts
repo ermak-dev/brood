@@ -3,7 +3,7 @@
  *
  * GET /api/swarms/{id}/requests?all=1 lists every request of the swarm, open
  * and closed, for any swarm role. POST .../requests/{request}/answer takes
- * exactly {outcome?, response?} from a swarm manager and returns the request
+ * {outcome?, response?, revision?} from a swarm manager and returns the request
  * after the answer; POST .../requests/{request}/deliver retries a failed or
  * unconfirmed delivery of the recorded answer to the asking actor (#260). A
  * delivery failure is not a refusal: the reply carries the delivery state
@@ -38,8 +38,10 @@ export interface RequestActor {
 export interface SwarmRequest {
   id: string;
   swarmId: string;
-  /** `node` (a waiting graph step) or `actor` (ask_operator). */
+  /** `node`, `actor` (ask_operator), or `policy` (revision-bound confirmation). */
   origin: string;
+  /** Exact policy confirmation revision; never inferred by a client. */
+  revision?: number;
   /** Step of a node request and the node it waits at. */
   sequence?: number;
   nodeId?: string;
@@ -72,6 +74,7 @@ export interface SwarmRequest {
 export interface RequestAnswer {
   outcome?: string;
   response?: string;
+  revision?: number;
 }
 
 const INVALID = 'Invalid swarm requests response';
@@ -126,6 +129,13 @@ export function parseSwarmRequest(value: unknown): SwarmRequest {
     state: requiredString(value, 'state'),
     createdAt: requiredString(value, 'createdAt'),
   };
+  const revision = value.revision;
+  if (revision !== undefined && revision !== null) {
+    if (!Number.isSafeInteger(revision) || (revision as number) < 1) throw new Error(INVALID);
+    parsed.revision = revision as number;
+  } else if (parsed.origin === 'policy') {
+    throw new Error(INVALID);
+  }
   if (typeof sequence === 'number') parsed.sequence = sequence;
   const actor = parseActor(value.actor);
   if (actor) parsed.actor = actor;

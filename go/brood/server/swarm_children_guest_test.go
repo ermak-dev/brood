@@ -304,7 +304,7 @@ func TestChildGuestParallelCreation(t *testing.T) {
 	}
 }
 
-func TestChildGuestLifecycleRefusesBeforeProvider(t *testing.T) {
+func TestAutomaticChildLifecycleRefusesBeforeProvider(t *testing.T) {
 	ctx := context.Background()
 	d := newOwnedChildEngineServer(t)
 	parent, _, _ := childRelay(t, d)
@@ -326,13 +326,12 @@ func TestChildGuestLifecycleRefusesBeforeProvider(t *testing.T) {
 	before := [4]int{pve.creates, pve.starts, pve.stops, pve.deletes}
 	pve.mu.Unlock()
 	for _, name := range []string{"stop", "reset", "delete"} {
-		args := map[string]any{"name": d.worker.Name}
-		if name != "stop" {
-			args["confirm"] = true
+		actor, err := d.srv.store.GetManagedActor(ctx, d.worker.UID)
+		if err != nil {
+			t.Fatal(err)
 		}
-		r := childCall(t, parent, name, args)
-		if r.OK || !strings.Contains(r.Text, "child") {
-			t.Fatalf("automatic guest lifecycle crossed child hold: %+v", r)
+		if _, err := d.srv.store.BeginManagedActorOperation(ctx, actor.UID, actor.Revision, store.NewID(), name); err == nil || !strings.Contains(err.Error(), "child") {
+			t.Fatalf("automatic lifecycle crossed child hold: %v", err)
 		}
 	}
 	pve.mu.Lock()

@@ -5,8 +5,8 @@ package server
 // idempotent for a running one; reset replaces the container and workspace with
 // a new generation and requires confirm=true. An operator must manage the swarm;
 // a master acts only on its own delegated workers, rechecked after provider
-// inspection. Coordination and workspace reservations refuse both before any
-// provider effect.
+// inspection. Explicit owner and delegated master control bypass automatic holds
+// while retaining interrupted workspace and dispatch evidence.
 // IMPLEMENTATION: The shared lifecycle executor admits the same durable managed
 // operations as the panel's resume/reset, behind stop/delete authorization.
 // RESULT: IMPLEMENTED — operator HTTP and guest RPC start/reset, ownership,
@@ -390,7 +390,7 @@ func TestStartResetRecheckApprovalAfterInspection(t *testing.T) {
 	}
 }
 
-func TestStartResetRefuseHeldCoordination(t *testing.T) {
+func TestStartResetExplicitControlPreservesHeldCoordination(t *testing.T) {
 	for _, hold := range []string{"dispatch", "workspace"} {
 		for _, via := range []string{"operator", "master"} {
 			t.Run(hold+"/"+via, func(t *testing.T) {
@@ -401,7 +401,6 @@ func TestStartResetRefuseHeldCoordination(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				release := func() {}
 				switch hold {
 				case "dispatch":
 					ts.srv.managed.deliverMessage = func(context.Context, string, int64, relay.MessageRequest) (relay.MessageResponse, error) {
@@ -410,60 +409,39 @@ func TestStartResetRefuseHeldCoordination(t *testing.T) {
 					if _, err := ts.srv.managed.executeCoordinationCommand(ctx, master, coordinationInvocation("dispatch", map[string]any{"to": "worker", "message": "task", "request_id": "held"})); err != nil {
 						t.Fatal(err)
 					}
-					release = func() {
-						claim, err := ts.srv.store.ShowDispatchLease(ctx, sw.ProjectID, sw.ID, worker.UID)
-						if err != nil || claim.RequestID != "held" {
-							t.Fatalf("refusal lost the lease: %+v %v", claim, err)
-						}
-						if err := ts.srv.store.ReleaseDispatchLease(ctx, claim); err != nil {
-							t.Fatal(err)
-						}
-					}
 				case "workspace":
-					op, err := ts.srv.store.AcquireActorOperation(ctx, worker.UID, worker.Incarnation, store.NewID(), "operator:test", "restart")
-					if err != nil {
+					if _, err := ts.srv.store.AcquireActorOperation(ctx, worker.UID, worker.Incarnation, store.NewID(), "operator:test", "restart"); err != nil {
 						t.Fatal(err)
-					}
-					release = func() {
-						if err := ts.srv.store.FinishActorOperation(ctx, op, true); err != nil {
-							t.Fatal(err)
-						}
 					}
 				}
 				call := lifecycleCallers(ts, alice, master)[via]
-				effects := providerEffectsOf(pve)
-				if via == "operator" {
-					if ok, text, _ := call(t, "reset", `{"name":"worker","confirm":true}`); !ok {
-						t.Fatalf("owner reset denied by automatic hold: %s", text)
-					}
-					if hold == "dispatch" {
-						if claim, err := ts.srv.store.ShowDispatchLease(ctx, sw.ProjectID, sw.ID, worker.UID); err != nil || claim.RequestID != "held" {
-							t.Fatalf("owner reset lost dispatch history: %+v %v", claim, err)
-						}
-					} else if _, err := ts.srv.store.CurrentActorOperation(ctx, worker.UID); err != nil {
-						t.Fatalf("owner reset lost workspace evidence: %v", err)
-					}
-					return
+				if ok, text, _ := call(t, "reset", `{"name":"worker","confirm":true}`); !ok {
+					t.Fatalf("explicit %s reset denied by automatic hold: %s", via, text)
 				}
-				if ok, text, _ := call(t, "reset", `{"name":"worker","confirm":true}`); ok {
-					t.Fatalf("reset with held %s: %s", hold, text)
-				}
-				// Неготовый гость (desired running, phase error) — тот случай, где
-				// start восстанавливает работающий CT; удержание всё равно в силе.
-				worker, err = ts.srv.store.GetManagedActor(ctx, worker.UID)
+				current, err := ts.srv.store.GetManagedActor(ctx, worker.UID)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if worker, err = ts.srv.managed.saveObservation(ctx, worker, "error", "", managedReadinessError); err != nil {
-					t.Fatal(err)
+				origin, err := ts.srv.store.GetOwnerManagedActorOperation(ctx, worker.UID, worker.Incarnation, current.OperationID)
+				if err != nil || origin.Operation != "reset" || origin.State != "completed" {
+					t.Fatalf("explicit reset lost journal: %+v %v", origin, err)
 				}
-				if ok, text, _ := call(t, "start", `{"name":"worker"}`); ok {
-					t.Fatalf("start with held %s: %s", hold, text)
+				prefix := "operator:"
+				if via == "master" {
+					prefix = "actor:"
 				}
-				expectUnchanged(t, ts, pve, worker, effects)
-				release()
-				if ok, text, _ := call(t, "reset", `{"name":"worker","confirm":true}`); !ok {
-					t.Fatalf("reset after release: %s", text)
+				if !strings.HasPrefix(origin.Caller, prefix) {
+					t.Fatalf("explicit reset misattributed: %+v", origin)
+				}
+				if hold == "dispatch" {
+					if claim, err := ts.srv.store.ShowDispatchLease(ctx, sw.ProjectID, sw.ID, worker.UID); err != nil || claim.RequestID != "held" {
+						t.Fatalf("explicit reset lost dispatch history: %+v %v", claim, err)
+					}
+				} else if held, err := ts.srv.store.CurrentActorOperation(ctx, worker.UID); err != nil || held.State != "unconfirmed" || held.InterruptedBy != current.OperationID {
+					t.Fatalf("explicit reset lost workspace uncertainty: %+v %v", held, err)
+				}
+				if pve.stops != 1 {
+					t.Fatalf("explicit reset duplicated stop: %d", pve.stops)
 				}
 			})
 		}

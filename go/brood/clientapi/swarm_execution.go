@@ -91,11 +91,14 @@ func swarmExecutionPath(swarm, action string) string {
 	return "/api/swarms/" + url.PathEscape(swarm) + "/" + action
 }
 
-// isSwarmExecutionPath узнаёт маршруты запуска и остановки роя:
-// /api/swarms/{id}/start и /api/swarms/{id}/stop.
+// isSwarmExecutionPath ограничивает показ публичных отказов маршрутами
+// запуска/остановки роя и двухэтапного eval.
 func isSwarmExecutionPath(path string) bool {
 	parts := strings.Split(path, "/")
-	return len(parts) == 5 && parts[0] == "" && parts[1] == "api" && parts[2] == "swarms" && (parts[4] == "start" || parts[4] == "stop")
+	if len(parts) < 5 || parts[0] != "" || parts[1] != "api" || parts[2] != "swarms" {
+		return false
+	}
+	return (len(parts) == 5 && (parts[4] == "start" || parts[4] == "stop" || parts[4] == "eval")) || (len(parts) == 6 && parts[4] == "eval" && parts[5] == "start")
 }
 
 // swarmExecutionRefusals — фиксированные причины отказов запуска и остановки
@@ -105,6 +108,9 @@ func isSwarmExecutionPath(path string) bool {
 var swarmExecutionRefusals = []string{
 	"invalid swarm start: expected {definition, goal, commit?} with a definition name and a goal",
 	"swarm management denied",
+	"swarm eval conflict",
+	"swarm eval conflict: eval permits only its first pass",
+	"swarm eval conflict: bound candidate requires eval-only execution",
 	"swarm not found",
 	"outstanding child obligations require explicit reconciliation before automatic progression",
 }

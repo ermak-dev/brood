@@ -57,9 +57,63 @@ var schemaMigrations = []schemaMigration{
 	{from: 32, sql: gitlabFullSchema()},
 	{from: 33, sql: gitlabProposalFullSchema()},
 	// 35: пустые дочерние задачи; существующие шаги и проходы не меняются (#289).
-	{from: 34, sql: swarmChildrenFullSchema()},
+	{from: 34, sql: swarmChildrenSchemaV35()},
 	// 36: default сети проекта и новые immutable snapshots; прежние строки не меняются (#302).
 	{from: 35, sql: managedNetworkFullSchema()},
+	// 37: пустой каталог версий policy; старым проходам правила не назначаются (#290).
+	{from: 36, sql: workflowPolicyFullSchema()},
+	// 38: старые проходы явно получают legacy empty, не текущий default (#290).
+	{from: 37, sql: swarmPassPolicyMigration()},
+	// 39: пустой журнал completion intent; старые исходы не переинтерпретируются (#290).
+	{from: 38, sql: pipelineCompletionIntentFullSchema()},
+	// 40: result observations и signed evidence; старые intent не исполняются (#290).
+	{from: 39, sql: pipelineResultFullSchema()},
+	// 41: acceptance receipts и ACK; старым intent получение не выдумывается (#290).
+	{from: 40, sql: pipelineCompletionReceiptFullSchema()},
+	// 42: immutable кандидаты; старым переходам решения не выдумываются (#290).
+	{from: 41, sql: pipelinePolicyCandidateFullSchema()},
+	// 43: подтверждения кандидатов; старым переходам ответов не приписываем (#290).
+	{from: 42, sql: pipelinePolicyConfirmationFullSchema()},
+	// 44: пустая история доставки; прежним неизвестным исходам не выдумываем отправку (#291).
+	{from: 43, sql: actorDeliveryFullSchemaV44()},
+	// 45: сохраняем контекст новых вопросов; прежним проход не выдумываем (#293).
+	{from: 44, sql: swarmRequestPassFullSchema()},
+	// 46: прежние акторы остаются persistent; эфемерную историю не выдумываем (#292).
+	{from: 45, sql: "ALTER TABLE managed_actors ADD COLUMN " + managedActorClassColumn + ";" + managedActorClassGuardSchema()},
+	// 47: пустая очередь до выделения актора, без выдуманной прошлой работы (#292).
+	{from: 46, sql: ephemeralChildIntentSchemaV47()},
+	// 48: пустые привязки выделения, без назначения акторов старым намерениям (#292).
+	{from: 47, sql: ephemeralChildAllocationFullSchema()},
+	// 49: пустой журнал attestation до регистрации child; старым allocation доказательств нет (#292).
+	{from: 48, sql: ephemeralChildAttestationFullSchema()},
+	// 50: proof-bound конверсия одного слота; прежние строки не меняются (#292).
+	{from: 49, sql: ephemeralChildRegistrationMigration()},
+	// 51: typed child delivery; прежние intent/attempt/outcome сохраняются (#292).
+	{from: 50, sql: actorDeliveryChildMigration()},
+	// 52: прежние allocation получают legacy hold, никогда queued create permission (#292).
+	{from: 51, sql: ephemeralChildCreateGrantMigration()},
+	// 53: пустые seals, никакого выведения разрешения cleanup из старых отчётов (#292).
+	{from: 52, sql: ephemeralChildResultSealFullSchema()},
+	// 54: пустая automatic provenance; старые start/delete не переклассифицируются (#292).
+	{from: 53, sql: ephemeralChildLifecycleFullSchema()},
+	// 55: только пустая история локальных pre-registration отказов (#292).
+	{from: 54, sql: ephemeralChildFailureMigration()},
+	// 56: пустая явная lineage; старые resets не классифицируются (#292).
+	{from: 55, sql: ownerManagedActorLineageFullSchema()},
+	// 57: пустая история отказов registered executor; actor reports не выводятся (#292).
+	{from: 56, sql: ephemeralChildExecutorFailureMigration()},
+	// 58: отдельная failure cleanup provenance; прежняя история сохраняется (#292).
+	{from: 57, sql: ephemeralChildFailureCleanupMigration()},
+	// 59: пустая immutable nonproduction eval identity (#293).
+	{from: 58, sql: swarmEvalFullSchema()},
+	// 60: failed member cleanup после точного applied any/quorum outcome (#292).
+	{from: 59, sql: ephemeralChildMixedCleanupMigration()},
+	// 61: positive pre-instruction cancelled registered cleanup; история сохранена (#292).
+	{from: 60, sql: ephemeralChildCancelCleanupMigration()},
+	// 62: entry после human и durable review contracts; старые кандидаты сохраняются (#290).
+	{from: 61, sql: pipelinePolicyProgressionMigration()},
+	// 63: явные владельцы проекта; прежнее членство не выдаёт grant (#290).
+	{from: 62, sql: projectOwnershipSchema},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).

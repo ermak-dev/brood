@@ -52,7 +52,7 @@ func TestOriginSchemaRefusesPreviousVersionWithoutMutation(t *testing.T) {
 
 func TestOriginSchemaDamageRefusedWithoutMutation(t *testing.T) {
 	for _, change := range []string{
-		`ALTER TABLE managed_actors DROP COLUMN origin`,
+		`ALTER TABLE managed_actors RENAME COLUMN origin TO missing_origin`,
 		`DROP TABLE project_repositories`,
 		`DROP TABLE project_repositories; CREATE TABLE project_repositories (project_id TEXT PRIMARY KEY, origin TEXT)`,
 		fmt.Sprintf("PRAGMA user_version=%d", schemaVersion+1),

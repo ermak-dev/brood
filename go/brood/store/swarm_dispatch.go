@@ -109,13 +109,19 @@ type PreviousStep struct {
 // answers ErrActorStepRefused. The attempt carries the source commit (#229)
 // and the goal of the step's pass, the sequence of its first step and, read
 // in the same transaction, the step right before it in that pass (Previous,
-// #248): nil for the first step of a pass.
+// #248): nil for the first step of a pass. A nonempty policy requires an exact
+// durable candidate before any workspace lease. Initial and post-human entries
+// retain their own candidate; immediate actor successors reuse their result
+// candidate. Unsatisfied obligations return ErrPipelinePolicyPending without an
+// actor attempt. Explicit denial/negative confirmation fails the pass with a
+// readable reason and no actor outcome. A graph answer is never policy approval.
 func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller string) (ActorStepAttempt, error) {
 	if !validPipelineField(swarmID) || !validPipelineField(requestID) || caller == "" {
 		return ActorStepAttempt{}, errors.New("invalid actor step reservation")
 	}
 	var attempt ActorStepAttempt
 	var refusal string
+	var policyHeld bool
 	err := s.WithTx(ctx, func(ctx context.Context) error {
 		w, sequence, node, d, err := s.awaitingActorStep(ctx, swarmID)
 		if err != nil {
@@ -130,6 +136,53 @@ func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller
 			refusal = "the step's pass has no source commit to attest"
 			return s.refusePendingStep(ctx, swarmID, sequence, refusal)
 		}
+		usesPolicy, err := s.PipelineCompletionUsesPolicy(ctx, swarmID, sequence)
+		if err != nil {
+			return err
+		}
+		if usesPolicy {
+			preview, boundary, err := s.actorEntryPolicyPreview(ctx, w, d, sequence)
+			if errors.Is(err, errPolicyReviewUnavailable) {
+				refusal = err.Error()
+				return s.failPolicyPendingActor(ctx, swarmID, sequence, pass, node, refusal)
+			}
+			if err != nil {
+				return err
+			}
+			if boundary == "entry" {
+				if _, err := s.RecordPipelinePolicyCandidate(ctx, swarmID, sequence, "entry", NewID()); err != nil {
+					return err
+				}
+			}
+			candidate, err := s.GetPipelinePolicyCandidate(ctx, swarmID, preview.Sequence, boundary)
+			if err != nil {
+				return err
+			}
+			decision, rejected, err := s.pipelinePolicyCandidateDecision(ctx, candidate)
+			if err != nil {
+				return err
+			}
+			if rejected {
+				refusal = policyRejectionReason(decision)
+				return s.failPolicyPendingActor(ctx, swarmID, sequence, pass, node, refusal)
+			}
+			allowed, err := s.actorEntryPolicyAllowed(ctx, w, d, sequence)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				policyHeld = true
+				return nil
+			}
+			if err := s.assignInlinePolicyReview(ctx, candidate, sequence); err != nil {
+				return err
+			}
+		}
+		source, err := s.PipelineActorStepSource(ctx, swarmID, sequence)
+		if err != nil {
+			return err
+		}
+		commit = source.Commit
 		n := d.Nodes[node]
 		b, err := s.stepRoleBinding(ctx, swarmID, n.Role)
 		if err != nil {
@@ -163,6 +216,9 @@ func (s *Store) ReserveActorStep(ctx context.Context, swarmID, requestID, caller
 	}
 	if refusal != "" {
 		return ActorStepAttempt{}, fmt.Errorf("%w: %s", ErrActorStepRefused, refusal)
+	}
+	if policyHeld {
+		return ActorStepAttempt{}, ErrPipelinePolicyPending
 	}
 	return attempt, nil
 }
@@ -265,7 +321,30 @@ func (s *Store) refusePendingStep(ctx context.Context, swarmID string, sequence 
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return err
 	}
-	return s.queueStepFailure(ctx, swarmID, sequence)
+	if err := s.queueStepFailure(ctx, swarmID, sequence); err != nil {
+		return err
+	}
+	_, err = s.ResolvePipelinePolicyReview(ctx, swarmID, sequence)
+	return err
+}
+
+// Отказ review уже мог завершить проход внутри refusePendingStep. Обычный
+// policy refusal завершает его здесь; pass_finished остаётся единственным.
+func (s *Store) failPolicyPendingActor(ctx context.Context, swarmID string, sequence, pass int64, node, reason string) error {
+	if err := s.refusePendingStep(ctx, swarmID, sequence, reason); err != nil {
+		return err
+	}
+	w, err := s.GetSwarm(ctx, swarmID)
+	if err != nil {
+		return err
+	}
+	if w.Execution == "failed" {
+		return nil
+	}
+	if err := s.advanceExecution(ctx, swarmID, "failed", nowRFC3339()); err != nil {
+		return err
+	}
+	return s.queueTelegram(ctx, "pass_finished", TelegramEvent{Swarm: swarmID, Sequence: pass, Node: node, Execution: "failed"})
 }
 
 // queueStepFailure ставит уведомление step_failed о шаге, который только
@@ -301,9 +380,9 @@ func (s *Store) RecordActorStepAttestation(ctx context.Context, a ActorStepAttem
 			return ErrPipelineSourceUnverified
 		}
 		// Commit прохода шага, а не роя (#229).
-		if _, _, pinned, err := s.stepPass(ctx, a.SwarmID, a.Sequence); err != nil {
+		if source, err := s.PipelineActorStepSource(ctx, a.SwarmID, a.Sequence); err != nil {
 			return err
-		} else if pinned == "" || pinned != commit {
+		} else if source.Commit == "" || source.Commit != commit {
 			return ErrPipelineSourceUnverified
 		}
 		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='delivering',attested_commit=? WHERE swarm_id=? AND sequence=? AND request_id=? AND state='attesting'`, commit, a.SwarmID, a.Sequence, a.RequestID)
@@ -395,6 +474,27 @@ func (s *Store) currentAttempt(ctx context.Context, a ActorStepAttempt, state st
 	if err := s.requireRoleActor(ctx, a.SwarmID, d.Nodes[node].Role, actor, incarnation); err != nil {
 		return Swarm{}, err
 	}
+	if _, assignment, err := s.inlinePolicyReview(ctx, a.SwarmID, a.Sequence); err == nil {
+		source, err := s.PipelineActorStepSource(ctx, a.SwarmID, a.Sequence)
+		if err != nil {
+			return Swarm{}, err
+		}
+		if source != a.Source {
+			return Swarm{}, ErrPipelineSourceUnverified
+		}
+		if err := s.CheckPipelinePolicyReviewAssignment(ctx, a.SwarmID, assignment.CandidateID, assignment.RuleID); err != nil {
+			return Swarm{}, err
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return Swarm{}, err
+	}
+	allowed, err := s.actorEntryPolicyAllowed(ctx, w, d, a.Sequence)
+	if err != nil {
+		return Swarm{}, err
+	}
+	if !allowed {
+		return Swarm{}, ErrPipelinePolicyPending
+	}
 	return w, nil
 }
 
@@ -452,7 +552,14 @@ func (s *Store) moveAttempt(ctx context.Context, a ActorStepAttempt, from []stri
 		if to != "refused" && to != "unconfirmed" {
 			return nil
 		}
-		return s.queueStepFailure(ctx, a.SwarmID, a.Sequence)
+		if err := s.queueStepFailure(ctx, a.SwarmID, a.Sequence); err != nil {
+			return err
+		}
+		if to == "refused" {
+			_, err := s.ResolvePipelinePolicyReview(ctx, a.SwarmID, a.Sequence)
+			return err
+		}
+		return nil
 	})
 }
 

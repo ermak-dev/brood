@@ -123,7 +123,15 @@ func (s *Server) serveGuestProjectSecrets(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	bundle, err := s.store.ReadProjectSecretBundle(ctx, g.swarm.ProjectID)
+	binding, err := s.swarmEvalRuntime(ctx, g.swarm.ID)
+	if err != nil {
+		writeDetail(w, 503, "eval isolation policy is unavailable")
+		return
+	}
+	bundle := projectsecret.Bundle{Files: []projectsecret.File{}, Vars: map[string]string{}}
+	if binding == nil {
+		bundle, err = s.store.ReadProjectSecretBundle(ctx, g.swarm.ProjectID)
+	}
 	if err != nil || projectsecret.ValidateBundle(bundle) != nil {
 		writeDetail(w, 503, "project secret delivery unavailable")
 		return
@@ -136,6 +144,9 @@ func (s *Server) serveGuestProjectSecrets(w http.ResponseWriter, r *http.Request
 	if !s.guestRuntimeCurrent(ctx, g) {
 		writeDetail(w, 401, "guest authorization denied")
 		return
+	}
+	if binding != nil {
+		w.Header().Set("X-Brood-Secret-Projection", "isolated-empty")
 	}
 	writeGuestRuntime(w, data)
 }

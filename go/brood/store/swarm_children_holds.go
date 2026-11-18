@@ -18,12 +18,17 @@ func (s *Store) CheckActorChildObligations(ctx context.Context, uid string) erro
 // guardChildLifecycle protects both executors and the parent, including missing
 // expected members. Holds are durable and never expire into permission to reset.
 func (s *Store) guardChildLifecycle(ctx context.Context, uid string) error {
+	return s.guardChildLifecycleExcept(ctx, uid, "")
+}
+
+// Исключение доступно только validated failure-cleanup scope, не общим lifecycle API.
+func (s *Store) guardChildLifecycleExcept(ctx context.Context, uid, failedChildID string) error {
 	if err := s.guardOwnerIntervention(ctx, uid); err != nil {
 		return err
 	}
 	var held bool
 	err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarm_child_joins j WHERE
- (j.parent_uid=? AND `+swarmChildUnfinished+`) OR EXISTS(SELECT 1 FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence AND c.actor_uid=? AND c.state IN ('pending','running')))`, uid, uid).Scan(&held)
+ (j.parent_uid=? AND `+swarmChildUnfinished+`) OR EXISTS(SELECT 1 FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence AND c.actor_uid=? AND c.state IN ('pending','running') AND NOT (c.id=? AND EXISTS(SELECT 1 FROM ephemeral_child_executor_failures f WHERE f.child_id=c.id))))`, uid, uid, failedChildID).Scan(&held)
 	if err != nil {
 		return err
 	}

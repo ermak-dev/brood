@@ -89,9 +89,17 @@ func (s *Store) guardActorCoordination(ctx context.Context, a ManagedActor) erro
 }
 
 func (s *Store) guardActorCoordinationForIntent(ctx context.Context, a ManagedActor, intent string) error {
-	if err := s.guardChildLifecycle(ctx, a.UID); err != nil {
+	return s.guardActorCoordinationExceptChild(ctx, a, intent, "")
+}
+
+func (s *Store) guardActorCoordinationExceptChild(ctx context.Context, a ManagedActor, intent, failedChildID string) error {
+	if err := s.guardChildLifecycleExcept(ctx, a.UID, failedChildID); err != nil {
 		return err
 	}
+	return s.guardActorCoordinationClaimsForIntent(ctx, a, intent)
+}
+
+func (s *Store) guardActorCoordinationClaimsForIntent(ctx context.Context, a ManagedActor, intent string) error {
 	if op, err := s.CurrentActorOperation(ctx, a.UID); err == nil {
 		// Явный stop отзывает живой browser stream, но не освобождает slot.
 		// Desired=stopped в той же транзакции запрещает новые child claims.

@@ -86,6 +86,7 @@ func TestMigrateV26DatabaseToCurrent(t *testing.T) {
 	path := loadSchemaFixture(t, 26)
 	raw := rawDatabase(t, path)
 	before, ids := databaseRows(t, raw), swarmIDs(t, raw)
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 
 	s, err := Open(ctx, path)
@@ -247,6 +248,7 @@ func TestMigrateV27DatabaseToCurrent(t *testing.T) {
 	}
 	requireIntact(t, raw)
 	before, ids := databaseRows(t, raw), swarmIDs(t, raw)
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 
 	s, err := Open(ctx, path)
@@ -323,6 +325,7 @@ func TestMigrateV28DatabaseToCurrent(t *testing.T) {
 	}
 	requireIntact(t, raw)
 	before := databaseRows(t, raw)
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 
 	s, err := Open(ctx, path)
@@ -404,6 +407,7 @@ func TestMigrateV29DatabaseToCurrent(t *testing.T) {
 	raw := rawDatabase(t, path)
 	requireIntact(t, raw)
 	before := databaseRows(t, raw)
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 	if len(before["user_telegram_links"]) != 3 {
 		t.Fatalf("the v29 fixture has no links to migrate: %v", before["user_telegram_links"])
@@ -452,6 +456,7 @@ func TestMigrateV30DatabaseToCurrent(t *testing.T) {
 	raw := rawDatabase(t, path)
 	requireIntact(t, raw)
 	before := databaseRows(t, raw)
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 	if len(before["user_telegram_links"]) != 3 {
 		t.Fatalf("the v30 fixture has no links to migrate: %v", before["user_telegram_links"])
@@ -509,14 +514,15 @@ func withForceReplyStep(rows map[string][]string) map[string][]string {
 	return out
 }
 
-// withCurrentHistoryTables: шаги 32→36 добавляют пустую историю и настройки;
-// полномочия и сети не выводятся из credentials, прежние строки не меняются.
+// withCurrentHistoryTables: поздние шаги добавляют пустую историю и настройки;
+// полномочия и сети не выводятся из credentials. В 45→46 прежние actor-поля
+// сохраняются дословно, новая колонка получает только persistent.
 func withCurrentHistoryTables(rows map[string][]string) map[string][]string {
 	out := maps.Clone(rows)
-	for _, table := range []string{"gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals", "gitlab_proposal_states", "swarm_child_joins", "swarm_child_tasks", "actor_interventions", "actor_step_interruptions", "project_managed_networks", "managed_actor_networks"} {
+	for _, table := range []string{"gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals", "gitlab_proposal_states", "swarm_child_joins", "swarm_child_tasks", "actor_interventions", "actor_step_interruptions", "project_managed_networks", "managed_actor_networks", "project_workflow_policy_heads", "project_workflow_policy_versions", "pipeline_completion_intents", "pipeline_result_observations", "pipeline_result_evidence", "pipeline_completion_receipts", "pipeline_completion_acknowledgements", "pipeline_policy_candidates", "pipeline_policy_confirmations", "actor_deliveries", "actor_delivery_attempts", "actor_delivery_outcomes", "swarm_request_pass_contexts", "ephemeral_child_intents", "ephemeral_child_allocations", "ephemeral_child_attestations", "ephemeral_child_create_grants", "ephemeral_child_result_seals", "ephemeral_child_lifecycles", "ephemeral_child_failures", "owner_managed_actor_lineage", "ephemeral_child_executor_failures", "swarm_eval_bindings", "swarm_eval_replays"} {
 		out[table] = nil
 	}
-	return out
+	return withEmptyPolicyReviewTables(withPersistentActorClass(out))
 }
 
 func TestMigrateV32DatabaseToCurrent(t *testing.T) {
@@ -524,6 +530,7 @@ func TestMigrateV32DatabaseToCurrent(t *testing.T) {
 	path := loadSchemaFixture(t, 32)
 	raw := rawDatabase(t, path)
 	before := databaseRows(t, raw)
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 	s, err := Open(ctx, path)
 	mustNil(t, err)
@@ -550,6 +557,7 @@ func TestMigrateV31DatabaseToCurrent(t *testing.T) {
 	raw := rawDatabase(t, path)
 	requireIntact(t, raw)
 	before := databaseRows(t, raw)
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 	if len(before["telegram_outbox"]) == 0 {
 		t.Fatal("the v31 fixture has no notifications to migrate")

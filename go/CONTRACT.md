@@ -222,13 +222,70 @@ SA и уже встреченных principals, не превращение ло
 - Гость получает тот же текст отказа через relay, как прежде; из других
   путей API `reason` отдаёт только профиль Telegram (#281).
 
+## Явный владелец проекта
+
+`GET /api/projects/{id}/owner` читают текущий admin и участники проекта. Ответ:
+`{projectId, viewerUid, revision, ownerUid, ownerUsername, updatedBy, updatedAt}`.
+`viewerUid` — UID текущей authenticated human session, не имя и не UID владельца
+из input; ответ персонализирован и имеет `Cache-Control: no-store`. Revision 0 и
+пустые owner/author/time означают отсутствие назначения. Положительная revision
+с пустыми ownerUid/ownerUsername означает снятое назначение либо удалённый
+аккаунт владельца. Чужой или отсутствующий
+проект — 404, отсутствие human session — 401.
+
+`PUT /api/projects/{id}/owner` доступен только текущему installation admin с
+Origin/CSRF и живой сессией. Тело не больше 16 KiB, ровно `{revision, username}`:
+неотрицательная integer revision и строка username. Неизвестные/повторные поля,
+null, неверный регистр, повреждённый UTF-8 или второй JSON-документ — 400. Непустой username
+должен разрешаться в активного текущего участника этого проекта; пустой явно
+снимает owner. Изменение — CAS по текущей revision, устаревшая — 409, без retry.
+Успех 200 возвращает новый снимок с revision + 1. Account/admin/session и target
+membership проверяются внутри записи; отказ не меняет назначение.
+
+Назначение даёт неадминистратору только право редактирования workflow policy
+этого проекта при текущем членстве. Не даёт installation-admin, управления
+ownership или новых прав на другие административные действия. Отсутствие записи,
+роль owner в рое и прежнее авторство policy не дают grant. Preserving migration
+62→63 добавляет пустую таблицу без вывода владельцев из старых данных. Панель
+показывает сведения всем читателям проекта, форму назначения/отзыва — только
+admin, а policy editor — admin или актуальному явному owner; неизвестная ownership
+не открывает права owner.
+
+## Политика workflow проекта
+
+`GET /api/projects/{id}/workflow-policy` — текущий default политики; читают
+участники проекта и администратор. Ответ: `projectId`, числовая `revision`,
+`rules`, `createdBy` (ID автора) и `createdAt`. Ненастроенный существующий проект
+возвращает revision 0, пустые rules и строки автора/времени, а не 404.
+Чужой/отсутствующий проект — 404, без сессии — 401. Ответ `Cache-Control: no-store`.
+
+`PUT /api/projects/{id}/workflow-policy` — текущий администратор либо явный
+активный владелец этого проекта с текущим членством, Origin/CSRF и действующей
+сессией; тело ровно `{revision, rules}` с явной текущей
+revision и массивом правил. Неверные типы, null, неизвестные поля, повторы ключей
+(в том числе внутри правила), регистровые варианты и второй JSON-документ — 400.
+Тело ограничено 1 МиБ; правила — 64 правилами, ограничениями evaluator и
+131072 байтами JSON после кодирования. Неверные правила или превышение размера
+сохраняемого набора — 422 без отражения входного тела. Правило имеет `id`,
+`paths?`, `actions?`, `require` (`human`, `independent_review`, `deny`) и
+`reviewRole?`; независимому review роль обязательна.
+
+Запись атомарно добавляет неизменяемую версию и сдвигает head по revision CAS.
+Устаревшая revision — 409, не перезапись и не автоматический retry на свежую
+версию. Успех — 200 с новым снимком. Явный пустой массив rules добавляет новую
+пустую версию, не удаляет историю. Автор, текущая admin либо owner/membership
+identity и session authority заново проверяются в транзакции после чтения тела;
+потеря полномочий — 403 без записи.
+Изменение default не переписывает policy уже запущенного прохода и не даёт
+разрешения активному candidate; политика закрепляется отдельно при запуске.
+
 ## Запросы роя
 
 Устройство и инварианты — [MODEL.md](../docs/MODEL.md), «Запросы роя» (#209, #210).
 
 - `GET /api/swarms/{id}/requests` — `{"results": [...]}` открытых запросов,
   `?all=1` — всех; любая роль роя. Элемент: `id`, `swarmId`, `origin`
-  (`node`/`actor`), `sequence`/`nodeId` узлового запроса, `actor`
+  (`node`/`actor`/`policy`), `sequence`/`nodeId` узлового запроса, `actor`
   (`name`, `incarnation`) запроса актора, `kind`, `question`, `context`,
   `options` (`label`, `outcome`), `state`, `createdAt`, после ответа
   `answeredAt`, `answeredBy` (username), `outcome`, `optionLabel`, `response`
@@ -239,7 +296,7 @@ SA и уже встреченных principals, не превращение ло
   проходе (#233): строка `Report of step <n> (node <узел>, outcome <исход>):`,
   пустая строка и отчёт как есть; без отчёта поля нет.
 - `POST /api/swarms/{id}/requests/{request}/answer` — ровно
-  `{outcome?, response?}`, owner/editor/administrator; 200 — запрос после
+  `{outcome?, response?, revision?}`, owner/editor/administrator; 200 — запрос после
   ответа. Сбой доставки ответа актору — не отказ: `delivery: "failed"` или
   `"unconfirmed"` и `deliveryError` из фиксированного набора; у
   `unconfirmed` — `delivery is unconfirmed: the answer may have reached the
@@ -255,7 +312,40 @@ SA и уже встреченных principals, не превращение ло
   409. Повтор из `unconfirmed` может доставить ответ дважды; не ушедший
   повтор оставляет `unconfirmed`, и `deliveryError` добавляет `; an earlier
   delivery is unconfirmed: the answer may have reached the actor, and a
-  retry may deliver it twice`.
+  retry may deliver it twice`. Это предупреждение относится к legacy-пути.
+  Для retained journal (#291) неизвестный эффект допускает только read-only
+  probe прежнего ID. Он не пишет повторно в session, а подтверждает лишь
+  сохранённую квитанцию точного journal. Смена или отсутствие journal не дают
+  fallback на legacy-send. Telegram `sendMessage` не получает такого протокола.
+
+Операторский CLI: `bro swarm requests SWARM [--all]` и
+`bro swarm answer SWARM REQUEST [--outcome VALUE] [--response TEXT] [--revision N]`.
+Для policy-запроса передайте `--response yes` или `--response no` и `--revision 1`.
+
+Policy-запрос (#290) имеет `id: "policy:<candidate ID>"`, `origin: "policy"`,
+`kind: "confirm"`, `revision: 1` до ответа и `2` после. Ответ — ровно
+`{response: "yes" | "no", revision: 1}` без `outcome`: клиент передаёт увиденную
+ревизию, не подбирает новую при конфликте. Повтор того же ответа того же
+пользователя возвращает первоначальную запись; другой ответ или ревизия — 409.
+Это не сообщение актору и не исход graph-узла; `deliver` возвращает 409.
+Подтверждение относится только к этому candidate; другие обязательства могут
+по-прежнему блокировать автоматическое продолжение. Изменение текущего default
+не заменяет политику прохода или сохранённое решение.
+
+`GET /api/swarms/{id}/requests/policy:{candidate}/policy` — полный неизменяемый
+снимок оснований решения, доступный любой текущей роли роя, в том числе viewer.
+Ответ: `id`, `version: 1`, `swarmId`, `sequence`, `pass`, `policyRevision`,
+`boundary` (`entry`/`result`), `createdAt`, `target`, `targetKind`, `initial`,
+`actionsKnown`, `actions`, `rules` (правила закреплённой политики), `evidence`
+(`id`, `known`, `complete`, `artifact`, `producerUid`, полный `paths`) и
+`decision` (`state`, `matches` с `ruleId` и полным `paths`, `human`, `review`,
+`denied`, `unknown`, `notApplicable`). Пустые массивы остаются массивами.
+Это исходная оценка, не текущее разрешение перехода: ответ оператора, остановка
+и новые defaults её не переписывают. Начальная граница не изобретает пустой
+успешный artifact: `initial` и признаки известности evidence передаются явно.
+Чужой candidate, другой рой или неполитический request — 404; без сессии — 401.
+Маршрут read-only: изменяющий метод авторизованного читателя — 405 с `Allow: GET`.
+Чтение не создаёт ответ, шаг, lease и не обращается к гостю.
 
 Тексты отказов — фиксированный публичный набор; текст ошибок хранилища и
 адаптеров клиенту не возвращается. Ответ оператора идёт только этим API:
@@ -342,9 +432,13 @@ Human API #289 требует текущую login-сессию и право в
   Неизвестные, повторные, пустые или некорректные параметры — 400.
 - Metadata группы: `parentSequence`, `pass`, `parentUid`, `parentIncarnation`,
   `mode`, `total`, `quorum`, `state`, `revision`, `interrupted`, `registered`,
-  `open`, `started`. `open` включает отсутствующие ожидаемые слоты, у aborted
-  группы — 0. `started` считает running/completed детей, а не доказывает внешний
-  эффект. Payload и отчёты не входят в страницы metadata.
+  `unregisteredFailed`, `executorFailed`, `open`, `started`. `unregisteredFailed`
+  считает явные отказы job до регистрации и не входит в `registered`.
+  `executorFailed` — отказы уже зарегистрированных pending/running детей,
+  подмножество `registered`, а не дополнительные слоты. `open` включает
+  отсутствующие слоты без явного отказа и незавершённых детей без server failure,
+  у aborted группы — 0. `started` считает running/completed детей, а не
+  доказывает внешний эффект. Payload и отчёты не входят в страницы metadata.
 - `GET /api/swarms/{id}/children/{sequence}` — те же поля, `readiness`,
   `abortedBy`/`abortedAt` при наличии и массив `children`. Sequence — положительный
   int64, query parameters не поддерживаются: неверный запрос — 400,
@@ -352,8 +446,11 @@ Human API #289 требует текущую login-сессию и право в
 - Ребёнок: `id`, `requestId`, `role`, `executorUid`, `executorIncarnation`,
   `state`, `delivery`, `deliveryDetail` при наличии, `task`, `outcome`/`report`
   при наличии, `revision`, `createdAt`, `finishedAt` при наличии. Исходные task и
-  report возвращаются без переписывания. В контракте нет session hashes,
-  credential references или внутренних principal-объектов.
+  report возвращаются без переписывания. Optional `executorFailure` содержит
+  точные `intentId`, `childId`, `requestId`, `reason`, `failedAt` отдельного
+  серверного решения, не заменяя actor state/outcome/report или delivery.
+  В контракте нет session hashes, credential references или внутренних
+  principal-объектов.
 
 `readiness` — результат оценки join, не утверждение, что родитель успешно
 завершён. `interrupted=true` сохраняет неопределённость и после позднего отчёта.
@@ -366,6 +463,153 @@ Human API #289 требует текущую login-сессию и право в
 получает 403 на abort. Сохранённые policy, payload и cancelled записи не удаляются.
 Это не API сверки или отмены неизвестного внешнего эффекта.
 
+## Трасса прохода
+
+`GET /api/swarms/{id}/passes/{pass}` (#293) читает сохранённый проход одним
+согласованным snapshot. `pass` — канонический положительный int64, номер первого
+visit с goal; sequence внутри прохода не является его альтернативным ID.
+Неверный номер/формат — 400, отсутствующий проход своего роя — 404. Требуются
+текущая human login-сессия и видимость роя, проверяемая повторно перед выдачей:
+viewer может читать, член проекта без grant роя получает 404, анонимный клиент
+или один machine Bearer без human-сессии — 401. Метод только GET/HEAD; прочие
+методы — 405 с `Allow: GET, HEAD`. Ответы имеют `Cache-Control: no-store`.
+
+Единственный query parameter — `download=0|1`, без повторов; неизвестный,
+некорректный или пустой параметр — 400. `download=1` отдаёт тот же JSON с
+`Content-Disposition: attachment; filename="brood-pass-N.json"`; имя не задаётся
+вызывающим. `version: 1`, `swarmId`, `pass`, `goal`, `source` (origin/commit
+именно прохода), `definition`, исходный `graph` текстом, `current`, `steps`,
+`requests`, `unscopedActorRequests`, `gaps`. `execution` присутствует только у
+текущего прохода: статус нового запуска не выдаётся за исторический.
+
+`steps` идут по sequence. В каждом есть nodeId/state, сохранённые времена,
+стабильная actor UID/incarnation (опциональный currentName — только текущая
+подпись), requestId/attestedCommit и actual outcome/report/detail при наличии.
+`reportedResult` отдельно хранит ещё не применённый completion report;
+`resultObservation` — только id/state/detail/revision, `artifactEvidence` —
+commit/baseCommit/producer UID/incarnation и полные пути. Root RPC lease, challenge,
+acceptance nonce, HMAC signature, machine token и session hashes в DTO не входят.
+`policyCandidates` — исходные immutable решения, не текущее разрешение действовать.
+`children` использует публичную проекцию истории дочерних групп.
+
+`instruction` и `deliveryHistory` сохраняют исходный frame текстом и все attempts:
+number/mode/createdAt/deadlineAt, `resultRetained`, исход/detail/observedAt при
+наличии. `childInstructions` сохраняет такую же проекцию typed child delivery.
+Отсутствующая квитанция не выдумывается как известный `not_sent`.
+`ephemeralJobs` показывает сохранённый intent, необязательные allocation и
+`childId`, а также раздельные `failure` до регистрации и `executorFailure`
+после регистрации; эти факты не являются actor report или cleanup grant.
+Actor-вопрос вне scoped ephemeral child остаётся глобальным; `createdDuring` описывает точные pass и observed
+sequence при создании, а не владение graph-шагом. Вопросы без такого контекста
+перечислены отдельно и не приписываются проходу по timestamps. `answeredByUid`
+остаётся сохранённой личностью автора, а не сегодняшним username.
+
+Лимит — 4096 записей visits и вопросов суммарно; бюджет материала — 32 MiB. Превышение
+возвращает 413 с причиной и без частичного JSON/download header, не усекает frames
+или reports. Не сохранённая legacy-инструкция или неизвестное время явно названы
+в gaps. Чтение/выгрузка не повторяет доставку или workspace observation, не закрывает
+join, не применяет policy и не выдаёт replay/landing authority. Это read-only
+trace/export API; страница панели открывается из истории проходов. Replay eval
+и сравнение не запускаются чтением трассы.
+
+### Сравнение сохранённых проходов
+
+`GET /api/swarms/{id}/passes/{pass}/compare?swarm=ID&pass=N` (#293) сравнивает
+reference из адреса с candidate из query. Оба номера — канонические положительные
+int64. `swarm` и `pass` обязательны ровно по одному разу; опциональный `download`
+принимает только `0|1`. Неизвестные/повторные/неполные параметры — 400. Невидимая
+любая сторона или отсутствующий проход — 404; анонимный клиент или machine Bearer
+без human-сессии — 401. Текущий owner/editor/viewer может читать; членство в проекте
+не заменяет grant роя. Видимость обеих сторон проверяется до единой транзакции
+чтения и повторно перед выдачей. Методы только GET/HEAD, иначе 405 с Allow.
+
+JSON содержит `version: 1`, `alignment: "visit-position"`, `reference` и `candidate`
+(swarmId/pass), `sameGoal`, `sameSource`, `sameDefinition`, `stepCount`,
+`childTaskCount` и `steps`. Счётчики имеют reference/candidate/delta, delta всегда
+candidate-reference и считает сохранённые записи, не неучтённую работу.
+Сопоставление по позиции не ищет похожие узлы и не доказывает эквивалентность:
+разные nodeId дают `not_comparable`, отсутствующая сторона — `node: "missing"`.
+
+Строка шага сохраняет sequence/nodeId/state каждой стороны; actual outcome/report
+и reportedOutcome/reportedReport — отдельно. Статусы сравнения: `same`, `different`,
+`unknown` при отсутствии сохранённого значения и `not_comparable` для разных узлов
+или отсутствующей стороны. Неприменённый completion не подставляется в actual.
+`durationMillis` — интервал корректных сохранённых времён; отсутствует для
+неполных, повреждённых, отрицательных или переполняющихся интервалов. Разница
+`durationDeltaMillis` есть только для того же nodeId с известным временем обеих
+сторон. Это elapsed wall-clock time, не model latency.
+
+Ответ `no-store`, `nosniff`, application/json. `download=1` отдаёт те же данные с
+фиксированным `attachment; filename="brood-pass-comparison.json"`. Лимиты трасс
+и 32 MiB результата действуют без усечения: превышение — 413 с причиной, без
+частичного JSON или download header. Root authority material не включается.
+Сравнение не наблюдает workspace заново, не повторяет доставку, не даёт eval
+provenance или разрешения landing/разрушительных действий.
+
+Operator CLI `bro swarm compare SWARM PASS OTHER_SWARM OTHER_PASS [--json]`
+разрешает каждое имя роя независимо среди доступных, либо принимает ID. Номера
+проходов — канонические положительные int64. Текст явно показывает unknown и
+разделяет actual/reported, пользовательские строки экранированы для терминала;
+`--json` печатает полный документ. Ошибки аргументов не делают запросов, guest
+mode запрещён, ошибочный API-ответ не печатается частично. Сравнение read-only,
+повторов или fallback нет. Панель использует тот же endpoint на странице
+`/#/swarms/{id}/passes/{pass}/compare?swarm=ID&pass=N`: явный выбор кандидата,
+пары сохранённых записей, исходные отчёты и JSON download, без запуска работы.
+Вердикт сравнения явно подписан и не выдаётся за actual outcome любой стороны.
+Replay eval не запускается сравнением; у него отдельный двухэтапный контракт.
+
+### Изолированный eval
+
+`POST /api/swarms/{id}/eval` принимает ровно
+`{referenceSwarmId, referencePass, definition, model}`. Human session и CSRF
+обязательны для мутаций; текущий launcher должен управлять candidate и reference.
+Candidate — новый рой отдельного проекта с тем же repository origin, без истории
+managed actors (включая tombstones), native actors и pending reservations. Binding
+создаётся под общей project admission gate до загрузки любого candidate actor.
+
+Reference pass должен быть завершён. Binding неизменно сохраняет его goal/commit,
+снимок candidate definition (name/version/revision/graph), explicit ASCII model ID
+и `nonProduction: true`. Credentials и сетевые настройки не копируются. После
+binding можно настроить изолированные managed actors и их роли; prestart roles
+читают закреплённый graph, а не изменившийся каталог. Native execution запрещён.
+
+`GET /api/swarms/{id}/eval` для видимого роя возвращает 200 с
+`{swarmId, referenceSwarmId, referencePass, definition, model, source, goal,
+nonProduction, execution, replay}`. `definition` имеет name/version/revision,
+`source` — origin/commit; `replay` — null либо
+`{requestId, state, reason, interruptedChildren}`. State — `applied|stopped`,
+`interruptedChildren` — boolean, не количество. Неизвестная binding — 404;
+прочие ошибки не означают ordinary swarm. Чтение не запускает работу.
+
+`POST /api/swarms/{id}/eval/start` запускает только первый проход bound selection.
+Тело отсутствует либо содержит только пустой JSON object/null; selection overrides
+и повторные/неизвестные поля — 400. Успех 200 возвращает обычный execution DTO.
+Повторный проход и ordinary start bound candidate — 409 `swarm eval conflict`;
+ordinary start отказывает до разрешения Git branch. Изменившиеся authority, scope,
+source или inventory не превращаются в разрешение запуска.
+
+Recorded node answers применяются только к совпадающим node/options. Исторический
+автор остаётся автором исходной записи; applied answer принадлежит launcher, не
+имитирует человека. Несовпадение, actor-origin или policy-вопрос сохраняют durable
+stop/reason. Live answer API отвергает eval с 409. Прерывание outstanding children
+требует отдельной положительной owner authority, а не выводится из replay.
+
+Runtime marker проверяется fail-closed. Для candidate workspace оператор
+настраивает отдельные Git credentials проекта и явную network policy; binding
+их не выдаёт, сервер не переходит на installation fallback. Гостевая проекция
+проектных секретов пуста, основная и малая модели закреплены. Git push, native
+workload и actor-origin lifecycle/landing take запрещены; authenticated owner
+stop/delete остаются доступны. Эти ограничения не заменяют sandbox
+произвольного project code и сетевую политику Substrate.
+
+Operator CLI: `bro swarm eval bind SWARM --reference SWARM --pass N
+--definition NAME --model NAME [--json]`, затем `bro swarm eval start SWARM
+[--json]`; `bro swarm eval status SWARM [--json]` читает binding/replay. Нет
+model defaults, start overrides или automatic retry. Панель показывает отдельную
+binding form и pinned start; ordinary start недоступен при bound/unknown/error
+marker, а boolean interruption локализован как Yes/No. Trace/compare остаются
+самостоятельными read-only представлениями.
+
 ## Привязка ролей роя к акторам
 
 Устройство и инварианты — [MODEL.md](../docs/MODEL.md), «Привязка ролей»
@@ -376,6 +620,11 @@ Human API #289 требует текущую login-сессию и право в
 (`ready`, `unbound`, `stale`, `inactive`, `foreign`, `missing`) и у
 привязанной роли `actorUid`, `actorName` (только у актора этого роя),
 `actorIncarnation` — записанная инкарнация.
+
+Managed inventory передаёт `class: persistent|ephemeral` независимо от роли
+`master`/`worker`. Панель и `bro swarm roles` не предлагают ephemeral для
+обычных ролей графа; отсутствие `class` у legacy-сервера совместимо. Общий
+список не скрывает временных исполнителей и не ограничивает ручные действия owner.
 
 - `GET /api/swarms/{id}/roles[?definition=NAME]` — любая роль роя. Отказы:
   404 `swarm not found`, 404 `workflow definition is not in the project

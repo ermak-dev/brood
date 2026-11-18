@@ -111,6 +111,7 @@ type Request struct {
 type pending struct {
 	claim   Claim
 	expires time.Time
+	result  *ResultRequest
 }
 
 type attempt struct{ swarm, step string }
@@ -175,18 +176,12 @@ func (r *Registry) Issue(req Request) (Claim, error) {
 // forgery or a late answer can never be retried against the same challenge.
 // key derives the incarnation key from the issued actor UID and generation.
 func (r *Registry) Consume(got Attestation, key func(actorUID string, generation int64) []byte) (Claim, error) {
-	r.mu.Lock()
-	p, ok := r.pending[got.Challenge]
-	if ok {
-		r.forget(got.Challenge)
+	p, err := r.takeChallenge(got.Challenge)
+	if err != nil {
+		return Claim{}, err
 	}
-	now := r.now()
-	r.mu.Unlock()
-	if !ok {
-		return Claim{}, ErrReplay
-	}
-	if !now.Before(p.expires) {
-		return Claim{}, ErrExpired
+	if p.result != nil {
+		return Claim{}, ErrMismatch
 	}
 	if err := Verify(key(p.claim.ActorUID, p.claim.Generation), p.claim, got); err != nil {
 		return Claim{}, err

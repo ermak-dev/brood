@@ -17,6 +17,38 @@ import (
 	"brood.dev/go/brood/command"
 )
 
+// FEATURE: Новые ephemeral CLI-команды используют прежний broker wire (#292).
+// SPEC: Никакой transport identity; unconfirmed сохраняет исход и данные.
+func TestEphemeralGuestCLIWire(t *testing.T) {
+	for _, argv := range [][]string{
+		{"child", "spawn", "--parent-sequence", "1", "--parent-request-id", "parent", "--request-id", "one", "--task", "Run tests", "--total", "2", "--pool-uid", "pool"},
+		{"child", "job", "--job-id", "job"},
+	} {
+		inv, err := command.ParseCLI(argv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, server := net.Pipe()
+		requests := make(chan Request, 1)
+		go func() {
+			defer server.Close()
+			var request Request
+			_ = json.NewDecoder(server).Decode(&request)
+			requests <- request
+			_, _ = io.WriteString(server, "{\"ok\":false,\"text\":\"authorization changed after commit\",\"outcome\":\"unconfirmed\"}\n")
+		}()
+		result, err := exchange(context.Background(), client, inv)
+		client.Close()
+		request := <-requests
+		if request.Tool != inv.Name || string(request.Arguments) != string(inv.Arguments) || request.To != "" || request.Message != "" || request.WaitSeconds != 0 {
+			t.Fatalf("noncanonical wire: %+v", request)
+		}
+		if err == nil || result.Outcome != "unconfirmed" {
+			t.Fatalf("uncertainty lost: %+v %v", result, err)
+		}
+	}
+}
+
 func TestChildGuestWireCanonicalAndUnconfirmed(t *testing.T) {
 	inv, err := command.ParseCLI([]string{"child", "create", "--parent-sequence", "1", "--parent-request-id", "parent", "--request-id", "one", "--role", "tests", "--task", "Run tests", "--total", "2"})
 	if err != nil {

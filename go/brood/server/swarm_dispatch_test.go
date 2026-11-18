@@ -1110,6 +1110,7 @@ func TestServerStartRecoversActorSteps(t *testing.T) {
 		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal,source_commit) VALUES ('s2',1,'build','pending','goal','`+dispatchCommit+`')`,
 		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id,attested_commit,goal,source_commit) VALUES ('s3',1,'build','delivering','actor',1,'request','`+dispatchCommit+`','goal','`+dispatchCommit+`')`,
 		`INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,actor_uid,actor_incarnation,request_id,attested_commit,goal,source_commit) VALUES ('s4',1,'build','inflight','actor',1,'request','`+dispatchCommit+`','goal','`+dispatchCommit+`')`)
+	statements = append(statements, `INSERT INTO swarm_pass_policies(swarm_id,pass_sequence,project_id,policy_revision,legacy_empty) SELECT id,1,'p',NULL,0 FROM swarms`)
 	for _, stmt := range statements {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("%s: %v", stmt, err)

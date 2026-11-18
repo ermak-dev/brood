@@ -75,9 +75,8 @@ MCP-настройки сохраняются. Namespace инструменто�
 
 Источник сравнения — `~/mop` на commit `e8f04f26`: 25 инструментов.
 Brood добавляет `start`, `reset`, `pipeline_visit_complete`, `ask_operator`
-и пять команд дочерних задач #289:
-в общем каталоге 34 инструмента, в гостевом MCP — 28. Перенос не подключает
-Brood к старой установке mop. Nomad job,
+и команды дочерних задач #289 и #292. Перенос не подключает Brood к старой
+установке mop. Nomad job,
 узел, контейнер PVE, пул Brood и native Worker — разные сущности.
 
 | Команда bro | Инструмент | Контракт Brood |
@@ -87,6 +86,8 @@ Brood к старой установке mop. Nomad job,
 | `ask operator` | `ask_operator` | Вопрос актора оператору своего роя (#210); ответ приходит сообщением оператора и граф не продвигает. Выполняет только гостевой путь |
 | `pipeline visit complete` | `pipeline_visit_complete` | Исход шага актора (`success`/`fail`) и необязательный `report` (#233): что сделано и где результат, до 16384 байт текста без управляющих символов, кроме перевода строки и табуляции. Отчёт хранится на шаге один раз и показывается оператору в узловом запросе следом. Выполняет только гостевой путь |
 | `child create` | `child_create` | Текущий делегированный master резервирует ребёнка своего graph step по роли и request ID. Узел задаёт childJoin all/any/quorum (по умолчанию all), родитель — total. Точный повтор не отправляет заново. Только существующие workers, без provision и workspace attestation |
+| `child spawn` | `child_spawn` | Родитель ставит ephemeral job в durable FIFO без allocation или запуска |
+| `child job` | `child_job` | Точный текущий parent читает сохранённые факты job по ID |
 | `child get` | `child_get` | Текущие точные parent/executor читают состояние, delivery, исход и полный bounded report своего ребёнка. Успех чтения не означает выполнения |
 | `child join` | `child_join` | Readiness и outstanding obligations; ожидание до 15 секунд. Только после нуля обязательств сервер вычисляет исход/отчёт родителя и переводит graph step. Ранний any/quorum running-детей не освобождает |
 | `child cancel` | `child_cancel` | Только queued либо доказанный not_sent. Sending/delivered/unconfirmed не отменяются; внешние эффекты не изображаются откаченными |
@@ -450,6 +451,26 @@ wait тоже возвращает unconfirmed, а не ложное «ниче�
 отдельной сверки. Здесь описан исходный #289 для постоянных workers, не более
 поздние ephemeral #292 или policy #290. Сверка внешних эффектов и возобновление
 owner-прерванного исполнения пока не реализованы; живая приёмка #288 не заявлена.
+
+### Очередь ephemeral jobs
+
+`child_spawn` ставит job текущей попытки родителя в durable FIFO, отдельно от
+role-based `child_create` для постоянного worker. Admission, allocation и запуск
+контейнера не входят в ответ enqueue. Точный повтор возвращает прежний job;
+изменение task, pool или параметров группы конфликтует. Join policy берётся из
+actor-узла снимка графа, не из аргументов гостя.
+
+```sh
+bro --guest child spawn --parent-sequence 5 --parent-request-id PARENT --request-id isolated-tests --task "Run isolated tests" --total 2 --pool-uid POOL
+bro --guest child job --job-id JOB
+```
+
+`child_job` доступен только точному текущему авторизованному родителю. Он читает
+сохранённые факты, а не вычисляет успешность запуска: `child_id` появляется после
+регистрации, `failure` обозначает отдельный отказ до регистрации, а
+`executor_failure` — доказанный отказ уже зарегистрированного executor. Intent
+удерживает обязательство join даже до регистрации. Очередь не предоставляет
+гостю право выбрать worker UID, incarnation, CTID или credentials.
 
 ## Приватная сессия
 

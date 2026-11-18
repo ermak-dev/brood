@@ -33,6 +33,9 @@ func (o *nativeWorkloadOperation) privateSecretsSupported() error {
 	if !starts {
 		return nil
 	}
+	if err := o.server.refuseEvalEffect(o.context, o.swarm.ID, "native workload execution"); err != nil {
+		return err
+	}
 	metadata, err := o.server.store.GetProjectSecretMetadata(o.context, o.swarm.ProjectID)
 	if err != nil {
 		return fmt.Errorf("%w: project secret policy is unavailable", app.ErrConflict)

@@ -39,6 +39,28 @@ var schemaModules = []schemaModule{
 	{id: "gitlab-proposals", create: gitlabProposalFullSchema, verify: verifyGitLabProposalSchema},
 	{id: "swarm-children", create: swarmChildrenFullSchema, verify: verifySwarmChildrenSchema},
 	{id: "managed-egress", create: managedNetworkFullSchema, verify: verifyManagedNetworkSchema},
+	{id: "workflow-policy", create: workflowPolicyFullSchema, verify: verifyWorkflowPolicySchema},
+	{id: "swarm-pass-policy", create: swarmPassPolicyFullSchema, verify: verifySwarmPassPolicySchema},
+	{id: "pipeline-completion-intent", create: pipelineCompletionIntentFullSchemaV62, verify: verifyPipelineCompletionIntentSchema},
+	{id: "pipeline-result", create: pipelineResultFullSchema, verify: verifyPipelineResultSchema},
+	{id: "pipeline-completion-receipt", create: pipelineCompletionReceiptFullSchema, verify: verifyPipelineCompletionReceiptSchema},
+	{id: "pipeline-policy-candidate", create: pipelinePolicyCandidateFullSchemaV62, verify: verifyPipelinePolicyCandidateSchema},
+	{id: "pipeline-policy-confirmation", create: pipelinePolicyConfirmationFullSchema, verify: verifyPipelinePolicyConfirmationSchema},
+	{id: "actor-delivery", create: actorDeliveryFullSchema, verify: verifyActorDeliverySchema},
+	{id: "swarm-request-pass", create: swarmRequestPassFullSchema, verify: verifySwarmRequestPassSchema},
+	{id: "managed-actor-class", create: managedActorClassGuardSchema, verify: verifyManagedActorClassGuards},
+	{id: "ephemeral-child-intents", create: ephemeralChildIntentFullSchema, verify: verifyEphemeralChildIntentSchema},
+	{id: "ephemeral-child-allocations", create: ephemeralChildAllocationFullSchema, verify: verifyEphemeralChildAllocationSchema},
+	{id: "ephemeral-child-attestations", create: ephemeralChildAttestationFullSchema, verify: verifyEphemeralChildAttestationSchema},
+	{id: "ephemeral-child-create-grants", create: ephemeralChildCreateGrantFullSchema, verify: verifyEphemeralChildCreateGrantSchema},
+	{id: "ephemeral-child-result-seals", create: func() string { return ephemeralChildResultSealV57(ephemeralChildResultSealFullSchemaV55()) }, verify: verifyEphemeralChildResultSealSchema},
+	{id: "ephemeral-child-lifecycles", create: func() string { return ephemeralChildLifecycleV61(ephemeralChildLifecycleFullSchema()) }, verify: verifyEphemeralChildLifecycleSchema},
+	{id: "ephemeral-child-failures", create: func() string { return ephemeralFailedLifecycleV58(ephemeralChildFailureFullSchema()) }, verify: verifyEphemeralChildFailureSchema},
+	{id: "owner-managed-lineage", create: ownerManagedActorLineageFullSchema, verify: verifyOwnerManagedActorLineageSchema},
+	{id: "ephemeral-child-executor-failures", create: ephemeralChildExecutorFailureFullSchema, verify: verifyEphemeralChildExecutorFailureSchema},
+	{id: "swarm-eval", create: swarmEvalFullSchema, verify: verifySwarmEvalSchema},
+	{id: "pipeline-policy-review", create: pipelinePolicyReviewFullSchema, verify: verifyPipelinePolicyReviewSchema},
+	{id: "project-ownership", create: func() string { return projectOwnershipSchema }, verify: verifyProjectOwnershipSchema},
 }
 
 // verifySchemaModules сверяет базу с реестром: и при открытии текущей
@@ -67,7 +89,7 @@ func workflowFullSchema() string {
 // managedFullSchema — инвентарь Proxmox: пулы, акторы (включая stage,
 // делегирование и origin), каталог подключений и ограничения уникальности.
 func managedFullSchema() string {
-	statements := []string{managedOriginSchema(), managedConnectionsRuntimeSchema()}
+	statements := []string{managedActorClassSchema(), managedConnectionsRuntimeSchema()}
 	for _, object := range managedConstraints {
 		statements = append(statements, object.sql)
 	}
@@ -82,7 +104,7 @@ func pipelineSourceFullSchema() string {
 	return pipelineSourceSchema + ";" + pipelineSourceImmutable + ";" +
 		pipelineSourceNoReplace + ";" + pipelineSourceNoDelete + ";" +
 		swarmGraphImmutable + ";" + swarmNoReplace + ";" +
-		swarmStepAttested + ";" + swarmStepAttestedInsert
+		policyStepSourceTriggerV62(swarmStepAttested) + ";" + policyStepSourceTriggerV62(swarmStepAttestedInsert)
 }
 
 // swarmNoReplace запрещает подмену строки роя целиком (INSERT OR REPLACE):
@@ -130,7 +152,7 @@ func verifyProjectCapacitySchema(ctx context.Context, tx *sql.Tx) error {
 
 // verifyManagedSchema сверяет инвентарь и его ограничения уникальности.
 func verifyManagedSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, managedOriginSchema()); err != nil {
+	if err := checkSchema(ctx, tx, managedActorClassSchema()); err != nil {
 		return err
 	}
 	if err := checkSchema(ctx, tx, managedConnectionsRuntimeSchema()); err != nil {
@@ -159,7 +181,7 @@ func verifyOriginSchema(ctx context.Context, tx *sql.Tx) error {
 	if err := checkSchema(ctx, tx, projectRepositorySchema); err != nil {
 		return err
 	}
-	return checkSchema(ctx, tx, managedOriginSchema())
+	return checkSchema(ctx, tx, managedActorClassSchema())
 }
 
 // verifySwarmStepsSchema сверяет шаги роя и ограждения их отчёта, задачи и
@@ -210,8 +232,8 @@ func verifyPipelineSourcesSchema(ctx context.Context, tx *sql.Tx) error {
 		"pipeline_sources_no_delete":  pipelineSourceNoDelete,
 		"swarm_graph_immutable":       swarmGraphImmutable,
 		"swarms_no_replace":           swarmNoReplace,
-		"swarm_steps_attested":        swarmStepAttested,
-		"swarm_steps_attested_insert": swarmStepAttestedInsert,
+		"swarm_steps_attested":        policyStepSourceTriggerV62(swarmStepAttested),
+		"swarm_steps_attested_insert": policyStepSourceTriggerV62(swarmStepAttestedInsert),
 	} {
 		if err := checkObject(ctx, tx, "trigger", name, expected); err != nil {
 			return err

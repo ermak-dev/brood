@@ -134,6 +134,9 @@ func telegramNoticeBody(kind string, ev store.TelegramEvent, f telegramFacts) (s
 	swarm := `Swarm "` + f.swarm + `": `
 	switch kind {
 	case "request_opened":
+		if f.request != nil && f.request.Origin == "policy" {
+			return swarm + "workflow policy requests confirmation (step " + strconv.FormatInt(ev.Sequence, 10) + ").", telegramRequestSections(f.request)
+		}
 		return swarm + "node " + ev.Node + " asks the operator (step " + strconv.FormatInt(ev.Sequence, 10) + ").",
 			telegramRequestSections(f.request)
 	case "actor_question":
@@ -254,6 +257,9 @@ func telegramAnswer(r *store.SwarmRequest) string {
 
 // telegramAsker — кто спрашивал: узел графа или актор.
 func telegramAsker(ev store.TelegramEvent, f telegramFacts) string {
+	if f.request != nil && f.request.Origin == "policy" {
+		return "workflow policy"
+	}
 	if f.request != nil && f.request.Origin == "actor" {
 		return "actor " + f.actor
 	}

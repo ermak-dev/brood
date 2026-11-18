@@ -10,21 +10,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestRootSwarmWorkflowProgression exercises applying engine transitions of the
-// repository's architecture graph through the store: both decision answers
-// land in the right visit and status. Pure route rules (plain chain, fail
-// edges) are engine tests in the pipeline package (#207); legacy runs here
-// deliberately have no source snapshot — source-bound execution stays fenced.
-func TestRootSwarmWorkflowProgression(t *testing.T) {
-	data, err := os.ReadFile("../../../Broodfile")
+// TestLegacySwarmWorkflowProgression preserves a pinned architecture graph after
+// catalog replacement: both decision answers land in the right visit and status.
+// Legacy runs here deliberately have no source snapshot; source-bound execution
+// stays fenced.
+func TestLegacySwarmWorkflowProgression(t *testing.T) {
+	data, err := os.ReadFile("../build/testdata/legacy-swarm-workflows.Broodfile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := build.ParseDocument(string(data), "Broodfile")
+	doc, err := build.ParseDocument(string(data), "legacy-swarm-workflows.Broodfile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph, err := build.Workflow(doc, "swarm-architecture", "Broodfile")
+	graph, err := build.Workflow(doc, "swarm-architecture", "legacy-swarm-workflows.Broodfile")
 	if err != nil {
 		t.Fatal(err)
 	}

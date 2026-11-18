@@ -85,6 +85,7 @@ type ManagedPool struct {
 // callers must settle their existing task before new work, even if Phase looks
 // terminal. A legacy reset is refused because schema 3 rotated ownership early.
 type ManagedActor struct {
+	Class             string
 	Role              string
 	DelegatorID       string
 	ParentUID         string
@@ -301,14 +302,14 @@ func managedFits(p ManagedPool, count int64, used, extra ManagedResources) bool 
 	return count <= p.MaxActors && used.CPUMillicores <= p.Resources.CPUMillicores && extra.CPUMillicores <= p.Resources.CPUMillicores-used.CPUMillicores && used.MemoryBytes <= p.Resources.MemoryBytes && extra.MemoryBytes <= p.Resources.MemoryBytes-used.MemoryBytes && used.DiskBytes <= p.Resources.DiskBytes && extra.DiskBytes <= p.Resources.DiskBytes-used.DiskBytes
 }
 
-const managedActorCols = `uid,name,swarm_id,atespace_uid,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at,stage,role,delegator_id,parent_uid,origin`
+const managedActorCols = `uid,name,swarm_id,atespace_uid,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at,stage,role,delegator_id,parent_uid,origin,actor_class`
 
 const managedActorReadCols = managedActorCols + `,COALESCE((SELECT policy FROM managed_actor_networks WHERE actor_uid=managed_actors.uid),'')`
 
 func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error) {
 	var a ManagedActor
 	var template string
-	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage, &a.Role, &a.DelegatorID, &a.ParentUID, &a.Origin, &a.NetworkPolicy)
+	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage, &a.Role, &a.DelegatorID, &a.ParentUID, &a.Origin, &a.Class, &a.NetworkPolicy)
 	if err == nil {
 		err = json.Unmarshal([]byte(template), &a.Template)
 	}
@@ -316,11 +317,26 @@ func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error)
 }
 
 // ReserveManagedActor atomically reserves live pool capacity across projects.
+// Only persistent actors enter this ordinary admission path; ephemeral actors
+// require separate child-step admission. An empty Class means persistent.
 // Input needs UID, Name, SwarmID, AtespaceUID, PoolUID, Resources, CTID,
 // OwnerNonce and a create OperationID. The store snapshots all binding fields.
 // The create intent must commit before the caller writes to PVE. When nested in
 // WithTx, callers must wait for the outer transaction to commit before any write.
 func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (ManagedActor, error) {
+	if a.Class == "" {
+		a.Class = ActorClassPersistent
+	}
+	if a.Class != ActorClassPersistent {
+		return ManagedActor{}, errors.New("ordinary admission requires a persistent actor; ephemeral actors require child-step admission")
+	}
+	return s.reserveManagedActor(ctx, a)
+}
+
+func (s *Store) reserveManagedActor(ctx context.Context, a ManagedActor) (ManagedActor, error) {
+	if a.Class != ActorClassPersistent && a.Class != ActorClassEphemeral {
+		return ManagedActor{}, errors.New("invalid managed actor class")
+	}
 	if a.Role == "" {
 		a.Role = "worker"
 	}
@@ -378,7 +394,7 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		a.CreatedAt = nowRFC3339()
 		a.UpdatedAt = a.CreatedAt
 		a.DeletedAt = nil
-		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.AtespaceUID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt, a.Stage, a.Role, a.DelegatorID, a.ParentUID, a.Origin)
+		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.AtespaceUID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt, a.Stage, a.Role, a.DelegatorID, a.ParentUID, a.Origin, a.Class)
 		if err != nil {
 			return wrapUnique(err, "managed actor name or CTID")
 		}
@@ -496,7 +512,7 @@ func (s *Store) BeginManagedActorOperation(ctx context.Context, uid string, expe
 
 func (s *Store) beginManagedActorOperation(ctx context.Context, uid string, expected int64, operationID, operation string, owner bool) (ManagedActor, error) {
 	var result ManagedActor
-	err := s.WithTx(ctx, func(ctx context.Context) error {
+	err := s.withInterventionTx(ctx, func(ctx context.Context) error {
 		a, err := s.GetManagedActor(ctx, uid)
 		if err != nil {
 			return err
@@ -578,6 +594,7 @@ func (s *Store) beginManagedActorOperation(ctx context.Context, uid string, expe
 		default:
 			return fmt.Errorf("invalid managed actor operation")
 		}
+		prior := a
 		a.Stage = operation
 		if operation == "reset" || operation == "delete" || operation == "update" {
 			a.Stage = "stop"
@@ -599,9 +616,22 @@ func (s *Store) beginManagedActorOperation(ctx context.Context, uid string, expe
 		case "start":
 			a.Phase = "provisioning"
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET operation_id=?,operation=?,desired=?,upid='',error=?,revision=?,updated_at=?,incarnation=?,phase=?,stage=? WHERE uid=?`, a.OperationID, a.Operation, a.Desired, a.Error, a.Revision, a.UpdatedAt, a.Incarnation, a.Phase, a.Stage, uid)
+		updated, err := s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET operation_id=?,operation=?,desired=?,upid='',error=?,revision=?,updated_at=?,incarnation=?,phase=?,stage=? WHERE uid=?`, a.OperationID, a.Operation, a.Desired, a.Error, a.Revision, a.UpdatedAt, a.Incarnation, a.Phase, a.Stage, uid)
+		if err != nil {
+			return err
+		}
+		if n, err := updated.RowsAffected(); err != nil {
+			return err
+		} else if n != 1 {
+			return ErrRevisionConflict
+		}
+		if !owner && operation == "start" && prior.Operation == "reset" {
+			if err := s.retainOwnerManagedActorLineage(ctx, prior, a); err != nil {
+				return err
+			}
+		}
 		result = a
-		return err
+		return nil
 	})
 	return result, err
 }
@@ -757,18 +787,42 @@ func (s *Store) ResolveManagedActorTaskFailure(ctx context.Context, uid string, 
 // The caller supplies a fresh unpredictable owner nonce, different from the old.
 // Operation remains reset; Stage=create identifies its new create task slot.
 func (s *Store) ConfirmManagedActorReset(ctx context.Context, uid string, expected int64, operationID, freshNonce string) (ManagedActor, error) {
-	return s.changeManagedStage(ctx, uid, expected, operationID, "delete", func(a *ManagedActor) error {
-		if a.Operation != "reset" || a.Desired != "running" || freshNonce == "" || freshNonce == a.OwnerNonce {
-			return fmt.Errorf("managed reset intent and fresh ownership nonce are required")
+	var result ManagedActor
+	err := s.withInterventionTx(ctx, func(ctx context.Context) error {
+		prior, err := s.GetManagedActor(ctx, uid)
+		if err != nil {
+			return err
 		}
-		a.Incarnation++
-		a.OwnerNonce = freshNonce
-		a.Stage = "create"
-		a.Phase = "provisioning"
-		a.UPID = ""
-		a.Error = ""
+		next, err := s.changeManagedStage(ctx, uid, expected, operationID, "delete", func(a *ManagedActor) error {
+			if a.Operation != "reset" || a.Desired != "running" || freshNonce == "" || freshNonce == a.OwnerNonce {
+				return fmt.Errorf("managed reset intent and fresh ownership nonce are required")
+			}
+			a.Incarnation++
+			a.OwnerNonce = freshNonce
+			a.Stage = "create"
+			a.Phase = "provisioning"
+			a.UPID = ""
+			a.Error = ""
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		// Игнорированный UPDATE не должен создавать исторический факт.
+		current, err := s.GetManagedActor(ctx, uid)
+		if err != nil {
+			return err
+		}
+		if current.Revision != next.Revision {
+			return ErrRevisionConflict
+		}
+		if err := s.retainOwnerManagedActorLineage(ctx, prior, next); err != nil {
+			return err
+		}
+		result = next
 		return nil
 	})
+	return result, err
 }
 
 func (s *Store) changeManagedStage(ctx context.Context, uid string, expected int64, operationID, stage string, change func(*ManagedActor) error) (ManagedActor, error) {

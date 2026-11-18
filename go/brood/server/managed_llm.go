@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -136,7 +137,17 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 			writeDetail(w, http.StatusUnauthorized, "guest authorization denied")
 			return
 		}
-		if cfg.CLIProxyURL == "" || cfg.CLIProxyAPIKey == "" {
+		actor, err := s.store.GetManagedActor(r.Context(), uid)
+		if err != nil {
+			writeDetail(w, http.StatusUnauthorized, "guest authorization denied")
+			return
+		}
+		binding, err := s.swarmEvalRuntime(r.Context(), actor.SwarmID)
+		if err != nil {
+			writeDetail(w, http.StatusServiceUnavailable, "eval isolation policy is unavailable")
+			return
+		}
+		if (binding == nil || upstream != "/v1/models") && (cfg.CLIProxyURL == "" || cfg.CLIProxyAPIKey == "") {
 			writeDetail(w, http.StatusServiceUnavailable, "managed model access is not configured: CLIPROXY_URL and CLIPROXY_API_KEY are required")
 			return
 		}
@@ -176,6 +187,22 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 		if upstream == "/v1/models" && len(body) != 0 {
 			writeDetail(w, http.StatusBadRequest, "models request must not have a body")
 			return
+		}
+		if !s.managed.authorizeGuest(uid, generation, token) {
+			writeDetail(w, http.StatusUnauthorized, "guest authorization denied")
+			return
+		}
+		if binding != nil {
+			if upstream == "/v1/models" {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{map[string]any{"id": binding.Model, "type": "model", "display_name": binding.Model}}, "has_more": false, "first_id": binding.Model, "last_id": binding.Model})
+				return
+			}
+			if !evalRequestModel(body, binding.Model) {
+				writeDetail(w, http.StatusForbidden, "eval isolation requires exactly the bound model")
+				return
+			}
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))

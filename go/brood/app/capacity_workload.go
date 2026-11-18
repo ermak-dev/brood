@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -29,12 +30,28 @@ type WorkloadOperation interface {
 // AdmitWorkload serializes inspection and mutation within a shard in this server.
 // It rechecks authorization after native inspection and does not persist a usage counter.
 func (s *Service) AdmitWorkload(userID, swarmID string, operation WorkloadOperation) error {
+	return s.AdmitWorkloadContext(context.Background(), userID, swarmID, operation)
+}
+
+// AdmitWorkloadContext shares the project gate with other workload mutations but
+// permits cancellation while waiting and before applying the prepared operation.
+// Prepare and Apply must use the same context for their own external effects.
+func (s *Service) AdmitWorkloadContext(ctx context.Context, userID, swarmID string, operation WorkloadOperation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	swarm, err := s.managedCapacitySwarm(userID, swarmID)
 	if err != nil {
 		return err
 	}
-	unlock := s.lockProject(swarm.ProjectID)
+	unlock, err := s.lockProjectContext(ctx, swarm.ProjectID)
+	if err != nil {
+		return err
+	}
 	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if _, err := s.managedCapacitySwarm(userID, swarmID); err != nil {
 		return err
 	}
@@ -44,6 +61,9 @@ func (s *Service) AdmitWorkload(userID, swarmID string, operation WorkloadOperat
 	}
 	plan, err := operation.Prepare(swarms)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	current, err := s.managedCapacitySwarm(userID, swarmID)
@@ -63,6 +83,9 @@ func (s *Service) AdmitWorkload(userID, swarmID string, operation WorkloadOperat
 	selector, err := ShardWorkerSelector(capacity.WorkerSelector, plan.WorkerSelector)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidWorkload, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if plan.TemplateOnly {
 		if plan.Replace {
@@ -102,6 +125,9 @@ func (s *Service) AdmitWorkload(userID, swarmID string, operation WorkloadOperat
 		return err
 	}
 	if err := CheckShardCapacityChange(capacity, before, proposed); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return operation.Apply(selector)

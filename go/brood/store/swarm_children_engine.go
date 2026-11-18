@@ -213,7 +213,9 @@ func (s *Store) RecoverSwarmChildDeliveries(ctx context.Context) error {
 // individual reports remain available unchanged from the child status API.
 func ChildJoinReport(j SwarmChildJoin) string {
 	header := fmt.Sprintf("Child join %s: %s; outstanding obligations: %d.\n", j.Policy.Mode, j.Evaluation.State, j.Evaluation.Open)
-	headers := make([]string, len(j.Children))
+	headers := make([]string, len(j.Children)+len(j.UnregisteredFailures))
+	texts := make([]string, len(headers))
+	serverReason := make([]bool, len(headers))
 	size := len(header)
 	for i, c := range j.Children {
 		outcome := c.Outcome
@@ -221,19 +223,34 @@ func ChildJoinReport(j SwarmChildJoin) string {
 			outcome = "cancelled"
 		}
 		headers[i] = fmt.Sprintf("\nChild %s (%s):\n", c.ID, outcome)
+		texts[i] = c.Report
+		for _, f := range j.ExecutorFailures {
+			if f.ChildID == c.ID {
+				headers[i] = fmt.Sprintf("\nChild %s (server executor failure; not an actor report; job %s):\n", c.ID, f.IntentID)
+				texts[i], serverReason[i] = f.Reason, true
+			}
+		}
+		size += len(headers[i])
+	}
+	for n, f := range j.UnregisteredFailures {
+		i := len(j.Children) + n
+		headers[i] = fmt.Sprintf("\nJob %s (failed before registration; not a child report):\n", f.IntentID)
+		texts[i] = f.Reason
 		size += len(headers[i])
 	}
 	budget := MaxStepReportBytes - size
-	if len(j.Children) > 0 {
-		budget /= len(j.Children)
+	if len(headers) > 0 {
+		budget /= len(headers)
 	}
 	var b strings.Builder
 	b.WriteString(header)
-	for i, c := range j.Children {
+	for i, text := range texts {
 		b.WriteString(headers[i])
-		text := c.Report
 		if len(text) > budget {
 			marker := "\n[report truncated; read child status]\n"
+			if i >= len(j.Children) || serverReason[i] {
+				marker = "\n[reason truncated; read job history]\n"
+			}
 			n := max(0, budget-len(marker))
 			for n > 0 && !utf8.ValidString(text[:n]) {
 				n--
@@ -261,6 +278,13 @@ func (s *Store) JoinSwarmChildren(ctx context.Context, p SwarmChildParent, autho
 		if j.Evaluation.Open != 0 || j.Interrupted || j.State == "aborted" {
 			return nil
 		}
+		usesPolicy, err := s.PipelineCompletionUsesPolicy(ctx, p.Principal.SwarmID, p.Sequence)
+		if err != nil {
+			return err
+		}
+		if usesPolicy {
+			return ErrPipelineCompletionPending
+		}
 		outcome := "fail"
 		if j.Evaluation.State == "ready_success" {
 			outcome = "success"
@@ -275,7 +299,7 @@ func (s *Store) JoinSwarmChildren(ctx context.Context, p SwarmChildParent, autho
 
 func (s *Store) checkChildParentResult(ctx context.Context, swarm string, sequence int64, outcome, report string) error {
 	var engine bool
-	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarm_child_tasks WHERE swarm_id=? AND parent_sequence=? AND role!='')`, swarm, sequence).Scan(&engine); err != nil {
+	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarm_child_tasks WHERE swarm_id=? AND parent_sequence=? AND role!='') OR EXISTS(SELECT 1 FROM ephemeral_child_intents WHERE swarm_id=? AND parent_sequence=?)`, swarm, sequence, swarm, sequence).Scan(&engine); err != nil {
 		return err
 	}
 	if !engine {

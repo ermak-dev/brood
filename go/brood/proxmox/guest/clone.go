@@ -35,6 +35,7 @@ type cloneGit func(ctx context.Context, env []string, args ...string) error
 type cloneSpec struct {
 	Project, Home string
 	Origin, Mode  string
+	Commit        string
 	// Identity is the installation-assigned commit identity (#249); zero
 	// leaves the clone without user.name and user.email, as before.
 	Identity gitidentity.Identity
@@ -48,6 +49,14 @@ func cloneFailure(reason string) error { return errors.New("workspace clone fail
 // cloneWorkspace clones only an empty workspace. Contents are preserved after
 // failure or interruption; recovery must never delete possible user work.
 func cloneWorkspace(parent context.Context, s cloneSpec) error {
+	if s.Commit != "" {
+		if !validPinnedCommit(s.Commit) {
+			return cloneFailure("pinned commit must be a full lowercase SHA-1")
+		}
+		if s.Origin == "" || s.Mode == "" {
+			return cloneFailure("pinned clone requires a workspace origin")
+		}
+	}
 	if s.Origin == "" && s.Mode == "" {
 		return nil
 	}
@@ -73,6 +82,9 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 		return cloneFailure("workspace is unavailable or unsafe")
 	}
 	if !empty {
+		if s.Commit != "" {
+			return cloneFailure("pinned clone requires an empty workspace; existing work preserved")
+		}
 		if !privateFileExists(state, cloneMarker) {
 			return nil
 		}
@@ -95,7 +107,7 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 		source, env = s.Origin, cloneEnv(s.Home, "https", true)
 	}
 	fixed := []string{"-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "core.hooksPath=/dev/null"}
-	cloneErr := git(ctx, env, append(fixed, "clone", "--", source, staging)...)
+	cloneErr := cloneStagedWorkspace(ctx, git, env, fixed, source, staging, s.Commit)
 	if cloneErr != nil {
 		cloneErr = cloneFailure(cloneErr.Error())
 	} else if git(ctx, env, append(fixed, "-C", staging, "config", "brood.origin", s.Origin)...) != nil {
@@ -111,6 +123,27 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 		return cloneFailure("cannot clear the pending clone record")
 	}
 	return cloneErr
+}
+
+func cloneStagedWorkspace(ctx context.Context, git cloneGit, env, fixed []string, source, staging, commit string) error {
+	args := append(fixed, "clone")
+	if commit != "" {
+		// Default branch не попадает в workspace даже на промежуточном checkout.
+		args = append(args, "--no-checkout")
+	}
+	if err := git(ctx, env, append(args, "--", source, staging)...); err != nil {
+		return err
+	}
+	if commit == "" {
+		return nil
+	}
+	if err := git(ctx, env, append(fixed, "-C", staging, "fetch", "--no-tags", "origin", commit)...); err != nil {
+		return errors.New("pinned commit is unavailable")
+	}
+	if err := git(ctx, env, append(fixed, "-C", staging, "checkout", "--detach", commit, "--")...); err != nil {
+		return errors.New("cannot check out pinned commit")
+	}
+	return nil
 }
 
 // recordIdentity writes the actor identity into the staged clone's own

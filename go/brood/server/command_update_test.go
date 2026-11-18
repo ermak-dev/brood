@@ -6,10 +6,10 @@ package server
 // CTID, disk, owner nonce, generation, template and resources stay. The answer
 // names the release before (as the guest root reports it) and after (the
 // server's manifest) and says the template and resources do not change. It is
-// refused, before any guest call or provider effect, while the actor's swarm
-// runs a pipeline pass (naming the step when one is in progress on the actor)
-// and while the actor has a dispatch lease or a landing token; for a
-// stopped actor (start installs the release); and without a verified server
+// refused for non-owner editors, before any guest call or provider effect,
+// while the actor's swarm runs a pipeline pass (naming its active step) or has
+// coordination holds. Explicit owner/delegated commands retain interruption
+// evidence instead. It is refused for a stopped actor and without a verified server
 // release. It is refused without a provider effect when the guest does not
 // report its release (a runtime before #133 answers unsupported), for a plain
 // bin of a bootstrap before #184 and for a container found stopped. An actor
@@ -389,8 +389,8 @@ func TestOperatorUpdatesMaster(t *testing.T) {
 	}
 }
 
-func TestUpdateRefusesLandingToken(t *testing.T) {
-	ts, alice, master, pve := masterSetup(t)
+func TestEditorUpdateRefusesLandingToken(t *testing.T) {
+	ts, _, master, pve := masterSetup(t)
 	ts.srv.artifactsDir = writeGuestArtifacts(t)
 	calls := guestReleaseHub(ts, reportsRelease(oldRelease))
 	if _, err := ts.srv.managed.executeCoordinationCommand(context.Background(), master, coordinationInvocation("landing", map[string]any{"action": "take", "request_id": "land-133"})); err != nil {
@@ -401,13 +401,13 @@ func TestUpdateRefusesLandingToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	effects := providerEffectsOf(pve)
-	expectUpdateRefused(t, operatorUpdate(ts, alice, master.SwarmID)(t, "master"), `landing token "land-133" is held by "master"; the holder or an administrator gives it back with landing --action give --request-id "land-133"`, ts, pve, master, effects)
+	expectUpdateRefused(t, editorUpdate(t, ts, master.SwarmID)(t, "master"), `landing token "land-133" is held by "master"; the holder or an administrator gives it back with landing --action give --request-id "land-133"`, ts, pve, master, effects)
 	if got := calls(); len(got) != 0 {
 		t.Fatalf("refused update called the guest: %v", got)
 	}
 }
 
-func TestUpdateRefusesStepInProgress(t *testing.T) {
+func TestEditorUpdateRefusesStepInProgress(t *testing.T) {
 	d := newDispatchServer(t)
 	// Worker добавлен master: отказ даёт шаг, а не владение.
 	d.exec(`UPDATE managed_actors SET parent_uid=? WHERE uid=?`, d.master.UID, d.worker.UID)
@@ -423,7 +423,7 @@ func TestUpdateRefusesStepInProgress(t *testing.T) {
 	}
 	before := calls()
 	want := `pipeline step 1 (node "build") is inflight for actor "worker"; update restarts the actor and would interrupt it; wait for the step to finish or stop the swarm`
-	for via, call := range map[string]updateCaller{"operator": operatorUpdate(d.substrateServer, d.alice, d.swarm), "master": guestUpdate(d.substrateServer, d.master)} {
+	for via, call := range map[string]updateCaller{"editor": editorUpdate(t, d.substrateServer, d.swarm)} {
 		got := call(t, "worker")
 		if got.ok || !strings.Contains(got.text, want) {
 			t.Errorf("%s update with a step in progress: %+v\nwant a refusal saying %s", via, got, want)
@@ -438,11 +438,10 @@ func TestUpdateRefusesStepInProgress(t *testing.T) {
 	}
 }
 
-// TestUpdateRefusesWaitingPass: проход human → build ждёт оператора, шага у
-// build ещё нет. Перезапуск build сейчас закрыл бы шаг build отказом, если
-// оператор ответит, пока актор stopping: update отказывает, называя рой.
-// Остановленный рой актора не держит.
-func TestUpdateRefusesWaitingPass(t *testing.T) {
+// Editor не получает owner-полномочий на прерывание прохода: human → build
+// держит automatic update, хотя шаг build ещё не начат. Остановленный рой
+// не держит актор. Явные owner/delegated команды проверяются отдельно.
+func TestEditorUpdateRefusesWaitingPass(t *testing.T) {
 	d := newDispatchServer(t)
 	d.exec(`UPDATE managed_actors SET parent_uid=? WHERE uid=?`, d.master.UID, d.worker.UID)
 	d.srv.artifactsDir = writeGuestArtifacts(t)
@@ -456,7 +455,7 @@ func TestUpdateRefusesWaitingPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `the pipeline pass of swarm "alpha" is waiting; update restarts actor "worker", and a step that becomes pending for its role during the restart would be refused; stop the swarm or wait for the pass to end`
-	for via, call := range map[string]updateCaller{"operator": operatorUpdate(d.substrateServer, d.alice, d.swarm), "master": guestUpdate(d.substrateServer, d.master)} {
+	for via, call := range map[string]updateCaller{"editor": editorUpdate(t, d.substrateServer, d.swarm)} {
 		if got := call(t, "worker"); got.ok || !strings.Contains(got.text, want) {
 			t.Errorf("%s update during a waiting pass: %+v\nwant a refusal saying %s", via, got, want)
 		}

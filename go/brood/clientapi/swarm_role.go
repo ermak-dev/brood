@@ -86,8 +86,9 @@ func (c *Client) UnbindSwarmRole(ctx context.Context, swarm, role string) (Swarm
 	return c.swarmRolesCall(ctx, http.MethodDelete, swarmRolesPath(swarm, role), nil)
 }
 
-// SwarmActors lists the managed actors of a swarm; native actors cannot
-// hold a role and are left out.
+// SwarmActors lists persistent managed candidates for workflow roles.
+// A missing class preserves legacy behavior; native, ephemeral and unknown
+// classes are excluded. This is not the inventory for manual actor control.
 func (c *Client) SwarmActors(ctx context.Context, swarm string) ([]SwarmActor, error) {
 	if swarm == "" {
 		return nil, errors.New("swarm is required")
@@ -98,9 +99,10 @@ func (c *Client) SwarmActors(ctx context.Context, swarm string) ([]SwarmActor, e
 				Name string `json:"name"`
 				UID  string `json:"uid"`
 			} `json:"metadata"`
-			Provider   string `json:"provider"`
-			Generation string `json:"generation"`
-			Phase      string `json:"phase"`
+			Provider   string          `json:"provider"`
+			Class      json.RawMessage `json:"class"`
+			Generation string          `json:"generation"`
+			Phase      string          `json:"phase"`
 		} `json:"results"`
 	}
 	if err := c.call(ctx, http.MethodGet, "/api/swarms/"+url.PathEscape(swarm)+"/actors", nil, &list); err != nil {
@@ -109,6 +111,17 @@ func (c *Client) SwarmActors(ctx context.Context, swarm string) ([]SwarmActor, e
 	actors := []SwarmActor{}
 	for _, row := range list.Results {
 		if row.Provider != "proxmox" {
+			continue
+		}
+		class := "persistent"
+		if len(row.Class) != 0 {
+			var parsed string
+			if json.Unmarshal(row.Class, &parsed) != nil || parsed == "" {
+				return nil, errors.New("malformed managed actor class in the swarm actor list")
+			}
+			class = parsed
+		}
+		if class != "persistent" {
 			continue
 		}
 		incarnation, err := strconv.ParseInt(row.Generation, 10, 64)

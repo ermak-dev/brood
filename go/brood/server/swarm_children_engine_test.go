@@ -19,9 +19,12 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-func newChildEngineServer(t *testing.T) *dispatchServer {
+func newChildEngineServer(t *testing.T, automaticEphemeral ...bool) *dispatchServer {
 	t.Helper()
 	d := newDispatchServer(t)
+	if len(automaticEphemeral) == 0 || !automaticEphemeral[0] {
+		d.srv.stopEphemeralChildRecovery()
+	}
 	// Manual scheduling makes delivery interleavings deterministic in this fixture.
 	d.srv.children.close()
 	d.srv.children = newChildDispatcher(d.srv)

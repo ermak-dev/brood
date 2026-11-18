@@ -33,7 +33,7 @@ func TestSwarmRolesCLI(t *testing.T) {
 		case r.URL.Path == "/api/projects/p2/swarms":
 			fmt.Fprint(w, `[{"id":"s2","name":"main","state":"active"},{"id":"s3","name":"solo","state":"active"}]`)
 		case r.URL.Path == "/api/swarms/s3/actors":
-			fmt.Fprint(w, `{"results":[{"metadata":{"name":"native","uid":"n1"}},{"metadata":{"name":"master","uid":"u1"},"provider":"proxmox","generation":"2","phase":"running"}]}`)
+			fmt.Fprint(w, `{"results":[{"metadata":{"name":"native","uid":"n1"}},{"metadata":{"name":"master","uid":"u1"},"provider":"proxmox","generation":"2","phase":"running"},{"metadata":{"name":"isolated-worker","uid":"ephemeral-uid"},"provider":"proxmox","class":"ephemeral","generation":"1","phase":"running"}]}`)
 		case r.URL.Path == "/api/swarms/s3/roles" && r.Method == "GET":
 			if got := r.URL.Query().Get("definition"); got != "release" && got != "" {
 				t.Errorf("definition %q", got)
@@ -87,6 +87,8 @@ func TestSwarmRolesCLI(t *testing.T) {
 		{[]string{"swarm", "roles", "main"}, "swarm name is ambiguous; use its ID"},
 		{[]string{"swarm", "roles", "absent"}, "swarm not found or not accessible"},
 		{[]string{"swarm", "bind", "s3", "build", "native"}, "actor not found in the swarm"},
+		{[]string{"swarm", "bind", "s3", "build", "isolated-worker"}, "actor not found in the swarm"},
+		{[]string{"swarm", "bind", "s3", "build", "ephemeral-uid"}, "actor not found in the swarm"},
 		{[]string{"swarm", "bind", "s3", "build", "ghost"}, "actor not found in the swarm"},
 	} {
 		code, out, diag := invoke(t, "", tc.args...)
