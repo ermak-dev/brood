@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"brood.dev/go/brood/proxmox/egress"
 )
 
 // Dependencies is the trusted root boundary. Tests replace it without changing
@@ -60,9 +62,11 @@ func systemDependencies(workspace string, uid, gid int, step stepPolicy) *Depend
 	}
 }
 
-// Config carries no relay or PVE credentials. Hosts is an exact public-host
-// allowlist, not a URL list. Executable defaults to the running supervisor.
+// Config carries no relay or PVE credentials. Hosts is the legacy public-host
+// allowlist and cannot be combined with Network. A nonnil Network may be offline.
+// Executable defaults to the running supervisor.
 type Config struct {
+	Network      *egress.Policy
 	Hosts        []string
 	Executable   string
 	Dependencies *Dependencies
@@ -156,7 +160,16 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if !filepath.IsAbs(c.Executable) {
 		return nil, errors.New("guest executable must be absolute")
 	}
-	policy, err := NewPolicy(c.Hosts, d.Lookup)
+	var policy *Policy
+	var err error
+	if c.Network != nil {
+		if len(c.Hosts) != 0 {
+			return nil, errors.New("legacy hosts and selected network policy cannot be combined")
+		}
+		policy, err = NewNetworkPolicy(c.Network.Rules(), d.Lookup)
+	} else {
+		policy, err = NewPolicy(c.Hosts, d.Lookup)
+	}
 	if err != nil {
 		return nil, err
 	}

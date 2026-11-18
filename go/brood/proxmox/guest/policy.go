@@ -8,9 +8,9 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"strings"
 	"time"
 
+	"brood.dev/go/brood/proxmox/egress"
 	"golang.org/x/net/dns/dnsmessage"
 )
 
@@ -19,8 +19,9 @@ type Lookup func(context.Context, string) ([]net.IP, error)
 
 // Policy permits only explicitly configured DNS names and public addresses.
 type Policy struct {
-	hosts  map[string]bool
-	lookup Lookup
+	hosts   map[string]bool
+	lookup  Lookup
+	network *egress.Policy
 }
 
 // NewPolicy rejects wildcards, IP literals and malformed names.
@@ -38,28 +39,28 @@ func NewPolicy(hosts []string, lookup Lookup) (*Policy, error) {
 	}
 	return p, nil
 }
+
+// NewNetworkPolicy preserves selected protocol and port rules, including offline.
+// Address validation remains public-only; DNS approval alone never permits a dial.
+func NewNetworkPolicy(rules []egress.Rule, lookup Lookup) (*Policy, error) {
+	if lookup == nil {
+		return nil, errors.New("guest requires a resolver")
+	}
+	network, err := egress.Compile(rules)
+	if err != nil {
+		return nil, err
+	}
+	p := &Policy{hosts: map[string]bool{}, lookup: lookup, network: network}
+	for _, rule := range network.Rules() {
+		for _, host := range rule.Hostnames {
+			p.hosts[host] = true
+		}
+	}
+	return p, nil
+}
+
 func canonicalHost(host string) (string, error) {
-	h := strings.ToLower(strings.TrimSuffix(host, "."))
-	if len(h) > 253 || !strings.Contains(h, ".") || net.ParseIP(h) != nil {
-		return "", errors.New("invalid policy hostname")
-	}
-	labels := strings.Split(h, ".")
-	for _, label := range labels {
-		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return "", errors.New("invalid policy hostname")
-		}
-		for _, c := range label {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-				return "", errors.New("invalid policy hostname")
-			}
-		}
-	}
-	for _, c := range labels[len(labels)-1] {
-		if c >= 'a' && c <= 'z' {
-			return h, nil
-		}
-	}
-	return "", errors.New("numeric policy hostname")
+	return egress.Hostname(host)
 }
 
 // Resolve validates every returned address before allowing any dial or DNS answer.
