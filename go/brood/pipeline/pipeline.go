@@ -36,13 +36,30 @@ type Option struct {
 // Node — узел конвейера с типом и полями своего типа. Role обязательна
 // у actor-узлов: имя, по которому рой связывает узел с существующим актором.
 type Node struct {
-	Type     string   `yaml:"type"`
-	Role     string   `yaml:"role,omitempty"`
-	Prompt   string   `yaml:"prompt,omitempty"`
-	Question string   `yaml:"question,omitempty"`
-	Options  []Option `yaml:"options,omitempty"`
-	Target   string   `yaml:"target,omitempty"`
-	Branches []string `yaml:"branches,omitempty"`
+	Type      string           `yaml:"type"`
+	Role      string           `yaml:"role,omitempty"`
+	Prompt    string           `yaml:"prompt,omitempty"`
+	Question  string           `yaml:"question,omitempty"`
+	Options   []Option         `yaml:"options,omitempty"`
+	Target    string           `yaml:"target,omitempty"`
+	Branches  []string         `yaml:"branches,omitempty"`
+	ChildJoin *ChildJoinPolicy `yaml:"childJoin,omitempty"`
+}
+
+// ChildJoinPolicy defines an actor node's server-computed child outcome.
+// Omitted mode means all. Total membership is fixed by the first child intent;
+// quorum is a node-defined threshold, not a guest-selected value.
+type ChildJoinPolicy struct {
+	Mode   string `yaml:"mode,omitempty"`
+	Quorum int    `yaml:"quorum,omitempty"`
+}
+
+// ChildJoinMode returns the node's join mode, defaulting to all.
+func (n Node) ChildJoinMode() string {
+	if n.ChildJoin == nil || n.ChildJoin.Mode == "" {
+		return "all"
+	}
+	return n.ChildJoin.Mode
 }
 
 // Edge — ребро графа; пустое условие всегда истинно.
@@ -140,6 +157,23 @@ func (d *Document) checkSchema(filename string) error {
 		}
 		if node.Type == "actor" && node.Role == "" {
 			return fail("nodes."+name+".role", "actor node requires a role; role replaced template, managedPool and styles")
+		}
+		if node.ChildJoin != nil {
+			if node.Type != "actor" {
+				return fail("nodes."+name+".childJoin", "only actor nodes support child joins")
+			}
+			switch node.ChildJoinMode() {
+			case "all", "any":
+				if node.ChildJoin.Quorum != 0 {
+					return fail("nodes."+name+".childJoin.quorum", "requires quorum mode")
+				}
+			case "quorum":
+				if node.ChildJoin.Quorum < 1 || node.ChildJoin.Quorum > 64 {
+					return fail("nodes."+name+".childJoin.quorum", "must be between 1 and 64")
+				}
+			default:
+				return fail("nodes."+name+".childJoin.mode", "must be all, any or quorum")
+			}
 		}
 		if node.Type == "human" {
 			if len(node.Options) == 0 {
