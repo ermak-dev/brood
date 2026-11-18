@@ -509,11 +509,11 @@ func withForceReplyStep(rows map[string][]string) map[string][]string {
 	return out
 }
 
-// withCurrentHistoryTables: шаги 32→35 добавляют пустую историю GitLab и
-// дочерних задач, не выводят полномочия из credentials и не трогают прежние строки.
+// withCurrentHistoryTables: шаги 32→36 добавляют пустую историю и настройки;
+// полномочия и сети не выводятся из credentials, прежние строки не меняются.
 func withCurrentHistoryTables(rows map[string][]string) map[string][]string {
 	out := maps.Clone(rows)
-	for _, table := range []string{"gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals", "gitlab_proposal_states", "swarm_child_joins", "swarm_child_tasks", "actor_interventions", "actor_step_interruptions"} {
+	for _, table := range []string{"gitlab_bindings", "gitlab_grants", "gitlab_operations", "gitlab_approvals", "gitlab_proposal_states", "swarm_child_joins", "swarm_child_tasks", "actor_interventions", "actor_step_interruptions", "project_managed_networks", "managed_actor_networks"} {
 		out[table] = nil
 	}
 	return out

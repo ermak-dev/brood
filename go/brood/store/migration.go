@@ -58,6 +58,8 @@ var schemaMigrations = []schemaMigration{
 	{from: 33, sql: gitlabProposalFullSchema()},
 	// 35: пустые дочерние задачи; существующие шаги и проходы не меняются (#289).
 	{from: 34, sql: swarmChildrenFullSchema()},
+	// 36: default сети проекта и новые immutable snapshots; прежние строки не меняются (#302).
+	{from: 35, sql: managedNetworkFullSchema()},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).

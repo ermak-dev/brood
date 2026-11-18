@@ -112,6 +112,8 @@ type ManagedActor struct {
 	UpdatedAt         string
 	DeletedAt         *string
 	Origin            string
+	// NetworkPolicy is pinned versioned JSON; empty preserves the legacy profile.
+	NetworkPolicy string
 }
 
 func validateManagedPool(p ManagedPool) error {
@@ -301,10 +303,12 @@ func managedFits(p ManagedPool, count int64, used, extra ManagedResources) bool 
 
 const managedActorCols = `uid,name,swarm_id,atespace_uid,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at,stage,role,delegator_id,parent_uid,origin`
 
+const managedActorReadCols = managedActorCols + `,COALESCE((SELECT policy FROM managed_actor_networks WHERE actor_uid=managed_actors.uid),'')`
+
 func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error) {
 	var a ManagedActor
 	var template string
-	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage, &a.Role, &a.DelegatorID, &a.ParentUID, &a.Origin)
+	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.AtespaceUID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage, &a.Role, &a.DelegatorID, &a.ParentUID, &a.Origin, &a.NetworkPolicy)
 	if err == nil {
 		err = json.Unmarshal([]byte(template), &a.Template)
 	}
@@ -355,6 +359,14 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		a.ClusterIdentity = p.Source.ClusterIdentity
 		a.SourceFingerprint = p.SourceFingerprint
 		a.Template = p.Template
+		selected, err := s.ProjectManagedNetwork(ctx, sw.ProjectID)
+		if err != nil {
+			return err
+		}
+		a.NetworkPolicy, err = normalizeManagedNetwork(selected)
+		if err != nil {
+			return err
+		}
 		a.Incarnation = 1
 		a.Phase = "provisioning"
 		a.Desired = "running"
@@ -367,15 +379,21 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		a.UpdatedAt = a.CreatedAt
 		a.DeletedAt = nil
 		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.AtespaceUID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt, a.Stage, a.Role, a.DelegatorID, a.ParentUID, a.Origin)
+		if err != nil {
+			return wrapUnique(err, "managed actor name or CTID")
+		}
+		if err = s.snapshotManagedNetwork(ctx, a.UID, a.NetworkPolicy); err != nil {
+			return err
+		}
 		result = a
-		return wrapUnique(err, "managed actor name or CTID")
+		return nil
 	})
 	return result, err
 }
 
 // GetManagedActor returns immutable identity, intent and latest reconciliation state.
 func (s *Store) GetManagedActor(ctx context.Context, uid string) (ManagedActor, error) {
-	a, err := scanManagedActor(s.conn(ctx).QueryRowContext(ctx, `SELECT `+managedActorCols+` FROM managed_actors WHERE uid=?`, uid))
+	a, err := scanManagedActor(s.conn(ctx).QueryRowContext(ctx, `SELECT `+managedActorReadCols+` FROM managed_actors WHERE uid=?`, uid))
 	if err == sql.ErrNoRows {
 		err = fmt.Errorf("%w: managed actor", ErrNotFound)
 	}
@@ -385,7 +403,7 @@ func (s *Store) GetManagedActor(ctx context.Context, uid string) (ManagedActor, 
 // ListManagedActors lists all rows for reconciliation; an empty swarmID means all swarms.
 // Deleted tombstones are included so callers can distinguish absent from retired UIDs.
 func (s *Store) ListManagedActors(ctx context.Context, swarmID string) ([]ManagedActor, error) {
-	query := `SELECT ` + managedActorCols + ` FROM managed_actors`
+	query := `SELECT ` + managedActorReadCols + ` FROM managed_actors`
 	args := []any{}
 	if swarmID != "" {
 		query += ` WHERE swarm_id=?`
@@ -869,7 +887,7 @@ func ptrManaged(value string) *string { return &value }
 // swarm-scoped delivery. Deleted tombstones resolve to ErrNotFound.
 func (s *Store) LookupManagedActor(ctx context.Context, swarmID, name string) (ManagedActor, error) {
 	a, err := scanManagedActor(s.conn(ctx).QueryRowContext(ctx,
-		`SELECT `+managedActorCols+` FROM managed_actors WHERE swarm_id=? AND name=? AND phase<>'deleted'`, swarmID, name))
+		`SELECT `+managedActorReadCols+` FROM managed_actors WHERE swarm_id=? AND name=? AND phase<>'deleted'`, swarmID, name))
 	if err == sql.ErrNoRows {
 		return a, fmt.Errorf("%w: managed actor", ErrNotFound)
 	}
