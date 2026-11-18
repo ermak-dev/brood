@@ -296,14 +296,16 @@ func secretClient(ctx context.Context, o secretOptions) (*clientapi.Client, *cli
 	if err != nil {
 		return nil, nil, "", err
 	}
-	project, err := resolveSecretProject(projects, o.project)
+	project, err := resolveProject(projects, o.project)
 	if err != nil {
 		return nil, nil, "", err
 	}
 	return client, store, project, nil
 }
 
-func resolveSecretProject(projects []clientapi.Project, selected string) (string, error) {
+// resolveProject находит проект списка по точному ID или по точному имени;
+// неоднозначное имя — отказ.
+func resolveProject(projects []clientapi.Project, selected string) (string, error) {
 	if selected == "" {
 		return "", errors.New("explicit project is required")
 	}

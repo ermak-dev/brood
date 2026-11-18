@@ -257,11 +257,11 @@ func TestSecretCLIValueFileAndMutationExpiry(t *testing.T) {
 
 func TestSecretProjectResolution(t *testing.T) {
 	projects := []clientapi.Project{{ID: "p1", Name: "demo"}, {ID: "p2", Name: "demo"}, {ID: "p3", Name: "p1"}}
-	if id, err := resolveSecretProject(projects, "p1"); err != nil || id != "p1" {
+	if id, err := resolveProject(projects, "p1"); err != nil || id != "p1" {
 		t.Fatalf("ID precedence %q %v", id, err)
 	}
 	for _, name := range []string{"", "demo", "missing"} {
-		if _, err := resolveSecretProject(projects, name); err == nil {
+		if _, err := resolveProject(projects, name); err == nil {
 			t.Error("ambiguous/missing project accepted")
 		}
 	}

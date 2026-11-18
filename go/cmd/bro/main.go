@@ -97,6 +97,7 @@ commands:
   build [target] [options]       build current files into local OCI artifacts
   push [target] [options]        upload built images and template to the current server
   secret [options]                manage project secrets on the current server
+  swarm list [options]           list all swarms of all accessible projects
   swarm roles|bind|unbind SWARM   list and change swarm role bindings to actors
   swarm start|stop SWARM          start a swarm pass with its goal, stop it
   pipeline <sub> FILE             validate, plan or render a pipeline document
