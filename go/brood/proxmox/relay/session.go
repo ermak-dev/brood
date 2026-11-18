@@ -20,6 +20,9 @@ const MaxSessionBytes = 128 * 1024
 // bring the workspace to a commit and sign the result (#183).
 const WorkspaceAttestOperation = "workspace_attest"
 
+// WorkspaceResultOperation observes a clean committed result under guest-root quiescence.
+const WorkspaceResultOperation = "workspace_result"
+
 // GuestReleaseOperation asks the guest root which guest release (#184) its
 // /opt/brood/bin names (#133). The guest reads only its own artifact root and
 // answers a GuestRelease as JSON in the response text; a guest runtime that
@@ -38,7 +41,7 @@ type GuestRelease struct {
 // sessionTimeout bounds one session call on both peers. Attestation fetches
 // and hashes a snapshot, which does not fit the interactive 20 s budget.
 func sessionTimeout(operation string) time.Duration {
-	if operation == WorkspaceAttestOperation {
+	if operation == WorkspaceAttestOperation || operation == WorkspaceResultOperation {
 		return 10 * time.Minute
 	}
 	return 20 * time.Second

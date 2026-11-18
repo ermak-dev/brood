@@ -64,12 +64,19 @@ func (s *Server) reserveManagedActorOrigin(ctx context.Context, request store.Ma
 		if err != nil {
 			return err
 		}
-		if actor.Origin == "" {
-			return nil
-		}
 		swarm, err := s.store.GetSwarm(tx, actor.SwarmID)
 		if err != nil {
 			return err
+		}
+		binding, err := s.swarmEvalRuntime(tx, swarm.ID)
+		if err != nil {
+			return err
+		}
+		if err := s.evalWorkspaceOrigin(tx, swarm.ProjectID, actor.Origin, actor.NetworkPolicy, binding); err != nil {
+			return err
+		}
+		if actor.Origin == "" {
+			return nil
 		}
 		mode, err := s.originMode(tx, swarm.ProjectID, actor.Origin, actor.NetworkPolicy)
 		if err != nil {

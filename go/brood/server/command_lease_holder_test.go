@@ -3,10 +3,10 @@ package server
 // BUG: The owner of a worker under a foreign dispatch lease got refusals that
 // named neither the lease holder nor its request ID, so it could not tell whom
 // to ask or what to release (#272).
-// SPEC: Lifecycle and session control refusals caused by the lease name the
-// holder within the swarm and the request ID with its release command, keep
-// the conflict class, carry no human identity or task hash, and leave the lease
-// in place.
+// SPEC: Автоматические lifecycle-проверки и отказы session control называют
+// держателя и request ID с командой освобождения, сохраняют conflict class
+// и lease, не раскрывают human identity или task hash. Явное lifecycle-управление
+// owner/delegated actor не освобождает lease и проверяется отдельно.
 // IMPLEMENTATION: store.DescribeCoordinationHold describes the claim in the
 // guard and in authorizeSessionCoordination; lifecycle commands keep the
 // coordination reason instead of a generic refusal.
@@ -23,9 +23,31 @@ import (
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/command"
+	"brood.dev/go/brood/store"
 )
 
-func TestForeignLeaseRefusalNamesHolder(t *testing.T) {
+func TestForeignLeaseAutomaticRefusalNamesHolder(t *testing.T) {
+	ts, _, _, _, theirs := foreignLeaseSetup(t)
+	claim, err := dispatchLease(t, ts, theirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `dispatch lease "before-267" on "theirs" is held by "master"; the holder or an administrator releases it with dispatch --action release --request-id "before-267"`
+	err = ts.srv.store.CheckActorUpdate(context.Background(), theirs)
+	if !errors.Is(err, store.ErrCoordinationConflict) || !strings.Contains(err.Error(), want) {
+		t.Fatalf("automatic update lost holder diagnostic: %v", err)
+	}
+	for _, private := range []string{claim.HumanID, claim.PayloadHash} {
+		if strings.Contains(err.Error(), private) {
+			t.Fatalf("automatic refusal leaked private claim metadata: %v", err)
+		}
+	}
+	if held, err := dispatchLease(t, ts, theirs); err != nil || held != claim {
+		t.Fatalf("automatic refusal changed lease: %+v %v", held, err)
+	}
+}
+
+func TestForeignLeaseSessionRefusalNamesHolder(t *testing.T) {
 	ts, _, _, other, theirs := foreignLeaseSetup(t)
 	ctx := context.Background()
 	sessions := recordSessions(ts)
@@ -34,7 +56,7 @@ func TestForeignLeaseRefusalNamesHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `dispatch lease "before-267" on "theirs" is held by "master"; the holder or an administrator releases it with dispatch --action release --request-id "before-267"`
-	refusals := map[string]string{"stop": "", "delete": "", "reset": "", "update": "", "restart": "release active coordination before restarting or cleaning this actor", "wipe": "release active coordination before restarting or cleaning this actor", "recycle": "release active coordination before restarting or cleaning this actor", "slash": "session control belongs to another dispatch owner", "session_terminal": "session control belongs to another dispatch owner"}
+	refusals := map[string]string{"restart": "release active coordination before restarting or cleaning this actor", "wipe": "release active coordination before restarting or cleaning this actor", "recycle": "release active coordination before restarting or cleaning this actor", "slash": "session control belongs to another dispatch owner", "session_terminal": "session control belongs to another dispatch owner"}
 	for tool, reason := range refusals {
 		args, lifecycle := lifecycleTargetArguments[tool]
 		if !lifecycle {

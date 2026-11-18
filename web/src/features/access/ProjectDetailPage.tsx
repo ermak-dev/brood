@@ -15,7 +15,14 @@ import { WorkflowCatalog } from '@/features/pipelines/WorkflowCatalog';
 import { CapacityEditor } from './CapacityEditor';
 import { ProjectMembers } from './PermissionsPage';
 import { ProjectRepository } from './ProjectRepository';
-import { LoadState, StatusBadge, useAccessActions, useAccessResource, useAdministrator } from './shared';
+import { ProjectPolicyManagement } from './ProjectPolicyManagement';
+import {
+  LoadState,
+  StatusBadge,
+  useAccessActions,
+  useAccessResource,
+  useAdministrator,
+} from './shared';
 import styles from '@/features/substrate/substrate.module.scss';
 
 export function ProjectDetailPage() {
@@ -145,6 +152,7 @@ function ProjectDetailView({ project }: { project: AccessProject }) {
       </LoadState>
       <ProjectRepository project={project} />
       <WorkflowCatalog projectId={project.id} />
+      <ProjectPolicyManagement key={project.id} projectId={project.id} />
       <ProjectMembers project={project} />
       {editing && admin && (
         <CapacityEditor

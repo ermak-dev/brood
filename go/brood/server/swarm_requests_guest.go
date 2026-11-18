@@ -53,15 +53,27 @@ func (m *managedProvider) askOperator(ctx context.Context, from store.ManagedAct
 	}
 	var opened store.SwarmRequest
 	err = m.inCommandActorTx(ctx, from, func(ctx context.Context, current store.ManagedActor) error {
-		var openErr error
-		opened, openErr = m.server.store.OpenActorRequest(ctx, store.ActorRequestInput{
+		in := store.ActorRequestInput{
 			SwarmID: current.SwarmID, ActorUID: current.UID, ActorIncarnation: current.Incarnation,
 			Kind: args.Kind, Question: args.Question, Context: args.Context, Options: requestOptionLabels(args.Options),
-		})
+		}
+		var openErr error
+		if current.Class == store.ActorClassEphemeral {
+			opened, openErr = m.openEphemeralOperatorRequest(ctx, current, in)
+		} else {
+			opened, openErr = m.server.store.OpenActorRequest(ctx, in)
+		}
 		return openErr
 	})
 	if err != nil {
 		return askOperatorRefusal(err)
+	}
+	// Пробуждение только после коммита успешно открытого вопроса.
+	// Обычный рой по-прежнему ждёт ответа оператора, не запускает dispatch.
+	if opened.State == "open" {
+		if _, err := m.server.store.GetSwarmEvalBinding(ctx, opened.SwarmID); err == nil {
+			m.server.steps.kick(opened.SwarmID)
+		}
 	}
 	data, _ := json.Marshal(map[string]string{"request_id": opened.ID, "state": opened.State, "kind": opened.Kind})
 	return relay.SwarmResponse{OK: true, Text: "operator request " + opened.ID + " is open; the answer arrives as a message from the operator", Data: data, Outcome: "completed"}
@@ -87,9 +99,9 @@ func askOperatorRefusal(err error) relay.SwarmResponse {
 		return relay.SwarmResponse{Text: "too many open operator requests; wait for answers", Outcome: "refused"}
 	case errors.Is(err, store.ErrSwarmRequestInvalid):
 		return relay.SwarmResponse{Text: "invalid operator request: check kind, options and text size", Outcome: "refused"}
-	case errors.Is(err, app.ErrNotAllowed), errors.Is(err, store.ErrSwarmRequestDenied), errors.Is(err, store.ErrSwarmRequestStale):
+	case errors.Is(err, app.ErrNotAllowed), errors.Is(err, app.ErrNotFound), errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrSwarmRequestDenied), errors.Is(err, store.ErrSwarmRequestStale), errors.Is(err, store.ErrSwarmChildDenied), errors.Is(err, store.ErrManagedBinding), errors.Is(err, store.ErrPipelineSourceUnverified):
 		return relay.SwarmResponse{Text: "operator request not authorized", Outcome: "refused"}
-	case errors.Is(err, app.ErrConflict):
+	case errors.Is(err, app.ErrConflict), errors.Is(err, store.ErrSwarmChildConflict):
 		return relay.SwarmResponse{Text: "operator request conflict", Outcome: "refused"}
 	default:
 		return relay.SwarmResponse{Text: "operator request unavailable", Outcome: "failed"}

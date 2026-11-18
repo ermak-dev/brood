@@ -184,7 +184,19 @@ func (o *managedWorkloadOperation) beginLifecycle(ctx context.Context, a store.M
 			userID = user.ID
 		}
 	}
-	if o.parent == nil && o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID) == nil {
+	if o.parent != nil {
+		return o.server.store.BeginDelegatedManagedActorOperation(ctx, *o.parent, a, o.intentID(), o.action, userID, func(ctx context.Context) error {
+			current, err := o.server.store.GetSwarm(ctx, o.swarm.ID)
+			if err != nil {
+				return err
+			}
+			if current.ProjectID != o.swarm.ProjectID || current.AtespaceUID == nil || *current.AtespaceUID != o.swarm.AtespaceUID {
+				return app.ErrNotAllowed
+			}
+			return o.server.authorizeSwarmManagerIntent(ctx, userID, o.swarm.ID)
+		})
+	}
+	if o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID) == nil {
 		return o.server.store.BeginOwnerManagedActorOperation(ctx, a, o.intentID(), o.action, userID, func(ctx context.Context) error {
 			return o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID)
 		})

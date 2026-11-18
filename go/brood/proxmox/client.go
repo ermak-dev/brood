@@ -231,6 +231,10 @@ func validVMID(id int) bool { return id >= 100 && id <= 999999999 }
 // by their own contexts.
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
+type responseStatusError struct{ code int }
+
+func (e responseStatusError) Error() string { return fmt.Sprintf("PVE HTTP status %d", e.code) }
+
 func (c *Client) request(ctx context.Context, method, path string, form url.Values, out any) error {
 	return c.requestData(ctx, method, path, form, out, false)
 }
@@ -266,7 +270,7 @@ func (c *Client) requestData(ctx context.Context, method, path string, form url.
 		case 409:
 			return ErrCollision
 		}
-		return fmt.Errorf("PVE HTTP status %d", resp.StatusCode)
+		return responseStatusError{code: resp.StatusCode}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	// A body can end cleanly but truncated after cancellation; never parse it.
@@ -355,13 +359,19 @@ func parseVMID(raw json.RawMessage) (int, error) {
 
 // ConfirmAbsent positively checks the global VMID registry, not ACL-filtered
 // inventory. Only a successful exact-ID response proves absence at this instant;
-// all errors retain the reservation. It does not reserve the now-free VMID.
+// all errors retain the reservation. A rejected exact-ID candidate returns
+// ErrCollision, not absence or permission to retarget a submitted create.
+// It does not reserve the now-free VMID.
 func (c *Client) ConfirmAbsent(ctx context.Context, id int) error {
 	if !validVMID(id) {
 		return errors.New("invalid PVE VMID")
 	}
 	var raw json.RawMessage
 	if err := c.request(ctx, http.MethodGet, "/cluster/nextid?"+url.Values{"vmid": {strconv.Itoa(id)}}.Encode(), nil, &raw); err != nil {
+		var status responseStatusError
+		if errors.As(err, &status) && status.code == http.StatusBadRequest {
+			return ErrCollision
+		}
 		return err
 	}
 	free, err := parseVMID(raw)

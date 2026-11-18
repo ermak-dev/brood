@@ -125,7 +125,17 @@ func (p *telegramPoller) press(ctx context.Context, owner string, chat, from int
 	if !ok {
 		return telegramReplyButtonStale
 	}
-	return p.answer(ctx, owner, chat, from, store.SwarmAnswer{SwarmID: req.SwarmID, RequestID: req.ID, UserID: owner, Outcome: outcome, Response: response})
+	return p.answer(ctx, owner, chat, from, telegramRequestAnswer(req, owner, outcome, response))
+}
+
+// Policy-кнопка относится к immutable вопросу revision 1, даже если повтор
+// пришёл после ответа: текущая revision 2 не переопределяет старое нажатие.
+func telegramRequestAnswer(req store.SwarmRequest, user, outcome, response string) store.SwarmAnswer {
+	in := store.SwarmAnswer{SwarmID: req.SwarmID, RequestID: req.ID, UserID: user, Outcome: outcome, Response: response}
+	if req.Origin == "policy" {
+		in.ExpectedRevision = 1
+	}
+	return in
 }
 
 // answerCommand — исход /answer <номер> <текст>: текстовый ответ на запрос

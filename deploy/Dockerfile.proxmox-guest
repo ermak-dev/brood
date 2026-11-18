@@ -69,6 +69,9 @@ RUN mkdir -p /tmp/ttyd/source \
 RUN groupadd --gid 1000 actor \
     && useradd --uid 1000 --gid 1000 --home-dir /workspace/home --no-create-home --shell /bin/bash actor \
     && mkdir -p /workspace /opt/seeds
+RUN install -d -m 0700 /etc/brood /var/lib/brood/delivery \
+    && printf '%s\n' '/var/lib/brood/delivery' > /etc/brood/delivery-state-dir \
+    && chmod 0600 /etc/brood/delivery-state-dir
 COPY --from=driftty /home/node/build/dist/index.html /usr/local/share/brood/driftty/index.html
 COPY --from=driftty /source/LICENSE /usr/local/share/brood/driftty/LICENSE
 COPY brood-guest /usr/local/bin/brood-guest

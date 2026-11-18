@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"brood.dev/go/brood/pipeline"
@@ -113,11 +114,29 @@ func (s *Store) SwarmRequests(ctx context.Context, swarmID string) ([]SwarmReque
 		}
 		result = append(result, r)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	policy, err := s.pipelinePolicyRequests(ctx, swarmID)
+	if err != nil {
+		return nil, err
+	}
+	result = append(result, policy...)
+	slices.SortFunc(result, func(a, b SwarmRequest) int {
+		if order := strings.Compare(a.CreatedAt, b.CreatedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return result, nil
 }
 
 // GetSwarmRequest возвращает запрос своего роя; чужой ID — ErrNotFound.
 func (s *Store) GetSwarmRequest(ctx context.Context, swarmID, id string) (SwarmRequest, error) {
+	if candidateID, policy := strings.CutPrefix(id, policyRequestPrefix); policy {
+		return s.pipelinePolicyRequest(ctx, swarmID, candidateID)
+	}
 	r, err := scanSwarmRequest(s.conn(ctx).QueryRowContext(ctx, `SELECT `+swarmRequestCols+` FROM swarm_requests WHERE swarm_id=? AND id=?`, swarmID, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, fmt.Errorf("%w: swarm request %q", ErrNotFound, id)
@@ -162,6 +181,10 @@ type ActorRequestInput struct {
 // граф не продвигает. Ответ на него закрывает вопрос, но не меняет
 // ничьих полномочий.
 func (s *Store) OpenActorRequest(ctx context.Context, in ActorRequestInput) (SwarmRequest, error) {
+	return s.openActorRequest(ctx, in, "", nil)
+}
+
+func (s *Store) openActorRequest(ctx context.Context, in ActorRequestInput, childID string, authorize SwarmChildAuthorize) (SwarmRequest, error) {
 	if !validPipelineField(in.SwarmID) || !validPipelineField(in.ActorUID) || in.ActorIncarnation < 1 {
 		return SwarmRequest{}, fmt.Errorf("%w: actor identity", ErrSwarmRequestInvalid)
 	}
@@ -209,8 +232,16 @@ func (s *Store) OpenActorRequest(ctx context.Context, in ActorRequestInput) (Swa
 		if err != nil {
 			return err
 		}
-		if err := liveRoleActor(sw, actor); errors.Is(err, ErrSwarmRoleForeignActor) {
+		var parent SwarmChildParent
+		if childID != "" {
+			parent, err = s.ephemeralQuestionParent(ctx, childID, in, "ask_ephemeral_operator", authorize)
+			if err != nil {
+				return err
+			}
+		} else if err := liveRoleActor(sw, actor); errors.Is(err, ErrSwarmRoleForeignActor) {
 			return fmt.Errorf("%w: actor does not belong to the swarm", ErrSwarmRequestDenied)
+		} else if actor.Class == ActorClassEphemeral {
+			return fmt.Errorf("%w: ephemeral actors require child-step request context", ErrSwarmRequestDenied)
 		} else if err != nil {
 			return fmt.Errorf("%w: actor incarnation %d: %v", ErrSwarmRequestStale, in.ActorIncarnation, err)
 		}
@@ -226,6 +257,13 @@ func (s *Store) OpenActorRequest(ctx context.Context, in ActorRequestInput) (Swa
 		}
 		if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_requests(id,swarm_id,origin,actor_uid,actor_incarnation,kind,question,context,options,state,created_at) VALUES (?,?,'actor',?,?,?,?,NULLIF(?,''),?,'open',?)`,
 			id, in.SwarmID, in.ActorUID, in.ActorIncarnation, in.Kind, in.Question, in.Context, encoded, nowRFC3339()); err != nil {
+			return err
+		}
+		if childID != "" {
+			if err := s.captureEphemeralQuestionContext(ctx, id, parent); err != nil {
+				return err
+			}
+		} else if err := s.captureSwarmRequestPassContext(ctx, in.SwarmID, id); err != nil {
 			return err
 		}
 		return s.queueTelegram(ctx, "actor_question", TelegramEvent{Swarm: in.SwarmID, Request: id})
@@ -292,6 +330,8 @@ func validOptions(options []RequestOption) error {
 type SwarmAnswer struct {
 	SwarmID, RequestID, UserID string
 	Outcome, Response          string
+	// ExpectedRevision is required only for a policy confirmation.
+	ExpectedRevision int64
 }
 
 // AnswerSwarmRequest записывает ответ одним действием с его последствиями.
@@ -304,11 +344,30 @@ type SwarmAnswer struct {
 // Доставка ответа актору здесь не происходит: сохранённый ответ не зависит
 // от успеха доставки и повторяется независимо.
 func (s *Store) AnswerSwarmRequest(ctx context.Context, in SwarmAnswer, authorize func(context.Context) bool) (SwarmRequest, error) {
+	var result SwarmRequest
+	err := s.WithTx(ctx, func(tx context.Context) error {
+		if err := s.refuseSwarmEval(tx, in.SwarmID); err != nil {
+			return err
+		}
+		var err error
+		result, err = s.answerSwarmRequest(tx, in, authorize)
+		return err
+	})
+	if err != nil {
+		return SwarmRequest{}, err
+	}
+	return result, nil
+}
+
+func (s *Store) answerSwarmRequest(ctx context.Context, in SwarmAnswer, authorize func(context.Context) bool) (SwarmRequest, error) {
 	if !validPipelineField(in.SwarmID) || !validPipelineField(in.RequestID) {
 		return SwarmRequest{}, ErrNotFound
 	}
 	if err := validRequestText(in.Response, false); err != nil {
 		return SwarmRequest{}, err
+	}
+	if strings.HasPrefix(in.RequestID, policyRequestPrefix) {
+		return s.answerPipelinePolicyRequest(ctx, in, authorize)
 	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
 		if authorize == nil || !authorize(ctx) {

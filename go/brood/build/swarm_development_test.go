@@ -1,31 +1,22 @@
 package build
 
-// FEATURE: Два определения разработки роем в корневом Broodfile.
-// SPEC: Обычный путь без человека; архитектурный путь пропускает только одобрение.
-// IMPLEMENTATION: Два графа с явной маршрутизацией успешных исходов и отказа;
-// узлы называют роли. Число ролей графа сверяется с принятой константой
-// maxWorkflowRoles, а не с ёмкостью пула (#221).
-// RESULT: IMPLEMENTED — определения проходят общую проверку и проверку маршрутов.
-// STATUS: DONE
+// Каталог #290 задаёт только скелеты; условия ворот принадлежат политике проекта.
+// Проверяем настоящий корневой документ, публичный loader и машину переходов.
 
 import (
-	"encoding/json"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"brood.dev/go/brood/pipeline"
 )
 
-// maxWorkflowRoles — принятая граница числа различных ролей в одном
-// опубликованном графе корневого Broodfile. Это не maxActors пула и не
-// гарантия ёмкости: пул проекта в Broodfile не объявлен, а несколько ролей
-// вправе делиться одним актором. Ёмкость пула с привязками ролей сверяет
-// store.RolesFit (#221) при запуске роя (#211); тест лишь ловит рост числа
-// ролей в Broodfile.
-const maxWorkflowRoles = 3
-
-func TestSwarmDevelopmentWorkflows(t *testing.T) {
+func rootCatalog(t *testing.T) map[string]any {
+	t.Helper()
 	data, err := os.ReadFile("../../../Broodfile")
 	if err != nil {
 		t.Fatal(err)
@@ -34,141 +25,162 @@ func TestSwarmDevelopmentWorkflows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinData, err := os.ReadFile("../../../brood/dev/pins.json")
-	if err != nil {
-		t.Fatal(err)
+	return doc
+}
+
+func TestRootCatalogSkeletons(t *testing.T) {
+	doc := rootCatalog(t)
+	workflows := doc["workflows"].(map[string]any)
+	var names []string
+	for name := range workflows {
+		names = append(names, name)
 	}
-	var pins map[string]string
-	if err := json.Unmarshal(pinData, &pins); err != nil {
-		t.Fatal(err)
+	slices.Sort(names)
+	if !reflect.DeepEqual(names, []string{"develop", "docs", "fix"}) {
+		t.Errorf("catalog names = %v, want develop, docs, fix", names)
 	}
-	if _, err := MakePlan(doc, pins, "", "localhost:5000/team", "development", "Broodfile"); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name   string
-		stages []string
-		human  bool
-	}{
-		{"swarm-development", []string{"triage", "implement", "review", "test", "integrate", "done"}, false},
-		{"swarm-architecture", []string{"triage", "architecture", "decision", "implement", "review", "test", "integrate", "done"}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			graph, err := Workflow(doc, tc.name, "Broodfile")
+	for _, name := range []string{"develop", "fix", "docs"} {
+		t.Run(name, func(t *testing.T) {
+			graph, err := Workflow(doc, name, "Broodfile")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if graph.Start != tc.stages[0] || graph.Exit != "done" || !reflect.DeepEqual(graph.GoalGates, []string{"done"}) {
-				t.Fatalf("unexpected endpoints or gates: %+v", graph)
+			if graph.Start != "implement" || graph.Exit != "done" || !reflect.DeepEqual(graph.GoalGates, []string{"done"}) {
+				t.Fatalf("unexpected endpoints or goal gates: %+v", graph)
 			}
-			if graph.Retry != nil && graph.Retry.MaxRetries != 0 {
-				t.Fatal("automatic retry is unsupported")
+			if len(graph.Nodes) != 4 || len(graph.Edges) != 3 || graph.Retry != nil {
+				t.Fatalf("expected only implement, review, land, done without retries: %+v", graph)
 			}
-			if len(graph.Nodes) != len(tc.stages) {
-				t.Fatalf("unexpected nodes: %+v", graph.Nodes)
+			if graph.Nodes["done"].Type != "exit" {
+				t.Fatal("done is not the exit")
 			}
-			for i, name := range tc.stages {
-				node := graph.Nodes[name]
-				if name == "done" {
-					if node.Type != "exit" {
-						t.Fatalf("%s is not exit", name)
-					}
-					continue
-				}
-				if name == "decision" {
-					if !tc.human || node.Type != "human" || len(node.Options) != 2 {
-						t.Fatalf("invalid decision: %+v", node)
-					}
-					if node.Options[0].Outcome != "success" || node.Options[1].Outcome != "fail" {
-						t.Fatalf("decision outcomes: %+v", node.Options)
-					}
-				} else if node.Type != "actor" || node.Role == "" || node.Prompt == "" {
-					t.Fatalf("invalid actor %s: %+v", name, node)
+			if roles := graph.Roles(); !reflect.DeepEqual(roles, map[string]bool{"build": true, "review": true}) {
+				t.Fatalf("roles = %v, want build and review", roles)
+			}
+			stages := []struct{ id, role, class, next string }{
+				{"implement", "build", "work", "review"},
+				{"review", "review", "review", "land"},
+				{"land", "build", "landing", "done"},
+			}
+			begin, err := pipeline.Begin(graph)
+			if err != nil || begin.Next != "implement" || begin.Execution != "running" {
+				t.Fatalf("begin = %+v, %v", begin, err)
+			}
+			for _, stage := range stages {
+				node := graph.Nodes[stage.id]
+				if node.Type != "actor" || node.Role != stage.role || !reflect.DeepEqual(node.ActionClasses, []string{stage.class}) || strings.TrimSpace(node.Prompt) == "" {
+					t.Fatalf("%s: unexpected actor contract: %+v", stage.id, node)
 				}
 				var outgoing []pipeline.Edge
 				for _, edge := range graph.Edges {
-					if edge.From == name {
+					if edge.From == stage.id {
 						outgoing = append(outgoing, edge)
 					}
 				}
-				edge, ok := pipeline.SelectNext(outgoing, "success", nil, "", nil)
-				if !ok || edge.To != tc.stages[i+1] || edge.Condition != "outcome=success" {
-					t.Fatalf("%s success routing: %+v", name, edge)
+				if len(outgoing) != 1 || outgoing[0].To != stage.next || outgoing[0].Condition != "outcome=success" {
+					t.Fatalf("%s: success-only routing = %+v", stage.id, outgoing)
 				}
-				edge, ok = pipeline.SelectNext(outgoing, "fail", nil, "", nil)
-				if name == "decision" {
-					if !ok || edge.To != "done" || edge.Condition != "outcome=fail" {
-						t.Fatalf("reject routing: %+v", edge)
-					}
-				} else if ok {
-					t.Fatalf("%s failure must stop, got %+v", name, edge)
+				want := pipeline.Transition{Next: stage.next, NextState: "pending", Execution: "running"}
+				if stage.next == "done" {
+					want.NextState, want.Execution = "completed", "succeeded"
+				}
+				got, err := pipeline.Advance(graph, pipeline.Event{Node: stage.id, State: "completed", Outcome: "success"})
+				if err != nil || got != want {
+					t.Fatalf("%s success = %+v, %v; want %+v", stage.id, got, err, want)
+				}
+				got, err = pipeline.Advance(graph, pipeline.Event{Node: stage.id, State: "completed", Outcome: "fail"})
+				if err != nil || got != (pipeline.Transition{Execution: "failed", Terminal: true}) {
+					t.Fatalf("%s failure must terminate without successor: %+v, %v", stage.id, got, err)
 				}
 			}
 		})
 	}
 }
 
-// TestSwarmWorkflowRoleCountBounded — опубликованный граф называет не более
-// maxWorkflowRoles ролей. Ёмкость пула и число акторов тест не проверяет (#221).
-func TestSwarmWorkflowRoleCountBounded(t *testing.T) {
-	data, err := os.ReadFile("../../../Broodfile")
+func TestRootCatalogPublicProjectLoader(t *testing.T) {
+	doc := rootCatalog(t)
+	want, err := WorkflowSnapshots(doc, "Broodfile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := ParseDocument(string(data), "Broodfile")
-	if err != nil {
-		t.Fatal(err)
-	}
-	workflows, _ := doc["workflows"].(map[string]any)
-	if len(workflows) == 0 {
-		t.Fatal("no published workflows")
-	}
-	for name := range workflows {
-		graph, err := Workflow(doc, name, "Broodfile")
-		if err != nil {
-			t.Fatal(err)
-		}
-		roles := graph.Roles()
-		if len(roles) > maxWorkflowRoles {
-			t.Fatalf("workflow %s names %d roles, expected at most %d", name, len(roles), maxWorkflowRoles)
-		}
+	for _, target := range []string{"", "development", "coding"} {
+		t.Run("target="+target, func(t *testing.T) {
+			project, err := LoadWorkingProject("../../..", target, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(project.Document, doc) {
+				t.Fatal("public project loader changed the catalog document")
+			}
+			snapshots, err := WorkflowSnapshots(project.Document, "Broodfile")
+			if err != nil || !reflect.DeepEqual(snapshots, want) || len(snapshots) != 3 {
+				t.Fatalf("loaded snapshots = %v, %v", snapshots, err)
+			}
+			for name, snapshot := range snapshots {
+				restored, err := pipeline.Parse(snapshot, name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				original, err := Workflow(doc, name, "Broodfile")
+				if err != nil || !reflect.DeepEqual(restored, original) {
+					t.Fatalf("%s: project publication lost graph data: %v", name, err)
+				}
+			}
+		})
 	}
 }
 
-// TestSwarmWorkflowRoleSplit — обзоры и реализация названы разными ролями.
-// Разные ли акторы их займут, решает привязка роя: один актор вправе держать
-// обе роли, и тогда независимость обзора граф не обеспечивает.
-func TestSwarmWorkflowRoleSplit(t *testing.T) {
+func TestRootCatalogPreservesBuildDeclaration(t *testing.T) {
 	data, err := os.ReadFile("../../../Broodfile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := ParseDocument(string(data), "Broodfile")
-	if err != nil {
-		t.Fatal(err)
+	prefix, _, ok := strings.Cut(string(data), "\nworkflows:\n")
+	if !ok {
+		t.Fatal("missing workflows block")
 	}
-	want := map[string]map[string]string{
-		"swarm-development": {
-			"triage": "review", "review": "review",
-			"implement": "build", "test": "build", "integrate": "build",
-		},
-		"swarm-architecture": {
-			"triage": "review", "architecture": "review", "review": "review",
-			"implement": "build", "test": "build", "integrate": "build",
-		},
+	// Смена каталога не должна менять поля сборки, ресурсов и сети вне workflows.
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(prefix+"\n"))); got != "64be0f174cd9634cd548b104191408be58ff6d20cb548195b65c8eb8ff91bb92" {
+		t.Fatalf("non-workflow declaration changed: %s", got)
 	}
-	for workflow, nodes := range want {
-		graph, err := Workflow(doc, workflow, "Broodfile")
-		if err != nil {
-			t.Fatal(err)
-		}
-		for node, role := range nodes {
-			if graph.Nodes[node].Role != role {
-				t.Fatalf("%s.%s: role %q, want %q", workflow, node, graph.Nodes[node].Role, role)
+}
+
+func TestRootCatalogPromptContracts(t *testing.T) {
+	doc := rootCatalog(t)
+	for _, name := range []string{"develop", "fix", "docs"} {
+		t.Run(name, func(t *testing.T) {
+			graph, err := Workflow(doc, name, "Broodfile")
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		if len(graph.Roles()) != 2 {
-			t.Fatalf("%s: expected exactly two roles, got %v", workflow, graph.Roles())
-		}
+			contracts := map[string][]string{
+				"implement": {"CLAUDE.md", "duplicates", "issue", "branch", "one change per layer", "failing test", "before", "brood dev test", "ruff check", "go build ./...", "go test ./...", "brood dev web test", "browser", "Go API", "ask_operator", "architecture", "blockers"},
+				"review":    {"independent", "fresh session", "different actor", "exact", "diff", "tests", "unresolved", "fail"},
+				"land":      {"current", "permissions", "external", "merge request", "main", "CI", "merged", "commit", "proof", "fail", "deploy"},
+			}
+			for stage, required := range contracts {
+				prompt := graph.Nodes[stage].Prompt
+				for _, phrase := range required {
+					if !strings.Contains(prompt, phrase) {
+						t.Errorf("%s prompt missing %q", stage, phrase)
+					}
+				}
+				if !strings.Contains(prompt, "Do not fabricate") {
+					t.Errorf("%s must prohibit fabricated evidence or effects", stage)
+				}
+				if strings.Contains(prompt, "selected externally") {
+					t.Errorf("%s retains external workflow selection dead end", stage)
+				}
+			}
+			for _, phrase := range map[string][]string{
+				"develop": {"scoped feature"},
+				"fix":     {"reproduce", "regression test", "root cause"},
+				"docs":    {"documentation-only", "examples", "links", "Do not change runtime"},
+			}[name] {
+				if !strings.Contains(graph.Nodes["implement"].Prompt, phrase) {
+					t.Errorf("%s work prompt missing scope %q", name, phrase)
+				}
+			}
+		})
 	}
 }

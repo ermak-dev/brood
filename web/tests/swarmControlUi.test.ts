@@ -12,16 +12,17 @@
 // snapshot identity the swarm recorded: a newer catalog version changes
 // neither the identity nor the graph the page draws.
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
-import { act, createElement, type ReactNode } from 'react';
+import { act, createElement, Fragment, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { AccessSwarm } from '@/services/brood/access';
 import type { PipelineRun, RunGraph } from '@/services/brood/pipelines';
 import { SwarmPage, SwarmView } from '@/features/swarms/SwarmPage';
 import { installTestDOM } from './helpers/dom';
+import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import en from '@/i18n/locales/en.json';
 
 const restoreDOM = installTestDOM();
@@ -121,7 +122,7 @@ afterEach(async () => {
 
 const settle = (ms = 0) => act(async () => new Promise((resolve) => setTimeout(resolve, ms)));
 
-async function openPage(id = 'swarm-1') {
+async function openPage(id = 'swarm-1', nextId?: string) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -139,7 +140,13 @@ async function openPage(id = 'swarm-1') {
             createElement(Route, {
               key: 'swarm',
               path: '/swarms/:id',
-              element: createElement(SwarmPage),
+              element: createElement(
+                Fragment,
+                null,
+                nextId &&
+                  createElement(Link, { to: `/swarms/${nextId}`, 'data-next-swarm': '' }, 'next'),
+                createElement(SwarmPage)
+              ),
             }),
           ])
         )
@@ -220,6 +227,290 @@ const pageRoutes = (current: () => PipelineRun | null, over: Partial<AccessSwarm
   'GET /api/projects/project-1/workflow-catalog': { body: catalog },
 });
 
+// FEATURE: Two-stage isolated eval panel (#293).
+// SPEC: Bind before configuring actors; pin all selection, route eval start without
+// a normal start dialog, keep owner stop/delete, and fail closed on non-404 reads.
+// IMPLEMENTATION: Eval details/binding controls share the existing swarm, roles and actor page.
+// RESULT: IMPLEMENTED — interactive request/state tests cover busy, refusal, refresh and stale IDs.
+// STATUS: DONE
+const evalBinding = () => ({
+  swarmId: 'swarm-1',
+  referenceSwarmId: 'reference',
+  referencePass: 3,
+  definition: { name: 'review', version: 1, revision: 'b'.repeat(40) },
+  model: 'selected-model',
+  source: { origin: 'https://example.test/repo', commit: 'a'.repeat(40) },
+  goal: '<img src=x onerror=alert(1)>\n﻿​',
+  nonProduction: true,
+  execution: 'idle',
+  replay: null,
+});
+test('eval binding pins selection before actor configuration and starts without selection', async () => {
+  let bound = false;
+  const calls = api({
+    ...pageRoutes(() => null),
+    'GET /api/swarms/swarm-1/eval': () =>
+      bound ? { body: evalBinding() } : { status: 404, body: { detail: 'no binding' } },
+    'POST /api/swarms/swarm-1/eval': () => {
+      bound = true;
+      return { body: evalBinding() };
+    },
+    'POST /api/swarms/swarm-1/eval/start': { body: { swarmId: 'swarm-1', execution: 'running' } },
+  });
+  const container = await openPage();
+  const form = container.querySelector('[data-eval] form') as HTMLFormElement;
+  expect(form).not.toBeNull();
+  for (const [name, value] of Object.entries({
+    referenceSwarmId: 'reference',
+    referencePass: '3',
+    model: 'selected-model',
+  }))
+    type(form.querySelector(`[name="${name}"]`) as HTMLInputElement, value);
+  (form.querySelector('[name="definition"]') as HTMLSelectElement).value = 'review';
+  await act(async () => {
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  });
+  await settle();
+  await settle();
+  expect(posts(calls).filter((call) => call.url.endsWith('/eval'))).toEqual([
+    {
+      method: 'POST',
+      url: '/api/swarms/swarm-1/eval',
+      body: {
+        referenceSwarmId: 'reference',
+        referencePass: 3,
+        definition: 'review',
+        model: 'selected-model',
+      },
+    },
+  ]);
+  const panel = container.querySelector('[data-eval]')!;
+  expect(panel.textContent).toContain('selected-model');
+  expect(panel.textContent).toContain(evalBinding().goal);
+  expect(panel.querySelector('img')).toBeNull();
+  expect(panel.querySelector('[name="model"]')).toBeNull();
+  expect(headerButtons(container)).not.toContain(en.swarm_page.control.start);
+  await click(panel.querySelector('[data-eval-start]'));
+  expect(posts(calls).filter((call) => call.url.endsWith('/eval/start'))).toEqual([
+    { method: 'POST', url: '/api/swarms/swarm-1/eval/start', body: undefined },
+  ]);
+  expect(posts(calls).some((call) => call.url === '/api/swarms/swarm-1/start')).toBe(false);
+});
+
+test('eval form has no implicit selection and does not submit an invalid model', async () => {
+  const calls = api(pageRoutes(() => null));
+  const container = await openPage();
+  const form = container.querySelector('[data-eval] form') as HTMLFormElement;
+  for (const name of ['referenceSwarmId', 'referencePass', 'definition', 'model'])
+    expect((form.elements.namedItem(name) as HTMLInputElement).value).toBe('');
+  await act(async () => {
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  });
+  expect(posts(calls)).toHaveLength(0);
+  expect(container.textContent).toContain(en.swarm_eval.invalid);
+});
+
+test('eval start refusal keeps its verbatim reason and immutable selection for retry', async () => {
+  const reason = 'managed isolation required\n﻿​';
+  const calls = api({
+    ...pageRoutes(() => null),
+    'GET /api/swarms/swarm-1/eval': { body: evalBinding() },
+    'POST /api/swarms/swarm-1/eval/start': { status: 422, body: { detail: reason } },
+  });
+  const container = await openPage();
+  await click(container.querySelector('[data-eval-start]'));
+  const panel = container.querySelector('[data-eval]')!;
+  expect(panel.textContent).toContain(reason);
+  expect(panel.querySelector('[data-eval-start]')).not.toBeNull();
+  expect(panel.querySelector('[name="model"]')).toBeNull();
+  expect(posts(calls)).toEqual([
+    { method: 'POST', url: '/api/swarms/swarm-1/eval/start', body: undefined },
+  ]);
+});
+
+test('owner can manually stop a bound eval using the existing confirmation', async () => {
+  const calls = api({
+    ...pageRoutes(() => run({ status: 'running' })),
+    'GET /api/swarms/swarm-1/eval': { body: { ...evalBinding(), execution: 'running' } },
+    'POST /api/swarms/swarm-1/stop': { body: { swarmId: 'swarm-1', execution: 'stopped' } },
+  });
+  const container = await openPage();
+  await click(header(container).querySelector('button'));
+  expect(dialog()).not.toBeNull();
+  await submit();
+  expect(posts(calls)).toEqual([
+    { method: 'POST', url: '/api/swarms/swarm-1/stop', body: undefined },
+  ]);
+});
+
+test('pinned eval cannot double-start while pending or after success with stale idle read', async () => {
+  const calls = api({
+    ...pageRoutes(() => null),
+    'GET /api/swarms/swarm-1/eval': { body: evalBinding() },
+  });
+  const fetcher = globalThis.fetch;
+  let resolve!: (value: Response) => void;
+  let starts = 0;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/eval/start')) {
+      starts++;
+      return new Promise<Response>((done) => {
+        resolve = done;
+      });
+    }
+    return fetcher(url, init);
+  }) as typeof fetch;
+  const container = await openPage();
+  const button = container.querySelector('[data-eval-start]') as HTMLButtonElement;
+  await act(async () => {
+    button.click();
+    button.click();
+  });
+  expect(starts).toBe(1);
+  expect(button.disabled).toBe(true);
+  expect(posts(calls).some((call) => call.url === '/api/swarms/swarm-1/start')).toBe(false);
+  await act(async () => {
+    resolve(Response.json({ swarmId: 'swarm-1', execution: 'running' }));
+  });
+  await settle();
+  await settle();
+  expect(container.querySelector('[data-eval-start]')).toBeNull();
+});
+
+test('eval status loading blocks normal start and a failed refresh never restores it', async () => {
+  api(pageRoutes(() => null));
+  const fetcher = globalThis.fetch;
+  let resolve!: (value: Response) => void;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/eval'))
+      return new Promise<Response>((done) => {
+        resolve = done;
+      });
+    return fetcher(url, init);
+  }) as typeof fetch;
+  const container = await openPage();
+  expect(headerButtons(container)).not.toContain(en.swarm_page.control.start);
+  await act(async () => {
+    resolve(Response.json({ detail: 'not authorized﻿​' }, { status: 403 }));
+  });
+  await settle();
+  expect(container.textContent).toContain('not authorized﻿​');
+  expect(headerButtons(container)).not.toContain(en.swarm_page.control.start);
+});
+
+test('late eval response for previous swarm never changes the newly selected swarm', async () => {
+  api({
+    ...pageRoutes(() => null),
+    'GET /api/swarms/swarm-2': { body: { ...swarm(), id: 'swarm-2', name: 'second candidate' } },
+  });
+  const fetcher = globalThis.fetch;
+  let resolve!: (value: Response) => void;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (url === '/api/swarms/swarm-1/eval')
+      return new Promise<Response>((done) => {
+        resolve = done;
+      });
+    return fetcher(url, init);
+  }) as typeof fetch;
+  const container = await openPage('swarm-1', 'swarm-2');
+  await click(container.querySelector('[data-next-swarm]'));
+  expect(container.textContent).toContain('second candidate');
+  expect(headerButtons(container)).toContain(en.swarm_page.control.start);
+  await act(async () => {
+    resolve(Response.json(evalBinding()));
+  });
+  await settle();
+  expect(container.textContent).not.toContain('selected-model');
+  expect(headerButtons(container)).toContain(en.swarm_page.control.start);
+});
+
+test('ordinary running swarm retains its layout without an empty eval section', async () => {
+  api(pageRoutes(() => run({ status: 'running' })));
+  const container = await openPage();
+  expect(Boolean(container.querySelector('[data-eval]'))).toBe(false);
+  expect(headerButtons(container)).toContain(en.swarm_page.control.stop);
+});
+
+test('a definitive no-binding read preserves normal start and stop/delete controls', async () => {
+  api(pageRoutes(() => null));
+  const container = await openPage();
+  expect(headerButtons(container)).toContain(en.swarm_page.control.start);
+  expect(container.textContent).toContain(en.substrate.delete);
+});
+
+test('binding discovered on refresh dismisses an already open ordinary start dialog', async () => {
+  let bound = false;
+  api({
+    ...pageRoutes(() => null),
+    'GET /api/swarms/swarm-1/eval': () =>
+      bound ? { body: evalBinding() } : { status: 404, body: { detail: 'no binding' } },
+  });
+  const container = await openPage();
+  await click(header(container).querySelector('button'));
+  expect(dialog()).not.toBeNull();
+  expect(dialog()!.querySelector('[name="goal"]')).not.toBeNull();
+  bound = true;
+  await act(async () => {
+    await triggerHeaderRefresh();
+  });
+  await settle();
+  expect(dialog()?.querySelector('[name="goal"]') ?? null).toBeNull();
+  expect(headerButtons(container)).not.toContain(en.swarm_page.control.start);
+});
+
+test('eval read errors have a retry action without granting ordinary start', async () => {
+  let failed = true;
+  api({
+    ...pageRoutes(() => null),
+    'GET /api/swarms/swarm-1/eval': () =>
+      failed ? { status: 503, body: { detail: 'eval unavailable' } } : { body: evalBinding() },
+  });
+  const container = await openPage();
+  const panel = container.querySelector('[data-eval]')!;
+  failed = false;
+  const retry = Array.from(panel.querySelectorAll('button')).find(
+    (button) => button.textContent === en.access.refresh
+  );
+  await click(retry);
+  expect(panel.textContent).toContain('selected-model');
+  expect(headerButtons(container)).not.toContain(en.swarm_page.control.start);
+});
+
+test('unknown eval status blocks normal start but does not remove owner management', async () => {
+  api({
+    ...pageRoutes(() => null),
+    'GET /api/swarms/swarm-1/eval': { status: 503, body: { detail: 'eval unavailable' } },
+  });
+  const container = await openPage();
+  expect(container.textContent).toContain('eval unavailable');
+  expect(headerButtons(container)).not.toContain(en.swarm_page.control.start);
+  expect(container.textContent).toContain(en.substrate.delete);
+});
+
+test('bound eval shows durable replay reason verbatim and retains manual stop', async () => {
+  const reason = '<script>unsafe</script>\n﻿​';
+  api({
+    ...pageRoutes(() => run({ status: 'running' })),
+    'GET /api/swarms/swarm-1/eval': {
+      body: {
+        ...evalBinding(),
+        execution: 'running',
+        replay: { requestId: 'req', state: 'stopped', reason, interruptedChildren: true },
+      },
+    },
+  });
+  const container = await openPage();
+  const panel = container.querySelector('[data-eval]')!;
+  expect(panel.textContent).toContain(reason);
+  const interruption = Array.from(panel.querySelectorAll('dt')).find(
+    (entry) => entry.textContent === en.swarm_eval.interrupted
+  );
+  expect(interruption?.nextElementSibling?.textContent).toBe(en.common.yes);
+  expect(panel.querySelector('script')).toBeNull();
+  expect(panel.querySelectorAll('a').length).toBeGreaterThanOrEqual(2);
+  expect(headerButtons(container)).toContain(en.swarm_page.control.stop);
+});
+
 describe('header', () => {
   const view = (actions: ReactNode, over: Partial<PipelineRun> = {}) =>
     renderToStaticMarkup(
@@ -251,7 +542,10 @@ describe('header', () => {
     const html = view(createElement('button', { 'data-action': 'yes' }, 'act'));
     const head = html.slice(html.indexOf('<header'), html.indexOf('</header>'));
     expect(head).not.toContain('data-action="yes"');
-    const line = html.slice(html.indexOf('data-swarm-now'), html.indexOf(`>${en.swarm_page.graph}<`));
+    const line = html.slice(
+      html.indexOf('data-swarm-now'),
+      html.indexOf(`>${en.swarm_page.graph}<`)
+    );
     expect(line).toContain('data-swarm-action');
     expect(line).toContain('data-action="yes"');
   });

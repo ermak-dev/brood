@@ -24,12 +24,14 @@ import { Section } from '@/features/substrate/components/form';
 import { useResource } from '@/features/substrate/hooks';
 import { DASH } from '@/features/substrate/format';
 import { formatDateTimeValue } from '@/utils/format';
-import { SWARMS_PATH } from './routes';
+import { SWARMS_PATH, swarmPassPath } from './routes';
 import { nodeRequest } from './requestState';
 import { RequestCard, RequestInbox } from './SwarmRequests';
 import { useSwarmRequests } from './useSwarmRequests';
 import { useGraphRefetch, useSwarmPolling } from './useSwarmPolling';
 import { SnapshotFacts, SwarmExecutionControl } from './SwarmControls';
+import { evalApi } from '@/services/brood/eval';
+import { SwarmEvalPanel } from './SwarmEvalPanel';
 import { SwarmObjects } from './SwarmObjects';
 import { SwarmRoles } from './SwarmRoles';
 import { SwarmChildren } from './SwarmChildren';
@@ -80,6 +82,10 @@ function SwarmScreen({ id }: { id: string }) {
   // Обёртка: у роя без графа исполнение null, а null у useResource — «грузится».
   const loadRun = useCallback(async () => ({ run: await pipelinesApi.getSwarmRun(id) }), [id]);
   const execution = useResource(loadRun);
+  const loadEval = useCallback(async () => ({ binding: await evalApi.get(id) }), [id]);
+  const evaluation = useResource(loadEval);
+  const binding = evaluation.data?.binding;
+  const [evalBusy, setEvalBusy] = useState(false);
   const run = execution.data?.run ?? null;
   const loadGraph = useCallback(() => pipelinesApi.getRunGraph(id), [id]);
   const graph = useResource(run ? loadGraph : null);
@@ -102,9 +108,13 @@ function SwarmScreen({ id }: { id: string }) {
   // ждёт; инбокс и роли подписаны на тот же тик; граф следует за исполнением.
   const live = runIsLive(run);
   const refreshExecution = execution.refresh;
+  const refreshEval = evaluation.refresh;
   const tick = useCallback(() => {
-    if (live) void refreshExecution();
-  }, [live, refreshExecution]);
+    if (live) {
+      void refreshExecution();
+      void refreshEval();
+    }
+  }, [live, refreshExecution, refreshEval]);
   useSwarmPolling(tick, swarm.data?.state === 'active');
   useGraphRefetch(execution.data ? run : undefined, graph.refresh);
   // Адрес роя выбирает его проект глобальным контекстом, как старые ссылки
@@ -131,20 +141,49 @@ function SwarmScreen({ id }: { id: string }) {
   // Исполнение, которое не прочитано или не перечитывается, действия не даёт:
   // по устаревшему состоянию кнопка предложила бы не то.
   const known = execution.data !== null && !execution.error ? run : undefined;
+  const action = executionAction(data, administrator, known);
+  // Неизвестная привязка не означает обычный рой. Ручная остановка остаётся.
+  const normalAction =
+    action === 'stop' ? action : binding === null && !evaluation.error && !evalBusy ? action : null;
   return (
     <SwarmView
       swarm={data}
       projectName={projectName}
       objects={<SwarmObjects swarm={data} changed={swarm.refresh} />}
+      evaluation={
+        <SwarmEvalPanel
+          key={id}
+          swarmId={id}
+          projectId={data.project_id}
+          binding={binding}
+          error={evaluation.error ?? ''}
+          canBind={action === 'start'}
+          canStart={action === 'start' && binding?.execution === 'idle' && !evaluation.error}
+          busyChanged={setEvalBusy}
+          changed={async () => {
+            await Promise.all([
+              evaluation.refresh(),
+              execution.refresh(),
+              graph.refresh(),
+              inbox.refresh(),
+            ]);
+          }}
+        />
+      }
       actions={
         swarmCapabilities(data, administrator).manage && (
           <SwarmExecutionControl
             swarm={data}
             projectName={projectName}
             run={run}
-            action={executionAction(data, administrator, known)}
+            action={normalAction}
             changed={async () => {
-              await Promise.all([execution.refresh(), graph.refresh(), inbox.refresh()]);
+              await Promise.all([
+                evaluation.refresh(),
+                execution.refresh(),
+                graph.refresh(),
+                inbox.refresh(),
+              ]);
             }}
             chose={setStartDefinition}
           />
@@ -169,7 +208,7 @@ function SwarmScreen({ id }: { id: string }) {
         <SwarmRoles
           swarm={data}
           run={execution.data ? run : undefined}
-          definition={startDefinition}
+          definition={binding?.definition.name ?? startDefinition}
         />
       }
       management={
@@ -194,6 +233,8 @@ export interface SwarmViewProps {
   /** Объекты роя (#195): акторы, шаблоны и доступ ссылками с числом, под
    * сведениями. */
   objects?: ReactNode;
+  /** Привязка eval до акторов и неизменяемые сведения изолированного прохода. */
+  evaluation?: ReactNode;
   /** Действие исполнения роя (#218): запуск или остановка, рядом со
    * строкой состояния — там, где совет говорит остановить и запустить. */
   actions?: ReactNode;
@@ -236,6 +277,7 @@ export function SwarmView({
   swarm,
   projectName,
   objects,
+  evaluation,
   actions,
   refreshError,
   run,
@@ -263,6 +305,7 @@ export function SwarmView({
     <div className={styles.page}>
       <PageHeader title={swarm.name} meta={[<SwarmsLink key="list" />]} />
       <SwarmMeta swarm={swarm} projectName={projectName} />
+      {evaluation}
       {objects}
       {refreshError && (
         <p className={`${styles.notice} ${styles.operationFailure}`} role="alert">
@@ -797,6 +840,7 @@ function StepHistory({
         ) : (
           <PassSteps
             key={pass.pass}
+            swarm={scope.swarm}
             pass={pass.pass}
             number={pass.number}
             goal={pass.pass === shownPass ? undefined : pass.goal}
@@ -817,6 +861,7 @@ function StepHistory({
  * текущий (последний) раскрыт, его задача — в первом блоке страницы.
  * Нажатие оператора React не перебивает. */
 function PassSteps({
+  swarm,
   pass,
   number,
   goal,
@@ -824,6 +869,7 @@ function PassSteps({
   open,
   children,
 }: {
+  swarm: string;
   pass: number;
   number?: number;
   goal?: string;
@@ -843,6 +889,7 @@ function PassSteps({
           <span className={local.foldMeta}>{t('swarm_page.pass_steps', { count })}</span>
         </summary>
         <div className={local.passBody}>
+          <Link to={swarmPassPath(swarm, pass)}>{t('pass_trace.open')}</Link>
           {goal && (
             <div className={local.passGoal}>
               <Markdown

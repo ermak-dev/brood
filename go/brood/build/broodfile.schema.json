@@ -795,9 +795,40 @@
                       }
                     }
                   }
+                },
+                {
+                  "if": {
+                    "required": [
+                      "actionClasses"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "type": {
+                        "const": "actor"
+                      }
+                    }
+                  }
                 }
               ],
               "properties": {
+                "actionClasses": {
+                  "items": {
+                    "enum": [
+                      "work",
+                      "review",
+                      "landing",
+                      "schema",
+                      "deploy",
+                      "destructive_lifecycle"
+                    ],
+                    "type": "string"
+                  },
+                  "maxItems": 6,
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
                 "branches": {
                   "items": {
                     "type": "string"

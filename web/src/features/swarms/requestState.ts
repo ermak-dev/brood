@@ -47,6 +47,16 @@ export function requestForm(request: SwarmRequest): RequestForm | null {
       text: 'optional',
     };
   }
+  if (request.origin === 'policy') {
+    if (request.kind !== 'confirm' || request.revision !== 1 || request.state !== 'open')
+      return null;
+    return {
+      choices: CONFIRM_VALUES.map((value) => ({ value, label: value })),
+      route: false,
+      confirm: true,
+      text: 'none',
+    };
+  }
   if (request.origin !== 'actor') return null;
   switch (request.kind) {
     case 'choice':
@@ -80,6 +90,7 @@ export function answerBody(request: SwarmRequest, draft: RequestDraft): RequestA
   }
   const choice = form.choices.find((option) => option.value === draft.choice);
   if (!choice) return null;
+  if (request.origin === 'policy') return { response: choice.value, revision: request.revision };
   if (!form.route) return { response: choice.value };
   return text === '' ? { outcome: choice.value } : { outcome: choice.value, response: text };
 }

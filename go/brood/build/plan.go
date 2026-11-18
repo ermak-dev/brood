@@ -507,10 +507,12 @@ func init() {
 		}}
 	node := &schemaNode{typ: "object", addlFalse: true, required: []string{"type"}, props: schemaProperties(
 		"type", &schemaNode{typ: "string", enum: []any{"actor", "human", "condition", "land", "exit", "parallel", "fan_in"}}, "role", name, "prompt", text, "question", text,
-		"options", &schemaNode{typ: "array", items: option}, "target", text, "branches", &schemaNode{typ: "array", items: text}, "childJoin", childJoin),
+		"options", &schemaNode{typ: "array", items: option}, "target", text, "branches", &schemaNode{typ: "array", items: text}, "childJoin", childJoin,
+		"actionClasses", &schemaNode{typ: "array", minItems: 1, maxItems: 6, uniqueItems: true, items: &schemaNode{typ: "string", enum: []any{"work", "review", "landing", "schema", "deploy", "destructive_lifecycle"}}}),
 		allOf: []*schemaNode{
 			{ifS: &schemaNode{required: []string{"role"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true})}},
 			{ifS: &schemaNode{required: []string{"childJoin"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true})}},
+			{ifS: &schemaNode{required: []string{"actionClasses"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true})}},
 		}}
 	edge := &schemaNode{typ: "object", addlFalse: true, required: []string{"from", "to"}, props: schemaProperties("from", text, "to", text, "condition", text, "label", text, "weight", &schemaNode{typ: "integer"})}
 	workflow := &schemaNode{typ: "object", addlFalse: true, required: []string{"start", "exit", "nodes", "edges", "goalGates"}, props: schemaProperties(

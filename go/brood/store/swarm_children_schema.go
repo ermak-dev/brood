@@ -59,7 +59,9 @@ CREATE TABLE swarm_child_tasks (
 
 // Отсутствующие слоты держат родителя до явного abort неисполненной группы.
 // Даже aborted не скрывает реальных pending/running обязательств.
-const swarmChildUnfinished = `((j.state!='aborted' AND EXISTS(SELECT 1 FROM actor_step_interruptions i WHERE i.swarm_id=j.swarm_id AND i.sequence=j.parent_sequence)) OR (j.state!='aborted' AND (SELECT count(*) FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence)<j.total) OR EXISTS(SELECT 1 FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence AND c.state IN ('pending','running')))`
+const swarmChildUnfinished = `((j.state!='aborted' AND EXISTS(SELECT 1 FROM actor_step_interruptions i WHERE i.swarm_id=j.swarm_id AND i.sequence=j.parent_sequence)) OR (j.state!='aborted' AND ((SELECT count(*) FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence)+(SELECT count(*) FROM ephemeral_child_failures f JOIN ephemeral_child_intents e ON e.id=f.intent_id WHERE e.swarm_id=j.swarm_id AND e.parent_sequence=j.parent_sequence))<j.total) OR EXISTS(SELECT 1 FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence AND c.state IN ('pending','running') AND NOT EXISTS(SELECT 1 FROM ephemeral_child_executor_failures f WHERE f.child_id=c.id)))`
+
+const swarmChildUnfinishedV55 = `((j.state!='aborted' AND EXISTS(SELECT 1 FROM actor_step_interruptions i WHERE i.swarm_id=j.swarm_id AND i.sequence=j.parent_sequence)) OR (j.state!='aborted' AND ((SELECT count(*) FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence)+(SELECT count(*) FROM ephemeral_child_failures f JOIN ephemeral_child_intents e ON e.id=f.intent_id WHERE e.swarm_id=j.swarm_id AND e.parent_sequence=j.parent_sequence))<j.total) OR EXISTS(SELECT 1 FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence AND c.state IN ('pending','running')))`
 
 var swarmChildObjects = []struct{ name, sql string }{
 	{"swarm_child_joins_insert", `CREATE TRIGGER swarm_child_joins_insert BEFORE INSERT ON swarm_child_joins BEGIN
@@ -104,6 +106,13 @@ var swarmChildObjects = []struct{ name, sql string }{
 
 const swarmChildRunningIndex = `CREATE UNIQUE INDEX swarm_child_running_actor ON swarm_child_tasks(actor_uid) WHERE state='running'`
 const swarmChildQueueIndex = `CREATE INDEX swarm_child_queue_actor ON swarm_child_tasks(actor_uid,state,delivery)`
+
+// Замороженный DDL шага 34→35; failure facts появляются только в шаге 54→55.
+func swarmChildrenSchemaV35() string {
+	return strings.ReplaceAll(swarmChildrenFullSchema(), swarmChildUnfinished, swarmChildUnfinishedV54)
+}
+
+const swarmChildUnfinishedV54 = `((j.state!='aborted' AND EXISTS(SELECT 1 FROM actor_step_interruptions i WHERE i.swarm_id=j.swarm_id AND i.sequence=j.parent_sequence)) OR (j.state!='aborted' AND (SELECT count(*) FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence)<j.total) OR EXISTS(SELECT 1 FROM swarm_child_tasks c WHERE c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence AND c.state IN ('pending','running')))`
 
 func swarmChildrenFullSchema() string {
 	statements := []string{swarmChildTables, swarmChildRunningIndex, swarmChildQueueIndex, actorInterventionSchema()}

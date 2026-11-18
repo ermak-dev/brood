@@ -67,7 +67,7 @@ func TestCoordinationAndTerminalActions(t *testing.T) {
 }
 
 func TestCatalog(t *testing.T) {
-	names := strings.Fields("agents send dispatch pipeline_visit_complete ask_operator tail slash child_create child_get child_join child_cancel child_complete session_history session_terminal add delete stop start restart update recycle wipe reset project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose")
+	names := strings.Fields("agents send dispatch pipeline_visit_complete ask_operator tail slash child_create child_get child_join child_cancel child_complete child_spawn child_job session_history session_terminal add delete stop start restart update recycle wipe reset project_add project_limit landing node node_drain node_up models profile stat diagnose server_diagnose")
 	specs := command.Specs()
 	if len(specs) != len(names) {
 		t.Fatalf("got %d specs", len(specs))
@@ -161,8 +161,8 @@ func TestStartResetMetadata(t *testing.T) {
 			guest++
 		}
 	}
-	if all != 34 || guest != 28 {
-		t.Fatalf("catalog=%d guest=%d; want 34 and 28", all, guest)
+	if all != 36 || guest != 30 {
+		t.Fatalf("catalog=%d guest=%d; want 36 and 30", all, guest)
 	}
 }
 

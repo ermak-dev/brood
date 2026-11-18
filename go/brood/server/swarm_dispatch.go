@@ -71,6 +71,7 @@ type stepDispatcher struct {
 	// attestations выдаёт и сжигает challenge подтверждений; в памяти
 	// процесса: рестарт отвергает все прежние ответы.
 	attestations *attest.Registry
+	results      *attest.Registry
 	connectWait  time.Duration
 	// now и pause — часы ожидания сессии актора; pause ждёт d или отмены
 	// ctx и возвращает false при отмене. Подменяются в тестах.
@@ -86,7 +87,7 @@ type stepDispatcher struct {
 }
 
 func newStepDispatcher(s *Server) *stepDispatcher {
-	return &stepDispatcher{server: s, attestations: attest.NewRegistry(stepAttestationTTL, stepAttestationLimit), connectWait: stepConnectWait, now: time.Now, pause: sleepContext, running: map[string]bool{}, again: map[string]bool{}}
+	return &stepDispatcher{server: s, attestations: attest.NewRegistry(stepAttestationTTL, stepAttestationLimit), results: attest.NewRegistry(stepAttestationTTL, stepAttestationLimit), connectWait: stepConnectWait, now: time.Now, pause: sleepContext, running: map[string]bool{}, again: map[string]bool{}}
 }
 
 // sleepContext ждёт d; false — ctx отменён раньше.
@@ -119,10 +120,36 @@ func (d *stepDispatcher) kickPending(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, id := range swarms {
+	results, err := d.server.store.PendingPipelineResultSwarms(ctx)
+	if err != nil {
+		return err
+	}
+	observed, err := d.server.store.PendingObservedPipelineSwarms(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range append(append(swarms, results...), observed...) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		d.kick(id)
 	}
-	return nil
+	for after := ""; ; {
+		evals, err := d.server.store.WaitingSwarmEvalSwarms(ctx, after)
+		if err != nil {
+			return err
+		}
+		if len(evals) == 0 {
+			return nil
+		}
+		for _, id := range evals {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			d.kick(id)
+		}
+		after = evals[len(evals)-1]
+	}
 }
 
 // kick будит диспетчер роя и не ждёт его. Рой обрабатывается одной
@@ -179,10 +206,23 @@ func (d *stepDispatcher) wait() { d.wg.Wait() }
 // dispatch — один проход роя: резерв, подтверждение, доставка. Повтор
 // безопасен: без pending-шага резерв ничего не пишет.
 func (d *stepDispatcher) dispatch(ctx context.Context, swarmID string) {
+	if d.replayEval(ctx, swarmID) {
+		return
+	}
+	// Обычный проход может открыть policy-вопрос уже после первого replay.
+	// Defer вызывается после возврата из effect-методов и освобождения gates;
+	// applied replay ставит новый проход через kick, не рекурсивный dispatch.
+	defer d.replayEval(ctx, swarmID)
+	if d.collectResult(ctx, swarmID) {
+		return
+	}
+	if d.resolvePolicyResult(ctx, swarmID) {
+		return
+	}
 	s := d.server
 	attempt, err := s.store.ReserveActorStep(ctx, swarmID, store.NewID(), stepMessageSender(swarmID))
 	switch {
-	case errors.Is(err, store.ErrNoActorStep):
+	case errors.Is(err, store.ErrNoActorStep), errors.Is(err, store.ErrPipelinePolicyPending):
 		return
 	case errors.Is(err, store.ErrActorStepRefused):
 		slog.Info("actor step refused", "swarm", swarmID, "reason", err.Error())
@@ -199,7 +239,7 @@ func (d *stepDispatcher) dispatch(ctx context.Context, swarmID string) {
 		d.finishLease(ctx, attempt, true)
 		return
 	}
-	if !d.attest(ctx, attempt) {
+	if !d.attest(ctx, attempt, text) {
 		return
 	}
 	d.deliver(ctx, attempt, text)
@@ -218,14 +258,14 @@ func (d *stepDispatcher) finishLease(ctx context.Context, a store.ActorStepAttem
 // attest подтверждает workspace привязанного актора на commit источника и
 // записывает подтверждение. false — шаг закрыт (refused, unconfirmed),
 // возвращён в pending или уже не этой попытки; инструкция не уходит.
-func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt) bool {
+func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt, text string) bool {
 	s := d.server
 	// Исход workspace-lease пишется ровно один раз: известный исход гостя
 	// (или гостя не звали) отпускает его, неизвестный оставляет
 	// неподтверждённым; возврат шага в pending отпускает его сам.
-	confirmed, withdrawn := true, false
+	confirmed, leaseSettled := true, false
 	defer func() {
-		if !withdrawn {
+		if !leaseSettled {
 			d.finishLease(ctx, a, confirmed)
 		}
 	}()
@@ -236,7 +276,7 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt) b
 	// Гостя не звали, а сервер выключается: шаг не закрывается, а
 	// возвращается следующему диспетчеру (старт сервера) целиком.
 	withdraw := func() bool {
-		withdrawn = d.withdraw(ctx, a)
+		leaseSettled = d.withdraw(ctx, a)
 		return false
 	}
 	hub, ok := s.managed.hub.(sessionRelay)
@@ -248,6 +288,19 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt) b
 			return withdraw()
 		}
 		return refuse("actor " + a.Actor.Name + " is not connected to the relay; no instruction was sent")
+	}
+	var delivery *store.ActorDeliveryInput
+	if s.actorDelivery != nil {
+		if journal := actorDeliveryJournal(s.managed.hub, a.Actor.UID, a.Actor.Incarnation); journal != "" {
+			input, err := preparedInstructionDelivery(a, text, journal)
+			if err != nil {
+				return refuse("the node instruction does not fit a durable relay message; no workspace attestation was started")
+			}
+			if !s.actorDelivery.instructionAuthority(ctx, input) {
+				return refuse("instruction owner authority changed before workspace attestation")
+			}
+			delivery = &input
+		}
 	}
 	claim, err := d.attestations.Issue(attest.Request{ActorUID: a.Actor.UID, Generation: a.Actor.Incarnation, Swarm: a.SwarmID, Step: a.RequestID, Origin: a.Source.Origin, Commit: a.Source.Commit})
 	if err != nil {
@@ -301,7 +354,15 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt) b
 	if err != nil {
 		return refuse("workspace attestation rejected: " + err.Error())
 	}
-	if err := s.store.RecordActorStepAttestation(ctx, a, verified.Origin, verified.Commit); err != nil {
+	if delivery != nil {
+		_, err = s.store.RecordActorStepAttestationDelivery(ctx, a, verified.Origin, verified.Commit, *delivery, func(ctx context.Context) bool { return s.actorDelivery.instructionAuthority(ctx, *delivery) })
+		if err == nil {
+			leaseSettled = true
+		}
+	} else {
+		err = s.store.RecordActorStepAttestation(ctx, a, verified.Origin, verified.Commit)
+	}
+	if err != nil {
 		// Остановленный рой уже закрыл шаг: условная запись отказа ничего
 		// не поменяет. Иначе роль или источник разошлись с попыткой.
 		return refuse("workspace attestation was not recorded: " + err.Error())
@@ -316,6 +377,9 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt) b
 // inbox — повторяет ту же попытку через stepSessionPause, пока не истечёт
 // stepSessionWait; затем refused. Любой другой исход не повторяется.
 func (d *stepDispatcher) deliver(ctx context.Context, a store.ActorStepAttempt, text string) {
+	if d.server.actorDelivery != nil && d.server.actorDelivery.instruction(ctx, a) {
+		return
+	}
 	deadline := d.now().Add(stepSessionWait)
 	for attempt := 1; ; attempt++ {
 		result, sent, err := d.send(ctx, a, text)

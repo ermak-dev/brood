@@ -267,6 +267,41 @@ describe('inbox', () => {
   });
 });
 
+describe('policy request form', () => {
+  test('labels policy authority separately and sends the exact revision once', async () => {
+    const request = nodeAsk({
+      id: 'policy:candidate',
+      origin: 'policy',
+      kind: 'confirm',
+      revision: 1,
+      options: [],
+      question: 'Approve automatic transition?',
+      context: '<script>window.policyExecuted = true</script>',
+    });
+    const recorded = recorder();
+    const view = await mount(createElement(RequestCard, { request, model: model({}, recorded) }));
+    try {
+      expect(view.container.textContent).toContain('Policy gate');
+      expect(view.container.textContent).not.toContain(t.actor_gone);
+      expect(view.container.textContent).not.toContain(t.actor_hint);
+      expect(view.container.querySelector('script')).toBeNull();
+      expect(submitButton(view.container).disabled).toBe(true);
+      await click(radioLabelled(view.container, t.confirm.yes));
+      await act(async () => {
+        form(view.container).dispatchEvent(
+          new window.Event('submit', { bubbles: true, cancelable: true })
+        );
+      });
+      expect(recorded.answers).toEqual([
+        { id: request.id, body: { response: 'yes', revision: 1 } },
+      ]);
+      expect(recorded.deliveries).toEqual([]);
+    } finally {
+      await unmount(view);
+    }
+  });
+});
+
 describe('node request form', () => {
   test('the options are a radio group by label; nothing is chosen and sent at first', async () => {
     const recorded = recorder();
@@ -442,7 +477,9 @@ describe('actor request form', () => {
     const field = html.match(/<textarea[^>]*>/)?.[0] ?? '';
     const describedBy = field.match(/aria-describedby="([^"]+)"/)?.[1];
     expect(describedBy).toBeTruthy();
-    expect(html).toMatch(new RegExp(`id="${describedBy}"[^>]*>${t.actor_hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<`));
+    expect(html).toMatch(
+      new RegExp(`id="${describedBy}"[^>]*>${t.actor_hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<`)
+    );
   });
 
   test('the actor hint says the answer does not route the graph', () => {

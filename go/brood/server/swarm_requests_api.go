@@ -53,6 +53,7 @@ type swarmRequestJSON struct {
 	ID          string                   `json:"id"`
 	SwarmID     string                   `json:"swarmId"`
 	Origin      string                   `json:"origin"`
+	Revision    int64                    `json:"revision,omitempty"`
 	Sequence    *int64                   `json:"sequence,omitempty"`
 	NodeID      string                   `json:"nodeId,omitempty"`
 	Actor       *swarmRequestActorJSON   `json:"actor,omitempty"`
@@ -78,6 +79,7 @@ type swarmRequestJSON struct {
 
 func (s *Server) mountSwarmRequests() {
 	s.mux.HandleFunc("GET /api/swarms/{id}/requests", s.swarmRequestList)
+	s.mux.HandleFunc("/api/swarms/{id}/requests/{request}/policy", s.swarmRequestPolicyDetail)
 	s.mux.HandleFunc("POST /api/swarms/{id}/requests/{request}/answer", s.swarmRequestAnswer)
 	s.mux.HandleFunc("POST /api/swarms/{id}/requests/{request}/deliver", s.swarmRequestDeliver)
 }
@@ -91,6 +93,8 @@ func swarmRequestError(w http.ResponseWriter, r *http.Request, err error) {
 		writeDetail(w, http.StatusNotFound, "swarm request not found")
 	case errors.Is(err, store.ErrSwarmRequestDenied), errors.Is(err, app.ErrNotAllowed):
 		writeDetail(w, http.StatusForbidden, "answer authorization changed or access denied")
+	case errors.Is(err, store.ErrSwarmEvalConflict):
+		writeDetail(w, http.StatusConflict, "bound eval requires replay; live answers are refused")
 	case errors.Is(err, store.ErrSwarmRequestStale):
 		writeDetail(w, http.StatusConflict, "request actor is stale")
 	case errors.Is(err, store.ErrPipelineVisitConflict):
@@ -175,6 +179,7 @@ func (s *Server) swarmRequestAnswer(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Outcome  string `json:"outcome"`
 		Response string `json:"response"`
+		Revision int64  `json:"revision"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestAnswerBytes))
 	dec.DisallowUnknownFields()
@@ -182,7 +187,11 @@ func (s *Server) swarmRequestAnswer(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusBadRequest, "invalid swarm answer")
 		return
 	}
-	answer := store.SwarmAnswer{SwarmID: r.PathValue("id"), RequestID: r.PathValue("request"), UserID: user.ID, Outcome: input.Outcome, Response: input.Response}
+	if input.Revision != 0 && !strings.HasPrefix(r.PathValue("request"), "policy:") {
+		writeDetail(w, http.StatusBadRequest, "revision is only valid for policy confirmations")
+		return
+	}
+	answer := store.SwarmAnswer{SwarmID: r.PathValue("id"), RequestID: r.PathValue("request"), UserID: user.ID, Outcome: input.Outcome, Response: input.Response, ExpectedRevision: input.Revision}
 	req, reason, err := s.answerSwarmRequest(r, user, answer)
 	if err != nil {
 		swarmRequestError(w, r, err)
@@ -245,7 +254,7 @@ func (s *Server) answerRequest(ctx context.Context, answer store.SwarmAnswer, au
 	if err != nil {
 		return store.SwarmRequest{}, err
 	}
-	if req.Origin == "node" {
+	if req.Origin == "node" || req.Origin == "policy" {
 		// Ответ мог ввести граф в actor-узел: его инструкцию доставляет
 		// диспетчер шагов (#212) после коммита ответа.
 		s.steps.kick(req.SwarmID)
@@ -274,6 +283,14 @@ func (s *Server) deliverSwarmAnswer(parent context.Context, user store.User, req
 	}
 	if current.Delivery != "pending" && (!retry || (current.Delivery != "failed" && current.Delivery != "unconfirmed")) {
 		return current, ""
+	}
+	if s.actorDelivery != nil {
+		if updated, reason, handled := s.actorDelivery.answer(ctx, user, current); handled {
+			return updated, reason
+		}
+	}
+	if job, err := s.ephemeralQuestionJob(ctx, current); err != nil || job != nil {
+		return current, "scoped child answer requires durable delivery"
 	}
 	author := "operator"
 	if u, err := s.store.GetUser(ctx, current.AnsweredBy); err == nil {
@@ -371,8 +388,27 @@ func (s *Server) writeSwarmRequest(w http.ResponseWriter, r *http.Request, req s
 		swarmRequestError(w, r, err)
 		return
 	}
-	views[0].DeliveryError = reason
+	if reason != "" {
+		views[0].DeliveryError = reason
+	}
 	writeJSON(w, http.StatusOK, views[0])
+}
+
+func swarmRequestBaseView(req store.SwarmRequest) swarmRequestJSON {
+	v := swarmRequestJSON{ID: req.ID, SwarmID: req.SwarmID, Origin: req.Origin, Sequence: req.Sequence, Kind: req.Kind, Question: req.Question, Context: req.Context, Options: []swarmRequestOptionJSON{}, State: req.State, CreatedAt: req.CreatedAt, AnsweredAt: req.AnsweredAt, Outcome: req.Outcome, Response: req.Response, Delivery: req.Delivery}
+	if req.Origin == "policy" {
+		v.Revision = 1
+		if req.State == "answered" {
+			v.Revision = 2
+		}
+	}
+	for _, option := range req.Options {
+		v.Options = append(v.Options, swarmRequestOptionJSON{Label: option.Label, Outcome: option.Outcome})
+	}
+	if label, ok := req.OptionLabel(); ok {
+		v.OptionLabel = label
+	}
+	return v
 }
 
 // swarmRequestViews рисует запросы роя: узел шага, имя актора и автора
@@ -389,15 +425,9 @@ func (s *Server) swarmRequestViews(ctx context.Context, swarmID string, requests
 	actors, users := map[string]string{}, map[string]string{}
 	out := make([]swarmRequestJSON, 0, len(requests))
 	for _, req := range requests {
-		v := swarmRequestJSON{ID: req.ID, SwarmID: req.SwarmID, Origin: req.Origin, Sequence: req.Sequence, Kind: req.Kind, Question: req.Question, Context: req.Context, Options: []swarmRequestOptionJSON{}, State: req.State, CreatedAt: req.CreatedAt, AnsweredAt: req.AnsweredAt, Outcome: req.Outcome, Response: req.Response, Delivery: req.Delivery}
+		v := swarmRequestBaseView(req)
 		if req.Sequence != nil {
 			v.NodeID = nodes[*req.Sequence]
-		}
-		for _, o := range req.Options {
-			v.Options = append(v.Options, swarmRequestOptionJSON{Label: o.Label, Outcome: o.Outcome})
-		}
-		if label, ok := req.OptionLabel(); ok {
-			v.OptionLabel = label
 		}
 		if req.ActorUID != "" {
 			name, seen := actors[req.ActorUID]
@@ -422,6 +452,13 @@ func (s *Server) swarmRequestViews(ctx context.Context, swarmID string, requests
 				users[req.AnsweredBy] = name
 			}
 			v.AnsweredBy = name
+		}
+		if s.actorDelivery != nil {
+			reason, reasonErr := s.actorDelivery.answerReason(ctx, req)
+			if reasonErr != nil {
+				return nil, reasonErr
+			}
+			v.DeliveryError = reason
 		}
 		out = append(out, v)
 	}
@@ -453,13 +490,30 @@ func (l *deliveryLocks) lock(id string) func() {
 	entry.waiters++
 	l.mu.Unlock()
 	entry.Lock()
-	return func() {
-		entry.Unlock()
-		l.mu.Lock()
-		entry.waiters--
-		if entry.waiters == 0 {
-			delete(l.locks, id)
-		}
-		l.mu.Unlock()
+	return func() { l.release(id, entry) }
+}
+
+func (l *deliveryLocks) release(id string, entry *deliveryLock) {
+	entry.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entry.waiters--
+	if entry.waiters == 0 {
+		delete(l.locks, id)
 	}
+}
+
+func (l *deliveryLocks) tryLock(id string) (func(), bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.locks == nil {
+		l.locks = map[string]*deliveryLock{}
+	}
+	if l.locks[id] != nil {
+		return nil, false
+	}
+	entry := &deliveryLock{waiters: 1}
+	entry.Lock()
+	l.locks[id] = entry
+	return func() { l.release(id, entry) }, true
 }

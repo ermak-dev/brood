@@ -139,8 +139,17 @@ type passPlan struct {
 // precede the first write and run in the transaction that writes, so of
 // concurrent starts exactly one succeeds. No actor is created or touched.
 func (s *Store) StartSwarm(ctx context.Context, in SwarmStart, authorize func(context.Context) bool) (Swarm, error) {
+	return s.startSwarm(ctx, in, authorize, false)
+}
+
+func (s *Store) startSwarm(ctx context.Context, in SwarmStart, authorize func(context.Context) bool, eval bool) (Swarm, error) {
 	var started Swarm
 	err := s.WithTx(ctx, func(ctx context.Context) error {
+		if !eval {
+			if err := s.refuseSwarmEval(ctx, in.SwarmID); err != nil {
+				return err
+			}
+		}
 		if err := ValidSwarmGoal(in.Goal); err != nil {
 			return err
 		}
@@ -376,6 +385,9 @@ func (s *Store) beginPass(ctx context.Context, swarmID, goal string, plan passPl
 		return err
 	}
 	if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_steps(swarm_id,sequence,node_id,state,goal,source_commit) VALUES (?,?,?,?,?,?)`, swarmID, sequence, plan.entry.Next, plan.entry.NextState, goal, plan.source.Commit); err != nil {
+		return err
+	}
+	if err := s.pinPassWorkflowPolicy(ctx, swarmID, sequence); err != nil {
 		return err
 	}
 	// Начало прохода в Telegram идёт раньше запроса его первого шага (#282).

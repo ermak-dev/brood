@@ -46,7 +46,34 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 		if err := json.Unmarshal(validated.Arguments, &args); err != nil {
 			return relay.SwarmResponse{Text: "invalid pipeline completion", Outcome: "refused"}
 		}
+		nonce, err := newPipelineCompletionNonce()
+		if err != nil {
+			return relay.SwarmResponse{Text: "completion acceptance receipt unavailable", Outcome: "failed"}
+		}
+		var acceptance json.RawMessage
 		err = m.inCommandActorTx(ctx, from, func(ctx context.Context, current store.ManagedActor) error {
+			if args.RunID != current.SwarmID {
+				return store.ErrPipelineVisitConflict
+			}
+			needsResult, err := m.server.store.PipelineCompletionUsesPolicy(ctx, current.SwarmID, args.Sequence)
+			if err != nil {
+				return err
+			}
+			if needsResult {
+				step, err := m.server.store.GetSwarmStep(ctx, current.SwarmID, args.Sequence)
+				if err != nil {
+					return err
+				}
+				if step.State != "completed" {
+					in := store.ActorCompletion{SwarmID: current.SwarmID, Sequence: args.Sequence, RequestID: args.RequestID, ActorUID: current.UID, Incarnation: current.Incarnation, Outcome: args.Outcome, Report: args.Report}
+					receipt, err := m.server.store.AcceptPipelineCompletion(ctx, in, nonce, func(ctx context.Context) bool { return m.currentActorReceiptAuthority(ctx, current) })
+					if err != nil {
+						return err
+					}
+					acceptance, err = relay.WithCompletionReceipt(nil, completionReceiptMetadata(receipt))
+					return err
+				}
+			}
 			return m.server.store.CompletePipelineActorVisit(ctx, current.SwarmID, args.RunID, args.Sequence, args.RequestID, current.UID, current.Incarnation, args.Outcome, args.Report)
 		})
 		if err != nil {
@@ -65,11 +92,16 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 				return relay.SwarmResponse{Text: "pipeline completion unavailable", Outcome: "failed"}
 			}
 		}
+		if acceptance != nil {
+			return relay.SwarmResponse{OK: true, Text: "pipeline completion accepted; result evidence and policy are pending", Data: acceptance, Outcome: "accepted"}
+		}
 		// Исход мог ввести граф в следующий actor-узел (#212).
 		m.server.steps.kick(from.SwarmID)
 		return relay.SwarmResponse{OK: true, Text: "pipeline visit completed", Outcome: "completed"}
 	case "child_create", "child_get", "child_join", "child_cancel", "child_complete":
 		return m.childCommand(ctx, from, inv)
+	case "child_spawn", "child_job":
+		return m.ephemeralJobCommand(ctx, from, inv)
 	case "ask_operator":
 		return m.askOperator(ctx, from, inv)
 	case "profile":

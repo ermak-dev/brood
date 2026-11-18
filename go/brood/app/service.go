@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -36,6 +37,17 @@ type Service struct {
 // NewService собирает сервис из зависимостей.
 func NewService(store Store, provisioner Provisioner, now Clock, newID IDGen) *Service {
 	return &Service{store: store, provisioner: provisioner, now: now, newID: newID}
+}
+
+func (s *Service) lockProjectContext(ctx context.Context, projectID string) (func(), error) {
+	value, _ := s.projects.LoadOrStore(projectID, make(chan struct{}, 1))
+	gate := value.(chan struct{})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	}
 }
 
 // lockProject serializes resource creation for an existing, authorized project.

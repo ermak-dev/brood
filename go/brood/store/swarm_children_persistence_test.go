@@ -123,7 +123,8 @@ func TestMigrateV34ChildStoragePreservesEveryRow(t *testing.T) {
 	ctx := context.Background()
 	path := loadSchemaFixture(t, 34)
 	raw := rawDatabase(t, path)
-	before := databaseRows(t, raw)
+	before := withEmptyDeliveryAndRequestContextTables(databaseRows(t, raw))
+	before["swarm_pass_policies"] = legacyPassPolicyRows(t, raw)
 	raw.Close()
 	s, err := Open(ctx, path)
 	mustNil(t, err)
@@ -134,6 +135,15 @@ func TestMigrateV34ChildStoragePreservesEveryRow(t *testing.T) {
 	before["actor_step_interruptions"] = nil
 	before["project_managed_networks"] = nil
 	before["managed_actor_networks"] = nil
+	before["project_workflow_policy_heads"] = nil
+	before["project_workflow_policy_versions"] = nil
+	before["pipeline_completion_intents"] = nil
+	before["pipeline_result_observations"] = nil
+	before["pipeline_result_evidence"] = nil
+	before["pipeline_completion_receipts"] = nil
+	before["pipeline_completion_acknowledgements"] = nil
+	before["pipeline_policy_candidates"] = nil
+	before["pipeline_policy_confirmations"] = nil
 	if after := databaseRows(t, s.db); !reflect.DeepEqual(after, before) {
 		t.Fatal("v34→v35 changed existing rows or created children")
 	}

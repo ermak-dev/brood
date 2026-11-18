@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,13 +23,15 @@ import (
 
 	"brood.dev/go/brood/proxmox/egress"
 	"brood.dev/go/brood/proxmox/guest"
+	"brood.dev/go/brood/proxmox/guest/deliverylog"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
 type config struct {
-	network *egress.Policy
-	hosts   []string
-	relay   relay.ClientConfig
+	network           *egress.Policy
+	hosts             []string
+	relay             relay.ClientConfig
+	deliveryDirectory string
 	// workspace не секретен: origin и режим клона (#147) и Git-идентичность
 	// актора (#249), как их отдал сервер.
 	workspace guest.WorkspaceOrigin
@@ -56,17 +59,19 @@ type swarmBroker interface {
 }
 
 type dependencies struct {
-	app     func() error
-	secrets func(context.Context, relay.ClientConfig) error
-	actor   func() error
-	attach  func(context.Context) error
-	message func(context.Context) error
-	session func(context.Context) error
-	mcp     func(context.Context) error
-	broker  func(context.Context) (swarmBroker, error)
-	model   func(context.Context, relay.ClientConfig) (service, error)
-	git     func(context.Context, relay.ClientConfig) (service, error)
-	origin  func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error)
+	deliveryDirectory func(context.Context) (string, error)
+	deliveryJournal   func(context.Context, string, deliverylog.Scope) (*deliverylog.Journal, error)
+	app               func() error
+	secrets           func(context.Context, relay.ClientConfig) error
+	actor             func() error
+	attach            func(context.Context) error
+	message           func(context.Context) error
+	session           func(context.Context) error
+	mcp               func(context.Context) error
+	broker            func(context.Context) (swarmBroker, error)
+	model             func(context.Context, relay.ClientConfig) (service, error)
+	git               func(context.Context, relay.ClientConfig) (service, error)
+	origin            func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error)
 	// artifacts читает манифест сервера и отдаёт его установщику набора
 	// (#155, #184); reexec подменяет процесс на runtime-стадию набора.
 	artifacts func(context.Context, relay.ClientConfig, []string, guest.ArtifactRelease) error
@@ -84,8 +89,8 @@ type dependencies struct {
 
 func parseConfig(env []string) (config, error) {
 	var c config
-	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true}
-	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true}
+	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true}
+	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true}
 	values := map[string]string{}
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
@@ -109,6 +114,12 @@ func parseConfig(env []string) (config, error) {
 		if !optional[key] && values[key] == "" {
 			return c, fmt.Errorf("%s is required", key)
 		}
+	}
+	if directory, exists := values["BROOD_GUEST_DELIVERY_STATE_DIR"]; exists {
+		if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+			return config{}, errors.New("invalid BROOD_GUEST_DELIVERY_STATE_DIR")
+		}
+		c.deliveryDirectory = directory
 	}
 	switch values["BROOD_GUEST_STAGE"] {
 	case "":
@@ -260,6 +271,39 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	} else {
 		os.Setenv("PATH", "/opt/brood/bin:"+current)
 	}
+	if c.deliveryDirectory == "" && d.deliveryDirectory != nil {
+		c.deliveryDirectory, err = d.deliveryDirectory(ctx)
+		if err != nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest delivery image configuration unavailable or unsafe")
+		}
+	}
+	if c.deliveryDirectory != "" {
+		if d.deliveryJournal == nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest delivery journal initialization unavailable")
+		}
+		journal, err := d.deliveryJournal(ctx, c.deliveryDirectory, deliverylog.Scope{ActorUID: c.relay.ActorUID, Incarnation: c.relay.Generation})
+		if err != nil || journal == nil {
+			if journal != nil {
+				journal.Close()
+			}
+			cancel()
+			boundedClose(network)
+			return errors.New("guest delivery journal initialization failed")
+		}
+		defer journal.Close()
+		if journal.Identifier() == "" {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest delivery journal identity unavailable")
+		}
+		c.relay.HandleMessage = guest.NewDurableMessageHandler(journal)
+		c.relay.MessageJournalID = journal.Identifier()
+		c.relay.MessageDeduplication = true
+	}
 	// Capture only the immutable bootstrap identity, never the relay socket.
 	cfg := c.relay
 	var refresh func(context.Context) error
@@ -337,12 +381,12 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		return errors.New("invalid guest terminal target")
 	}
 	go func() { relayDone <- d.relay(ctx, c.relay); cancel() }()
-	// Сессия Claude поднимается без терминала: после секретов, origin и сервисов
-	// актора. Отказ автостарта не останавливает supervisor.
+	// Persistent поднимает сессию после сервисов; ephemeral ждёт workspace_attest,
+	// который готовит точный source до первой модели. Отказ автостарта не завершает supervisor.
 	autostartDone := make(chan struct{})
 	go func() {
 		defer close(autostartDone)
-		if d.autorun != nil {
+		if c.workspace.Ephemeral == nil && d.autorun != nil {
 			d.autorun(ctx)
 		}
 	}()
@@ -458,13 +502,15 @@ func cancellationOnly(err error) bool {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	d := dependencies{app: func() error { return guest.RunProjectApp(os.Stderr) }, boot: guest.RunSessionAutostart, autorun: func(ctx context.Context) {
+	d := dependencies{deliveryDirectory: func(ctx context.Context) (string, error) {
+		return guest.ReadSupervisorDeliveryDirectory(ctx, "/etc/brood")
+	}, deliveryJournal: guest.OpenSupervisorDeliveryJournal, app: func() error { return guest.RunProjectApp(os.Stderr) }, boot: guest.RunSessionAutostart, autorun: func(ctx context.Context) {
 		guest.AutostartSession(ctx, func(err error) { fmt.Fprintln(os.Stderr, err) })
 	}, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, attach: guest.RunPTYAttach, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 		return guest.StartModelGateway(ctx, cfg)
 	}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 		return guest.StartGitGateway(ctx, cfg)
-	}, origin: guest.RefreshWorkspaceOrigin, euid: os.Geteuid, network: startDHCP, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
+	}, origin: refreshWorkspaceBootstrap, euid: os.Geteuid, network: startDHCP, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
 	}, startPolicy: func(ctx context.Context, network *egress.Policy) (actorRuntime, error) {
 		return guest.Start(ctx, guest.Config{Network: network, Dependencies: guest.SystemDependencies()})

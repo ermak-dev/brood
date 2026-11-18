@@ -153,8 +153,10 @@ describe('identity', () => {
 const now = (html: string) => {
   const start = html.indexOf('data-swarm-now');
   if (start < 0) throw new Error('no "what now" block');
-  const ends = [html.indexOf('data-inbox', start), html.indexOf(`>${en.swarm_page.graph}<`, start)]
-    .filter((index) => index > start);
+  const ends = [
+    html.indexOf('data-inbox', start),
+    html.indexOf(`>${en.swarm_page.graph}<`, start),
+  ].filter((index) => index > start);
   return html.slice(start, ends.length > 0 ? Math.min(...ends) : undefined);
 };
 /** Строка-мета под заголовком: сведения о рое. */
@@ -342,10 +344,10 @@ describe('first screen (#253)', () => {
     });
     const html = render({ run: timed, selected: undefined });
     const history = html.slice(html.indexOf(`>${en.swarm_page.steps}<`));
-    expect(visibleText(history)).toContain(
-      en.swarm_page.duration.min.replace('{{count}}', '10')
+    expect(visibleText(history)).toContain(en.swarm_page.duration.min.replace('{{count}}', '10'));
+    expect(history).toMatch(
+      new RegExp(`title="${en.swarm_page.started} [^"]+${en.swarm_page.finished} [^"]+"`)
     );
-    expect(history).toMatch(new RegExp(`title="${en.swarm_page.started} [^"]+${en.swarm_page.finished} [^"]+"`));
     expect(history).not.toContain(`>${en.swarm_page.finished}<`);
     // A step still running has no duration yet: its start is named instead.
     expect(visibleText(history)).toContain(en.swarm_page.started);
@@ -633,6 +635,9 @@ describe('pass goal', () => {
     expect(second).toBeGreaterThan(first);
     const earlier = history.slice(first, second);
     const later = history.slice(second);
+    expect(earlier).toContain(`href="/swarms/${swarm.id}/passes/1"`);
+    expect(later).toContain(`href="/swarms/${swarm.id}/passes/3"`);
+    expect(earlier.slice(0, earlier.indexOf('</summary>'))).not.toContain('/passes/');
     expect(earlier).toContain('&lt;b&gt;as is&lt;/b&gt;');
     expect(earlier).toContain('#1<');
     expect(earlier).toContain('#2<');
@@ -652,7 +657,10 @@ describe('pass goal', () => {
   test('earlier passes fold into their heading; the current pass stands open', () => {
     const html = render({ run: passes, selected: undefined });
     const history = html.slice(html.indexOf(`>${en.swarm_page.steps}<`));
-    const earlier = history.slice(history.indexOf('data-pass="1"'), history.indexOf('data-pass="3"'));
+    const earlier = history.slice(
+      history.indexOf('data-pass="1"'),
+      history.indexOf('data-pass="3"')
+    );
     const later = history.slice(history.indexOf('data-pass="3"'));
     expect(earlier).toMatch(/<details(?![^>]*\sopen)[^>]*>/);
     expect(later).toMatch(/<details[^>]*\sopen/);
@@ -671,7 +679,10 @@ describe('pass goal', () => {
     expect(earlier).toContain('&lt;b&gt;as is&lt;/b&gt;');
     expect(earlier).toContain('#2<');
     // A single pass is the current one: open.
-    const single = render({ run: run({ goal, nodes: passes.nodes.slice(0, 2) }), selected: undefined });
+    const single = render({
+      run: run({ goal, nodes: passes.nodes.slice(0, 2) }),
+      selected: undefined,
+    });
     expect(single.slice(single.indexOf('data-pass="1"'))).toMatch(/<details[^>]*\sopen/);
   });
 

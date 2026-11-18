@@ -20,6 +20,7 @@ import {
   retryMayDuplicate,
 } from './requestState';
 import type { RequestInboxModel, RequestPlace } from './useSwarmRequests';
+import { PolicyEvidence } from './PolicyEvidence';
 import styles from '@/features/substrate/substrate.module.scss';
 import page from './SwarmPage.module.scss';
 import local from './SwarmRequests.module.scss';
@@ -191,6 +192,13 @@ export function RequestCard({
           {!atNode && (
             <Markdown id={questionId} className={local.question} text={request.question} />
           )}
+          {request.origin === 'policy' && (
+            <PolicyEvidence
+              key={`${request.swarmId}/${request.id}`}
+              swarmId={request.swarmId}
+              requestId={request.id}
+            />
+          )}
           {request.context && (
             <details className={local.context}>
               <summary className={local.contextSummary}>{t('swarm_requests.context')}</summary>
@@ -255,6 +263,9 @@ function Asker({
   onSelectNode?: (node: string) => void;
 }) {
   const { t } = useTranslation();
+  if (request.origin === 'policy') {
+    return <span>{t('swarm_requests.asker_policy')}</span>;
+  }
   if (request.origin === 'node') {
     const node = request.nodeId;
     return (
@@ -344,7 +355,13 @@ function AnswerForm({
         </div>
       )}
       <p id={hintId} className={page.hint}>
-        {t(form.route ? 'swarm_requests.route_hint' : 'swarm_requests.actor_hint')}
+        {t(
+          request.origin === 'policy'
+            ? 'swarm_requests.policy_hint'
+            : form.route
+              ? 'swarm_requests.route_hint'
+              : 'swarm_requests.actor_hint'
+        )}
       </p>
       {form.text !== 'none' && (
         <label className={local.field}>

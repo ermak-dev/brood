@@ -375,7 +375,7 @@ func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedA
 	ctx, cancel := context.WithTimeout(parent, m.actorPassTimeout())
 	_, err := m.reconcileActor(ctx, a)
 	cancel()
-	if err == nil || parent.Err() != nil {
+	if err == nil || parent.Err() != nil || errors.Is(err, errEphemeralObservationHeld) {
 		return
 	}
 	current, getErr := m.server.store.GetManagedActor(parent, a.UID)
@@ -502,6 +502,18 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	if current.Revision != a.Revision {
 		return a, store.ErrRevisionConflict
 	}
+	if current.Class == store.ActorClassEphemeral && current.Operation != "create" {
+		if out, handled, err := m.reconcileEphemeralOperation(ctx, current); handled {
+			return out, err
+		}
+	}
+	if current.Class == store.ActorClassEphemeral && current.Operation == "create" {
+		a = current
+		queued, err := m.ephemeralCreateQueued(ctx, a)
+		if err != nil || queued {
+			return a, err
+		}
+	}
 	// Согласованный терминальный отказ требует нового явного намерения.
 	// Диагностика сохраняется даже при недоступной конфигурации провайдера.
 	if a.Stage == "done" && a.Phase == "error" && a.Error == managedProviderError(proxmox.ErrTaskFailed) {
@@ -595,6 +607,9 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		}
 		if err != nil {
 			return a, err
+		}
+		if a.Class == store.ActorClassEphemeral && a.Operation == "create" {
+			return a, nil
 		}
 		a, err = m.beginStart(ctx, a, store.NewID())
 		if err != nil {
@@ -696,6 +711,15 @@ func (m *managedProvider) confirmStartRunning(ctx context.Context, a store.Manag
 // проходу, как start update (#133); provisioning ставит launchStart перед
 // самим Start.
 func (m *managedProvider) beginStart(ctx context.Context, a store.ManagedActor, operationID string) (store.ManagedActor, error) {
+	if a.Operation == "reset" {
+		link, err := m.server.store.GetDerivedOwnerManagedActorOperation(ctx, a.UID, a.Incarnation, a.OperationID)
+		if err == nil && link.Operation == "reset" {
+			return m.continueOwnerResetStart(ctx, a, operationID, link)
+		}
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return a, err
+		}
+	}
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
 		a, e = m.server.store.BeginManagedActorOperation(tx, a.UID, a.Revision, operationID, "start")
@@ -1049,7 +1073,7 @@ func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace, origi
 	case "error":
 		state = "ACTOR_STATE_CRASHED"
 	}
-	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "atespace": atespace}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name, "atespace": atespace}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Diagnostic()}, "origin": a.Origin, "originMode": originMode}
+	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "atespace": atespace}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name, "atespace": atespace}, "provider": "proxmox", "class": a.Class, "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Diagnostic()}, "origin": a.Origin, "originMode": originMode}
 }
 
 func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNames map[string]bool) ([]any, error) {

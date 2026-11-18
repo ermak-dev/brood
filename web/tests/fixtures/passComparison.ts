@@ -1,0 +1,38 @@
+export const passComparison = (overrides: Record<string, unknown> = {}) => ({
+  version: 1,
+  alignment: 'visit-position',
+  reference: { swarmId: 'reference', pass: 1 },
+  candidate: { swarmId: 'candidate', pass: 10 },
+  sameGoal: true,
+  sameSource: true,
+  sameDefinition: false,
+  stepCount: { reference: 1, candidate: 1, delta: 0 },
+  childTaskCount: { reference: 0, candidate: 0, delta: 0 },
+  steps: [
+    {
+      position: 1,
+      node: 'same',
+      outcome: 'unknown',
+      report: 'unknown',
+      reportedOutcome: 'unknown',
+      reportedReport: 'unknown',
+      reference: {
+        sequence: 1,
+        nodeId: 'build',
+        state: 'inflight',
+        reportedOutcome: 'success',
+        reportedReport: '<script>Retained, not executed.</script>',
+        childTasks: 0,
+      },
+      candidate: {
+        sequence: 10,
+        nodeId: 'build',
+        state: 'completed',
+        outcome: 'fail',
+        report: 'Actual retained failure.',
+        childTasks: 0,
+      },
+    },
+  ],
+  ...overrides,
+});

@@ -3,10 +3,8 @@
 package guest
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -35,6 +33,7 @@ type WorkspaceOrigin struct {
 	Mode        string               `json:"mode"`
 	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
 	Models      actormodel.Models    `json:"models,omitzero"`
+	Ephemeral   *EphemeralWorkspace  `json:"ephemeral,omitempty"`
 }
 
 // ValidateWorkspaceOrigin checks the bootstrap pair. It mirrors the server's
@@ -57,6 +56,9 @@ func ValidateWorkspaceOrigin(origin, mode string, hosts []string) error {
 func checkWorkspaceOrigin(o WorkspaceOrigin) error {
 	if err := o.Models.Validate(); err != nil {
 		return err
+	}
+	if o.Ephemeral != nil && (o.Origin == "" || !validPinnedCommit(o.Ephemeral.Commit)) {
+		return errors.New("ephemeral workspace requires an origin and a full lowercase SHA-1")
 	}
 	switch {
 	case o.Origin == "" && !o.GitIdentity.IsZero():
@@ -168,11 +170,5 @@ func readWorkspaceOrigin(path string, uid, gid int) (WorkspaceOrigin, error) {
 	if err != nil || st.Gid != uint32(gid) {
 		return WorkspaceOrigin{}, originFailure()
 	}
-	var o WorkspaceOrigin
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&o) != nil || decoder.Decode(new(any)) != io.EOF || checkWorkspaceOrigin(o) != nil {
-		return WorkspaceOrigin{}, originFailure()
-	}
-	return o, nil
+	return decodeWorkspaceOrigin(data, true)
 }

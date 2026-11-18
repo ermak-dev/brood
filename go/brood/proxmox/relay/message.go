@@ -25,6 +25,13 @@ var errMessageTooLarge = errors.New("swarm message exceeds size limit")
 // MessageRequest — один запрос гостя к соседу по рою. Проверку адреса
 // (чей это актор, тот ли рой) делает сервер до передачи запроса дальше.
 type MessageRequest struct {
+	// DeliveryID is server-owned journal metadata, sent only after capability
+	// negotiation. A guest cannot choose it for a routed peer message.
+	DeliveryID string `json:"deliveryId,omitempty"`
+	// JournalID binds the operation to the receiver's retained storage identity.
+	JournalID string `json:"journalId,omitempty"`
+	// Replay is a read-only probe of an uncertain attempt, never permission to send.
+	Replay  bool   `json:"replay,omitempty"`
 	To      string `json:"to"`      // имя актора-адресата в рое отправителя
 	Body    string `json:"body"`    // непустой текст; конверт надстроит гость
 	From    string `json:"from"`    // имя актора-отправителя
@@ -39,14 +46,19 @@ type MessageRequest struct {
 // ушло, и повтор безопасен. Без поля (false; прежний гость его не пишет) отказ
 // означает неизвестный исход: сообщение могло дойти, повтор дал бы дубль.
 type MessageResponse struct {
-	OK      bool   `json:"ok"`
-	Verdict string `json:"verdict"`
-	NotSent bool   `json:"notSent,omitempty"`
+	// Duplicate acknowledges an exact delivery already confirmed in the durable journal.
+	Duplicate bool   `json:"duplicate,omitempty"`
+	OK        bool   `json:"ok"`
+	Verdict   string `json:"verdict"`
+	NotSent   bool   `json:"notSent,omitempty"`
 }
 
 // encodeMessageFrame собирает один NDJSON-кадр запроса. Предел проверяется
 // до кодирования: сервер не буферизует произвольный объём от гостя.
 func encodeMessageFrame(req MessageRequest) ([]byte, error) {
+	if err := validateMessageDeliveryMetadata(req); err != nil {
+		return nil, err
+	}
 	if req.To == "" || req.From == "" || req.Body == "" {
 		return nil, errors.New("swarm message requires to, from and body")
 	}
@@ -78,5 +90,21 @@ func decodeMessageFrame(frame []byte) (MessageRequest, error) {
 	if req.WaitSec < 0 || req.WaitSec > 300 {
 		return MessageRequest{}, errors.New("waitSec must be between 0 and 300 seconds")
 	}
+	if err := validateMessageDeliveryMetadata(req); err != nil {
+		return MessageRequest{}, err
+	}
 	return req, nil
+}
+
+func validateMessageDeliveryMetadata(req MessageRequest) error {
+	if req.DeliveryID == "" {
+		if req.JournalID != "" || req.Replay {
+			return errors.New("delivery metadata requires a stable delivery ID")
+		}
+		return nil
+	}
+	if !validMessageJournalID(req.JournalID) {
+		return errors.New("stable delivery requires a retained journal identity")
+	}
+	return nil
 }

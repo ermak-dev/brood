@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 
+	"brood.dev/go/brood/workflowpolicy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -36,14 +37,15 @@ type Option struct {
 // Node — узел конвейера с типом и полями своего типа. Role обязательна
 // у actor-узлов: имя, по которому рой связывает узел с существующим актором.
 type Node struct {
-	Type      string           `yaml:"type"`
-	Role      string           `yaml:"role,omitempty"`
-	Prompt    string           `yaml:"prompt,omitempty"`
-	Question  string           `yaml:"question,omitempty"`
-	Options   []Option         `yaml:"options,omitempty"`
-	Target    string           `yaml:"target,omitempty"`
-	Branches  []string         `yaml:"branches,omitempty"`
-	ChildJoin *ChildJoinPolicy `yaml:"childJoin,omitempty"`
+	Type          string           `yaml:"type"`
+	Role          string           `yaml:"role,omitempty"`
+	Prompt        string           `yaml:"prompt,omitempty"`
+	Question      string           `yaml:"question,omitempty"`
+	Options       []Option         `yaml:"options,omitempty"`
+	Target        string           `yaml:"target,omitempty"`
+	Branches      []string         `yaml:"branches,omitempty"`
+	ChildJoin     *ChildJoinPolicy `yaml:"childJoin,omitempty"`
+	ActionClasses []string         `yaml:"actionClasses,omitempty"`
 }
 
 // ChildJoinPolicy defines an actor node's server-computed child outcome.
@@ -157,6 +159,18 @@ func (d *Document) checkSchema(filename string) error {
 		}
 		if node.Type == "actor" && node.Role == "" {
 			return fail("nodes."+name+".role", "actor node requires a role; role replaced template, managedPool and styles")
+		}
+		if node.ActionClasses != nil {
+			if node.Type != "actor" || len(node.ActionClasses) == 0 || len(node.ActionClasses) > 6 {
+				return fail("nodes."+name+".actionClasses", "requires an actor and one to six explicit classes")
+			}
+			seen := map[string]bool{}
+			for _, action := range node.ActionClasses {
+				if !workflowpolicy.ValidAction(action) || seen[action] || action == "work" && len(node.ActionClasses) != 1 {
+					return fail("nodes."+name+".actionClasses", "classes must be known, unique and work must stand alone")
+				}
+				seen[action] = true
+			}
 		}
 		if node.ChildJoin != nil {
 			if node.Type != "actor" {

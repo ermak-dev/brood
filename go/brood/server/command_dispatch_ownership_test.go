@@ -136,9 +136,8 @@ func TestMasterLandingNamesOnlyItself(t *testing.T) {
 	}
 }
 
-// foreignLeaseSetup пишет аренду master на worker другого master так, как
-// её взял бы dispatch до #267, и проверяет, что владелец worker остановить
-// его не может и чужую аренду не отпускает.
+// foreignLeaseSetup пишет историческую чужую аренду и проверяет, что
+// automatic update её учитывает, а владелец worker не может её отпустить.
 func foreignLeaseSetup(t *testing.T) (ts *substrateServer, alice *http.Client, master, other, theirs store.ManagedActor) {
 	t.Helper()
 	ts, alice, master, other, theirs, _ = threeSlotMasters(t)
@@ -153,8 +152,8 @@ func foreignLeaseSetup(t *testing.T) (ts *substrateServer, alice *http.Client, m
 	if _, err := ts.srv.store.ClaimDispatchLease(ctx, claim); err != nil {
 		t.Fatal(err)
 	}
-	if got := guestCommand(ts, other, "stop", `{"name":"theirs"}`); got.OK {
-		t.Fatalf("owner stopped a worker under a foreign lease: %+v", got)
+	if err := ts.srv.store.CheckActorUpdate(ctx, theirs); err == nil {
+		t.Fatal("automatic update ignored a foreign dispatch lease")
 	}
 	if got := guestCommand(ts, other, "dispatch", `{"to":"theirs","request_id":"before-267","action":"release"}`); got.OK || !strings.Contains(got.Text, "belongs to another request or owner") {
 		t.Fatalf("owner released a foreign lease: %+v", got)
@@ -174,6 +173,29 @@ func expectOwnerStops(t *testing.T, ts *substrateServer, other, theirs store.Man
 	}
 	if got := guestCommand(ts, other, "stop", `{"name":"theirs"}`); !got.OK || got.Outcome != "accepted" {
 		t.Fatalf("owner stop after release: %+v", got)
+	}
+}
+
+func TestForeignDispatchLeaseSurvivesExplicitOwnerStop(t *testing.T) {
+	ts, _, _, other, theirs := foreignLeaseSetup(t)
+	before, err := dispatchLease(t, ts, theirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := guestCommand(ts, other, "stop", `{"name":"theirs"}`)
+	if !got.OK || got.Outcome != "accepted" {
+		t.Fatalf("explicit owner stop blocked by automatic lease: %+v", got)
+	}
+	current, err := ts.srv.store.GetManagedActor(context.Background(), theirs.UID)
+	if err != nil || current.Operation != "stop" || current.OperationID == theirs.OperationID || current.Incarnation != theirs.Incarnation || current.CTID != theirs.CTID {
+		t.Fatalf("explicit stop lost the exact owned allocation: %+v %v", current, err)
+	}
+	origin, err := ts.srv.store.GetOwnerManagedActorOperation(context.Background(), current.UID, current.Incarnation, current.OperationID)
+	if err != nil || origin.Caller != fmt.Sprintf("actor:%s:%d", other.UID, other.Incarnation) || origin.Operation != "stop" || origin.State != "completed" {
+		t.Fatalf("explicit stop lost truthful actor origin: %+v %v", origin, err)
+	}
+	if held, err := dispatchLease(t, ts, theirs); err != nil || held != before {
+		t.Fatalf("explicit stop cleared another owner's lease: %+v %v", held, err)
 	}
 }
 

@@ -40,6 +40,10 @@ func ReceiveSession(ctx context.Context, req relay.SessionRequest) relay.Session
 		return sessionctl.RunWorkspace(ctx, req)
 	case sessionctl.CheckoutOperation:
 		return sessionctl.RunCheckout(ctx, req)
+	case sessionctl.ResultOperation:
+		return sessionctl.RunResult(ctx, req)
+	case ephemeralPreparationOperation:
+		return receiveEphemeralPreparation(ctx, req)
 	default:
 		return sessionctl.Run(ctx, req)
 	}
@@ -107,6 +111,15 @@ func newSessionHandler(connection context.Context, refresh func(context.Context)
 		switch req.Operation {
 		case sessionctl.CheckoutOperation:
 			return terminalFailure("workspace checkout is internal to the guest supervisor")
+		case sessionctl.ResultOperation:
+			return terminalFailure("workspace result observation is internal to the guest supervisor")
+		case ephemeralPreparationOperation:
+			return terminalFailure("ephemeral workspace preparation is internal to the guest supervisor")
+		case relay.WorkspaceResultOperation:
+			if attestor == nil || attestor.Observe == nil {
+				return relay.SessionResponse{Text: "workspace result attestation is not supported by this guest", Outcome: "unsupported"}
+			}
+			return controller.Control(ctx, func() relay.SessionResponse { return attestor.ObserveResult(ctx, req) })
 		case relay.WorkspaceAttestOperation:
 			if attestor == nil {
 				return relay.SessionResponse{Text: "workspace attestation is not supported by this guest", Outcome: "unsupported"}
@@ -151,6 +164,12 @@ func HandleSession(parent context.Context, req relay.SessionRequest) relay.Sessi
 func runSessionHelper(parent context.Context, req relay.SessionRequest) relay.SessionResponse {
 	if req.Operation == sessionctl.CheckoutOperation {
 		return relay.SessionResponse{Text: "workspace checkout is internal to the guest supervisor", Outcome: "failed"}
+	}
+	if req.Operation == sessionctl.ResultOperation {
+		return relay.SessionResponse{Text: "workspace result observation is internal to the guest supervisor", Outcome: "failed"}
+	}
+	if req.Operation == ephemeralPreparationOperation {
+		return relay.SessionResponse{Text: "ephemeral workspace preparation is internal to the guest supervisor", Outcome: "failed"}
 	}
 	return runHelper(parent, req, 18*time.Second)
 }

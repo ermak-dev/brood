@@ -71,10 +71,13 @@ type Server struct {
 	adminModels *adminModelClient
 
 	// deliveries сериализует доставку ответа на запрос роя (#210).
-	deliveries deliveryLocks
+	deliveries    deliveryLocks
+	actorDelivery *actorDeliveryService
 	// steps доставляет инструкции шагов actor-узлов (#212).
-	steps    *stepDispatcher
-	children *childDispatcher
+	steps                  *stepDispatcher
+	children               *childDispatcher
+	ephemeralAttestor      *ephemeralChildAttestor
+	ephemeralRecoveryClose func()
 	// telegram держит поллеры ботов Telegram (#281).
 	telegram *telegramBots
 	// sender отправляет уведомления outbox Telegram (#282).
@@ -119,6 +122,14 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
+	if err := st.RecoverEphemeralChildAttestations(ctx); err != nil {
+		catalog.Close()
+		return nil, errors.New("ephemeral child attestation recovery failed")
+	}
+	if err := st.RecoverPipelineResultObservations(ctx); err != nil {
+		catalog.Close()
+		return nil, errors.New("pipeline result observation recovery failed")
+	}
 	// Попытки шагов, чей эффект у гостя мог оборвать прошлый процесс, —
 	// unconfirmed без повтора (#212); ждущие доставки шаги будит steps.start.
 	if err := st.RecoverActorSteps(ctx); err != nil {
@@ -137,6 +148,8 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.steps = newStepDispatcher(srv)
+	srv.ephemeralAttestor = newEphemeralChildAttestor()
+	srv.actorDelivery = newActorDeliveryService(srv, time.Now)
 	srv.children = newChildDispatcher(srv)
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	// Поллер отвечает на запросы путём ответа сервера (#283), а команды
@@ -214,6 +227,8 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProjectSecrets()
 	srv.mountGitCredentials()
 	srv.mountGitRepositories()
+	srv.mountWorkflowPolicy()
+	srv.mountProjectOwnership()
 	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)
@@ -225,6 +240,8 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.managed.start(proxyCtx)
 	srv.steps.start(proxyCtx)
 	srv.children.start(proxyCtx)
+	srv.actorDelivery.start(proxyCtx)
+	srv.ephemeralRecoveryClose = srv.startEphemeralChildRecovery(proxyCtx)
 	srv.telegram.start(proxyCtx)
 	srv.sender.start(proxyCtx)
 	return srv, nil
@@ -256,6 +273,8 @@ func (s *Server) Close() error {
 	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
 	s.steps.close()
 	s.children.close()
+	s.stopEphemeralChildRecovery()
+	s.actorDelivery.close()
 	// Поллеры и отправитель Telegram пишут в базу: остановлены до её
 	// закрытия.
 	s.telegram.close()

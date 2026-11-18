@@ -104,7 +104,7 @@ func (s *Store) AcquireActorSessionOperation(ctx context.Context, target Managed
 
 func (s *Store) acquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string, guard func(context.Context, ManagedActor) error) (ActorOperation, error) {
 	var op ActorOperation
-	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "wipe" && operation != "recycle" && operation != "workspace_attest" && !sessionMutationOperation(operation)) {
+	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "wipe" && operation != "recycle" && operation != "workspace_attest" && operation != WorkspaceResultOperation && !sessionMutationOperation(operation)) {
 		return op, newCoordinationConflict("invalid workspace operation identity")
 	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {

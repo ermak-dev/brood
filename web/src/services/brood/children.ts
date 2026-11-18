@@ -12,8 +12,18 @@ export interface ChildGroupSummary {
   revision: number;
   interrupted: boolean;
   registered: number;
+  unregisteredFailed?: number;
+  executorFailed?: number;
   open: number;
   started: number;
+}
+
+export interface ExecutorFailure {
+  intentId: string;
+  childId: string;
+  requestId: string;
+  reason: string;
+  failedAt: string;
 }
 
 export interface ChildTask {
@@ -31,6 +41,7 @@ export interface ChildTask {
   revision: number;
   createdAt: string;
   finishedAt: string;
+  executorFailure?: ExecutorFailure;
 }
 
 export interface ChildGroup extends ChildGroupSummary {
@@ -91,6 +102,12 @@ function parseSummary(value: unknown): ChildGroupSummary {
     revision: integer(value, 'revision', 1),
     interrupted: value.interrupted,
     registered,
+    ...(value.unregisteredFailed === undefined
+      ? {}
+      : { unregisteredFailed: integer(value, 'unregisteredFailed', 0, total - registered) }),
+    ...(value.executorFailed === undefined
+      ? {}
+      : { executorFailed: integer(value, 'executorFailed', 0, registered) }),
     open: integer(value, 'open', 0, total),
     started: integer(value, 'started', 0, registered),
   };
@@ -98,6 +115,30 @@ function parseSummary(value: unknown): ChildGroupSummary {
 
 function parseTask(value: unknown): ChildTask {
   if (!isRecord(value)) throw new Error(INVALID);
+  let executorFailure: ExecutorFailure | undefined;
+  if (value.executorFailure !== undefined) {
+    const fact = value.executorFailure;
+    if (!isRecord(fact)) throw new Error(INVALID);
+    executorFailure = {
+      intentId: text(fact, 'intentId'),
+      childId: text(fact, 'childId'),
+      requestId: text(fact, 'requestId'),
+      reason: text(fact, 'reason'),
+      failedAt: text(fact, 'failedAt'),
+    };
+    if (
+      executorFailure.childId !== value.id ||
+      executorFailure.requestId !== value.requestId ||
+      /^\p{White_Space}*$/u.test(executorFailure.reason) ||
+      !['pending', 'running'].includes(String(value.state)) ||
+      value.role !== '' ||
+      value.delivery !== '' ||
+      optionalText(value, 'outcome') !== '' ||
+      optionalText(value, 'report') !== '' ||
+      optionalText(value, 'finishedAt') !== ''
+    )
+      throw new Error(INVALID);
+  }
   return {
     id: text(value, 'id'),
     requestId: text(value, 'requestId'),
@@ -113,6 +154,7 @@ function parseTask(value: unknown): ChildTask {
     revision: integer(value, 'revision', 1),
     createdAt: text(value, 'createdAt'),
     finishedAt: optionalText(value, 'finishedAt'),
+    ...(executorFailure ? { executorFailure } : {}),
   };
 }
 
@@ -131,10 +173,20 @@ export function parseChildGroup(value: unknown): ChildGroup {
   const started = children.filter(
     (task) => task.state === 'running' || task.state === 'completed'
   ).length;
+  const failures = children.flatMap((task) => (task.executorFailure ? [task.executorFailure] : []));
+  if (
+    failures.length !== (summary.executorFailed ?? 0) ||
+    new Set(failures.map((fact) => fact.intentId)).size !== failures.length ||
+    new Set(failures.map((fact) => fact.requestId)).size !== failures.length
+  )
+    throw new Error(INVALID);
   const unsettled = children.filter(
-    (task) => task.state === 'pending' || task.state === 'running'
+    (task) => !task.executorFailure && (task.state === 'pending' || task.state === 'running')
   ).length;
-  const open = summary.state === 'aborted' ? 0 : summary.total - children.length + unsettled;
+  const open =
+    summary.state === 'aborted'
+      ? 0
+      : summary.total - children.length - (summary.unregisteredFailed ?? 0) + unsettled;
   if (summary.started !== started || summary.open !== open) throw new Error(INVALID);
   return {
     ...summary,
@@ -156,7 +208,8 @@ export function parseChildGroupPage(value: unknown): ChildGroupPage {
   ) {
     throw new Error(INVALID);
   }
-  if (nextBefore !== 0 && nextBefore !== items[items.length - 1]?.parentSequence) throw new Error(INVALID);
+  if (nextBefore !== 0 && nextBefore !== items[items.length - 1]?.parentSequence)
+    throw new Error(INVALID);
   return { items, nextBefore };
 }
 

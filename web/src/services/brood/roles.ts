@@ -140,14 +140,18 @@ export function parseSwarmRoles(value: unknown): SwarmRolesView {
   };
 }
 
-/** Managed actors of an actor list; native actors cannot hold a role. The
- * generation is a decimal string: one that is not a positive integer is
- * refused, not guessed at, since the binding records exactly it. */
+/** Native и ephemeral не подходят для роли графа. Отсутствие class у старого
+ * сервера сохраняет прежний persistent-контракт. generation — десятичная
+ * инкарнация: некорректное значение нельзя угадывать при записи привязки. */
 export function managedActors(value: unknown): RoleActor[] {
   if (!isRecord(value) || !Array.isArray(value.results)) throw new Error(INVALID_ACTORS);
   const actors: RoleActor[] = [];
   for (const row of value.results) {
     if (!isRecord(row) || row.provider !== 'proxmox') continue;
+    if (row.class !== undefined) {
+      if (typeof row.class !== 'string' || row.class === '') throw new Error(INVALID_ACTORS);
+      if (row.class !== 'persistent') continue;
+    }
     const metadata = isRecord(row.metadata) ? row.metadata : {};
     const generation = typeof row.generation === 'string' ? row.generation : '';
     const incarnation = /^[1-9][0-9]*$/.test(generation) ? Number(generation) : 0;

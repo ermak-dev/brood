@@ -109,6 +109,9 @@ func liveRoleActor(swarm Swarm, a ManagedActor) error {
 	if a.SwarmID != swarm.ID || swarm.AtespaceUID == nil || *swarm.AtespaceUID != a.AtespaceUID {
 		return ErrSwarmRoleForeignActor
 	}
+	if a.Class == ActorClassEphemeral {
+		return fmt.Errorf("%w: ephemeral actors cannot bind workflow roles", ErrSwarmRoleInactive)
+	}
 	if swarm.State != "active" {
 		return fmt.Errorf("%w: swarm is %s", ErrSwarmRoleInactive, swarm.State)
 	}
@@ -296,8 +299,8 @@ func (s *Store) changeableSwarmRoles(ctx context.Context, swarmID, userID string
 }
 
 // ListSwarmRoles reads the role view of a swarm in one transaction. The
-// graph is the pinned snapshot; before the first start it is the catalog
-// definition named by definition, and none when definition is empty. A
+// graph is the pinned execution or eval snapshot; before an ordinary first start
+// it is the catalog definition named by definition, and none when empty. A
 // pinned swarm refuses another definition with ErrSwarmGraphPinned; a
 // definition absent from the swarm's project catalog is
 // ErrWorkflowDefinitionMissing, one the runner would refuse is
@@ -325,6 +328,22 @@ func (s *Store) ListSwarmRoles(ctx context.Context, swarmID, definition string) 
 func (s *Store) swarmRoleGraph(ctx context.Context, w Swarm, definition string) (*SwarmRoleGraph, error) {
 	var graph *SwarmRoleGraph
 	var source []byte
+	var evaluation *SwarmEvalBinding
+	if w.Graph == nil {
+		binding, err := s.GetSwarmEvalBinding(ctx, w.ID)
+		if err == nil {
+			namespace := ""
+			if w.AtespaceUID != nil {
+				namespace = *w.AtespaceUID
+			}
+			if binding.CandidateProjectID != w.ProjectID || w.CreatedAt == nil || binding.CandidateCreatedAt != *w.CreatedAt || binding.CandidateAtespaceUID != namespace {
+				return nil, fmt.Errorf("%w: eval candidate identity changed", ErrSwarmGraphPinned)
+			}
+			evaluation = &binding
+		} else if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
 	switch {
 	case w.Graph != nil:
 		if definition != "" && definition != w.DefinitionName {
@@ -332,6 +351,12 @@ func (s *Store) swarmRoleGraph(ctx context.Context, w Swarm, definition string) 
 		}
 		graph = &SwarmRoleGraph{Pinned: true, Name: w.DefinitionName, Version: w.DefinitionVersion, Revision: w.DefinitionRevision}
 		source = w.Graph
+	case evaluation != nil:
+		if definition != "" && definition != evaluation.Definition {
+			return nil, fmt.Errorf("%w: eval pins workflow %q", ErrSwarmGraphPinned, evaluation.Definition)
+		}
+		graph = &SwarmRoleGraph{Pinned: true, Name: evaluation.Definition, Version: evaluation.DefinitionVersion, Revision: evaluation.DefinitionRevision}
+		source = []byte(evaluation.Graph)
 	case definition != "":
 		def, err := s.GetWorkflowDefinition(ctx, w.ProjectID, definition)
 		if errors.Is(err, ErrNotFound) {

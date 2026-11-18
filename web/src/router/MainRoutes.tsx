@@ -6,6 +6,8 @@ import { SwarmsPage } from '@/features/access/SwarmsPage';
 import { UsersPage } from '@/features/access/UsersPage';
 import { ProjectDetailPage } from '@/features/access/ProjectDetailPage';
 import { SwarmPage } from '@/features/swarms/SwarmPage';
+import { SwarmPassTracePage } from '@/features/swarms/SwarmPassTrace';
+import { SwarmPassComparisonPage } from '@/features/swarms/SwarmPassComparison';
 import { LegacyRunRoute } from '@/features/swarms/LegacyRunRoute';
 import { useAdministrator } from '@/features/access/shared';
 import { visibleAccessPath } from '@/features/access/permissions';
@@ -74,6 +76,8 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/swarms', element: <LegacyProjectRoute section="swarms" /> },
   // Рой — главный объект (#215): у него свой адрес, проект берётся из роя.
   { path: '/swarms/:id', element: <SwarmPage /> },
+  { path: '/swarms/:id/passes/:pass', element: <SwarmPassTracePage /> },
+  { path: '/swarms/:id/passes/:pass/compare', element: <SwarmPassComparisonPage /> },
   { path: '/permissions', element: <LegacyProjectRoute section="members" /> },
   { path: '/substrate-projects', element: <Navigate to="/projects" replace /> },
   { path: '/actors', element: <ActorsPage /> },

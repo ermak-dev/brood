@@ -307,15 +307,15 @@ func TestAdvanceRejectsUnsupportedDocument(t *testing.T) {
 	}
 }
 
-// TestAdvanceSwarmWorkflowRoutes — маршруты рабочего Broodfile: успех
-// проходит цепочку, отказ любого актёра завершает прогон, отказ человека
-// на решении уходит в выход.
-func TestAdvanceSwarmWorkflowRoutes(t *testing.T) {
-	data, err := os.ReadFile("../../../Broodfile")
+// TestAdvanceLegacySwarmWorkflowRoutes preserves pinned routes after catalog
+// replacement: success follows the chain, actor failure terminates the pass,
+// and a rejected human decision reaches the exit with failure.
+func TestAdvanceLegacySwarmWorkflowRoutes(t *testing.T) {
+	data, err := os.ReadFile("../build/testdata/legacy-swarm-workflows.Broodfile")
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := build.ParseDocument(string(data), "Broodfile")
+	doc, err := build.ParseDocument(string(data), "legacy-swarm-workflows.Broodfile")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestAdvanceSwarmWorkflowRoutes(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			graph, err := build.Workflow(doc, tc.name, "Broodfile")
+			graph, err := build.Workflow(doc, tc.name, "legacy-swarm-workflows.Broodfile")
 			if err != nil {
 				t.Fatal(err)
 			}

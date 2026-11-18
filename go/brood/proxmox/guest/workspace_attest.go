@@ -30,8 +30,11 @@ type WorkspaceAttestor struct {
 	// Origin is the root's own bootstrap origin; a request may only repeat it.
 	Origin WorkspaceOrigin
 	// Quiesce runs its callback while no actor process exists (Runtime.Quiesce).
-	Quiesce  func(context.Context, func(context.Context) error) error                            `json:"-"`
+	Quiesce func(context.Context, func(context.Context) error) error `json:"-"`
+	// Prepare builds a pinned empty ephemeral workspace in the same quiet window.
+	Prepare  func(context.Context, sessionctl.CheckoutRequest) error                             `json:"-"`
 	Checkout func(context.Context, sessionctl.CheckoutRequest) (sessionctl.CheckoutFacts, error) `json:"-"`
+	Observe  func(context.Context, sessionctl.CheckoutRequest) (sessionctl.ResultFacts, error)   `json:"-"`
 	Ensure   func(context.Context) error                                                         `json:"-"`
 	// Step puts the next Claude session into the step mode (#224) while no
 	// actor process exists; Free returns it to the free mode. Both are root
@@ -56,7 +59,12 @@ func NewWorkspaceAttestor(cfg relay.ClientConfig, origin WorkspaceOrigin, quiesc
 // newWorkspaceAttestor is NewWorkspaceAttestor with the step policy paths that
 // tests substitute.
 func newWorkspaceAttestor(cfg relay.ClientConfig, origin WorkspaceOrigin, quiesce func(context.Context, func(context.Context) error) error, policy stepPolicy) *WorkspaceAttestor {
-	return &WorkspaceAttestor{ActorUID: cfg.ActorUID, Generation: cfg.Generation, Token: cfg.Token, Origin: origin, Quiesce: quiesce, Checkout: runCheckoutHelper, Ensure: ensureSessionAfterQuiesce, Step: policy.enter, Free: policy.leave}
+	return &WorkspaceAttestor{
+		ActorUID: cfg.ActorUID, Generation: cfg.Generation, Token: cfg.Token, Origin: origin,
+		Quiesce: quiesce, Prepare: runEphemeralPreparation, Checkout: runCheckoutHelper,
+		Observe: runResultHelper, Ensure: ensureSessionAfterQuiesce,
+		Step: policy.enter, Free: policy.leave,
+	}
 }
 
 type attestArguments struct {
@@ -75,7 +83,9 @@ func attestFailure(text string) relay.SessionResponse {
 // while no actor process exists, puts the next session into the step mode,
 // restores the session and only then signs. The claim is about that quiet
 // window, not about later model actions; the step mode (#224) keeps the code
-// the actor stored in its home from starting with the new session.
+// the actor stored in its home from starting with the new session. Ephemeral
+// actors are restricted to their bootstrap commit; refused preparation, checkout
+// or step policy never starts a model session.
 func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
 	args, err := decodeAttestArguments(req.Arguments)
 	if err != nil {
@@ -91,6 +101,15 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 	if a.Origin.Origin != claim.Origin {
 		return attestFailure("requested origin differs from the actor workspace origin; nothing changed")
 	}
+	ephemeral := a.Origin.Ephemeral != nil
+	if ephemeral {
+		if !validPinnedCommit(a.Origin.Ephemeral.Commit) || a.Origin.Ephemeral.Commit != claim.Commit {
+			return attestFailure("requested commit differs from the ephemeral bootstrap commit; nothing changed")
+		}
+		if a.Prepare == nil {
+			return attestFailure("ephemeral workspace preparation is unavailable; nothing changed")
+		}
+	}
 	if ctx.Err() != nil {
 		return attestFailure("workspace attestation canceled; nothing changed")
 	}
@@ -101,12 +120,21 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 	var facts sessionctl.CheckoutFacts
 	var checkoutErr, policyErr error
 	quiesceErr := a.Quiesce(work, func(ctx context.Context) error {
-		facts, checkoutErr = a.Checkout(ctx, sessionctl.CheckoutRequest{Commit: claim.Commit, Origin: a.Origin.Origin, Mode: a.Origin.Mode, GitIdentity: a.Origin.GitIdentity})
+		request := sessionctl.CheckoutRequest{Commit: claim.Commit, Origin: a.Origin.Origin, Mode: a.Origin.Mode, GitIdentity: a.Origin.GitIdentity}
+		if ephemeral {
+			bounded, cancel := context.WithTimeout(ctx, checkoutHelperTimeout)
+			defer cancel()
+			ctx = bounded
+			checkoutErr = a.Prepare(ctx, request)
+		}
+		if checkoutErr == nil {
+			facts, checkoutErr = a.Checkout(ctx, request)
+		}
 		// Ещё в окне тишины: rc-файлы актора не читает ни один процесс, а
 		// сессия стартует уже в своём режиме. Отказ проверки — не шаг.
 		if checkoutErr == nil && facts.Commit == claim.Commit {
 			policyErr = a.Step(a.Origin.GitIdentity)
-		} else {
+		} else if !ephemeral {
 			policyErr = a.Free()
 		}
 		return checkoutErr
@@ -115,8 +143,12 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 		// Остановка не доказана или актор не перезапущен: runtime завершается.
 		return attestFailure(quiesceErr.Error())
 	}
-	// Актор уже перезапущен: сессия нужна и после отказа проверки.
-	sessionErr := a.Ensure(work)
+	// Persistent восстанавливает сессию и после отказа; ephemeral не получает
+	// автоматическую модель без успешно подготовленного и проверенного source.
+	var sessionErr error
+	if !ephemeral || checkoutErr == nil && facts.Commit == claim.Commit && policyErr == nil {
+		sessionErr = a.Ensure(work)
+	}
 	refused := ""
 	if (checkoutErr != nil || facts.Commit != claim.Commit) && policyErr != nil {
 		// Свободной сессии не вышло: осталась политика прошлого шага.

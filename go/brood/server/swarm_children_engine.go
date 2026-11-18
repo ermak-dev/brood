@@ -138,6 +138,14 @@ func (m *managedProvider) createChild(ctx context.Context, from store.ManagedAct
 }
 
 func (m *managedProvider) childJoin(ctx context.Context, from store.ManagedActor, sequence int64, request string, advance bool) (store.SwarmChildJoin, error) {
+	var nonce string
+	if advance {
+		var err error
+		nonce, err = newPipelineCompletionNonce()
+		if err != nil {
+			return store.SwarmChildJoin{}, err
+		}
+	}
 	var j store.SwarmChildJoin
 	err := m.withChildParent(ctx, from, sequence, request, func(ctx context.Context, p store.SwarmChildParent) error {
 		var err error
@@ -154,10 +162,18 @@ func (m *managedProvider) childJoin(ctx context.Context, from store.ManagedActor
 		if policy != j.Policy {
 			return errChildNodePolicyMismatch
 		}
-		j, err = m.server.store.JoinSwarmChildren(ctx, p, m.childAuthority)
+		usesPolicy, err := m.server.store.PipelineCompletionUsesPolicy(ctx, p.Principal.SwarmID, p.Sequence)
+		if err != nil {
+			return err
+		}
+		if usesPolicy {
+			j, err = m.server.store.AcceptSwarmChildJoin(ctx, p, nonce, m.childAuthority)
+		} else {
+			j, err = m.server.store.JoinSwarmChildren(ctx, p, m.childAuthority)
+		}
 		return err
 	})
-	if err == nil && advance && j.Evaluation.Open == 0 && !j.Interrupted && j.State != "aborted" {
+	if err == nil && advance && j.CompletionReceipt == nil && j.Evaluation.Open == 0 && !j.Interrupted && j.State != "aborted" {
 		m.server.steps.kick(from.SwarmID)
 	}
 	return j, err
@@ -186,7 +202,22 @@ func (m *managedProvider) cancelChild(ctx context.Context, from store.ManagedAct
 }
 
 func (m *managedProvider) completeChild(ctx context.Context, from store.ManagedActor, id, key, outcome, report string) error {
-	err := m.inCommandActorTx(ctx, from, func(ctx context.Context, current store.ManagedActor) error {
+	actor, checked, err := m.authorizeCommandActor(ctx, from)
+	if err != nil {
+		return err
+	}
+	transaction := m.server.store.WithTx
+	if actor.Class == store.ActorClassEphemeral {
+		transaction = m.server.store.WithDurableTx
+	}
+	err = transaction(ctx, func(ctx context.Context) error {
+		current, swarm, err := m.authorizeCommandActorDurable(ctx, actor)
+		if err != nil {
+			return err
+		}
+		if current.Class != actor.Class || swarm.AtespaceName != checked.AtespaceName || swarm.AtespaceUID != checked.AtespaceUID {
+			return app.ErrConflict
+		}
 		w, err := m.server.store.SwarmChildWorkByID(ctx, id)
 		if err != nil {
 			return err

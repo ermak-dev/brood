@@ -45,6 +45,10 @@ func (s *Store) actorOwner(ctx context.Context, uid, human string) error {
 // authorize must check the live authenticated session locally using ctx. A
 // repeated ID never grants a second effect attempt, including after completion.
 func (s *Store) AcquireOwnerActorOperation(ctx context.Context, target ManagedActor, id, caller, operation, human string, authorize func(context.Context) error) (ActorOperation, error) {
+	return s.acquireExplicitActorOperation(ctx, target, id, caller, operation, human, "Explicit owner intervention interrupted execution; effects require reconciliation.", authorize)
+}
+
+func (s *Store) acquireExplicitActorOperation(ctx context.Context, target ManagedActor, id, caller, operation, human, detail string, authorize func(context.Context) error) (ActorOperation, error) {
 	var op ActorOperation
 	if id == "" || caller == "" || len(caller) > 512 || human == "" || authorize == nil || !(sessionMutationOperation(operation) || operation == "restart" || operation == "wipe" || operation == "recycle" || operation == "stop" || operation == "reset" || operation == "delete" || operation == "update" || operation == "start") {
 		return op, ErrSwarmChildDenied
@@ -94,11 +98,13 @@ func (s *Store) AcquireOwnerActorOperation(ctx context.Context, target ManagedAc
 		}
 		// Запоминаем каждый затронутый текущий шаг, в том числе родителя child.
 		if _, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO actor_step_interruptions(intervention_id,swarm_id,sequence)
- SELECT ?,p.swarm_id,p.sequence FROM swarm_steps p WHERE p.state IN ('pending','attesting','delivering','inflight','unconfirmed','waiting') AND (p.actor_uid=? AND p.actor_incarnation=? OR EXISTS(SELECT 1 FROM swarm_child_joins j JOIN swarm_child_tasks c ON c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence WHERE j.swarm_id=p.swarm_id AND j.parent_sequence=p.sequence AND c.actor_uid=? AND c.actor_incarnation=? AND c.state IN ('pending','running')))`, id, a.UID, a.Incarnation, a.UID, a.Incarnation); err != nil {
+ SELECT ?,p.swarm_id,p.sequence FROM swarm_steps p WHERE p.state IN ('pending','attesting','delivering','inflight','unconfirmed','waiting') AND (p.actor_uid=? AND p.actor_incarnation=? OR EXISTS(SELECT 1 FROM swarm_child_joins j JOIN swarm_child_tasks c ON c.swarm_id=j.swarm_id AND c.parent_sequence=j.parent_sequence WHERE j.swarm_id=p.swarm_id AND j.parent_sequence=p.sequence AND c.actor_uid=? AND c.actor_incarnation=? AND c.state IN ('pending','running')) OR EXISTS(SELECT 1 FROM ephemeral_child_allocations x JOIN ephemeral_child_intents e ON e.id=x.intent_id WHERE e.swarm_id=p.swarm_id AND e.parent_sequence=p.sequence AND e.parent_uid=p.actor_uid AND e.parent_incarnation=p.actor_incarnation AND e.parent_request_id=p.request_id AND x.actor_uid=? AND x.actor_incarnation=?))`, id, a.UID, a.Incarnation, a.UID, a.Incarnation, a.UID, a.Incarnation); err != nil {
 			return err
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='unconfirmed',detail='Explicit owner intervention interrupted execution; effects require reconciliation.' WHERE EXISTS(SELECT 1 FROM actor_step_interruptions i WHERE i.intervention_id=? AND i.swarm_id=swarm_steps.swarm_id AND i.sequence=swarm_steps.sequence)`, id)
-		return err
+		if _, err = s.conn(ctx).ExecContext(ctx, `UPDATE swarm_steps SET state='unconfirmed',detail=? WHERE EXISTS(SELECT 1 FROM actor_step_interruptions i WHERE i.intervention_id=? AND i.swarm_id=swarm_steps.swarm_id AND i.sequence=swarm_steps.sequence)`, detail, id); err != nil {
+			return err
+		}
+		return s.verifyExplicitActorInterruption(ctx, a, id)
 	})
 	return op, err
 }
@@ -124,6 +130,30 @@ func (s *Store) interruptPendingActorStep(ctx context.Context, sw Swarm, a Manag
 	// До резерва у шага ещё нет actor_uid: его назначение задаёт binding роли.
 	_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO actor_step_interruptions(intervention_id,swarm_id,sequence) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM swarm_role_bindings WHERE swarm_id=? AND role=? AND actor_uid=? AND actor_incarnation=?)`, intervention, sw.ID, sequence, sw.ID, node.Role, a.UID, a.Incarnation)
 	return err
+}
+
+// GetOwnerManagedActorOperation returns retained explicit owner/admin or delegated
+// actor lifecycle evidence. Caller distinguishes actor commands from human actions.
+// The lookup binds an exact UID, incarnation, and server operation ID, including
+// completed records. Invalid or unmatched identities return ErrNotFound.
+// It only reads the journal, without current human authorization or network I/O.
+// This is not permission to act: callers must separately fence the current managed
+// operation ID, kind (update maps to start), scope, revision, and policy. Reset
+// does not imply owner evidence for a subsequent incarnation.
+func (s *Store) GetOwnerManagedActorOperation(ctx context.Context, uid string, incarnation int64, operationID string) (ActorOperation, error) {
+	var op ActorOperation
+	if uid == "" || incarnation <= 0 || operationID == "" {
+		return op, ErrNotFound
+	}
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT project_id,swarm_id,actor_uid,incarnation,id,caller,operation,state FROM actor_interventions WHERE actor_uid=? AND incarnation=? AND id=? AND operation IN ('start','stop','delete','reset','update')`, uid, incarnation, operationID).Scan(&op.ProjectID, &op.SwarmID, &op.UID, &op.Generation, &op.OperationID, &op.Caller, &op.Operation, &op.State)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ActorOperation{}, ErrNotFound
+	}
+	if err != nil {
+		return ActorOperation{}, err
+	}
+	op.Owner = true
+	return op, nil
 }
 
 func (s *Store) currentOwnerActorOperation(ctx context.Context, uid string) (ActorOperation, error) {

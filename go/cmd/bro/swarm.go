@@ -24,6 +24,10 @@ func swarmUsage(w io.Writer) {
        bro swarm status SWARM [--json]
        bro swarm requests SWARM [--all]
        bro swarm answer SWARM REQUEST [--outcome VALUE] [--response TEXT] [--revision N]
+       bro swarm compare SWARM PASS OTHER_SWARM OTHER_PASS [--json]
+       bro swarm eval bind SWARM --reference SWARM --pass N --definition NAME --model NAME [--json]
+       bro swarm eval start SWARM [--json]
+       bro swarm eval status SWARM [--json]
 
 Operator-only command. SWARM is a swarm ID or a name unique among accessible
 swarms; ACTOR is a managed actor name or UID of that swarm.
@@ -62,6 +66,21 @@ commit; earlier passes keep theirs. stop freezes the running or waiting pass;
 actors, their workspaces and role bindings stay. Both print the execution,
 its graph, source and last step. Owners, editors and administrators start and
 stop a swarm.
+
+compare reads two retained passes by their first visit sequence. It compares
+recorded positions, not semantic equivalence; reported work stays separate from
+actual outcomes, and unavailable elapsed time remains unknown. Both swarms must
+be visible. It never replays a pass, sends an answer or authorizes landing.
+--json prints the complete comparison document instead of the text report.
+
+eval is non-production and strictly two-stage: bind before candidate actors ever
+boot, configure isolated actors/roles, then eval start with the pinned selection.
+Use a separate candidate project for the same repository; the launcher must manage
+both scopes. No credentials or network configuration are copied, no model defaults
+or goal/commit overrides are supplied, and start is not automatically retried.
+Ordinary start is forbidden for bound candidates. eval status shows the retained
+binding and durable replay decision, not a submitted historical answer.
+See bro swarm eval --help for the full contract.
 `)
 }
 
@@ -173,6 +192,12 @@ const trueText = "true"
 // swarm — bro swarm: привязки ролей роя к managed-акторам (#235), запуск
 // прохода с задачей и остановка (#242), список роёв всех проектов (#306).
 func (c command) swarm(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "eval" {
+		return c.swarmEval(ctx, args[1:])
+	}
+	if len(args) > 0 && args[0] == "compare" {
+		return c.swarmCompare(ctx, args[1:])
+	}
 	if len(args) > 0 && args[0] == "status" {
 		return c.swarmStatus(ctx, args[1:])
 	}

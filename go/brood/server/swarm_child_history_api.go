@@ -10,36 +10,39 @@ import (
 )
 
 type childGroupSummaryJSON struct {
-	ParentSequence    int64  `json:"parentSequence"`
-	Pass              int64  `json:"pass"`
-	ParentUID         string `json:"parentUid"`
-	ParentIncarnation int64  `json:"parentIncarnation"`
-	Mode              string `json:"mode"`
-	Total             int    `json:"total"`
-	Quorum            int    `json:"quorum"`
-	State             string `json:"state"`
-	Revision          int64  `json:"revision"`
-	Interrupted       bool   `json:"interrupted"`
-	Registered        int    `json:"registered"`
-	Open              int    `json:"open"`
-	Started           int    `json:"started"`
+	ParentSequence     int64  `json:"parentSequence"`
+	Pass               int64  `json:"pass"`
+	ParentUID          string `json:"parentUid"`
+	ParentIncarnation  int64  `json:"parentIncarnation"`
+	Mode               string `json:"mode"`
+	Total              int    `json:"total"`
+	Quorum             int    `json:"quorum"`
+	State              string `json:"state"`
+	Revision           int64  `json:"revision"`
+	Interrupted        bool   `json:"interrupted"`
+	Registered         int    `json:"registered"`
+	UnregisteredFailed int    `json:"unregisteredFailed"`
+	ExecutorFailed     int    `json:"executorFailed"`
+	Open               int    `json:"open"`
+	Started            int    `json:"started"`
 }
 
 type childHistoryTaskJSON struct {
-	ID                  string `json:"id"`
-	RequestID           string `json:"requestId"`
-	Role                string `json:"role"`
-	ExecutorUID         string `json:"executorUid"`
-	ExecutorIncarnation int64  `json:"executorIncarnation"`
-	State               string `json:"state"`
-	Delivery            string `json:"delivery"`
-	DeliveryDetail      string `json:"deliveryDetail,omitempty"`
-	Task                string `json:"task"`
-	Outcome             string `json:"outcome,omitempty"`
-	Report              string `json:"report,omitempty"`
-	Revision            int64  `json:"revision"`
-	CreatedAt           string `json:"createdAt"`
-	FinishedAt          string `json:"finishedAt,omitempty"`
+	ID                  string               `json:"id"`
+	RequestID           string               `json:"requestId"`
+	Role                string               `json:"role"`
+	ExecutorUID         string               `json:"executorUid"`
+	ExecutorIncarnation int64                `json:"executorIncarnation"`
+	State               string               `json:"state"`
+	Delivery            string               `json:"delivery"`
+	DeliveryDetail      string               `json:"deliveryDetail,omitempty"`
+	Task                string               `json:"task"`
+	Outcome             string               `json:"outcome,omitempty"`
+	Report              string               `json:"report,omitempty"`
+	Revision            int64                `json:"revision"`
+	CreatedAt           string               `json:"createdAt"`
+	FinishedAt          string               `json:"finishedAt,omitempty"`
+	ExecutorFailure     *executorFailureJSON `json:"executorFailure,omitempty"`
 }
 
 type childHistoryGroupJSON struct {
@@ -56,12 +59,13 @@ func childGroupSummaryView(summary store.SwarmChildGroupSummary) childGroupSumma
 		ParentUID: summary.Parent.Principal.ActorUID, ParentIncarnation: summary.Parent.Principal.Incarnation,
 		Mode: summary.Policy.Mode, Total: summary.Policy.Total, Quorum: summary.Policy.Quorum,
 		State: summary.State, Revision: summary.Revision, Interrupted: summary.Interrupted,
-		Registered: summary.Registered, Open: summary.Open, Started: summary.Started,
+		Registered: summary.Registered, UnregisteredFailed: summary.UnregisteredFailed, ExecutorFailed: summary.ExecutorFailed,
+		Open: summary.Open, Started: summary.Started,
 	}
 }
 
 func childHistoryView(group store.SwarmChildJoin) childHistoryGroupJSON {
-	summary := store.SwarmChildGroupSummary{Parent: group.Parent, Policy: group.Policy, State: group.State, Revision: group.Revision, Interrupted: group.Interrupted, Registered: len(group.Children), Open: group.Evaluation.Open}
+	summary := store.SwarmChildGroupSummary{Parent: group.Parent, Policy: group.Policy, State: group.State, Revision: group.Revision, Interrupted: group.Interrupted, Registered: len(group.Children), UnregisteredFailed: len(group.UnregisteredFailures), ExecutorFailed: len(group.ExecutorFailures), Open: group.Evaluation.Open}
 	result := childHistoryGroupJSON{Readiness: group.Evaluation.State, AbortedBy: group.AbortedBy, AbortedAt: group.AbortedAt, Children: []childHistoryTaskJSON{}}
 	for _, task := range group.Children {
 		if task.State == "running" || task.State == "completed" {
@@ -73,6 +77,7 @@ func childHistoryView(group store.SwarmChildJoin) childHistoryGroupJSON {
 			State: task.State, Delivery: task.Delivery, DeliveryDetail: task.DeliveryDetail,
 			Task: task.Payload, Outcome: task.Outcome, Report: task.Report,
 			Revision: task.Revision, CreatedAt: task.CreatedAt, FinishedAt: task.FinishedAt,
+			ExecutorFailure: executorFailureView(childExecutorFailure(group, task.ID)),
 		})
 	}
 	result.childGroupSummaryJSON = childGroupSummaryView(summary)

@@ -66,12 +66,17 @@ type SwarmChildJoin struct {
 	Parent               SwarmChildParent
 	Policy               SwarmChildJoinPolicy
 	Children             []SwarmChildTask
+	UnregisteredFailures []EphemeralChildFailure
+	ExecutorFailures     []EphemeralChildExecutorFailure
 	Evaluation           SwarmChildJoinEvaluation
 	State                string
 	Revision             int64
 	AbortedBy, AbortedAt string
 	// Interrupted is independent of late executor reports or delivery receipts.
 	Interrupted bool
+	// CompletionReceipt is present only after policy-aware join acceptance;
+	// it does not mean the parent graph step has advanced.
+	CompletionReceipt *PipelineCompletionReceipt `json:"-"`
 }
 
 // SwarmChildAuthorization describes an exact operation for a local explicit policy.
@@ -140,9 +145,14 @@ func EvaluateSwarmChildJoin(p SwarmChildJoinPolicy, children []SwarmChildTask) (
 			return SwarmChildJoinEvaluation{}, ErrSwarmChildConflict
 		}
 	}
+	return evaluateSwarmChildCounts(p, len(children), success, failed), nil
+}
+
+// Числа получены только после проверки typed child/failure фактов.
+func evaluateSwarmChildCounts(p SwarmChildJoinPolicy, members, success, failed int) SwarmChildJoinEvaluation {
 	result := SwarmChildJoinEvaluation{State: "pending", Open: p.Total - success - failed}
-	if len(children) != p.Total {
-		return result, nil
+	if members != p.Total {
+		return result
 	}
 	required := p.Total
 	if p.Mode == "any" {
@@ -155,7 +165,7 @@ func EvaluateSwarmChildJoin(p SwarmChildJoinPolicy, children []SwarmChildTask) (
 	} else if success+result.Open < required {
 		result.State = "ready_fail"
 	}
-	return result, nil
+	return result
 }
 
 func validChildRequestID(id string) bool {
@@ -298,6 +308,7 @@ func (s *Store) CreateSwarmChildJoin(ctx context.Context, p SwarmChildParent, po
 // ReserveSwarmChild records a bounded plain-text payload and exact executor under
 // a stable parent-scoped request ID. Changed payload/executor conflicts, including
 // after cancellation. The same request ID in another parent names another child.
+// Ephemeral executors must use the dedicated proof-bound RegisterEphemeralChild API.
 func (s *Store) ReserveSwarmChild(ctx context.Context, p SwarmChildParent, requestID, payload string, executor SwarmChildPrincipal, authorize SwarmChildAuthorize) (SwarmChildTask, error) {
 	return s.reserveSwarmChild(ctx, p, requestID, payload, "", executor, authorize)
 }
@@ -312,6 +323,13 @@ func (s *Store) reserveSwarmChild(ctx context.Context, p SwarmChildParent, reque
 		if err := s.authorizeChild(ctx, a, authorize); err != nil {
 			return err
 		}
+		actor, err := s.GetManagedActor(ctx, executor.ActorUID)
+		if err != nil {
+			return err
+		}
+		if actor.Class == ActorClassEphemeral {
+			return ErrSwarmChildDenied
+		}
 		join, err := s.loadChildJoin(ctx, p)
 		if err != nil {
 			return err
@@ -325,7 +343,11 @@ func (s *Store) reserveSwarmChild(ctx context.Context, p SwarmChildParent, reque
 				return nil
 			}
 		}
-		if join.State != "open" || join.Interrupted || len(join.Children) >= join.Policy.Total {
+		queued, err := s.unregisteredEphemeralChildCount(ctx, p)
+		if err != nil {
+			return err
+		}
+		if join.State != "open" || join.Interrupted || len(join.Children)+queued >= join.Policy.Total {
 			return ErrSwarmChildConflict
 		}
 		// Enqueue и mutation берут один BEGIN IMMEDIATE: проверка перед RPC
@@ -340,7 +362,7 @@ func (s *Store) reserveSwarmChild(ctx context.Context, p SwarmChildParent, reque
 			result.Delivery = "queued"
 		}
 		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO swarm_child_tasks(id,swarm_id,parent_sequence,request_id,payload,actor_uid,actor_incarnation,state,revision,created_at,role,delivery) VALUES(?,?,?,?,?,?,?,'pending',1,?,?,?)`, result.ID, p.Principal.SwarmID, p.Sequence, requestID, payload, executor.ActorUID, executor.Incarnation, result.CreatedAt, role, result.Delivery)
-		return err
+		return ephemeralSlotError(err)
 	})
 	if err != nil {
 		return SwarmChildTask{}, err
@@ -401,7 +423,15 @@ func (s *Store) loadChildJoin(ctx context.Context, p SwarmChildParent) (SwarmChi
 	if err != nil {
 		return j, err
 	}
-	j.Evaluation, err = EvaluateSwarmChildJoin(j.Policy, j.Children)
+	j.UnregisteredFailures, err = s.unregisteredEphemeralFailures(ctx, p)
+	if err != nil {
+		return j, err
+	}
+	j.ExecutorFailures, err = s.registeredEphemeralFailures(ctx, p)
+	if err != nil {
+		return j, err
+	}
+	j.Evaluation, err = evaluateSwarmChildExecutorFailures(j.Policy, j.Children, j.UnregisteredFailures, j.ExecutorFailures)
 	if err == nil && j.Interrupted {
 		j.Evaluation.State = "unconfirmed"
 	}
@@ -470,6 +500,11 @@ func (s *Store) transitionChild(ctx context.Context, p SwarmChildParent, key str
 		if !found {
 			return ErrNotFound
 		}
+		for _, f := range join.ExecutorFailures {
+			if f.ChildID == result.ID {
+				return ErrSwarmChildConflict
+			}
+		}
 		wantCaller := result.Executor
 		if action == "cancel" {
 			wantCaller = p.Principal
@@ -508,6 +543,13 @@ func (s *Store) transitionChild(ctx context.Context, p SwarmChildParent, key str
 			return ErrSwarmChildConflict
 		}
 		if action == "start" {
+			actor, err := s.GetManagedActor(ctx, result.Executor.ActorUID)
+			if err != nil {
+				return err
+			}
+			if actor.Class == ActorClassEphemeral {
+				return ErrSwarmChildConflict
+			}
 			if join.Interrupted {
 				return newCoordinationConflict("owner interrupted this child group; reconcile before automatic scheduling")
 			}

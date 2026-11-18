@@ -298,75 +298,32 @@ func (s *Store) appendPipelineVisit(ctx context.Context, swarmID string, v Pipel
 // outcome with the recorded report, writes nothing and succeeds; any other
 // outcome or report for the completed step is ErrPipelineVisitConflict.
 func (s *Store) CompletePipelineActorVisit(ctx context.Context, swarmID, legacyRunID string, sequence int64, requestID, actorUID string, incarnation int64, outcome, report string) error {
-	if legacyRunID != swarmID || !validPipelineField(swarmID) || sequence < 1 || !validPipelineField(requestID) || !validPipelineField(actorUID) || incarnation < 1 || (outcome != "success" && outcome != "fail") {
+	if legacyRunID != swarmID {
 		return errors.New("invalid pipeline actor completion")
 	}
-	if err := validStepReport(report); err != nil {
+	in := ActorCompletion{SwarmID: swarmID, Sequence: sequence, RequestID: requestID, ActorUID: actorUID, Incarnation: incarnation, Outcome: outcome, Report: report}
+	if err := validActorCompletion(in); err != nil {
 		return err
 	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
-		w, err := s.GetSwarm(ctx, swarmID)
+		checked, err := s.checkActorCompletion(ctx, in)
 		if err != nil {
 			return err
 		}
-		var node, state, request, actor, attested, recorded string
-		var inc int64
-		var prior sql.NullString
-		err = s.conn(ctx).QueryRowContext(ctx, `SELECT node_id,state,COALESCE(request_id,''),COALESCE(actor_uid,''),COALESCE(actor_incarnation,0),outcome,COALESCE(attested_commit,''),COALESCE(report,'') FROM swarm_steps WHERE swarm_id=? AND sequence=?`, swarmID, sequence).Scan(&node, &state, &request, &actor, &inc, &prior, &attested, &recorded)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrPipelineVisitConflict
-		}
-		if err != nil {
-			return err
-		}
-		if request != requestID || actor != actorUID || inc != incarnation {
-			return ErrPipelineVisitConflict
-		}
-		interrupted, err := s.interruptedStep(ctx, swarmID, sequence)
-		if err != nil {
-			return err
-		}
-		if interrupted {
-			return ErrPipelineVisitInterrupted
-		}
-		if err := s.checkChildParentResult(ctx, swarmID, sequence, outcome, report); err != nil {
-			return err
-		}
-		if w.Source != nil {
-			// Commit прохода шага, а не роя (#229): поздний исход шага
-			// прошлого прохода сверяется со своим commit.
-			_, _, commit, err := s.stepPass(ctx, swarmID, sequence)
-			if err != nil {
-				return err
-			}
-			if commit == "" || attested != commit {
-				return ErrPipelineSourceUnverified
-			}
-		}
-		if state == "completed" && prior.Valid && prior.String == outcome && recorded == report {
+		if checked.replay {
 			return nil
 		}
-		// unconfirmed с подтверждённым checkout — шаг, чья квитанция доставки
-		// потерялась: request_id попытки есть только в тексте инструкции, так
-		// что вызов с ним доказывает её получение (#245). Без подтверждения
-		// инструкция не уходила; unconfirmed старого пути без источника
-		// по-прежнему ждёт решения оператора.
-		lostReceipt := state == "unconfirmed" && attested != ""
-		if (state != "inflight" && state != "delivering" && !lostReceipt) || !activeExecution(w.Execution) {
-			return ErrPipelineVisitConflict
-		}
-		d, err := pipeline.Parse(string(w.Graph), "pipeline")
+		usesPolicy, err := s.PipelineCompletionUsesPolicy(ctx, swarmID, sequence)
 		if err != nil {
 			return err
 		}
-		n, ok := d.Nodes[node]
-		if !ok || n.Type != "actor" {
-			return ErrPipelineVisitConflict
+		if usesPolicy {
+			return ErrPipelineCompletionPending
 		}
-		if err := s.requireRoleActor(ctx, swarmID, n.Role, actorUID, incarnation); err != nil {
-			return fmt.Errorf("%w: role %q: %w", ErrPipelineVisitConflict, n.Role, err)
+		if err := s.checkPendingCompletionIntent(ctx, in); err != nil {
+			return err
 		}
-		return s.progressPipeline(ctx, w, d, sequence, node, "completed", outcome, report)
+		return s.progressPipeline(ctx, checked.swarm, checked.graph, sequence, checked.visit.NodeID, "completed", outcome, report)
 	})
 
 }

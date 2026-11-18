@@ -78,6 +78,28 @@ class ProxmoxGuestImageTests(unittest.TestCase):
         self.assertIn('"$DRIFTTY_DIRECT_INDEX_SHA256" dist/index.html', recipe)
         self.assertIn('fs.readFileSync("/source/LICENSE","utf8")', recipe)
 
+    def test_recipe_provisions_private_persistent_delivery_state_without_bootstrap_env(self):
+        recipe = self.required(RECIPE).read_text()
+        instructions = recipe.replace("\\\n", "").splitlines()
+        provision = next((line.removeprefix("RUN ") for line in instructions
+                          if line.startswith("RUN ") and "/etc/brood/delivery-state-dir" in line), None)
+        self.assertIsNotNone(provision, "Image does not provision explicit root delivery configuration")
+        self.assertNotIn("BROOD_GUEST_DELIVERY_STATE_DIR", recipe)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command = provision.replace("/etc/brood", str(root / "etc/brood"))
+            command = command.replace("/var/lib/brood", str(root / "var/lib/brood"))
+            result = subprocess.run(["sh", "-eu", "-c", command], cwd="/",
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = root / "etc/brood/delivery-state-dir"
+            state = root / "var/lib/brood/delivery"
+            self.assertEqual(config.read_text(), str(state) + "\n")
+            for path, mode in ((config.parent, 0o700), (config, 0o600), (state, 0o700)):
+                self.assertEqual(path.stat().st_mode & 0o7777, mode)
+                self.assertEqual(path.stat().st_uid, os.geteuid())
+            self.assertEqual(list(state.iterdir()), [], "Template contains actor delivery history")
+
     def test_recipe_installs_executable_bro_without_replacing_supervisor(self):
         recipe = self.required(RECIPE).read_text()
         self.assertIn("COPY bro /usr/local/bin/bro", recipe)

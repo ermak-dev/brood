@@ -11,3 +11,10 @@ func workspaceAttestationKey(relaySecret string) func(string, int64) []byte {
 		return attest.Key(guestToken(relaySecret, uid, generation))
 	}
 }
+
+// workspaceResultAttestationKey uses the separate result protocol key domain.
+func workspaceResultAttestationKey(relaySecret string) func(string, int64) []byte {
+	return func(uid string, generation int64) []byte {
+		return attest.ResultKey(guestToken(relaySecret, uid, generation))
+	}
+}
