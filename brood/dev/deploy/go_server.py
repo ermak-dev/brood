@@ -660,9 +660,15 @@ class Deploy:
             if code or not (work / name).is_file():
                 raise RuntimeError(f"guest bootstrap artifact build failed: {name}: " + err[-2000:])
         claude = work / "claude"
-        code, _, _ = self.cluster.shell.output("curl", "--disable", "-fsSL",
-            "--connect-timeout", "20", "--max-time", "300", "-o", str(claude),
-            f"https://downloads.claude.ai/claude-code-releases/{pins['CLAUDE_VERSION']}/linux-x64/claude")
+        # Продолжаем только свой частичный файл после тайм-аута. Ошибка HTTP,
+        # неподдерживаемый Range или любой другой отказ не разрешает повтор.
+        for _ in range(3):
+            code, _, _ = self.cluster.shell.output("curl", "--disable", "-fsSL",
+                "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "20",
+                "--max-time", "150", "--continue-at", "-", "-o", str(claude),
+                f"https://downloads.claude.ai/claude-code-releases/{pins['CLAUDE_VERSION']}/linux-x64/claude")
+            if code != 28:
+                break
         if code:
             raise RuntimeError(f"guest bootstrap claude artifact download failed (curl exit {code})")
         try:

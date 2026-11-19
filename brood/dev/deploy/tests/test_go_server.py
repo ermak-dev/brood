@@ -360,6 +360,52 @@ class GoManifestTests(unittest.TestCase):
                 self.assertRegex(str(raised.exception), reason)
                 self.assertNotIn(body, str(raised.exception))
 
+    # BUG: Тайм-аут прерывает подготовку, даже когда curl сохранил часть бинарника.
+    # HYPOTHESIS: Загрузка не продолжает приватный частичный файл.
+    def test_pinned_claude_download_resumes_only_bounded_timeouts(self):
+        pinned = b"\x7fELFclaude-pinned"
+        prefix, tail = pinned[:7], pinned[7:]
+        for codes, suffix, reason in (
+                ((28, 0), tail, None),
+                ((28, 0), b"wrong bytes", "SHA-256 mismatch"),
+                ((28, 28, 28), None, r"download failed \(curl exit 28\)"),
+                ((22,), None, r"download failed \(curl exit 22\)")):
+            with self.subTest(codes=codes, reason=reason):
+                deploy, _, root = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
+                shell = deploy.cluster.shell
+                normal_output = shell.output.side_effect
+                downloads = []
+
+                def output(*argv, **kwargs):
+                    if argv[0] != "curl":
+                        return normal_output(*argv, **kwargs)
+                    self.assertLess(len(downloads), len(codes), "unexpected additional download attempt")
+                    code = codes[len(downloads)]
+                    target = Path(argv[argv.index("-o") + 1])
+                    self.assertTrue(target.is_relative_to(root))
+                    self.assertEqual(argv[-1], "https://downloads.claude.ai/claude-code-releases/2.1.310/linux-x64/claude")
+                    if downloads:
+                        self.assertEqual(target, downloads[0])
+                        self.assertEqual(argv[argv.index("--continue-at") + 1], "-")
+                        self.assertEqual(target.read_bytes(), prefix)
+                    else:
+                        target.write_bytes(prefix)
+                    downloads.append(target)
+                    if code == 0:
+                        with target.open("ab") as file:
+                            file.write(suffix)
+                    return code, "", "synthetic transport output"
+
+                shell.output.side_effect = output
+                if reason is None:
+                    stream = deploy.prepare_bootstrap_artifacts(root)
+                    self.assertTrue(stream.endswith(b"claude\0" + str(len(pinned)).encode() + b"\0" + pinned))
+                else:
+                    with self.assertRaisesRegex(RuntimeError, reason):
+                        deploy.prepare_bootstrap_artifacts(root)
+                self.assertEqual(len(downloads), len(codes))
+                shell.output_bytes.assert_not_called()
+
     def test_foreign_tls_secret_created_during_prepare_stops_before_apply(self):
         deploy, _, _ = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
         shell = deploy.cluster.shell
@@ -424,7 +470,10 @@ class GoManifestTests(unittest.TestCase):
             self.assertEqual(build[:5], ("env", "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "go"))
         download, = [a for a in calls if a[0] == "curl"]
         self.assertEqual(download[download.index("--connect-timeout") + 1], "20")
-        self.assertEqual(download[download.index("--max-time") + 1], "300")
+        self.assertEqual(download[download.index("--max-time") + 1], "150")
+        self.assertEqual(download[download.index("--continue-at") + 1], "-")
+        self.assertEqual(download[download.index("--proto") + 1], "=https")
+        self.assertEqual(download[download.index("--proto-redir") + 1], "=https")
         self.assertEqual(download[-1], "https://downloads.claude.ai/claude-code-releases/2.1.310/linux-x64/claude")
         # Под выбран после сборки и скачивания, перед самым exec: минута сборки
         # не отделяет выбор от записи.
