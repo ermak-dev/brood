@@ -374,6 +374,7 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt, t
 			return s.actorDelivery.instructionAuthority(ctx, *delivery)
 		})
 		if err != nil {
+			logInboxAttestationCommitRefusal(ctx, a, err)
 			return refuse("workspace and chosen inbox could not be committed together; no instruction was sent")
 		}
 		leaseSettled = true
@@ -394,6 +395,39 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt, t
 		return refuse("workspace attestation was not recorded: " + err.Error())
 	}
 	return true
+}
+
+func logInboxAttestationCommitRefusal(ctx context.Context, a store.ActorStepAttempt, err error) {
+	stage := "unknown"
+	var failure *store.ActorStepInboxCommitError
+	if errors.As(err, &failure) {
+		stage = failure.InboxCommitStage()
+	}
+	kind, code := "unclassified", 0
+	var databaseError interface{ Code() int }
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		kind = "deadline"
+	case errors.Is(err, context.Canceled):
+		kind = "canceled"
+	case errors.Is(err, store.ErrActorDeliveryDenied):
+		kind = "authority_denied"
+	case errors.Is(err, store.ErrActorDeliveryConflict):
+		kind = "delivery_conflict"
+	case errors.Is(err, store.ErrPipelineSourceUnverified):
+		kind = "source_unverified"
+	case errors.Is(err, store.ErrPipelineVisitConflict):
+		kind = "visit_conflict"
+	case errors.Is(err, store.ErrCoordinationConflict):
+		kind = "coordination_conflict"
+	case errors.Is(err, store.ErrDurableTransactionNested):
+		kind = "nested_transaction"
+	case errors.As(err, &databaseError):
+		kind, code = "database", databaseError.Code()
+	}
+	// Underlying database errors can contain private values. Log codes only.
+	slog.WarnContext(ctx, "inbox attestation commit refused", "swarm", a.SwarmID, "sequence", a.Sequence,
+		"stage", stage, "failure", kind, "database_code", code)
 }
 
 // deliverAttestedInbox has the only in-process authority to use the initial
