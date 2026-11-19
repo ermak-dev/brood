@@ -101,6 +101,13 @@ type passTraceDeliveryJSON struct {
 	ProbeOnly        bool                   `json:"probeOnly"`
 	Frame            string                 `json:"frame"`
 	Attempts         []passTraceAttemptJSON `json:"attempts"`
+	SupervisorInbox  *passTraceInboxJSON    `json:"supervisorInbox,omitempty"`
+}
+
+type passTraceInboxJSON struct {
+	ReceiverID    string `json:"receiverId"`
+	PayloadDigest string `json:"payloadDigest"`
+	Milestone     string `json:"milestone"`
 }
 
 type passTraceRequestContextJSON struct {
@@ -185,6 +192,15 @@ func passTraceDeliveryView(delivery *store.SwarmPassTraceDelivery) *passTraceDel
 	result := &passTraceDeliveryJSON{ID: intent.ID, SourceKind: intent.Input.SourceKind, SourceID: intent.Input.SourceID,
 		ActorUID: intent.Input.ActorUID, ActorIncarnation: intent.Input.Incarnation, CreatedAt: intent.CreatedAt,
 		ProbeOnly: intent.ProbeOnly, Frame: intent.Input.Payload, Attempts: []passTraceAttemptJSON{}}
+	if inbox := delivery.SupervisorInbox; inbox != nil {
+		milestone := "selected"
+		if inbox.DispatchReserved {
+			milestone = "dispatch_permit_reserved"
+		} else if inbox.Custody {
+			milestone = store.ActorDeliveryInboxAdmitted
+		}
+		result.SupervisorInbox = &passTraceInboxJSON{ReceiverID: inbox.Target.ReceiverID, PayloadDigest: inbox.Target.Digest, Milestone: milestone}
+	}
 	for _, observation := range delivery.Attempts {
 		attempt := observation.Attempt
 		item := passTraceAttemptJSON{Number: attempt.Number, Mode: attempt.Mode,

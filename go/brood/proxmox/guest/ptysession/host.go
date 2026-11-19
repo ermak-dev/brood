@@ -46,18 +46,19 @@ type subscription struct {
 // Host owns at most one child. All screen updates, subscriptions, mutations and
 // writer ownership changes share one lock, including the replay/live handoff.
 type Host struct {
-	mu          sync.Mutex
-	config      Config
-	current     *child
-	writer      *subscription
-	subscribers map[*subscription]bool
-	connections map[net.Conn]bool
-	listener    net.Listener
-	closing     bool
-	closeOnce   sync.Once
-	closed      chan struct{}
-	closeErr    error
-	finishGroup func(int) error
+	mu             sync.Mutex
+	config         Config
+	current        *child
+	writer         *subscription
+	subscribers    map[*subscription]bool
+	connections    map[net.Conn]bool
+	listener       net.Listener
+	startAttempted bool
+	closing        bool
+	closeOnce      sync.Once
+	closed         chan struct{}
+	closeErr       error
+	finishGroup    func(int) error
 }
 
 // New validates trusted configuration but does not start a child.
@@ -131,6 +132,9 @@ func (h *Host) startLocked() error {
 		return nil
 	}
 	c := h.config
+	if c.OneShot && h.startAttempted {
+		return errors.New("one-shot PTY launch has already been used")
+	}
 	master, slave, err := openPTY(c.Columns, c.Rows)
 	if err != nil {
 		return err
@@ -143,6 +147,8 @@ func (h *Host) startLocked() error {
 	cmd.Stdout = slave
 	cmd.Stderr = slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	// A possibly started child must not be replaced even if tracking it fails.
+	h.startAttempted = true
 	if err = cmd.Start(); err != nil {
 		_ = master.Close()
 		return err

@@ -125,10 +125,21 @@ func newSessionHandler(connection context.Context, refresh func(context.Context)
 				return relay.SessionResponse{Text: "workspace attestation is not supported by this guest", Outcome: "unsupported"}
 			}
 			// Тот же gate, что у restart: активный rw-терминал — отказ до остановки.
-			return controller.Control(ctx, func() relay.SessionResponse { return attestor.Attest(ctx, req) })
+			return controller.Control(ctx, func() relay.SessionResponse { return attestor.attest(ctx, connection, req) })
 		case "slash", "wipe", "recycle", "restart":
 			return controller.Control(ctx, func() relay.SessionResponse {
-				if (req.Operation == "restart" || req.Operation == "recycle") && refresh != nil {
+				replace := req.Operation == "restart" || req.Operation == "recycle"
+				if replace && attestor != nil && attestor.stepRuntime != nil {
+					attestor.stepRuntime.stepOperation.Lock()
+					defer attestor.stepRuntime.stepOperation.Unlock()
+					if ctx.Err() != nil || connection.Err() != nil {
+						return terminalFailure("session replacement canceled; session unchanged")
+					}
+					if attestor.stepRuntime.heldInboxApp.Load() {
+						return terminalFailure("legacy replacement is unavailable for a held inbox session; session unchanged")
+					}
+				}
+				if replace && refresh != nil {
 					bound, cancel := context.WithCancel(ctx)
 					stop := context.AfterFunc(connection, cancel)
 					defer cancel()
@@ -139,8 +150,14 @@ func newSessionHandler(connection context.Context, refresh func(context.Context)
 				}
 				// Перезапуск вне шага — свободная сессия (#224): режим снимается
 				// до остановки старой, иначе новая унаследовала бы его.
-				if (req.Operation == "restart" || req.Operation == "recycle") && attestor != nil && attestor.Free() != nil {
-					return terminalFailure("step session policy could not be cleared; session unchanged")
+				if replace && attestor != nil {
+					if attestor.stepRuntime != nil {
+						// Free can remove the marker before a later cleanup fails.
+						attestor.stepRuntime.revokeStepLaunch(nil)
+					}
+					if attestor.Free() != nil {
+						return terminalFailure("step session policy could not be cleared; session unchanged")
+					}
 				}
 				return run(ctx, req)
 			})

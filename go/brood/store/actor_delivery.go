@@ -293,6 +293,13 @@ func (s *Store) ReserveActorDeliveryAttempt(ctx context.Context, id string, now,
 		if err != nil {
 			return err
 		}
+		selected, err := s.actorDeliveryInboxSelected(ctx, id)
+		if err != nil {
+			return err
+		}
+		if selected {
+			return ErrActorDeliveryConflict
+		}
 		probe, err := s.actorDeliveryCurrent(ctx, intent.Input)
 		if err != nil {
 			return err

@@ -2,14 +2,13 @@ package store
 
 import (
 	"context"
-	"maps"
 	"reflect"
 	"testing"
 )
 
 // Новые журналы при upgrade пусты. Прежние review claims не становятся evidence.
 func withEmptyPolicyReviewTables(rows map[string][]string) map[string][]string {
-	out := maps.Clone(rows)
+	out := withEmptyActorDeliveryInboxTables(rows)
 	for _, table := range []string{"pipeline_policy_review_requirements", "pipeline_policy_review_assignments", "pipeline_policy_review_evidence", "project_ownership"} {
 		if _, exists := out[table]; !exists {
 			out[table] = nil

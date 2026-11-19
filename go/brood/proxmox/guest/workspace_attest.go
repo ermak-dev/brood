@@ -41,6 +41,9 @@ type WorkspaceAttestor struct {
 	// effects of stepPolicy; restart and recycle call Free too.
 	Step func(gitidentity.Identity) error `json:"-"`
 	Free func() error                     `json:"-"`
+
+	stepRuntime     *Runtime
+	inboxReceiverID string
 }
 
 func (*WorkspaceAttestor) String() string     { return "guest.WorkspaceAttestor{redacted}" }
@@ -87,6 +90,10 @@ func attestFailure(text string) relay.SessionResponse {
 // actors are restricted to their bootstrap commit; refused preparation, checkout
 // or step policy never starts a model session.
 func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
+	return a.attest(ctx, ctx, req)
+}
+
+func (a *WorkspaceAttestor) attest(ctx, authority context.Context, req relay.SessionRequest) relay.SessionResponse {
 	args, err := decodeAttestArguments(req.Arguments)
 	if err != nil {
 		return attestFailure("invalid workspace attestation request; exactly swarm, step, origin, commit and challenge are accepted")
@@ -110,7 +117,11 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 			return attestFailure("ephemeral workspace preparation is unavailable; nothing changed")
 		}
 	}
-	if ctx.Err() != nil {
+	if a.stepRuntime != nil {
+		a.stepRuntime.stepOperation.Lock()
+		defer a.stepRuntime.stepOperation.Unlock()
+	}
+	if ctx.Err() != nil || authority.Err() != nil {
 		return attestFailure("workspace attestation canceled; nothing changed")
 	}
 	// После остановки актора эффекты доводятся до конца и без сервера: прерванный
@@ -119,7 +130,7 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 	work := context.WithoutCancel(ctx)
 	var facts sessionctl.CheckoutFacts
 	var checkoutErr, policyErr error
-	quiesceErr := a.Quiesce(work, func(ctx context.Context) error {
+	apply := func(ctx context.Context) error {
 		request := sessionctl.CheckoutRequest{Commit: claim.Commit, Origin: a.Origin.Origin, Mode: a.Origin.Mode, GitIdentity: a.Origin.GitIdentity}
 		if ephemeral {
 			bounded, cancel := context.WithTimeout(ctx, checkoutHelperTimeout)
@@ -138,7 +149,19 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 			policyErr = a.Free()
 		}
 		return checkoutErr
-	})
+	}
+	var quiesceErr error
+	var step *stepLaunchRequest
+	attested := false
+	if a.stepRuntime == nil {
+		quiesceErr = a.Quiesce(work, apply)
+	} else {
+		step = &stepLaunchRequest{claim: claim, request: ctx, authority: authority, inbox: a.inboxReceiverID != "", applied: func() bool {
+			return facts.Commit == claim.Commit && policyErr == nil
+		}}
+		quiesceErr = a.stepRuntime.transition(work, apply, step)
+		defer func() { a.stepRuntime.finishStepLaunch(step.launch, ctx, attested) }()
+	}
 	if quiesceErr != nil && quiesceErr != checkoutErr {
 		// Остановка не доказана или актор не перезапущен: runtime завершается.
 		return attestFailure(quiesceErr.Error())
@@ -174,7 +197,20 @@ func (a *WorkspaceAttestor) Attest(ctx context.Context, req relay.SessionRequest
 	if err != nil {
 		return attestFailure("attestation encoding failed")
 	}
-	return relay.SessionResponse{OK: true, Outcome: "complete", Text: string(data)}
+	response := relay.SessionResponse{OK: true, Outcome: "complete", Text: string(data)}
+	if a.inboxReceiverID != "" {
+		if step == nil || step.launch == nil || step.launch.actorInbox.pid == 0 || step.launch.ctx.Err() != nil {
+			return attestFailure("current inbox launch could not be proven")
+		}
+		binding := attest.InboxLaunchClaim{Claim: claim, LaunchID: step.launch.id, ReceiverID: a.inboxReceiverID}
+		proof, err := attest.SignInboxLaunch(attest.InboxLaunchKey(a.Token), binding)
+		if err != nil {
+			return attestFailure("inbox launch proof could not be issued")
+		}
+		response.InboxLaunch = &attest.InboxLaunchProof{InboxLaunchClaim: binding, Signature: proof}
+	}
+	attested = true
+	return response
 }
 
 // decodeAttestArguments accepts one object with exactly the request fields;

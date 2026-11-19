@@ -114,6 +114,8 @@ var schemaMigrations = []schemaMigration{
 	{from: 61, sql: pipelinePolicyProgressionMigration()},
 	// 63: явные владельцы проекта; прежнее членство не выдаёт grant (#290).
 	{from: 62, sql: projectOwnershipSchema},
+	// 64: пустое хранение выбора inbox, custody и dispatch permits (#291).
+	{from: 63, sql: actorDeliveryInboxFullSchema()},
 }
 
 // swarmExecutionAtColumn добавляет момент последнего исполнения роя (#268).

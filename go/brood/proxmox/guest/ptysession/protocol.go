@@ -26,6 +26,7 @@ type Config struct {
 	Env           []string
 	Dir           string
 	Columns, Rows int
+	OneShot       bool // Do not start a replacement after the first spawn attempt.
 }
 
 // State identifies one owned child instance.

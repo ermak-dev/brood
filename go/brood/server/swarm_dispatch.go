@@ -290,6 +290,10 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt, t
 		return refuse("actor " + a.Actor.Name + " is not connected to the relay; no instruction was sent")
 	}
 	var delivery *store.ActorDeliveryInput
+	inboxReceiver := ""
+	if available, ok := s.managed.hub.(actorDeliveryInboxRelay); ok {
+		inboxReceiver = available.InboxReceiverID(a.Actor.UID, a.Actor.Incarnation)
+	}
 	if s.actorDelivery != nil {
 		if journal := actorDeliveryJournal(s.managed.hub, a.Actor.UID, a.Actor.Incarnation); journal != "" {
 			input, err := preparedInstructionDelivery(a, text, journal)
@@ -301,6 +305,9 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt, t
 			}
 			delivery = &input
 		}
+	}
+	if inboxReceiver != "" && delivery == nil {
+		return refuse("the guest inbox has no durable instruction path; no instruction was sent")
 	}
 	claim, err := d.attestations.Issue(attest.Request{ActorUID: a.Actor.UID, Generation: a.Actor.Incarnation, Swarm: a.SwarmID, Step: a.RequestID, Origin: a.Source.Origin, Commit: a.Source.Commit})
 	if err != nil {
@@ -354,6 +361,25 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt, t
 	if err != nil {
 		return refuse("workspace attestation rejected: " + err.Error())
 	}
+	if inboxReceiver != "" || resp.InboxLaunch != nil {
+		if inboxReceiver == "" || resp.InboxLaunch == nil || delivery == nil {
+			return refuse("workspace attestation did not prove the selected inbox launch; no instruction was sent")
+		}
+		proof := *resp.InboxLaunch
+		key := attest.InboxLaunchKey(guestToken(s.managed.registry.relaySecret, a.Actor.UID, a.Actor.Incarnation))
+		if err := attest.VerifyInboxLaunch(key, verified, inboxReceiver, proof); err != nil {
+			return refuse("the exact inbox launch was not verified; no instruction was sent")
+		}
+		intent, err := s.store.RecordActorStepInboxAttestation(ctx, a, verified.Origin, verified.Commit, *delivery, inboxReceiver, func(ctx context.Context) bool {
+			return s.actorDelivery.instructionAuthority(ctx, *delivery)
+		})
+		if err != nil {
+			return refuse("workspace and chosen inbox could not be committed together; no instruction was sent")
+		}
+		leaseSettled = true
+		d.deliverAttestedInbox(ctx, a, intent, proof)
+		return false // Do not subsequently enter either native delivery path.
+	}
 	if delivery != nil {
 		_, err = s.store.RecordActorStepAttestationDelivery(ctx, a, verified.Origin, verified.Commit, *delivery, func(ctx context.Context) bool { return s.actorDelivery.instructionAuthority(ctx, *delivery) })
 		if err == nil {
@@ -368,6 +394,31 @@ func (d *stepDispatcher) attest(ctx context.Context, a store.ActorStepAttempt, t
 		return refuse("workspace attestation was not recorded: " + err.Error())
 	}
 	return true
+}
+
+// deliverAttestedInbox has the only in-process authority to use the initial
+// admission path for this atomic selection. No startup worker can recreate
+// that authority from the presence or absence of a custody receipt.
+func (d *stepDispatcher) deliverAttestedInbox(ctx context.Context, a store.ActorStepAttempt, intent store.ActorDeliveryIntent, proof attest.InboxLaunchProof) {
+	delivery := d.server.actorDelivery
+	outcome, err := delivery.deliverInboxMode(ctx, intent.ID, "", true)
+	if err != nil || outcome != relay.InboxCustodyRecorded {
+		// Only the selected receiver's read-only status can repair a lost reply.
+		outcome, err = delivery.deliverInbox(ctx, intent.ID, "")
+	}
+	if err != nil || outcome != relay.InboxCustodyRecorded {
+		d.settle(ctx, a, true, "the chosen inbox has no confirmed custody; no instruction was resent")
+		return
+	}
+	expected := inboxDeliveryTarget(intent, proof.ReceiverID)
+	outcome, err = delivery.dispatchInbox(ctx, intent.ID, "", proof.LaunchID, func(ctx context.Context, target store.ActorDeliveryInboxTarget, launch string) bool {
+		return ctx.Err() == nil && target == expected && launch == proof.LaunchID && proof.Step == a.RequestID
+	})
+	if err != nil || outcome != relay.InboxDispatchArmed {
+		d.settle(ctx, a, true, "the inbox launch did not confirm arming; no dispatch permit will be reissued")
+	}
+	// Arming is not native admission: leave the attested visit delivering so
+	// only the exact authenticated actor report can progress the graph.
 }
 
 // deliver отправляет инструкцию узла привязанному актору той же инкарнации.

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"brood.dev/go/brood/proxmox/attest"
 )
 
 const sessionChannel = "brood-session-rpc-v1"
@@ -57,9 +59,10 @@ type SessionRequest struct {
 
 // SessionResponse distinguishes completed reads from unconfirmed input writes.
 type SessionResponse struct {
-	OK      bool   `json:"ok"`
-	Text    string `json:"text"`
-	Outcome string `json:"outcome"`
+	OK          bool                     `json:"ok"`
+	Text        string                   `json:"text"`
+	Outcome     string                   `json:"outcome"`
+	InboxLaunch *attest.InboxLaunchProof `json:"inbox_launch,omitempty"`
 }
 
 // ReadSessionRequest parses a single bounded frame, rejecting extra fields.

@@ -108,6 +108,9 @@ func TestPassTraceRetainsExactInstructionAndAllReceiptsWithoutReconciliation(t *
 		t.Fatal("trace omitted exact retained instruction")
 	}
 	delivery := trace.Steps[0].Instruction
+	if delivery.SupervisorInbox != nil {
+		t.Fatal("native delivery unexpectedly acquired supervisor inbox evidence")
+	}
 	if delivery.Intent != intent || len(delivery.Attempts) != 2 || delivery.Attempts[0].Attempt != first || delivery.Attempts[0].Outcome != "unconfirmed" || delivery.Attempts[1].Attempt != second || delivery.Attempts[1].Outcome != "duplicate" {
 		t.Fatalf("trace reconstructed or collapsed delivery history: %+v", delivery)
 	}

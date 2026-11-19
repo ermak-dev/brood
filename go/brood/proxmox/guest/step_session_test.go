@@ -30,6 +30,7 @@ import (
 
 	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/projectsecret"
+	"brood.dev/go/brood/proxmox/guest/managedinbox"
 	"brood.dev/go/brood/proxmox/guest/sessionctl"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -111,6 +112,91 @@ func TestStepPolicyManagedSettingsAreRootOnly(t *testing.T) {
 	// Свободная сессия на CT без каталога политики: снимать нечего.
 	if err := stepTestPolicy(t).leave(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStepPolicyManagedInboxIsOptInAndRestorable(t *testing.T) {
+	p := stepTestPolicy(t)
+	layout := stepTestLayout(t, p)
+	if err := p.enter(attestIdentity); err != nil {
+		t.Fatal(err)
+	}
+	baseline := readTestFile(t, p.dropIn())
+	want := readJSONObject(t, p.dropIn())
+	for _, key := range []string{"strictKnownMarketplaces", "extraKnownMarketplaces", "enabledPlugins"} {
+		if _, present := want[key]; present {
+			t.Fatalf("ordinary step drop-in has %s without inbox opt-in", key)
+		}
+	}
+	bundle, ok := managedinbox.Package(true)
+	if !ok {
+		t.Fatal("managed inbox package unavailable")
+	}
+	assertStepLaunch := func() {
+		t.Helper()
+		args, _, err := prepareClaudeLaunch(layout, io.Discard)
+		if err != nil || !slices.Equal(args, []string{
+			"claude", "--dangerously-skip-permissions", "--setting-sources", "project", "--strict-mcp-config", "--mcp-config",
+			`{"mcpServers":{"brood":{"command":"/opt/brood/bin/bro","args":["--guest","mcp"]}}}`,
+		}) {
+			t.Fatalf("step launch changed: %q, %v", args, err)
+		}
+	}
+
+	if err := p.writeManagedInbox(bundle.ManagedSettings); err != nil {
+		t.Fatal(err)
+	}
+	source := map[string]any{"source": "directory", "path": "/opt/brood/managed-marketplaces/supervisor-inbox"}
+	want["strictKnownMarketplaces"] = []any{source}
+	want["extraKnownMarketplaces"] = map[string]any{
+		"brood-managed-inbox": map[string]any{"source": source, "autoUpdate": false},
+	}
+	want["enabledPlugins"] = map[string]any{"supervisor-inbox@brood-managed-inbox": true}
+	if got := readJSONObject(t, p.dropIn()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("managed inbox drop-in %v, want %v", got, want)
+	}
+	assertOwnedMode(t, p.dropIn(), 0644, p.Root, p.RootGID)
+	assertStepLaunch()
+
+	ordinary := stepTestPolicy(t)
+	if err := ordinary.enter(attestIdentity); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTestFile(t, ordinary.dropIn()); got != baseline {
+		t.Fatalf("inbox opt-in changed the default step policy: %s", got)
+	}
+
+	if err := p.writeManaged(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTestFile(t, p.dropIn()); got != baseline {
+		t.Fatalf("ordinary step drop-in not restored: %s", got)
+	}
+	assertStepLaunch()
+
+	for _, tc := range []struct{ key, value string }{
+		{"mcpServers", `{}`},
+		{"allowManagedHooksOnly", `false`},
+		{"enabledPlugins", `{"supervisor-inbox@brood-managed-inbox":"true"}`},
+		{"extraKnownMarketplaces", `{"brood-managed-inbox":{"source":{"source":"directory","path":"/opt/brood/elsewhere"}}}`},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			var fragment map[string]json.RawMessage
+			if err := json.Unmarshal(bundle.ManagedSettings, &fragment); err != nil {
+				t.Fatal(err)
+			}
+			fragment[tc.key] = json.RawMessage(tc.value)
+			data, err := json.Marshal(fragment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.writeManagedInbox(data); err == nil {
+				t.Fatalf("accepted unexpected %s value %s", tc.key, tc.value)
+			}
+			if got := readTestFile(t, p.dropIn()); got != baseline {
+				t.Fatalf("rejected fragment changed the drop-in: %s", got)
+			}
+		})
 	}
 }
 
@@ -397,7 +483,7 @@ func stepTestLayout(t *testing.T, p stepPolicy) appLayout {
 	if err := publishWorkspaceOrigin(p.Run, WorkspaceOrigin{}, p.Root, p.ActorGID); err != nil {
 		t.Fatal(err)
 	}
-	return appLayout{Project: privateTemp(t), Home: p.Home, Run: p.Run, RunUID: p.Root, RunGID: p.ActorGID, Gateway: deadGateway(t), CloneTimeout: time.Second}
+	return appLayout{Project: privateTemp(t), Home: p.Home, Run: p.Run, RunUID: p.Root, RunGID: p.ActorGID}
 }
 
 func TestStepSessionSelectsClaudeLaunch(t *testing.T) {
