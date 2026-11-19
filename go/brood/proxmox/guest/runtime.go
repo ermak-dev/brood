@@ -358,8 +358,12 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 						// failing to sync it. Restore the baseline before any app.
 						activeInboxPolicy = policy
 						if err := policy.enter(); err != nil {
-							q.reply <- errors.New("guest inbox policy could not be prepared")
-							r.err = errors.New("guest inbox policy could not be prepared")
+							refusal := errors.New("guest inbox policy could not be prepared")
+							if errors.Is(err, errInboxScaffold) {
+								refusal = errInboxScaffold
+							}
+							q.reply <- refusal
+							r.err = refusal
 							childExited, running = true, false
 							continue
 						}
