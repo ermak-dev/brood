@@ -102,9 +102,12 @@ func (p stepPolicy) verifyInboxLoaderSources(project string) error {
 	if st, err := os.Lstat(claudeHome); (err == nil && !st.IsDir()) || (err != nil && !errors.Is(err, os.ErrNotExist)) {
 		return errors.New("unsafe Claude home for inbox launch")
 	}
+	if err := p.verifyEmptyInboxPluginScaffold(claudeHome); err != nil {
+		return err
+	}
 	for _, path := range []string{
 		filepath.Join(p.Managed, "managed-settings.json"), filepath.Join(p.Managed, "plugins"),
-		filepath.Join(claudeHome, "plugins"), filepath.Join(claudeHome, "cowork_plugins"),
+		filepath.Join(claudeHome, "cowork_plugins"),
 		filepath.Join(claudeHome, ".credentials.json"), filepath.Join(claudeHome, "settings.local.json"),
 		filepath.Join(claudeHome, ".config.json"), filepath.Join(claudeHome, "remote-settings.json"),
 	} {
