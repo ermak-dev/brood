@@ -14,41 +14,75 @@ func (s *Store) RecordActorStepAttestationDelivery(ctx context.Context, a ActorS
 	return s.recordActorStepAttestationTransport(ctx, a, origin, commit, in, "", authorize)
 }
 
+// ActorStepInboxCommitError identifies a fixed commit stage without rendering
+// the underlying database error, which can contain private data.
+// Use errors.Is or errors.As to classify its cause.
+type ActorStepInboxCommitError struct {
+	stage string
+	cause error
+}
+
+func (e *ActorStepInboxCommitError) Error() string {
+	return "workspace inbox commit failed at " + e.stage
+}
+func (e *ActorStepInboxCommitError) Unwrap() error { return e.cause }
+
+// InboxCommitStage is a fixed identifier, not data from the request or SQL error.
+func (e *ActorStepInboxCommitError) InboxCommitStage() string { return e.stage }
+
 // RecordActorStepInboxAttestation commits a verified workspace, exact payload
 // and its selected receiving inbox together. No recovery worker can see a
 // deliverable native intent between attestation and selection of this inbox.
 func (s *Store) RecordActorStepInboxAttestation(ctx context.Context, a ActorStepAttempt, origin, commit string, in ActorDeliveryInput, receiverID string, authorize func(context.Context) bool) (ActorDeliveryIntent, error) {
 	if receiverID == "" {
-		return ActorDeliveryIntent{}, ErrActorDeliveryConflict
+		return ActorDeliveryIntent{}, &ActorStepInboxCommitError{stage: "input", cause: ErrActorDeliveryConflict}
 	}
 	return s.recordActorStepAttestationTransport(ctx, a, origin, commit, in, receiverID, authorize)
 }
 
-func (s *Store) recordActorStepAttestationTransport(ctx context.Context, a ActorStepAttempt, origin, commit string, in ActorDeliveryInput, receiverID string, authorize func(context.Context) bool) (ActorDeliveryIntent, error) {
+func (s *Store) recordActorStepAttestationTransport(ctx context.Context, a ActorStepAttempt, origin, commit string, in ActorDeliveryInput, receiverID string, authorize func(context.Context) bool) (_ ActorDeliveryIntent, err error) {
+	stage := "input"
+	if receiverID != "" {
+		defer func() {
+			if err != nil {
+				err = &ActorStepInboxCommitError{stage: stage, cause: err}
+			}
+		}()
+	}
 	if !validActorDeliveryInput(in) || in.SourceKind != "step" || in.SwarmID != a.SwarmID || in.SourceID != strconv.FormatInt(a.Sequence, 10) || in.RequestID != a.RequestID || in.Commit != commit || in.ActorUID != a.Actor.UID || in.Incarnation != a.Actor.Incarnation || in.AtespaceUID != a.Actor.AtespaceUID {
 		return ActorDeliveryIntent{}, ErrActorDeliveryConflict
 	}
 	var out ActorDeliveryIntent
-	err := s.WithDurableTx(ctx, func(ctx context.Context) error {
+	stage = "transaction_prepare"
+	err = s.WithDurableTx(ctx, func(ctx context.Context) error {
+		stage = "authority"
 		if authorize == nil || !authorize(ctx) {
 			return ErrActorDeliveryDenied
 		}
+		stage = "workspace"
 		if err := s.RecordActorStepAttestation(ctx, a, origin, commit); err != nil {
 			return err
 		}
+		stage = "intent"
 		var err error
 		out, err = s.prepareActorDelivery(ctx, in, authorize)
 		if err != nil {
 			return err
 		}
 		if receiverID != "" {
+			stage = "receiver"
 			digest := sha256.Sum256([]byte(in.Payload))
 			target := ActorDeliveryInboxTarget{DeliveryID: out.ID, SwarmID: in.SwarmID, SourceKind: in.SourceKind, SourceID: in.SourceID, ActorUID: in.ActorUID, Incarnation: in.Incarnation, ReceiverID: receiverID, Digest: hex.EncodeToString(digest[:])}
 			if err := s.selectActorDeliveryInbox(ctx, target, authorize); err != nil {
 				return err
 			}
 		}
-		return s.FinishActorOperation(ctx, a.Lease, true)
+		stage = "lease"
+		if err := s.FinishActorOperation(ctx, a.Lease, true); err != nil {
+			return err
+		}
+		stage = "transaction_commit"
+		return nil
 	})
 	if err != nil {
 		return ActorDeliveryIntent{}, err
