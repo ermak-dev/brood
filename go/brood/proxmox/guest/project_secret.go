@@ -205,7 +205,12 @@ func projectAppEnvironment(bundle projectsecret.Bundle) ([]string, error) {
 // RunProjectApp is the only project-secret consumer. Dispatch before reading root
 // configuration. No caller-selected path, command, or environment is accepted.
 // Nonfatal startup problems are reported to warn, the terminal of the session.
-func RunProjectApp(warn io.Writer) error {
+func RunProjectApp(warn io.Writer) error { return runProjectApp(warn, false) }
+
+// RunInboxProjectApp is the fixed child of a one-shot, held step PTY.
+func RunInboxProjectApp(warn io.Writer) error { return runProjectApp(warn, true) }
+
+func runProjectApp(warn io.Writer, inbox bool) error {
 	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
 		return secretFailure()
 	}
@@ -223,7 +228,16 @@ func RunProjectApp(warn io.Writer) error {
 	}
 	unix.Umask(0077)
 	layout := appLayout{Project: "/workspace/project", Home: "/workspace/home", Run: projectSecretDirectory, RunUID: 0, RunGID: 1000, Gateway: workspaceGatewayURL, CloneTimeout: 30 * time.Minute}
-	args, env, err := prepareClaudeLaunch(layout, warn)
+	prepare := prepareClaudeLaunch
+	if inbox {
+		parent := os.Getppid()
+		identity, err := inboxProcessStat(parent)
+		if err != nil || verifyInboxAppParent(layout.Run, layout.RunUID, layout.RunGID, parent, identity.start) != nil || os.Getppid() != parent {
+			return ErrInboxHandoffUnavailable
+		}
+		prepare = prepareInboxClaudeLaunch
+	}
+	args, env, err := prepare(layout, warn)
 	if err != nil {
 		return err
 	}

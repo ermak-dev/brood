@@ -593,7 +593,11 @@ func TestEphemeralCreateMigrated51Legacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`DROP TABLE project_ownership; DROP TABLE pipeline_policy_review_evidence; DROP TABLE pipeline_policy_review_assignments; DROP TABLE pipeline_policy_review_requirements; DROP TABLE swarm_eval_replays; DROP TABLE swarm_eval_bindings; DROP TRIGGER ephemeral_executor_failed_task_guard; DROP TABLE ephemeral_child_executor_failures; DROP TABLE owner_managed_actor_lineage; DROP TRIGGER ephemeral_failed_child_insert_guard; DROP TRIGGER ephemeral_failed_allocation_guard; DROP TRIGGER ephemeral_failed_attestation_guard; DROP TRIGGER ephemeral_failed_attestation_proof_guard; DROP TABLE ephemeral_child_failures; DROP TABLE ephemeral_child_lifecycles; DROP TABLE ephemeral_child_result_seals; DROP TRIGGER ephemeral_child_create_grant_initialize; DROP TABLE ephemeral_child_create_grants`)
+	_, err = db.Exec(`DROP TRIGGER actor_delivery_attempts_no_inbox;
+DROP TABLE actor_delivery_inbox_permits;
+DROP TABLE actor_delivery_inbox_custody;
+DROP TABLE actor_delivery_inbox_selections;
+DROP TABLE project_ownership; DROP TABLE pipeline_policy_review_evidence; DROP TABLE pipeline_policy_review_assignments; DROP TABLE pipeline_policy_review_requirements; DROP TABLE swarm_eval_replays; DROP TABLE swarm_eval_bindings; DROP TRIGGER ephemeral_executor_failed_task_guard; DROP TABLE ephemeral_child_executor_failures; DROP TABLE owner_managed_actor_lineage; DROP TRIGGER ephemeral_failed_child_insert_guard; DROP TRIGGER ephemeral_failed_allocation_guard; DROP TRIGGER ephemeral_failed_attestation_guard; DROP TRIGGER ephemeral_failed_attestation_proof_guard; DROP TABLE ephemeral_child_failures; DROP TABLE ephemeral_child_lifecycles; DROP TABLE ephemeral_child_result_seals; DROP TRIGGER ephemeral_child_create_grant_initialize; DROP TABLE ephemeral_child_create_grants`)
 	if err == nil {
 		restoreLegacy51ChildHolds(t, db)
 		_, err = db.Exec(`PRAGMA user_version=51`)

@@ -37,8 +37,11 @@ type ClientConfig struct {
 	MessageJournalID     string `json:"messageJournalId,omitempty"`
 	// HandleMessage receives server-authorized swarm messages. It must honor
 	// cancellation and never dial actor-supplied socket paths as root.
-	HandleMessage  func(context.Context, MessageRequest) MessageResponse `json:"-"`
-	OnSwarmSession func(context.Context, SwarmCaller)                    `json:"-"`
+	HandleMessage func(context.Context, MessageRequest) MessageResponse `json:"-"`
+	// InboxReceiverID and HandleInbox opt in only this authenticated peer.
+	InboxReceiverID string                                        `json:"inboxReceiverId,omitempty"`
+	HandleInbox     func(context.Context, []byte) ([]byte, error) `json:"-"`
+	OnSwarmSession  func(context.Context, SwarmCaller)            `json:"-"`
 	// Session handles authenticated server session operations independently.
 	Session func(context.Context, SessionRequest) SessionResponse `json:"-"`
 	// SessionFactory overrides Session with fresh state for each authenticated
@@ -58,6 +61,7 @@ type clientOptions struct {
 	ssh            *ssh.ClientConfig
 	target         func(context.Context) (net.Conn, error)
 	message        func(context.Context, MessageRequest) MessageResponse
+	inbox          func(context.Context, []byte) ([]byte, error)
 	onSwarmSession func(context.Context, SwarmCaller)
 	session        func(context.Context, SessionRequest) SessionResponse
 	sessionFactory func(context.Context) func(context.Context, SessionRequest) SessionResponse
@@ -69,6 +73,9 @@ func options(c ClientConfig) (*clientOptions, error) {
 	}
 	if c.MessageDeduplication && !validMessageJournalID(c.MessageJournalID) || !c.MessageDeduplication && c.MessageJournalID != "" {
 		return nil, errors.New("message deduplication requires an explicit retained journal identity")
+	}
+	if c.HandleInbox == nil && c.InboxReceiverID != "" || c.HandleInbox != nil && !validMessageJournalID(c.InboxReceiverID) {
+		return nil, errors.New("supervisor inbox requires an explicit retained receiver and handler")
 	}
 	if !validUID(c.ActorUID) || c.Generation <= 0 || !validToken(c.Token) || c.DialTarget == nil {
 		return nil, errors.New("invalid guest relay configuration")
@@ -111,7 +118,13 @@ func options(c ClientConfig) (*clientOptions, error) {
 		wc.Header.Set(messageProtocolHeader, messageDedupProtocol)
 		wc.Header.Set(messageJournalHeader, c.MessageJournalID)
 	}
-	return &clientOptions{wc, &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}, c.DialTarget, c.HandleMessage, c.OnSwarmSession, c.Session, c.SessionFactory}, nil
+	if c.HandleInbox != nil {
+		wc.Header.Set(inboxProtocolHeader, inboxProtocol)
+		wc.Header.Set(inboxReceiverHeader, c.InboxReceiverID)
+	}
+	sshConfig := &ssh.ClientConfig{User: c.ActorUID + "/" + strconv.FormatInt(c.Generation, 10), Auth: []ssh.AuthMethod{ssh.Password(c.Token)}, HostKeyCallback: ssh.FixedHostKey(key)}
+	return &clientOptions{ws: wc, ssh: sshConfig, target: c.DialTarget, message: c.HandleMessage,
+		inbox: c.HandleInbox, onSwarmSession: c.OnSwarmSession, session: c.Session, sessionFactory: c.SessionFactory}, nil
 }
 
 // RunClient reconnects with bounded exponential backoff until ctx is canceled.
@@ -174,16 +187,29 @@ func runAttempt(ctx context.Context, o *clientOptions) bool {
 	if o.sessionFactory != nil {
 		handler = o.sessionFactory(session)
 	}
-	serveTargets(session, channels, o.target, o.message, handler)
+	serveTargets(session, channels, o.target, o.message, handler, o.inbox)
 	<-done
 	return true
 }
-func serveTargets(ctx context.Context, channels <-chan ssh.NewChannel, target func(context.Context) (net.Conn, error), message func(context.Context, MessageRequest) MessageResponse, session func(context.Context, SessionRequest) SessionResponse) {
+func serveTargets(ctx context.Context, channels <-chan ssh.NewChannel, target func(context.Context) (net.Conn, error), message func(context.Context, MessageRequest) MessageResponse, session func(context.Context, SessionRequest) SessionResponse, inbox func(context.Context, []byte) ([]byte, error)) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	slots := make(chan struct{}, MaxStreams)
 	messageSlots := make(chan struct{}, MaxMessagesInFlight)
 	for ch := range channels {
+		if ch.ChannelType() == inboxChannel && inbox != nil {
+			select {
+			case messageSlots <- struct{}{}:
+			default:
+				ch.Reject(ssh.ResourceShortage, "supervisor inbox stream limit reached")
+				continue
+			}
+			wg.Go(func() {
+				defer func() { <-messageSlots }()
+				serveGuestInbox(ctx, inbox, ch)
+			})
+			continue
+		}
 		if ch.ChannelType() == sessionChannel && session != nil {
 			select {
 			case messageSlots <- struct{}{}:

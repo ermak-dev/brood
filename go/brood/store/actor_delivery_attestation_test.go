@@ -32,6 +32,37 @@ func TestInstructionAttestationAndIntentCommitTogether(t *testing.T) {
 	}
 }
 
+func TestInboxInstructionPinsReceiverInAttestationCommit(t *testing.T) {
+	ctx := context.Background()
+	s := dispatchStore(t)
+	a := reserveOne(t, s, "atomic-inbox-instruction")
+	input := instructionDeliveryInput(a)
+	if _, err := s.RecordActorStepInboxAttestation(ctx, a, startOrigin, startCommit, input, input.JournalID, allow); !errors.Is(err, ErrActorDeliveryConflict) {
+		t.Fatalf("native journal used as inbox receiver: %v", err)
+	}
+	if stepOf(t, s, 1).State != "attesting" {
+		t.Fatal("refused selection partially committed the attestation")
+	}
+	if _, err := s.GetActorDeliveryForSource(ctx, "one", "step", "1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("refused selection left a recoverable native intent: %v", err)
+	}
+	if lease, err := s.CurrentActorOperation(ctx, a.Actor.UID); err != nil || lease != a.Lease {
+		t.Fatalf("refused selection cleared the workspace lease: %+v %v", lease, err)
+	}
+	receiver := strings.Repeat("b", 64)
+	intent, err := s.RecordActorStepInboxAttestation(ctx, a, startOrigin, startCommit, input, receiver, allow)
+	mustNil(t, err)
+	state, err := s.ActorDeliveryInboxStatus(ctx, intent.ID)
+	mustNil(t, err)
+	if state.Target.ReceiverID != receiver || state.Target.ActorUID != input.ActorUID || state.Custody || state.DispatchReserved || stepOf(t, s, 1).State != "delivering" {
+		t.Fatalf("attestation did not atomically pin inbox recovery: %+v", state)
+	}
+	now := time.Now().UTC()
+	if _, err := s.ReserveActorDeliveryAttempt(ctx, intent.ID, now, now.Add(time.Minute), allow); !errors.Is(err, ErrActorDeliveryConflict) {
+		t.Fatalf("recovery could reserve native delivery for a pinned inbox: %v", err)
+	}
+}
+
 func TestRecoveredPreparedInstructionWithoutAttemptIsNotAnUncertainSend(t *testing.T) {
 	ctx := context.Background()
 	s := dispatchStore(t)

@@ -30,6 +30,20 @@ func OpenSupervisorDeliveryJournal(ctx context.Context, directory string, scope 
 	return openScopedDeliveryJournal(ctx, base, scope)
 }
 
+// OpenSupervisorInbox opens a separate receiving store using the supervisor's
+// trusted directory checks. This does not enable or advertise a transport.
+func OpenSupervisorInbox(ctx context.Context, directory string, scope deliverylog.Scope) (*deliverylog.Inbox, error) {
+	if os.Getuid() != 0 || os.Geteuid() != 0 {
+		return nil, errDeliveryDirectory
+	}
+	base, err := openDeliveryRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer base.Close()
+	return openScopedSupervisorInbox(ctx, base, scope)
+}
+
 func deliveryDirectoryOwned(dir *os.File, owner uint32, private bool) bool {
 	if dir == nil {
 		return false
@@ -105,6 +119,29 @@ func deliveryScopeDirectory(parent *os.File, name string) (*os.File, error) {
 }
 
 func openScopedDeliveryJournal(ctx context.Context, base *os.File, scope deliverylog.Scope) (*deliverylog.Journal, error) {
+	incarnation, err := openDeliveryIncarnation(ctx, base, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer incarnation.Close()
+	return deliverylog.OpenDirectory(ctx, incarnation, scope, deliverylog.MaxEntries)
+}
+
+func openScopedSupervisorInbox(ctx context.Context, base *os.File, scope deliverylog.Scope) (*deliverylog.Inbox, error) {
+	incarnation, err := openDeliveryIncarnation(ctx, base, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer incarnation.Close()
+	directory, err := deliveryScopeDirectory(incarnation, "supervisor-inbox")
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	return deliverylog.OpenInboxDirectory(ctx, directory, scope, deliverylog.MaxInboxEntries)
+}
+
+func openDeliveryIncarnation(ctx context.Context, base *os.File, scope deliverylog.Scope) (*os.File, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -124,10 +161,5 @@ func openScopedDeliveryJournal(ctx context.Context, base *os.File, scope deliver
 		return nil, err
 	}
 	defer actor.Close()
-	incarnation, err := deliveryScopeDirectory(actor, strconv.FormatInt(scope.Incarnation, 10))
-	if err != nil {
-		return nil, err
-	}
-	defer incarnation.Close()
-	return deliverylog.OpenDirectory(ctx, incarnation, scope, deliverylog.MaxEntries)
+	return deliveryScopeDirectory(actor, strconv.FormatInt(scope.Incarnation, 10))
 }

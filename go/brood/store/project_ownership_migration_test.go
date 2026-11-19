@@ -11,7 +11,7 @@ import (
 func TestProjectOwnershipMigrationDoesNotInferHistoricalOwners(t *testing.T) {
 	path := loadSchemaFixture(t, 62)
 	raw := rawDatabase(t, path)
-	before := databaseRows(t, raw)
+	before := withEmptyActorDeliveryInboxTables(databaseRows(t, raw))
 	mustNil(t, raw.Close())
 	for range 2 {
 		s, err := Open(context.Background(), path)

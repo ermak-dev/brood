@@ -83,6 +83,34 @@ func TestConfigValidation(t *testing.T) {
 		t.Fatal("invalid base64 accepted")
 	}
 }
+
+// FEATURE: Opt in to the local step launch lifecycle without enabling inbox transport.
+// SPEC: Only an exact opt-in survives bootstrap; neither case advertises an inbox.
+// IMPLEMENTATION: Parse the root-only opt-in and require the launch-owning runtime.
+func TestStepLaunchBindingConfigDoesNotAdvertiseInbox(t *testing.T) {
+	const key = "BROOD_GUEST_STEP_LAUNCH_BINDING"
+	env := validEnv(t)
+	for _, value := range []string{"", "0", "true", "1 "} {
+		if _, err := parseConfig(replace(env, key, value)); err == nil {
+			t.Fatalf("accepted invalid step launch opt-in: %q", value)
+		}
+	}
+	for _, enabled := range []bool{false, true} {
+		input := env
+		if enabled {
+			input = replace(env, key, "1")
+		}
+		c, err := parseConfig(input)
+		if err != nil || c.stepLaunchBinding != enabled || c.relay.HandleInbox != nil || c.relay.InboxReceiverID != "" {
+			t.Fatalf("unexpected opt-in or relay advertisement: %v", err)
+		}
+		runtimeConfig, err := parseConfig(runtimeEnv(c))
+		if err != nil || runtimeConfig.stepLaunchBinding != enabled || runtimeConfig.stage != "runtime" {
+			t.Fatalf("bootstrap lost the launch opt-in: %v", err)
+		}
+	}
+}
+
 func TestConfigDecodedCAAndExactEndpoint(t *testing.T) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -143,6 +171,25 @@ func (f *fakeService) TerminalDialTarget() string { return "127.0.0.1:8080" }
 func (f *fakeService) Quiesce(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
 }
+func TestStepLaunchBindingRequiresTheOwningRuntime(t *testing.T) {
+	network, runtime := newFake(), newFake()
+	d := dependencies{
+		euid:    func() int { return 0 },
+		network: func(context.Context) (service, error) { return network, nil },
+		start:   func(context.Context, []string) (actorRuntime, error) { return runtime, nil },
+		relay: func(context.Context, relay.ClientConfig) error {
+			t.Error("relay started without the launch-owning runtime")
+			return errors.New("unexpected relay start")
+		},
+	}
+	t.Setenv("PATH", "/usr/bin:/bin")
+	env := append(validEnv(t), "BROOD_GUEST_STAGE=runtime", "BROOD_GUEST_STEP_LAUNCH_BINDING=1")
+	err := dispatch(context.Background(), nil, func() []string { return env }, d)
+	if err == nil || !strings.Contains(err.Error(), "step launch binding") || !network.closed || !runtime.closed {
+		t.Fatalf("incomplete opt-in did not fail closed: %v", err)
+	}
+}
+
 func TestOrchestration(t *testing.T) {
 	for _, failure := range []string{"network", "policy", "relay", "dhcp", "service", "signal"} {
 		t.Run(failure, func(t *testing.T) {

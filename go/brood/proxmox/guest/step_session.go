@@ -27,6 +27,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"brood.dev/go/brood/gitidentity"
+	"brood.dev/go/brood/proxmox/guest/managedinbox"
 )
 
 // Файлы режима шага в /run/brood лежат рядом с проекцией origin и по тому же
@@ -130,6 +131,9 @@ func (p stepPolicy) leave() error {
 		return errors.New("step session marker cannot be removed, so the rest of the step policy stays in place")
 	}
 	var reasons []string
+	if err := p.removeInboxAppParent(); err != nil {
+		reasons = append(reasons, "inbox app parent binding cannot be removed")
+	}
 	if err := p.removeManaged(); err != nil {
 		reasons = append(reasons, "Claude managed settings of the step cannot be removed: "+err.Error())
 	}
@@ -231,6 +235,36 @@ func (p stepPolicy) managedFailure(err error) error {
 }
 
 func (p stepPolicy) writeManaged() error {
+	return p.writeManagedDropIn(stepManagedSettings)
+}
+
+func (p stepPolicy) writeManagedInbox(fragment []byte) error {
+	bundle, ok := managedinbox.Package(true)
+	// Проверяем байты до разбора, чтобы JSON с повторными ключами не прошёл.
+	if !ok || !bytes.Equal(fragment, bundle.ManagedSettings) {
+		return errors.New("managed inbox settings do not match the bundled fragment")
+	}
+	// Берём из пакета только настройки marketplace и plugin, не политику шага.
+	inbox, ok := jsonObject(bundle.ManagedSettings)
+	if !ok || len(inbox) != 4 || !bytes.Equal(inbox["allowManagedHooksOnly"], jsonTrue) ||
+		inbox["strictKnownMarketplaces"] == nil || inbox["extraKnownMarketplaces"] == nil || inbox["enabledPlugins"] == nil {
+		return errors.New("bundled managed inbox settings have an unexpected shape")
+	}
+	settings, ok := jsonObject(stepManagedSettings)
+	if !ok {
+		return errors.New("baseline step managed settings are invalid")
+	}
+	settings["strictKnownMarketplaces"] = inbox["strictKnownMarketplaces"]
+	settings["extraKnownMarketplaces"] = inbox["extraKnownMarketplaces"]
+	settings["enabledPlugins"] = inbox["enabledPlugins"]
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("cannot encode step managed settings with inbox: %w", err)
+	}
+	return p.writeManagedDropIn(append(data, '\n'))
+}
+
+func (p stepPolicy) writeManagedDropIn(data []byte) error {
 	dir, err := p.managedDirectory(true)
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("Claude Code managed settings directory %s cannot be created", p.Managed)
@@ -240,7 +274,7 @@ func (p stepPolicy) writeManaged() error {
 	}
 	defer unix.Close(dir)
 	// Временное имя начинается с точки: Claude такие drop-in не читает.
-	if replaceSecretFile(dir, stepManagedFile, stepManagedSettings, 0644, p.Root, p.RootGID, false) != nil {
+	if replaceSecretFile(dir, stepManagedFile, data, 0644, p.Root, p.RootGID, false) != nil {
 		return errors.New("Claude managed settings of the step cannot be published")
 	}
 	return nil
@@ -395,6 +429,10 @@ func prepareClaudeLaunch(l appLayout, warn io.Writer) ([]string, []string, error
 	if err != nil {
 		return nil, nil, err
 	}
+	return prepareClaudeLaunchMode(l, warn, step)
+}
+
+func prepareClaudeLaunchMode(l appLayout, warn io.Writer, step bool) ([]string, []string, error) {
 	if step {
 		now := time.Now()
 		if err := asideClaudeHomeConfig(l.Home, now); err != nil {

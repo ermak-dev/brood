@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"brood.dev/go/brood/proxmox/egress"
@@ -80,12 +81,31 @@ type Runtime struct {
 	quiesce chan quiesceRequest
 	once    sync.Once
 	err     error
+
+	stepOperation sync.Mutex // Serializes opted-in attestation and explicit session replacement.
+	stepMu        sync.Mutex
+	stepLaunch    *stepLaunch
+	inboxPolicy   *stepInboxSessionPolicy // Installed before advertising the prepared inbox.
+	heldInboxApp  atomic.Bool             // Remains true until the holder is physically retired.
+}
+
+type stepInboxSessionPolicy struct {
+	enter     func() error
+	authorize func(inboxProcessIdentity) error
+	leave     func() error
+}
+
+func (r *Runtime) stepInboxPolicy() *stepInboxSessionPolicy {
+	r.stepMu.Lock()
+	defer r.stepMu.Unlock()
+	return r.inboxPolicy
 }
 
 type quiesceRequest struct {
 	ctx   context.Context
 	run   func(context.Context) error
 	reply chan error
+	step  *stepLaunchRequest
 }
 
 // Quiesce stops every actor process, runs fn while none exists and relaunches
@@ -94,7 +114,11 @@ type quiesceRequest struct {
 // trace the fixed helper that fn starts. An unproven stop or a failed relaunch
 // ends the runtime, as a child exit would.
 func (r *Runtime) Quiesce(ctx context.Context, fn func(context.Context) error) error {
-	q := quiesceRequest{ctx: ctx, run: fn, reply: make(chan error, 1)}
+	return r.transition(ctx, fn, nil)
+}
+
+func (r *Runtime) transition(ctx context.Context, fn func(context.Context) error, step *stepLaunchRequest) error {
+	q := quiesceRequest{ctx: ctx, run: fn, reply: make(chan error, 1), step: step}
 	select {
 	case r.quiesce <- q:
 	case <-r.done:
@@ -139,7 +163,13 @@ func (*Runtime) TerminalDialTarget() string { return "127.0.0.1:8080" }
 func (r *Runtime) Wait() error { <-r.done; return r.err }
 
 // Close stops the whole actor before closing root services or removing rules.
-func (r *Runtime) Close() error { r.once.Do(func() { close(r.stop) }); return r.Wait() }
+func (r *Runtime) Close() error {
+	r.once.Do(func() {
+		close(r.stop)
+		r.revokeStepLaunch(nil)
+	})
+	return r.Wait()
+}
 
 // Start refuses missing dependencies and installs enforcement before any child.
 // An existing brood_guest nft table is an error, never overwritten or adopted.
@@ -219,15 +249,34 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		return fail(startErr)
 	}
 	r := &Runtime{done: make(chan struct{}), stop: make(chan struct{}), quiesce: make(chan quiesceRequest)}
-	wait := func(p Process) chan error {
+	wait := func(p Process, launch *stepLaunch) chan error {
 		done := make(chan error, 1)
-		go func() { done <- p.Wait() }()
+		go func() {
+			err := p.Wait()
+			done <- err
+			if launch != nil {
+				r.revokeStepLaunch(launch)
+			}
+		}()
 		return done
 	}
-	childDone := wait(process)
+	childDone := wait(process, nil)
 	go func() {
 		defer close(r.done)
 		childExited := false
+		var heldLaunch *stepLaunch
+		var heldRevoked <-chan struct{}
+		var activeInboxPolicy *stepInboxSessionPolicy
+		clearInboxPolicy := func() error {
+			if activeInboxPolicy == nil {
+				return nil
+			}
+			if err := activeInboxPolicy.leave(); err != nil {
+				return errors.New("guest inbox policy could not be restored")
+			}
+			activeInboxPolicy = nil
+			return nil
+		}
 		for running := true; running; {
 			select {
 			case err := <-childDone:
@@ -242,7 +291,41 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				running = false
 			case <-r.stop:
 				running = false
+			case <-heldRevoked:
+				// An exited holder ends the runtime as before. Its waiter publishes
+				// the exit before canceling launch authority.
+				select {
+				case r.err = <-childDone:
+					childExited, running = true, false
+					continue
+				default:
+				}
+				r.revokeStepLaunch(heldLaunch)
+				heldLaunch, heldRevoked = nil, nil
+				if err := process.Close(); err != nil {
+					cancel()
+					r.err = errors.Join(errors.New("revoked inbox holder could not be proven stopped"), err, services.Close())
+					return // Retain enforcement while descendants may still exist.
+				}
+				<-childDone
+				if err := clearInboxPolicy(); err != nil || ctx.Err() != nil || r.stopping() {
+					r.err = errors.Join(err, ctx.Err())
+					childExited, running = true, false
+					continue
+				}
+				next, err := d.Launch(ctx, spec)
+				if next != nil {
+					process, childDone = next, wait(next, nil)
+				}
+				if err != nil || next == nil {
+					r.err = errors.Join(errors.New("ordinary holder could not be restored after inbox revocation"), err)
+					childExited, running = next == nil, false
+					continue
+				}
+				r.heldInboxApp.Store(false)
 			case q := <-r.quiesce:
+				heldLaunch, heldRevoked = nil, nil
+				r.revokeStepLaunch(nil)
 				if err := process.Close(); err != nil {
 					// Как при остановке: недоказанная смерть потомков оставляет enforcement.
 					q.reply <- errors.New("actor processes could not be proven stopped; workspace not inspected")
@@ -252,6 +335,13 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				}
 				// Код выхода убитого актора — ожидаемое следствие, не отказ.
 				<-childDone
+				if err := clearInboxPolicy(); err != nil {
+					q.reply <- err
+					r.err = err
+					childExited, running = true, false
+					continue
+				}
+				r.heldInboxApp.Store(false)
 				runErr := r.runQuiet(ctx, q)
 				if ctx.Err() != nil || r.stopping() {
 					q.reply <- errors.Join(errors.New("guest runtime stopped during quiesce"), runErr)
@@ -259,9 +349,66 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 					childExited, running = true, false
 					continue
 				}
-				next, err := d.Launch(ctx, spec)
+				applied := runErr == nil && q.step != nil && q.step.applied()
+				nextSpec := spec
+				nextSpec.holdPTY = applied && q.step.inbox
+				if nextSpec.ptyStartHeld() {
+					if policy := r.stepInboxPolicy(); policy != nil {
+						// A failed publication may have renamed the drop-in before
+						// failing to sync it. Restore the baseline before any app.
+						activeInboxPolicy = policy
+						if err := policy.enter(); err != nil {
+							q.reply <- errors.New("guest inbox policy could not be prepared")
+							r.err = errors.New("guest inbox policy could not be prepared")
+							childExited, running = true, false
+							continue
+						}
+					}
+				}
+				next, err := d.Launch(ctx, nextSpec)
 				if next != nil {
-					process, childDone = next, wait(next)
+					var launch *stepLaunch
+					if err == nil && applied {
+						if nextSpec.ptyStartHeld() {
+							launch, err = r.recordHeldStepLaunch(ctx, q.step, next)
+						} else if ctx.Err() == nil {
+							launch = r.recordStepLaunch(q.step, next)
+						}
+						q.step.launch = launch
+					}
+					process, childDone = next, wait(next, launch)
+					if launch != nil && nextSpec.ptyStartHeld() {
+						heldLaunch, heldRevoked = launch, launch.ctx.Done()
+						r.heldInboxApp.Store(true)
+					}
+				}
+				if next != nil && errors.Is(err, errHeldStepLaunchRevoked) && ctx.Err() == nil && !r.stopping() {
+					// The exact attempt is over, not the runtime. Prove the held
+					// actor stopped before restoring a holder without an inbox launch.
+					if stopErr := process.Close(); stopErr != nil {
+						q.reply <- errors.New("revoked inbox actor could not be proven stopped")
+						cancel()
+						r.err = errors.Join(stopErr, services.Close())
+						return // Retain enforcement while descendants may still exist.
+					}
+					<-childDone
+					if err := clearInboxPolicy(); err != nil {
+						q.reply <- err
+						r.err = err
+						childExited, running = true, false
+						continue
+					}
+					next = nil
+					if ctx.Err() == nil && !r.stopping() {
+						next, err = d.Launch(ctx, spec)
+					}
+					if next != nil {
+						process, childDone = next, wait(next, nil)
+					}
+					if err == nil && next != nil {
+						q.reply <- errHeldStepLaunchRevoked
+						continue
+					}
 				}
 				if err != nil || next == nil {
 					q.reply <- errors.Join(errors.New("guest actor relaunch failed"), runErr)
@@ -272,6 +419,7 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				q.reply <- runErr
 			}
 		}
+		r.revokeStepLaunch(nil)
 		if err := process.Close(); err != nil {
 			// Retain enforcement if descendants cannot be proven dead.
 			cancel()
@@ -283,7 +431,7 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 			<-childDone
 		}
 		cancel()
-		r.err = errors.Join(r.err, services.Close(), cleanupRules())
+		r.err = errors.Join(r.err, clearInboxPolicy(), services.Close(), cleanupRules())
 	}()
 	return r, nil
 }

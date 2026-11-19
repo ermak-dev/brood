@@ -61,6 +61,7 @@ var schemaModules = []schemaModule{
 	{id: "swarm-eval", create: swarmEvalFullSchema, verify: verifySwarmEvalSchema},
 	{id: "pipeline-policy-review", create: pipelinePolicyReviewFullSchema, verify: verifyPipelinePolicyReviewSchema},
 	{id: "project-ownership", create: func() string { return projectOwnershipSchema }, verify: verifyProjectOwnershipSchema},
+	{id: "actor-delivery-inbox", create: actorDeliveryInboxFullSchema, verify: verifyActorDeliveryInboxSchema},
 }
 
 // verifySchemaModules сверяет базу с реестром: и при открытии текущей

@@ -50,11 +50,12 @@ type SwarmPassTraceRequest struct {
 	Delivery      *SwarmPassTraceDelivery
 }
 
-// SwarmPassTraceDelivery contains the original immutable payload and all saved
-// attempts, including reservations without a retained result.
+// SwarmPassTraceDelivery contains the original payload, saved native attempts,
+// and optional supervisor inbox evidence. Neither is authority to deliver.
 type SwarmPassTraceDelivery struct {
-	Intent   ActorDeliveryIntent
-	Attempts []ActorDeliveryObservation
+	Intent          ActorDeliveryIntent
+	Attempts        []ActorDeliveryObservation
+	SupervisorInbox *ActorDeliveryInboxState
 }
 
 // SwarmPassTraceGap names unavailable history without reconstructing an effect.
@@ -222,5 +223,12 @@ func (s *Store) passTraceDelivery(ctx context.Context, swarmID, kind, source str
 	if err != nil {
 		return nil, err
 	}
-	return &SwarmPassTraceDelivery{Intent: intent, Attempts: attempts}, nil
+	result := &SwarmPassTraceDelivery{Intent: intent, Attempts: attempts}
+	inbox, err := s.ActorDeliveryInboxStatus(ctx, intent.ID)
+	if err == nil {
+		result.SupervisorInbox = &inbox
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	return result, nil
 }

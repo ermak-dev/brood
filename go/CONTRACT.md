@@ -496,6 +496,13 @@ acceptance nonce, HMAC signature, machine token и session hashes в DTO не в
 number/mode/createdAt/deadlineAt, `resultRetained`, исход/detail/observedAt при
 наличии. `childInstructions` сохраняет такую же проекцию typed child delivery.
 Отсутствующая квитанция не выдумывается как известный `not_sent`.
+При сохранённом выборе inbox поле `supervisorInbox` содержит `receiverId`,
+`payloadDigest` (SHA-256 точных байтов frame) и последнюю сохранённую веху
+`milestone`: `selected`, `admitted_to_supervisor_inbox` или
+`dispatch_permit_reserved`. Резерв создаётся до отправки разрешения и не
+подтверждает, что гость его получил. Ни одна из вех не подтверждает доставку
+в Claude или исход шага. Само разрешение и идентификатор запуска не выдаются.
+У доставки без выбранного inbox этого поля нет.
 `ephemeralJobs` показывает сохранённый intent, необязательные allocation и
 `childId`, а также раздельные `failure` до регистрации и `executorFailure`
 после регистрации; эти факты не являются actor report или cleanup grant.

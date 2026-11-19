@@ -123,6 +123,11 @@ func (d *actorDeliveryService) authority(ctx context.Context, intent store.Actor
 
 func (d *actorDeliveryService) attempt(ctx context.Context, intent store.ActorDeliveryIntent, authorize func(context.Context) bool) (string, error) {
 	s := d.server
+	if _, err := s.store.ActorDeliveryInboxStatus(ctx, intent.ID); !errors.Is(err, store.ErrNotFound) {
+		// Native callers must neither send nor project an outcome once custody
+		// transport is pinned (or when the selection cannot be read safely).
+		return "", errors.Join(errActorDeliveryInboxProtected, err)
+	}
 	history, err := s.store.GetActorDeliveryHistory(ctx, intent.ID)
 	if err != nil {
 		return "", err
@@ -220,6 +225,9 @@ func (d *actorDeliveryService) answer(ctx context.Context, user store.User, curr
 		return current, "delivery unavailable", true
 	}
 	outcome, err := d.attempt(ctx, intent, local)
+	if errors.Is(err, errActorDeliveryInboxProtected) {
+		return current, errActorDeliveryInboxProtected.Error(), true
+	}
 	if errors.Is(err, store.ErrActorDeliveryPending) {
 		return current, "delivery retry is waiting for persisted backoff", true
 	}

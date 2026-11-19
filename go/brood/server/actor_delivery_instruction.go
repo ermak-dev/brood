@@ -98,7 +98,7 @@ func (d *actorDeliveryService) recoverStep(parent context.Context, candidate sto
 func (d *actorDeliveryService) deliverInstruction(ctx context.Context, intent store.ActorDeliveryIntent) {
 	local := func(ctx context.Context) bool { return d.instructionAuthority(ctx, intent.Input) }
 	outcome, err := d.attempt(ctx, intent, local)
-	if err == nil && (outcome == "delivered" || outcome == "duplicate") {
+	if errors.Is(err, errActorDeliveryInboxProtected) || err == nil && (outcome == "delivered" || outcome == "duplicate") {
 		return
 	}
 	detail := "instruction delivery outcome is unknown; only a read-only receipt probe is permitted"

@@ -139,7 +139,7 @@ func (s *Server) deliverEphemeralChild(parentCtx context.Context, userID string,
 		return store.ActorDeliveryIntent{}, "", err
 	}
 	// Фоновый worker берёт тот же retained ID, не child/request/actor alias.
-	unlock, err := s.actorDelivery.lockChild(ctx, intent.ID)
+	unlock, err := s.actorDelivery.lockDelivery(ctx, intent.ID)
 	if err != nil {
 		return intent, "", err
 	}
@@ -151,7 +151,7 @@ func (s *Server) deliverEphemeralChild(parentCtx context.Context, userID string,
 // Существующие deliveryLocks не имеют cancellable wait. Не оставляем goroutine
 // ждать mutex после отмены; короткий bounded retry использует тот же tryLock,
 // что worker, и не меняет порядок/права каких-либо внешних эффектов.
-func (d *actorDeliveryService) lockChild(ctx context.Context, id string) (func(), error) {
+func (d *actorDeliveryService) lockDelivery(ctx context.Context, id string) (func(), error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err

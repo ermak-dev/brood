@@ -52,7 +52,7 @@ func inheritedActorListener(file *os.File, path string, owner uint32) (net.Liste
 	return listener, nil
 }
 
-func runActorPTY(executable string, driftty bool) error {
+func runActorPTY(executable string, driftty, oneShot bool) error {
 	inherited := os.NewFile(3, "actor-pty-listener")
 	if inherited == nil {
 		return errors.New("inherited PTY listener is required")
@@ -64,7 +64,12 @@ func runActorPTY(executable string, driftty bool) error {
 		return err
 	}
 	defer listener.Close()
-	host, err := ptysession.New(actorPTYConfig(executable))
+	config := actorPTYConfig(executable)
+	if oneShot {
+		config.OneShot = true
+		config.Command = []string{executable, "--brood-guest-inbox-app"}
+	}
+	host, err := ptysession.New(config)
 	if err != nil {
 		return errors.New("cannot initialize actor PTY host")
 	}

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -32,6 +33,8 @@ type config struct {
 	hosts             []string
 	relay             relay.ClientConfig
 	deliveryDirectory string
+	stepLaunchBinding bool
+	supervisorInbox   bool
 	// workspace не секретен: origin и режим клона (#147) и Git-идентичность
 	// актора (#249), как их отдал сервер.
 	workspace guest.WorkspaceOrigin
@@ -58,14 +61,21 @@ type swarmBroker interface {
 	ServeSession(context.Context, relay.SwarmCaller)
 }
 
+// preparedInboxStart activates the exact inbox only after the root runtime exists.
+type preparedInboxStart func(context.Context, *guest.Runtime, *relay.ClientConfig) (io.Closer, error)
+
 type dependencies struct {
 	deliveryDirectory func(context.Context) (string, error)
 	deliveryJournal   func(context.Context, string, deliverylog.Scope) (*deliverylog.Journal, error)
+	prepareInbox      func(context.Context, string) (preparedInboxStart, error)
 	app               func() error
+	inboxApp          func() error
 	secrets           func(context.Context, relay.ClientConfig) error
 	actor             func() error
+	heldActor         func() error
 	attach            func(context.Context) error
 	message           func(context.Context) error
+	inbox             func(context.Context) error
 	session           func(context.Context) error
 	mcp               func(context.Context) error
 	broker            func(context.Context) (swarmBroker, error)
@@ -89,8 +99,12 @@ type dependencies struct {
 
 func parseConfig(env []string) (config, error) {
 	var c config
-	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true}
-	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true}
+	const (
+		stepLaunchBindingEnv = "BROOD_GUEST_STEP_LAUNCH_BINDING"
+		supervisorInboxEnv   = "BROOD_GUEST_SUPERVISOR_INBOX"
+	)
+	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true, stepLaunchBindingEnv: true, supervisorInboxEnv: true}
+	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true, stepLaunchBindingEnv: true, supervisorInboxEnv: true}
 	values := map[string]string{}
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
@@ -120,6 +134,19 @@ func parseConfig(env []string) (config, error) {
 			return config{}, errors.New("invalid BROOD_GUEST_DELIVERY_STATE_DIR")
 		}
 		c.deliveryDirectory = directory
+	}
+	if value, present := values[stepLaunchBindingEnv]; present {
+		if value != "1" {
+			return config{}, fmt.Errorf("invalid %s", stepLaunchBindingEnv)
+		}
+		c.stepLaunchBinding = true
+	}
+	if value, present := values[supervisorInboxEnv]; present {
+		if value != "1" {
+			return config{}, fmt.Errorf("invalid %s", supervisorInboxEnv)
+		}
+		c.supervisorInbox = true
+		c.stepLaunchBinding = true
 	}
 	switch values["BROOD_GUEST_STAGE"] {
 	case "":
@@ -209,14 +236,23 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	if len(args) == 1 && args[0] == "--brood-guest-app" {
 		return d.app()
 	}
+	if len(args) == 1 && args[0] == "--brood-guest-inbox-app" && d.inboxApp != nil {
+		return d.inboxApp()
+	}
 	if len(args) == 1 && args[0] == "--brood-guest-actor" {
 		return d.actor()
+	}
+	if len(args) == 1 && args[0] == "--brood-guest-actor-held" && d.heldActor != nil {
+		return d.heldActor()
 	}
 	if len(args) == 1 && args[0] == "--brood-guest-attach" {
 		return d.attach(ctx)
 	}
 	if len(args) == 1 && args[0] == "--brood-guest-message" {
 		return d.message(ctx)
+	}
+	if len(args) == 1 && args[0] == "--brood-guest-inbox" {
+		return d.inbox(ctx)
 	}
 	if len(args) == 1 && args[0] == "--brood-guest-session" {
 		return d.session(ctx)
@@ -277,6 +313,22 @@ func supervise(parent context.Context, c config, d dependencies) error {
 			cancel()
 			boundedClose(network)
 			return errors.New("guest delivery image configuration unavailable or unsafe")
+		}
+	}
+	var startInbox preparedInboxStart
+	if c.supervisorInbox {
+		if c.deliveryDirectory == "" {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest supervisor inbox requires durable delivery state")
+		}
+		if d.prepareInbox != nil {
+			startInbox, err = d.prepareInbox(ctx, c.deliveryDirectory)
+		}
+		if err != nil || startInbox == nil {
+			cancel()
+			boundedClose(network)
+			return errors.New("guest supervisor inbox requires a prepared managed loader")
 		}
 	}
 	if c.deliveryDirectory != "" {
@@ -368,7 +420,31 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		return errors.New("guest policy or actor initialization failed")
 	}
 	// Подпись — от bootstrap-идентичности root, остановка — через сам runtime.
-	attestor := guest.NewWorkspaceAttestor(cfg, c.workspace, runtime.Quiesce)
+	var attestor *guest.WorkspaceAttestor
+	if c.stepLaunchBinding || startInbox != nil {
+		owner, ok := runtime.(*guest.Runtime)
+		if !ok || owner == nil {
+			cancel()
+			err := errors.New("guest step launch binding requires the owning runtime")
+			if runtime == nil || ok {
+				return errors.Join(err, boundedClose(network))
+			}
+			return errors.Join(err, boundedClose(runtime, network))
+		}
+		if startInbox != nil {
+			broker, err := startInbox(ctx, owner, &c.relay)
+			if broker != nil {
+				defer broker.Close()
+			}
+			if err != nil || broker == nil || c.relay.HandleInbox == nil || c.relay.InboxReceiverID == "" {
+				cancel()
+				return errors.Join(errors.New("guest supervisor inbox broker initialization failed"), boundedClose(runtime, network))
+			}
+		}
+		attestor = owner.NewStepLaunchWorkspaceAttestor(c.relay, c.workspace)
+	} else {
+		attestor = guest.NewWorkspaceAttestor(cfg, c.workspace, runtime.Quiesce)
+	}
 	c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
 		return releaseSessions(artifactRoot, guest.NewSupervisorSessionHandler(connection, refresh, attestor))
 	}
@@ -504,17 +580,24 @@ func main() {
 	defer stop()
 	d := dependencies{deliveryDirectory: func(ctx context.Context) (string, error) {
 		return guest.ReadSupervisorDeliveryDirectory(ctx, "/etc/brood")
-	}, deliveryJournal: guest.OpenSupervisorDeliveryJournal, app: func() error { return guest.RunProjectApp(os.Stderr) }, boot: guest.RunSessionAutostart, autorun: func(ctx context.Context) {
+	}, deliveryJournal: guest.OpenSupervisorDeliveryJournal, prepareInbox: func(ctx context.Context, directory string) (preparedInboxStart, error) {
+		profile, err := guest.PrepareStepInbox(ctx, directory)
+		if err != nil {
+			return nil, err
+		}
+		return profile.Start, nil
+	}, app: func() error { return guest.RunProjectApp(os.Stderr) }, inboxApp: func() error { return guest.RunInboxProjectApp(os.Stderr) }, boot: guest.RunSessionAutostart, autorun: func(ctx context.Context) {
 		guest.AutostartSession(ctx, func(err error) { fmt.Fprintln(os.Stderr, err) })
-	}, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, attach: guest.RunPTYAttach, message: runMessageHelper, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
-		return guest.StartModelGateway(ctx, cfg)
-	}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
-		return guest.StartGitGateway(ctx, cfg)
-	}, origin: refreshWorkspaceBootstrap, euid: os.Geteuid, network: startDHCP, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
-		return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
-	}, startPolicy: func(ctx context.Context, network *egress.Policy) (actorRuntime, error) {
-		return guest.Start(ctx, guest.Config{Network: network, Dependencies: guest.SystemDependencies()})
-	}, relay: relay.RunClient}
+	}, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, heldActor: guest.RunHeldActor, attach: guest.RunPTYAttach, message: runMessageHelper,
+		inbox: func(ctx context.Context) error { return guest.RunInboxHelper(ctx, os.Stdin, os.Stdout) }, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+			return guest.StartModelGateway(ctx, cfg)
+		}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
+			return guest.StartGitGateway(ctx, cfg)
+		}, origin: refreshWorkspaceBootstrap, euid: os.Geteuid, network: startDHCP, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
+			return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
+		}, startPolicy: func(ctx context.Context, network *egress.Policy) (actorRuntime, error) {
+			return guest.Start(ctx, guest.Config{Network: network, Dependencies: guest.SystemDependencies()})
+		}, relay: relay.RunClient}
 	err := dispatch(ctx, os.Args[1:], func() []string {
 		env := os.Environ()
 		os.Clearenv()
@@ -525,7 +608,9 @@ func main() {
 		return env
 	}, d)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if !errors.Is(err, guest.ErrInboxHandoffWaiting) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
