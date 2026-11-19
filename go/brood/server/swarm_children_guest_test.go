@@ -382,6 +382,9 @@ func TestChildGuestServerRestartRetainsSending(t *testing.T) {
 	if recovered.Task.State != "running" || recovered.Task.Delivery != "unconfirmed" || received.Load() != 0 {
 		t.Fatalf("restart forgot or resent possible effects: %+v", recovered)
 	}
+	// Стартовая сверка может поменять ревизию между Get и Begin. Дожидаемся
+	// её остановки, чтобы проверка удержания не превращалась в проверку CAS.
+	restarted.managed.stopReconcile()
 	a, err := restarted.store.GetManagedActor(ctx, d.worker.UID)
 	if err != nil {
 		t.Fatal(err)
