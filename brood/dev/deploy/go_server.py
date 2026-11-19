@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import socket
 import ssl
+import stat
 from urllib.parse import urlsplit
 import tempfile
 import uuid
@@ -659,6 +660,42 @@ class Deploy:
                 "-o", str(work / name), package, cwd=str(self.project / "go"))
             if code or not (work / name).is_file():
                 raise RuntimeError(f"guest bootstrap artifact build failed: {name}: " + err[-2000:])
+        claude_bytes = self._read_bootstrap_claude(work, pins)
+        # Запись «имя NUL размер NUL байты»: ELF содержит нули, поэтому длина
+        # задаётся явно, а не разделителем после байтов.
+        chunks = []
+        for name in ("bro", "brood-guest", "claude"):
+            binary = claude_bytes if name == "claude" else (work / name).read_bytes()
+            chunks.extend((name.encode() + b"\0" + str(len(binary)).encode() + b"\0", binary))
+        return b"".join(chunks)
+
+    def _read_bootstrap_claude(self, work, pins):
+        incoming = self.project / ".brood-deploy-artifacts"
+        try:
+            directory = incoming.lstat()
+        except FileNotFoundError:
+            claude = self._download_bootstrap_claude(work, pins)
+        except OSError:
+            raise RuntimeError("invalid transferred Claude artifact") from None
+        else:
+            claude = incoming / "claude"
+            if not stat.S_ISDIR(directory.st_mode):
+                raise RuntimeError("invalid transferred Claude artifact")
+            try:
+                metadata = claude.lstat()
+            except OSError:
+                raise RuntimeError("invalid transferred Claude artifact") from None
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise RuntimeError("invalid transferred Claude artifact")
+        try:
+            binary = claude.read_bytes()
+        except OSError:
+            raise RuntimeError("guest bootstrap claude artifact could not be read for SHA-256 verification") from None
+        if hashlib.sha256(binary).hexdigest() != pins["CLAUDE_SHA256"]:
+            raise RuntimeError("guest bootstrap claude artifact SHA-256 mismatch")
+        return binary
+
+    def _download_bootstrap_claude(self, work, pins):
         claude = work / "claude"
         # Продолжаем только свой частичный файл после тайм-аута. Ошибка HTTP,
         # неподдерживаемый Range или любой другой отказ не разрешает повтор.
@@ -667,23 +704,11 @@ class Deploy:
                 "--proto", "=https", "--proto-redir", "=https", "--connect-timeout", "20",
                 "--max-time", "150", "--continue-at", "-", "-o", str(claude),
                 f"https://downloads.claude.ai/claude-code-releases/{pins['CLAUDE_VERSION']}/linux-x64/claude")
+            if code == 0:
+                return claude
             if code != 28:
                 break
-        if code:
-            raise RuntimeError(f"guest bootstrap claude artifact download failed (curl exit {code})")
-        try:
-            claude_bytes = claude.read_bytes()
-        except OSError:
-            raise RuntimeError("guest bootstrap claude artifact could not be read for SHA-256 verification") from None
-        if hashlib.sha256(claude_bytes).hexdigest() != pins["CLAUDE_SHA256"]:
-            raise RuntimeError("guest bootstrap claude artifact SHA-256 mismatch")
-        # Запись «имя NUL размер NUL байты»: ELF содержит нули, поэтому длина
-        # задаётся явно, а не разделителем после байтов.
-        chunks = []
-        for name in ("bro", "brood-guest", "claude"):
-            binary = claude_bytes if name == "claude" else (work / name).read_bytes()
-            chunks.extend((name.encode() + b"\0" + str(len(binary)).encode() + b"\0", binary))
-        return b"".join(chunks)
+        raise RuntimeError(f"guest bootstrap claude artifact download failed (curl exit {code})")
 
     def publish_bootstrap_artifacts(self, stream):
         """Публикует готовый поток в PVC через brood artifacts после rollout."""

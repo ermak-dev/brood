@@ -406,6 +406,49 @@ class GoManifestTests(unittest.TestCase):
                 self.assertEqual(len(downloads), len(codes))
                 shell.output_bytes.assert_not_called()
 
+    # BUG: Подготовка зависит от CDN даже при доступном проверенном бинарнике CI.
+    # HYPOTHESIS: Машина выкладки игнорирует переданный артефакт релиза.
+    def test_prepared_claude_is_rehashed_and_never_downloaded_again(self):
+        pinned = b"\x7fELFclaude-pinned"
+        for kind, reason in (("valid", None), ("bad hash", "SHA-256 mismatch"),
+                             ("absent payload", "invalid transferred Claude artifact"),
+                             ("payload symlink", "invalid transferred Claude artifact"),
+                             ("payload hardlink", "invalid transferred Claude artifact"),
+                             ("directory symlink", "invalid transferred Claude artifact")):
+            with self.subTest(kind=kind):
+                deploy, _, root = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
+                incoming = deploy.project / ".brood-deploy-artifacts"
+                actual = root / "real"
+                actual.mkdir()
+                (actual / "claude").write_bytes(pinned)
+                if kind == "directory symlink":
+                    incoming.symlink_to(actual, target_is_directory=True)
+                else:
+                    incoming.mkdir()
+                    binary = incoming / "claude"
+                    if kind == "payload symlink":
+                        binary.symlink_to(actual / "claude")
+                    elif kind == "payload hardlink":
+                        binary.hardlink_to(actual / "claude")
+                    elif kind != "absent payload":
+                        binary.write_bytes(b"synthetic invalid bytes" if kind == "bad hash" else pinned)
+                shell = deploy.cluster.shell
+                normal_output = shell.output.side_effect
+
+                def output(*argv, **kwargs):
+                    self.assertNotEqual(argv[0], "curl", "transferred artifact must not trigger a download")
+                    return normal_output(*argv, **kwargs)
+
+                shell.output.side_effect = output
+                if reason is None:
+                    stream = deploy.prepare_bootstrap_artifacts(root)
+                    self.assertTrue(stream.endswith(b"claude\0" + str(len(pinned)).encode() + b"\0" + pinned))
+                else:
+                    with self.assertRaisesRegex(RuntimeError, reason):
+                        deploy.prepare_bootstrap_artifacts(root)
+                self.assertFalse(any("apply" in invocation.args for invocation in shell.output.call_args_list))
+                shell.output_bytes.assert_not_called()
+
     def test_foreign_tls_secret_created_during_prepare_stops_before_apply(self):
         deploy, _, _ = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
         shell = deploy.cluster.shell
