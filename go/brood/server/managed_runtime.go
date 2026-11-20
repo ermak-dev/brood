@@ -337,6 +337,14 @@ func (m *managedProvider) launch(ctx context.Context, client proxmoxAPI, a store
 			err = imageErr
 		case clone:
 			upid, err = client.Clone(ctx, imageOwned(image), m.agentSpec(a))
+			if err == nil {
+				// PVE держит замок на шаблоне, пока идёт клон: второй клон
+				// того же образа в это время получил бы отказ с неизвестным
+				// исходом. Вызывающий держит lifecycle, поэтому ожидание
+				// задачи здесь выстраивает клоны в очередь. Исход задачи
+				// читает reconcile по записанному UPID.
+				_ = client.WaitTask(ctx, upid)
+			}
 		default:
 			upid, err = client.Create(ctx, m.agentSpec(a))
 		}

@@ -260,7 +260,12 @@ func (o *managedWorkloadOperation) Apply() error {
 		}
 		// Stop/start/reset require a reconciled task slot, not merely a terminal
 		// diagnostic phase. Delete may settle a known prior task before cleanup.
-		if a.Stage != "done" && !waiting && (o.action != "delete" || a.UPID == "" || a.Stage == "delete" || a.Operation == "reset") {
+		// Создание, на которое PVE не вернул задачу, и контейнера с этим
+		// номером нет: удаление снимает запись. Запрос, принятый PVE после
+		// потери ответа, оставил бы контейнер без записи, поэтому отсутствие
+		// проверяется прямо перед удалением, а не берётся из прошлого прохода.
+		unborn := o.action == "delete" && a.Stage == "create" && a.UPID == "" && a.Operation == "create" && client.ConfirmAbsent(o.context, a.CTID) == nil
+		if a.Stage != "done" && !waiting && !unborn && (o.action != "delete" || a.UPID == "" || a.Stage == "delete" || a.Operation == "reset") {
 			return fmt.Errorf("%w: previous provider outcome is uncertain; allocation retained", app.ErrConflict)
 		}
 		if a.Stage != "done" && a.UPID != "" {
