@@ -154,10 +154,12 @@ store нужен docker-container builder, выбранный через `BUILDX
 запускает интерактивный терминал. Обе цели разделяют environment `workbench`.
 Внешние Git-источники получаются по закреплённому commit. Клон Substrate
 оператора, локальный кластер и login в brood для plan/export не требуются.
-Корневой Broodfile использует приватный Substrate-форк: хостовому Git нужен
-read access либо явно настроенный проверенный checkout-кэш. Это отдельное
-право на исходники, не сессия brood. SSH keys, credential helpers и локальная
-Git-конфигурация не попадают в экспортированный source или образ.
+Корневой Broodfile использует `https://github.com/ermak-dev/substrate.git`
+и закреплённый commit; предполагается опубликовать его в ветке `brood`.
+До публикации репозитория и commit сетевое получение невозможно; нужен явно
+настроенный проверенный checkout-кэш.
+Доступ Git к исходникам не является сессией brood. SSH keys, credential helpers
+и локальная Git-конфигурация не попадают в экспортированный source или образ.
 
 ## Документ
 

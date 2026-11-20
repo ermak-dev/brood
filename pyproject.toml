@@ -2,6 +2,7 @@
 name = "brood"
 version = "0.1.0"
 description = "An agent pool on Agent Substrate"
+license = "MIT"
 requires-python = ">=3.12"
 
 # Python нужен только dev-инструментам; common обходится stdlib.
