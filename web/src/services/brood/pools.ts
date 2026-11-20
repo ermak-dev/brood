@@ -20,7 +20,11 @@ export interface PoolUsage {
 export interface Pool {
   name: string;
   endpoint: string;
+  tokenID: string;
   node: string;
+  resourcePool: string;
+  storage: string;
+  network: string;
   /** The connection can be activated: template and capacity are installed. */
   runtimeAvailable: boolean;
   /** Present once the pool is activated. */

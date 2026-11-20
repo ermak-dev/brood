@@ -17,9 +17,23 @@ export interface Agent {
   role: string;
   /** provisioning, running, stopping, stopped, error or deleting. */
   phase: string;
+  /** The server's diagnostic in English and its stable code; both empty when fine. */
   error: string;
+  errorCode: string;
   pool: string;
+  /** The Proxmox node of the pool. */
+  node: string;
   ctid: number | null;
+  /** The pool profile the agent was created from. */
+  profile: string;
+  /** The repository cloned into the workspace; '' when none. */
+  origin: string;
+  /** What the pool gives the agent; decimal strings, '' when unknown. */
+  cpuMillicores: string;
+  memoryBytes: string;
+  diskBytes: string;
+  /** RFC 3339. */
+  createdAt: string;
 }
 
 export interface NewAgent {
@@ -36,8 +50,14 @@ interface WireAgent {
   projectName?: string;
   role?: string;
   phase?: string;
-  status?: { errorMessage?: string };
-  placement?: { ctid?: number; pool?: string };
+  status?: { errorMessage?: string; errorCode?: string };
+  placement?: { ctid?: number; pool?: string; node?: string };
+  profile?: string;
+  origin?: string;
+  templateDefinition?: {
+    resources?: { cpuMillicores?: string; memoryBytes?: string; diskBytes?: string };
+  };
+  createdAt?: string;
 }
 
 const fromWire = (wire: WireAgent): Agent => ({
@@ -49,8 +69,16 @@ const fromWire = (wire: WireAgent): Agent => ({
   role: wire.role ?? '',
   phase: wire.phase ?? '',
   error: wire.status?.errorMessage ?? '',
+  errorCode: wire.status?.errorCode ?? '',
   pool: wire.placement?.pool ?? '',
+  node: wire.placement?.node ?? '',
   ctid: wire.placement?.ctid || null,
+  profile: wire.profile ?? '',
+  origin: wire.origin ?? '',
+  cpuMillicores: wire.templateDefinition?.resources?.cpuMillicores ?? '',
+  memoryBytes: wire.templateDefinition?.resources?.memoryBytes ?? '',
+  diskBytes: wire.templateDefinition?.resources?.diskBytes ?? '',
+  createdAt: wire.createdAt ?? '',
 });
 
 const segment = encodeURIComponent;
@@ -80,5 +108,9 @@ export const agentsApi = {
     request<unknown>('POST', agentPath(swarm, name), { action }),
   remove: (swarm: string, name: string) => request<void>('DELETE', agentPath(swarm, name)),
   /** A GET here issues a short-lived actor view and redirects to the terminal. */
-  terminal: (swarm: string, name: string) => `${swarmPath(swarm)}/proxy/actors/${segment(name)}/`,
+  terminal: (swarm: string, name: string) =>
+    `${swarmPath(swarm)}/proxy/actors/${segment(name)}/?mode=rw`,
+  /** The same session as a read-only snapshot: nothing typed reaches the agent. */
+  view: (swarm: string, name: string) =>
+    `${swarmPath(swarm)}/proxy/actors/${segment(name)}/?mode=ro`,
 };
