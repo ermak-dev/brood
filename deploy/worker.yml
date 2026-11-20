@@ -1,0 +1,74 @@
+---
+# Образ воркера проекта brood: `bro build` просит сервер сыграть этот
+# плейбук в сборочном контейнере Debian (ansible-playbook -c local) и
+# превратить контейнер в шаблон. Воркеры проекта — клоны шаблона.
+#
+# Плейбук идемпотентен и ставит только то, чем агент работает над этим
+# репозиторием: Go из brood/dev/pins.json, Python с venv и обычные
+# инструменты разработчика. Агента brood, ttyd и Claude Code сюда не кладём:
+# их ставит и обновляет сам сервер.
+- name: brood worker image
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+
+  vars:
+    pins: "{{ lookup('ansible.builtin.file', playbook_dir + '/../brood/dev/pins.json') | from_json }}"
+    go_archive: "go{{ pins.GO_VERSION }}.linux-amd64.tar.gz"
+
+  tasks:
+    - name: Developer packages
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - curl
+          - git
+          - jq
+          - make
+          - python3
+          - python3-venv
+          - ripgrep
+          - unzip
+        state: present
+        install_recommends: false
+        update_cache: true
+
+    - name: Installed Go version
+      ansible.builtin.command: /usr/local/go/bin/go env GOVERSION
+      register: go_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Go toolchain from the pins
+      when: go_installed.stdout | default('') != 'go' + pins.GO_VERSION
+      block:
+        - name: Download the pinned Go archive
+          ansible.builtin.get_url:
+            url: "https://go.dev/dl/{{ go_archive }}"
+            dest: "/tmp/{{ go_archive }}"
+            checksum: "sha256:{{ pins.GO_SHA256 }}"
+            mode: "0644"
+
+        - name: Remove the previous Go
+          ansible.builtin.file:
+            path: /usr/local/go
+            state: absent
+
+        - name: Unpack Go
+          ansible.builtin.unarchive:
+            src: "/tmp/{{ go_archive }}"
+            dest: /usr/local
+            remote_src: true
+
+        - name: Remove the archive
+          ansible.builtin.file:
+            path: "/tmp/{{ go_archive }}"
+            state: absent
+
+    - name: Go on the PATH of every login shell
+      ansible.builtin.copy:
+        dest: /etc/profile.d/brood-go.sh
+        mode: "0644"
+        content: |
+          export PATH=/usr/local/go/bin:$PATH

@@ -182,7 +182,7 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	}
 	if inv.Name == "add" {
 		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
-		if err != nil || pool.Template != from.Template || pool.SourceFingerprint != from.SourceFingerprint {
+		if err != nil || pool.SourceFingerprint != from.SourceFingerprint {
 			return command.Result{}, command.Refuse(nil, "actor creation refused: approved managed pool binding is unavailable")
 		}
 		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, args.Name, pool, "worker", args.Origin, &from)

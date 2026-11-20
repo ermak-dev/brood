@@ -38,10 +38,6 @@ func publicProjectSyncError(body io.Reader) string {
 	switch response.Detail {
 	case "invalid or oversized project declaration":
 		return "invalid or oversized project declaration"
-	case "workflow limit exceeded: too many workflow definitions":
-		return "workflow limit exceeded: too many workflow definitions"
-	case "workflow limit exceeded: workflow definition batch exceeds size limit":
-		return "workflow limit exceeded: workflow definition batch exceeds size limit"
 	default:
 		return ""
 	}

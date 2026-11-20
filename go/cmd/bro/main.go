@@ -39,7 +39,7 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 	var err error
 	if options.guest {
 		switch args[0] {
-		case "login", "logout", "whoami", "projects", "push", "secret":
+		case "login", "logout", "whoami", "projects", "image", "secret":
 			fmt.Fprintln(diagnostic, "operator command is unavailable in guest mode")
 			return 1
 		}
@@ -55,8 +55,8 @@ func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic
 		err = c.auth(ctx, "projects", rest)
 	case "build":
 		err = c.build(ctx, args[1:], options.guest)
-	case "push":
-		err = c.push(ctx, args[1:])
+	case "image":
+		err = c.image(ctx, args[1:])
 	case "secret":
 		err = c.secret(ctx, args[1:])
 	case "help", "-h", "--help":
@@ -86,8 +86,8 @@ commands:
   logout [server] [--ca FILE]     revoke the server session, then clear local storage
   whoami [server] [--ca FILE]     print the current user
   projects list [server] [--ca FILE]  list accessible projects
-  build [target] [options]       build current files into local OCI artifacts
-  push [target] [options]        upload built images and template to the current server
+  build [options]                 synchronize the project and build its worker image on the server
+  image list|delete [options]     list or delete the project's worker images
   secret [options]                manage project secrets on the current server
   mcp                           serve catalog tools over stdio
   <catalog command>             execute a scoped orchestration command

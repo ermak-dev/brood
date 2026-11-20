@@ -355,7 +355,10 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		}
 		a.ClusterIdentity = p.Source.ClusterIdentity
 		a.SourceFingerprint = p.SourceFingerprint
-		a.Template = p.Template
+		// Клон образа проекта называет образ сам; иначе базовый шаблон пула.
+		if _, image := ProjectImageFromURI(a.Template.URI); !image {
+			a.Template = p.Template
+		}
 		a.Incarnation = 1
 		a.Phase = "provisioning"
 		a.Desired = "running"

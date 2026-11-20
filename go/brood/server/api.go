@@ -221,6 +221,12 @@ func (s *Server) handleProjectDelete(w http.ResponseWriter, r *http.Request) {
 		if current.Disabled || !current.IsAdmin {
 			return app.ErrNotAllowed
 		}
+		// Образ проекта — контейнер в PVE: его удаляют явно, до проекта.
+		if images, err := s.store.ProjectHasImages(ctx, id); err != nil {
+			return err
+		} else if images {
+			return &app.APIError{Status: http.StatusConflict, Detail: "the project has images; delete them first"}
+		}
 		return s.store.DeleteProjectWithoutSwarms(ctx, id)
 	})
 	if err != nil {

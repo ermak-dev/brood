@@ -99,6 +99,10 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	if err != nil {
 		return nil, err
 	}
+	if err := st.FailBuildingProjectImages(ctx); err != nil {
+		catalog.Close()
+		return nil, errors.New("project image recovery failed")
+	}
 	if err := st.RecoverActorOperations(ctx); err != nil {
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
@@ -144,6 +148,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountGitCredentials()
 	srv.mountGitRepositories()
 	srv.mountProjectOwnership()
+	srv.mountProjectImages()
 	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)

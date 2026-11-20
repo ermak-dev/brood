@@ -223,7 +223,11 @@ func (o *managedWorkloadOperation) Apply() error {
 		if o.parent != nil {
 			parentUID = o.parent.UID
 		}
-		a, err = o.server.reserveManagedActorOrigin(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
+		template, err := m.imageTemplate(o.context, o.swarm.ProjectID, o.pool)
+		if err != nil {
+			return err
+		}
+		a, err = o.server.reserveManagedActorOrigin(o.context, store.ManagedActor{Template: template, Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
 		if err != nil {
 			return err
 		}
@@ -419,7 +423,7 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 	if parent != nil {
 		a, err := s.store.LookupManagedActor(ctx, sw.ID, op.name)
 		if err == nil {
-			if a.ParentUID != parent.UID || a.PoolUID != pool.UID || a.Template != parent.Template {
+			if a.ParentUID != parent.UID || a.PoolUID != pool.UID {
 				return store.ManagedActor{}, app.ErrExists
 			}
 			if origin != "" {

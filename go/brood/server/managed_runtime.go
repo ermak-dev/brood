@@ -42,6 +42,7 @@ type proxmoxAPI interface {
 	Resize(context.Context, proxmox.OwnedCT, int, int) error
 	ConvertToTemplate(context.Context, proxmox.OwnedCT) error
 	Stop(context.Context, proxmox.OwnedCT) (string, error)
+	Shutdown(context.Context, proxmox.OwnedCT) (string, error)
 	Delete(context.Context, proxmox.OwnedCT) (string, error)
 	Close()
 }
@@ -71,7 +72,10 @@ type managedRuntime struct {
 	// agentHostKeys — ключ хоста контейнера, принятый при первом входе.
 	identity       *sshboot.Identity
 	agentInstalled sync.Map
-	agentHostKeys  sync.Map
+	// buildContext — время жизни сборок образов; его отменяет остановка
+	// сервера.
+	buildContext  context.Context
+	agentHostKeys sync.Map
 	// Швы прохода reconcile: nil и 0 значат time.Now и managedPassTimeout.
 	now         func() time.Time
 	passTimeout time.Duration
@@ -162,6 +166,7 @@ func (m *managedProvider) initialize(cfg Config) error {
 }
 func (m *managedProvider) start(ctx context.Context) {
 	ctx, m.cancel = context.WithCancel(ctx)
+	m.buildContext = ctx
 	m.workers.Add(1)
 	go func() {
 		defer m.workers.Done()
@@ -326,7 +331,15 @@ func (m *managedProvider) launch(ctx context.Context, client proxmoxAPI, a store
 	var err error
 	switch a.Stage {
 	case "create":
-		upid, err = client.Create(ctx, m.agentSpec(a))
+		image, clone, imageErr := m.workerImage(ctx, a)
+		switch {
+		case imageErr != nil:
+			err = imageErr
+		case clone:
+			upid, err = client.Clone(ctx, imageOwned(image), m.agentSpec(a))
+		default:
+			upid, err = client.Create(ctx, m.agentSpec(a))
+		}
 	case "start":
 		// Стадию start записывает beginStart: Start ещё не запрошен.
 		return m.launchStart(ctx, client, a, "")
@@ -587,6 +600,13 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		}
 		if err != nil {
 			return a, err
+		}
+		if _, clone, _ := m.workerImage(ctx, a); clone {
+			// Клон наследует ресурсы сборочного контейнера: до первого
+			// старта ему задаётся доля воркера. Повтор безопасен.
+			if err := client.Resize(ctx, managedOwned(a), int(a.Resources.CPUMillicores/1000), int(a.Resources.MemoryBytes/mib)); err != nil {
+				return a, err
+			}
 		}
 		a, err = m.beginStart(ctx, a, store.NewID())
 		if err != nil {

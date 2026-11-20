@@ -289,6 +289,10 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 	if resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
+	// Удаление образа сервер вправе принять без тела (202).
+	if resp.StatusCode == http.StatusAccepted && out == nil {
+		return nil
+	}
 	if (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted) && out != nil {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
 			if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
@@ -309,6 +313,11 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 		if method == http.MethodPut && path == "/api/projects/sync" && resp.StatusCode == http.StatusBadRequest {
 			if detail := publicProjectSyncError(resp.Body); detail != "" {
 				statusErr = fmt.Errorf("%w: %s", statusErr, detail)
+			}
+		} else if isImagesPath(path) {
+			// Причину отказа сборки образа пользователь должен увидеть целиком.
+			if detail := publicDetail(resp.Body); detail != "" {
+				statusErr = fmt.Errorf("%s %s: %s (status %d)", method, path, detail, resp.StatusCode)
 			}
 		} else if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
 			if reason := publicCommandRefusal(resp.Body); reason != "" {
@@ -356,4 +365,45 @@ func (c *Client) absorbCookies(resp *http.Response) {
 	if updated != nil {
 		c.Restore(*updated)
 	}
+}
+
+func (c *Client) request(ctx context.Context, method, path string, body io.Reader, size int64, media string, timeout time.Duration) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.origin+path, body)
+	if err != nil {
+		return nil, errors.New("invalid API request")
+	}
+	req.ContentLength = size
+	if media != "" {
+		req.Header.Set("Content-Type", media)
+	}
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+		req.Header.Set("Origin", c.origin)
+	}
+	stored := c.Stored()
+	if stored.Session != "" {
+		req.AddCookie(&http.Cookie{Name: cookieSession, Value: stored.Session})
+	}
+	if stored.CSRF != "" {
+		req.AddCookie(&http.Cookie{Name: cookieCSRF, Value: stored.CSRF})
+		if method != http.MethodGet && method != http.MethodHead {
+			req.Header.Set(headerCSRF, stored.CSRF)
+		}
+	}
+	transport := *c.http
+	transport.Timeout = timeout
+	response, err := transport.Do(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return nil, context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, context.DeadlineExceeded
+		}
+		var cert *tls.CertificateVerificationError
+		if errors.As(err, &cert) {
+			return nil, errors.New("TLS certificate verification failed; configure a trusted CA")
+		}
+		return nil, fmt.Errorf("request to %s failed; check network and TLS configuration", c.origin)
+	}
+	return response, nil
 }
