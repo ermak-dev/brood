@@ -27,8 +27,8 @@ def settings(get):
              "BROOD_PUBLIC_HOST", "BROOD_HTTPS_PORT", "CLIPROXY_URL", "CLIPROXY_MANAGEMENT_KEY",
              "CLIPROXY_API_KEY")
     mode = get("BROOD_DEPLOY_MODE") or "initial"
-    if mode not in {"initial", "existing"}:
-        raise RuntimeError("BROOD_DEPLOY_MODE must be initial or existing")
+    if mode not in {"initial", "existing", "fixture"}:
+        raise RuntimeError("BROOD_DEPLOY_MODE must be initial, existing or fixture")
     values = {key: get(key) or "" for key in names}
     values["BROOD_DEPLOY_MODE"] = mode
     required = names[:5] if mode == "initial" else ("BROOD_SESSION_SECRET", "BROOD_PUBLIC_HOST")
@@ -273,11 +273,28 @@ class Deployment:
     def run(self):
         # Место - до Lease, сборки и любой записи: на полном диске падает и запись Lease (#247).
         space = self.space()
-        existing = ExistingInstall(self) if (self.get("BROOD_DEPLOY_MODE") or "initial") == "existing" else None
-        result = self.run_existing(existing) if existing else self.run_initial()
+        mode = self.get("BROOD_DEPLOY_MODE") or "initial"
+        if mode == "existing":
+            result = self.run_existing(ExistingInstall(self))
+        elif mode == "fixture":
+            result = self.run_fixture()
+        else:
+            result = self.run_initial()
         # Уборка только после успеха и вне Lease: она трогает локальный Docker, не кластер.
         result.update(space=space, docker=disk.tidy(self.cluster.shell, self.get, result.pop("tags")))
         return result
+
+    def run_fixture(self):
+        """Временный режим: сервер нового релиза стартует с пустой базой и фикстурой
+        установки (администратор, его Telegram); прежняя база остаётся одной копией."""
+        values, before = self.check()
+        image = self.build_edge()
+        go = GoDeploy(self.cluster, get=self.get, project=self.project)
+        server = go.run()
+        self.apply_edge(image, before)
+        self.probe(values, login=False)
+        return {"image": server, "edge": image, "host": values["BROOD_PUBLIC_HOST"], "fixture": True,
+                "tags": (go.tag, self.edge_tag)}
 
     def run_initial(self):
         values, before = self.check()

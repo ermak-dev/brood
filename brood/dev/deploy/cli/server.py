@@ -1,6 +1,8 @@
 """brood deploy server: publish the Go server with TLS
 
-Initial mode bootstraps an administrator and verifies login. Explicit
+Initial mode bootstraps an administrator and verifies login.
+BROOD_DEPLOY_MODE=fixture (temporary) recreates the database on every release
+and restores the administrator and Telegram from secrets/fixture.json. Explicit
 BROOD_DEPLOY_MODE=existing snapshots the owned database without credentials
 and has the new image verify that it opens or migrates the snapshot before
 apply; operator-authenticated acceptance remains pending. --check is read-only.
@@ -79,6 +81,8 @@ def main(argv):
             print(schema_line(result["schema"]))
         if "snapshots" in result:
             print(snapshot_line(result["snapshots"]))
+    elif result.get("fixture"):
+        print("Database recreated for this release; administrator and Telegram restored from the fixture")
     else:
         print(f"Administrator ready: {result['admin']}")
     if "docker" in result:

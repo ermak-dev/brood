@@ -38,6 +38,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdBootstrapAdmin(rest, stdin, stdout, stderr)
 	case "database":
 		return cmdDatabase(rest, stdout, stderr)
+	case "fixture":
+		return cmdFixture(rest, stdin, stdout, stderr)
 	case "artifacts":
 		return cmdArtifacts(rest, stdin, stdout, stderr)
 	case "version":
@@ -57,6 +59,8 @@ func usage(stderr io.Writer) {
 	fmt.Fprint(stderr, `usage:
   brood serve               run the server (environment-configured)
   brood bootstrap-admin     create the first administrator interactively
+  brood fixture export      print the installation fixture (admins, their Telegram links) as JSON
+  brood fixture apply       insert the installation fixture JSON from stdin
   brood version             print the binary version
 
 settings: BROOD_DB_PATH, BROOD_ADDR, BROOD_TLS_CERT, BROOD_TLS_KEY,
@@ -80,6 +84,17 @@ func cmdServe(args []string, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	// Временный режим выкладки (BROOD_DEPLOY_MODE=fixture): новая база на релиз.
+	if generation := os.Getenv("BROOD_DB_RESET"); generation != "" {
+		reset, err := resetDatabase(ctx, cfg.DBPath, generation, os.Getenv("BROOD_FIXTURE"))
+		if err != nil {
+			fmt.Fprintf(stderr, "brood serve: database reset: %s\n", err)
+			return 1
+		}
+		if reset {
+			fmt.Fprintf(stderr, "brood serve: database recreated for %s\n", generation)
+		}
+	}
 	if err := server.Serve(ctx, cfg); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(stderr, "brood serve: %s\n", err)
 		return 1

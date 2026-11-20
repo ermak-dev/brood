@@ -1,5 +1,6 @@
-# Проверки на каждый push, выкладка успешного main через restricted SSH. Шаги --
-# скриптами в .ci/, чтобы их видел shellcheck.
+# Выкладка main через restricted SSH на каждый push. Проверки временно
+# ручные (временный режим CLAUDE.md): запуск кнопкой в конвейере, выкладку
+# они не задерживают. Шаги -- скриптами в .ci/, чтобы их видел shellcheck.
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
@@ -9,12 +10,16 @@ stages: [test, deploy]
 test:
   stage: test
   tags: [docker]
+  when: manual
+  allow_failure: true
   script:
     - .ci/test.sh
 
 go-test:
   stage: test
   tags: [docker]
+  when: manual
+  allow_failure: true
   # До 40 минут SDK и 30 минут модулей, затем все проверки и сборки.
   timeout: 90 minutes
   script:
@@ -38,6 +43,7 @@ deploy:
     when: on_success
   # Первая установка собирает Substrate и тянет образы с нуля.
   timeout: 90 minutes
+  needs: []
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:

@@ -259,6 +259,22 @@ def telegram_egress(raw, resolver, setting=TELEGRAM_API):
     return proxmox_egress({f"https://{host}" + (f":{port}" if port != 443 else "")}, resolver, setting)
 
 
+def fixture_text(project):
+    """Фикстура установки для режима fixture: secrets/fixture.json релиза (CI BROOD_DEPLOY_FIXTURE)."""
+    path = Path(project) / "secrets" / "fixture.json"
+    if not path.is_file():
+        raise RuntimeError("BROOD_DEPLOY_MODE=fixture needs secrets/fixture.json "
+                           "(protected CI file variable BROOD_DEPLOY_FIXTURE)")
+    text = path.read_text(encoding="utf-8")
+    try:
+        fixture = json.loads(text)
+    except ValueError:
+        raise RuntimeError("secrets/fixture.json is not valid JSON") from None
+    if not isinstance(fixture, dict) or fixture.get("version") != 1:
+        raise RuntimeError("secrets/fixture.json must be a brood fixture of version 1")
+    return text
+
+
 def approved_images(raw):
     try:
         images = json.loads(raw)
@@ -341,7 +357,7 @@ def artifact_pod(deployment, replicasets, pods):
 
 def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=False, proxmox_runtime=False,
               proxy_api_key=False, actor_llm_settings=(), git_remotes=False, actor_git_domain=False,
-              actor_model_settings=()):
+              actor_model_settings=(), db_reset=None, fixture=False):
     if not isinstance(image, str) or not re.fullmatch(r"localhost:5002/brood-go@sha256:[0-9a-f]{64}", image):
         raise RuntimeError("Go deployment needs an owned registry image pinned by sha256")
     workers = approved_images(json.dumps(worker_images))
@@ -373,6 +389,9 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
            # Артефакты бутстрапа песочницы (#156): выкладка публикует их в PVC
            # после rollout; сервер перечитывает манифест на каждый запрос.
            "BROOD_ARTIFACTS_DIR": "/data/artifacts"}
+    if db_reset:
+        # Временный режим fixture: сервер пересоздаёт базу один раз на релиз.
+        env["BROOD_DB_RESET"] = db_reset
     if registry:
         env.update(BROOD_REGISTRY_URL=registry["url"], BROOD_REGISTRY_IMAGE_HOST=f"localhost:{local.REGISTRY_PORT}")
     container = {"name": "brood", "image": image, "args": ["serve"],
@@ -398,6 +417,9 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
             "name": "brood-go-env", "key": "CLIPROXY_API_KEY"}}})
     container["env"].extend({"name": key, "valueFrom": {"secretKeyRef": {
         "name": "brood-go-env", "key": key}}} for key in ACTOR_LLM_SETTINGS if key in actor_llm_settings)
+    if fixture:
+        container["env"].append({"name": "BROOD_FIXTURE", "valueFrom": {"secretKeyRef": {
+            "name": "brood-go-env", "key": "BROOD_FIXTURE"}}})
     if git_remotes:
         container["env"].append({"name": GIT_REMOTES, "valueFrom": {"secretKeyRef": {
             "name": "brood-go-env", "key": GIT_REMOTES}}})
@@ -574,6 +596,8 @@ class Deploy:
             if not proxy_key:
                 raise RuntimeError("CLIPROXY_MANAGEMENT_KEY is required with CLIPROXY_URL")
             environment.update(CLIPROXY_URL=proxy_url, CLIPROXY_MANAGEMENT_KEY=proxy_key)
+        if (self.get("BROOD_DEPLOY_MODE") or "initial") == "fixture":
+            environment["BROOD_FIXTURE"] = fixture_text(self.project)
         infrastructure = Infrastructure(self.cluster, project=str(self.project))
         tls = infrastructure._tls()
         self.cluster.check()
@@ -590,6 +614,7 @@ class Deploy:
             if release and not re.fullmatch(r"[0-9a-f]{40}", release):
                 raise RuntimeError("BROOD_RELEASE_SHA must be a full commit sha")
             version_args = ("--build-arg", f"VERSION={release}") if release else ()
+            reset = (release or uuid.uuid4().hex) if "BROOD_FIXTURE" in environment else None
             code, out, err = self.cluster.shell.output("docker", "buildx", "build", "--push", "--platform",
                 "linux/amd64", *version_args, "--metadata-file", str(metadata), "-t", tag,
                 "-f", str(self.project / "deploy/Dockerfile.go"), str(self.project))
@@ -604,7 +629,8 @@ class Deploy:
                                 proxmox_runtime=all(key in environment for key in PROXMOX_RUNTIME_SETTINGS),
                                 actor_llm_settings=tuple(actor_env), git_remotes=GIT_REMOTES in environment,
                                 actor_git_domain=ACTOR_GIT_DOMAIN in environment,
-                                actor_model_settings=tuple(models))
+                                actor_model_settings=tuple(models), db_reset=reset,
+                                fixture="BROOD_FIXTURE" in environment)
             # data сохраняет владение apply ключами, включая их удаление при отключении.
             env_data = {key: base64.b64encode(value.encode("utf-8")).decode("ascii")
                         for key, value in environment.items()}

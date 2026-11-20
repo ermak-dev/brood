@@ -55,6 +55,33 @@ Preflight проверяет настройки, свободное место �
 `bin/brood deploy go` остаётся подготовкой только приватного Go endpoint,
 без public edge, bootstrap пользователя или очистки старых данных.
 
+## Временный режим fixture (с 2026-11-20)
+
+`BROOD_DEPLOY_MODE=fixture` — временный режим из `CLAUDE.md`: миграций нет,
+каждый релиз начинает с новой базы. Выкладка передаёт серверу
+`BROOD_DB_RESET=<sha релиза>` и фикстуру установки `BROOD_FIXTURE` через
+Secret `brood-go-env`. При старте сервер сравнивает sha с меткой
+`/data/brood.db.reset`. Новое поколение уносит базу в единственную копию
+`/data/brood.db.before-<sha>`, удаляя прежние копии, создаёт пустую базу
+текущей схемы и вставляет фикстуру. Перезапуск пода того же релиза и повтор
+джобы базу не трогают. Snapshot и schema gate режима `existing` не работают,
+login gate не нужен: пароль администратора приходит хешем.
+
+Фикстура — JSON `secrets/fixture.json` релиза из защищённой файловой
+переменной CI `BROOD_DEPLOY_FIXTURE`. В ней включённые администраторы
+(`users`), их привязки Telegram со своим ботом (`user_telegram_links`,
+без роя по умолчанию) и сессии этих привязок (`sessions`). Обновить её с
+работающего сервера:
+
+```sh
+kubectl -n brood exec deployment/brood-go -- /brood fixture export > fixture.json
+bin/brood dev ci set --file BROOD_DEPLOY_FIXTURE=fixture.json
+```
+
+`/brood fixture apply` вставляет фикстуру из stdin в текущую базу.
+Токен бота установки, CLIProxyAPI и его ключи — не база: они в `.env` релиза
+и в собственном PVC `cliproxy-data`, сброс их не трогает.
+
 ## Существующая Go-установка
 
 `BROOD_DEPLOY_MODE=existing` — явный opt-in в приватном `.env` релиза.

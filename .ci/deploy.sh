@@ -89,6 +89,10 @@ install -d -m 0700 "$stage/secrets"
 install -m 0600 "$BROOD_DEPLOY_ENV" "$stage/.env"
 install -m 0600 "$BROOD_DEPLOY_TLS_CERT" "$stage/secrets/tls.crt"
 install -m 0600 "$BROOD_DEPLOY_TLS_KEY" "$stage/secrets/tls.key"
+# Фикстура установки для BROOD_DEPLOY_MODE=fixture: администратор и его Telegram.
+if [[ -n ${BROOD_DEPLOY_FIXTURE:-} ]]; then
+    install -m 0600 "$BROOD_DEPLOY_FIXTURE" "$stage/secrets/fixture.json"
+fi
 
 tree="$work/tree.tar"
 git archive --format=tar -o "$tree" "$CI_COMMIT_SHA"
