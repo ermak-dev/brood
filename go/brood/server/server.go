@@ -149,6 +149,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountGitRepositories()
 	srv.mountProjectOwnership()
 	srv.mountProjectImages()
+	srv.mountLists()
 	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)

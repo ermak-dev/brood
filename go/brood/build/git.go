@@ -31,7 +31,7 @@ func git(root string, arguments ...string) (output string, failed bool, err erro
 }
 
 // origin не наследует origin родителя выбранного каталога: Git нужен только
-// рабочей копии, корень которой совпадает с каталогом Broodfile.
+// рабочей копии, корень которой совпадает с каталогом brood.yaml.
 func origin(root string) (remote string, present bool, err error) {
 	toplevel, failed, err := git(root, "rev-parse", "--show-toplevel")
 	if err != nil || failed {

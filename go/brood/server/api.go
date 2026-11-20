@@ -29,6 +29,11 @@ type projectJSON struct {
 type projectRowJSON struct {
 	projectJSON
 	SwarmCount int64 `json:"swarmCount"`
+	// Поля плоской таблицы проектов: репозиторий, участники и лимиты одним
+	// запросом, без обращения за каждым проектом отдельно.
+	Repository string       `json:"repository"`
+	Members    []string     `json:"members"`
+	Capacity   capacityJSON `json:"capacity"`
 }
 
 // swarmRowJSON — строка списка роёв: рой и число его живых воркеров.
@@ -194,7 +199,26 @@ func (s *Server) writeProjects(w http.ResponseWriter, r *http.Request, userID st
 	}
 	out := make([]projectRowJSON, 0, len(projects))
 	for _, p := range projects {
-		out = append(out, projectRowJSON{projectJSON: projectJSON{ID: p.ID, Name: p.Name}, SwarmCount: counts[p.ID]})
+		row := projectRowJSON{projectJSON: projectJSON{ID: p.ID, Name: p.Name}, SwarmCount: counts[p.ID], Members: []string{}}
+		if row.Repository, err = s.store.ProjectRepository(r.Context(), p.ID); err != nil {
+			apiError(w, r, err)
+			return
+		}
+		members, err := s.store.MembersOf(r.Context(), p.ID)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		for _, member := range members {
+			row.Members = append(row.Members, member.Username)
+		}
+		capacity, err := s.gateway.ProjectCapacity(p.ID)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		row.Capacity = formatCapacity(capacity)
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

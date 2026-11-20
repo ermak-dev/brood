@@ -14,7 +14,13 @@
   gather_facts: false
 
   vars:
-    pins: "{{ lookup('ansible.builtin.file', playbook_dir + '/../brood/dev/pins.json') | from_json }}"
+    # Декларация проекта для `bro build`: читается как обычный YAML, без
+    # шаблонов. Блока secrets нет: секреты проекта ведутся вручную.
+    brood:
+      project: brood
+      description: Agent pool on Proxmox
+      git_credential: brood-gitlab
+    pins: "{{ lookup('ansible.builtin.file', playbook_dir + '/brood/dev/pins.json') | from_json }}"
     go_archive: "go{{ pins.GO_VERSION }}.linux-amd64.tar.gz"
 
   tasks:

@@ -1,7 +1,0 @@
-apiVersion: brood.dev/v1alpha2
-name: brood
-project:
-  description: Agent pool on Agent Substrate
-  git_credential: brood-gitlab
-image:
-  playbook: deploy/worker.yml

@@ -211,7 +211,7 @@ func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolNa
 		return store.ProjectImage{}, err
 	}
 	if access.repository == "" {
-		return store.ProjectImage{}, &imageRefusal{detail: "the project has no repository; declare it in the Broodfile and run bro build"}
+		return store.ProjectImage{}, &imageRefusal{detail: "the project has no repository; declare brood.repository in brood.yaml and run bro build"}
 	}
 	pool, err := m.imagePool(ctx, poolName)
 	if err != nil {

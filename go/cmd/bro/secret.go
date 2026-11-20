@@ -34,10 +34,14 @@ Lists show only file names and sizes or variable names. Mutations print nothing.
 file and var secrets are delivered to the project's actors. git credentials are
 server-only: the Git gateway sends them to exactly the bound repository and
 never to an actor. The token comes from stdin or a private file; add with an
-existing name rotates it. A credential is active when the Broodfile references
-it as project.git_credential and the project repository equals its repository.
+existing name rotates it. A credential is active when brood.yaml references it
+as brood.git_credential and the project repository equals its repository.
 git list prints NAME, REPOSITORY and active or inactive.
 --ca FILE adds a trusted server CA; otherwise use the saved login trust.
+
+A brood.secrets block in brood.yaml declares the complete set of file and var
+secrets: bro build removes file and var secrets that the block does not list,
+including ones added here by hand. Without that block bro build leaves them alone.
 `)
 }
 

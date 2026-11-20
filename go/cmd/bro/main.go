@@ -86,7 +86,7 @@ commands:
   logout [server] [--ca FILE]     revoke the server session, then clear local storage
   whoami [server] [--ca FILE]     print the current user
   projects list [server] [--ca FILE]  list accessible projects
-  build [options]                 synchronize the project and build its worker image on the server
+  build [options]                 synchronize the project and secrets from ./brood.yaml and build its worker image
   image list|delete [options]     list or delete the project's worker images
   secret [options]                manage project secrets on the current server
   mcp                           serve catalog tools over stdio

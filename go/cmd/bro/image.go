@@ -18,7 +18,7 @@ func imageUsage(w io.Writer) {
        bro image delete IMAGE [--project NAME]
 
 List or delete the worker images the server built for a project. The project
-defaults to the name in ./Broodfile. Images are built with bro build.
+defaults to brood.project of ./brood.yaml. Images are built with bro build.
 list prints ID, STATE, REF, POOL, PLAYBOOK and CREATED, newest first.
 `)
 }
