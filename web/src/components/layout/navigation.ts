@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react';
 import {
+  IconSidebarAgents,
   IconSidebarAuthFiles,
   IconSidebarConfig,
   IconSidebarDashboard,
@@ -11,16 +12,12 @@ import {
   IconSidebarProviders,
   IconSidebarQuota,
   IconSidebarStore,
+  IconSidebarSwarms,
   IconSidebarSystem,
   IconSidebarUsers,
   type IconProps,
 } from '@/components/ui/icons';
 import { visiblePath } from '@/features/brood/routes';
-
-/** A swarm is reached through its project: its page keeps Projects active. */
-export function isNavigationActive(path: string, pathname: string, routerActive: boolean): boolean {
-  return routerActive || (path === '/projects' && pathname.startsWith('/swarms/'));
-}
 
 export interface NavEntry {
   path: string;
@@ -35,15 +32,17 @@ export interface NavSection {
   entries: NavEntry[];
 }
 
-// A project and a swarm are reached from the project list, so the brood group
-// lists only the roots. visiblePath hides the administrator's entries from
-// everyone else; the server checks each request.
+// Every brood entity is a menu entry with a flat table of its own.
+// visiblePath hides the administrator's entries from everyone else; the
+// server checks each request.
 const sections = (plugins: boolean): NavSection[] => [
   {
     id: 'brood',
     labelKey: 'nav_groups.brood',
     entries: [
       { path: '/projects', labelKey: 'nav.projects', icon: IconSidebarProjects },
+      { path: '/swarms', labelKey: 'nav.swarms', icon: IconSidebarSwarms },
+      { path: '/agents', labelKey: 'nav.agents', icon: IconSidebarAgents },
       { path: '/pools', labelKey: 'nav.pools', icon: IconSidebarPools },
       { path: '/users', labelKey: 'nav.users', icon: IconSidebarUsers },
     ],

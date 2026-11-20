@@ -17,3 +17,4 @@ go/brood.db
 go/serve.pid
 !go/brood/server/static/
 !go/brood/server/static/**
+.playwright-mcp/

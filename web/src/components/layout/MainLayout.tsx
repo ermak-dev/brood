@@ -18,7 +18,7 @@ import { PageTransition } from '@/components/common/PageTransition';
 import { MainRoutes } from '@/router/MainRoutes';
 import { authFilesApi, pluginsApi } from '@/services/api';
 import { IconChevronDown, IconSidebarPlugins } from '@/components/ui/icons';
-import { isNavigationActive, navSections } from './navigation';
+import { navSections } from './navigation';
 import { INLINE_LOGO } from '@/assets/logoInline';
 import {
   useAuthStore,
@@ -756,11 +756,7 @@ export function MainLayout() {
     const itemLabel = item.label ?? (item.labelKey ? t(item.labelKey) : '');
     const itemMeta = item.meta ?? (item.metaKey ? t(item.metaKey) : '');
     const accessibleLabel = item.badgeLabel ? `${itemLabel}, ${item.badgeLabel}` : itemLabel;
-    const routeMatches = !!matchPath(
-      { path: item.path, end: item.path === '/' },
-      location.pathname
-    );
-    const active = isNavigationActive(item.path, location.pathname, routeMatches);
+    const active = !!matchPath({ path: item.path, end: item.path === '/' }, location.pathname);
 
     return (
       <Link

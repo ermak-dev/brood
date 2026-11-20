@@ -1,12 +1,8 @@
-import { Fragment, useId, useState, type FormEvent, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Fragment, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { Modal } from '@/components/ui/Modal';
 import styles from './brood.module.scss';
-
-export const DASH = '—';
 
 export type BadgeTone = 'attention' | 'progress' | 'problem' | 'neutral';
 
@@ -18,40 +14,25 @@ export function StatusBadge({ tone, children }: { tone: BadgeTone; children: Rea
   );
 }
 
-export interface Crumb {
-  to: string;
-  label: string;
-}
-
-/** Page title with the path that leads to it (Projects / project / swarm),
- * a mono meta line and the page actions. */
+/** Page title with a one-line description or a mono meta line, and the
+ * page actions on the right. */
 export function PageHeader({
   title,
-  crumbs = [],
+  description,
   meta = [],
   actions,
 }: {
   title: ReactNode;
-  crumbs?: Crumb[];
+  description?: string;
   meta?: ReactNode[];
   actions?: ReactNode;
 }) {
-  const { t } = useTranslation();
   const items = meta.filter(Boolean);
   return (
     <header className={styles.header}>
       <div className={styles.copy}>
-        {crumbs.length > 0 && (
-          <nav className={styles.crumbs} aria-label={t('brood.breadcrumb')}>
-            {crumbs.map((crumb) => (
-              <Fragment key={crumb.to}>
-                <Link to={crumb.to}>{crumb.label}</Link>
-                <span aria-hidden="true">/</span>
-              </Fragment>
-            ))}
-          </nav>
-        )}
         <h1 className={styles.title}>{title}</h1>
+        {description && <p className={styles.description}>{description}</p>}
         {items.length > 0 && (
           <p className={styles.meta}>
             {items.map((item, index) => (
@@ -101,28 +82,6 @@ export function Section({
   );
 }
 
-/** A labelled control that is not an Input: the label points at its id. */
-export function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: ReactNode;
-  children: (id: string) => ReactNode;
-}) {
-  const id = useId();
-  return (
-    <div className={styles.field}>
-      <label className={styles.fieldLabel} htmlFor={id}>
-        {label}
-      </label>
-      {children(id)}
-      {hint && <p className={styles.fieldHint}>{hint}</p>}
-    </div>
-  );
-}
-
 /** Spinner until the first answer, the refusal with a retry after a failed
  * one; once data is on screen a failed refresh only adds the reason. */
 export function LoadState({
@@ -158,56 +117,5 @@ export function LoadState({
       )}
       {children}
     </>
-  );
-}
-
-/** A dialog with a form: Enter submits, the dialog closes when `submit`
- * resolves to true and stays open with the fields intact otherwise. It stays
- * mounted while closed, so the Modal can return focus to where it came from. */
-export function FormModal({
-  open,
-  title,
-  submitLabel,
-  canSubmit,
-  submit,
-  close,
-  width,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  submitLabel: string;
-  canSubmit: boolean;
-  submit: () => Promise<boolean>;
-  close: () => void;
-  width?: number;
-  children: ReactNode;
-}) {
-  const { t } = useTranslation();
-  const [saving, setSaving] = useState(false);
-  const save = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!canSubmit || saving) return;
-    setSaving(true);
-    try {
-      if (await submit()) close();
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <Modal open={open} title={title} onClose={close} closeDisabled={saving} width={width}>
-      <form className={styles.form} onSubmit={(event) => void save(event)}>
-        {children}
-        <div className={styles.formActions}>
-          <Button type="button" variant="ghost" onClick={close} disabled={saving}>
-            {t('common.cancel')}
-          </Button>
-          <Button type="submit" disabled={!canSubmit} loading={saving}>
-            {submitLabel}
-          </Button>
-        </div>
-      </form>
-    </Modal>
   );
 }

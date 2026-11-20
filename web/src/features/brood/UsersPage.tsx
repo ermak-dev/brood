@@ -1,222 +1,236 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/Button';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
 import { accessApi, type User } from '@/services/brood/access';
 import { useAuthStore } from '@/stores';
-import { useActions, useResource } from './hooks';
-import { DASH, FormModal, LoadState, PageHeader } from './ui';
-import styles from './brood.module.scss';
+import { useResource } from './hooks';
+import { FormDialog } from './table/dialogs';
+import { useDialog, useForm } from './table/formState';
+import { Truncate } from './table/format';
+import { TablePage, type Column, type RowAction } from './table/TablePage';
+import { StatusBadge } from './ui';
+import styles from './table/table.module.scss';
+
+const SORT = { column: 'username', desc: false };
+
+function CreateUser({
+  open,
+  close,
+  after,
+}: {
+  open: boolean;
+  close: () => void;
+  after: () => unknown;
+}) {
+  const { t } = useTranslation();
+  const [admin, setAdmin] = useState(false);
+  const form = useForm({ username: '', displayName: '', password: '' }, (values) => ({
+    username: values.username.trim() ? undefined : t('brood.form.required'),
+    password: values.password ? undefined : t('brood.form.required'),
+  }));
+  const username = form.values.username.trim();
+  return (
+    <FormDialog
+      open={open}
+      close={close}
+      title={t('brood.users.create')}
+      submitLabel={t('brood.form.create')}
+      valid={form.valid}
+      submit={() =>
+        accessApi.createUser({
+          username,
+          password: form.values.password,
+          display_name: form.values.displayName.trim(),
+          is_admin: admin,
+        })
+      }
+      success={t('brood.users.created', { name: username })}
+      after={after}
+    >
+      <Input
+        label={t('brood.users.username')}
+        required
+        autoComplete="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        {...form.field('username')}
+      />
+      <Input
+        label={t('brood.users.display_name')}
+        autoComplete="off"
+        {...form.field('displayName')}
+      />
+      <Input
+        label={t('brood.users.password')}
+        required
+        type="password"
+        autoComplete="new-password"
+        {...form.field('password')}
+      />
+      <label className={styles.check}>
+        <input
+          type="checkbox"
+          checked={admin}
+          onChange={(event) => setAdmin(event.target.checked)}
+        />
+        {t('brood.users.administrator')}
+      </label>
+    </FormDialog>
+  );
+}
+
+function ResetPassword({
+  user,
+  open,
+  close,
+  after,
+}: {
+  user: User;
+  open: boolean;
+  close: () => void;
+  after: () => unknown;
+}) {
+  const { t } = useTranslation();
+  const form = useForm({ password: '' }, ({ password }) => ({
+    password: password ? undefined : t('brood.form.required'),
+  }));
+  return (
+    <FormDialog
+      open={open}
+      close={close}
+      title={t('brood.users.reset_password_for', { name: user.username })}
+      submitLabel={t('brood.users.reset_password')}
+      valid={form.valid}
+      submit={() => accessApi.resetPassword(user.username, form.values.password)}
+      success={t('brood.users.password_reset', { name: user.username })}
+      after={after}
+    >
+      <Input
+        label={t('brood.users.new_password')}
+        hint={t('brood.users.reset_password_hint')}
+        required
+        type="password"
+        autoComplete="new-password"
+        {...form.field('password')}
+      />
+    </FormDialog>
+  );
+}
 
 export function UsersPage() {
   const { t } = useTranslation();
   const users = useResource(accessApi.users);
+  const create = useDialog();
+  const reset = useDialog<User>();
   // A change to the signed-in account (role, blocking) ends or changes its
   // session: the panel re-reads it after every mutation.
-  const { run, confirm, busy } = useActions(async () => {
+  const refresh = async () => {
     await users.refresh();
     await useAuthStore.getState().checkAuth();
-  });
-  const [creating, setCreating] = useState(false);
-  // Whose password is being reset; the name outlives the closing dialog.
-  const [reset, setReset] = useState({ open: false, username: '' });
-  const [username, setUsername] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [password, setPassword] = useState('');
-  const [admin, setAdmin] = useState(false);
-  const clear = () => {
-    setUsername('');
-    setDisplayName('');
-    setPassword('');
-    setAdmin(false);
   };
-  const rows = users.data ?? [];
-  const action = (user: User, key: string, onClick: () => void, danger = false) => (
-    <Button
-      variant="ghost"
-      size="sm"
-      className={danger ? styles.dangerText : undefined}
-      disabled={busy}
-      aria-label={t(`brood.users.${key}_named`, { name: user.username })}
-      onClick={onClick}
-    >
-      {t(`brood.users.${key}`)}
-    </Button>
-  );
+  const roleLabel = (user: User) =>
+    t(user.is_admin ? 'brood.users.administrator' : 'brood.users.user');
+  const stateLabel = (user: User) =>
+    t(user.disabled ? 'brood.users.disabled' : 'brood.users.enabled');
+
+  const columns: Column<User>[] = [
+    {
+      id: 'username',
+      header: t('brood.users.username'),
+      cell: (row) => <span className={styles.name}>{row.username}</span>,
+      text: (row) => row.username,
+      sort: (row) => row.username,
+    },
+    {
+      id: 'display_name',
+      header: t('brood.users.display_name'),
+      cell: (row) => <Truncate text={row.display_name} />,
+      text: (row) => row.display_name,
+      sort: (row) => row.display_name,
+    },
+    {
+      id: 'role',
+      header: t('brood.users.role'),
+      cell: roleLabel,
+      text: roleLabel,
+      sort: (row) => (row.is_admin ? 0 : 1),
+    },
+    {
+      id: 'state',
+      header: t('brood.users.state'),
+      cell: (row) => (
+        <StatusBadge tone={row.disabled ? 'problem' : 'neutral'}>{stateLabel(row)}</StatusBadge>
+      ),
+      text: stateLabel,
+      sort: (row) => (row.disabled ? 0 : 1),
+    },
+  ];
+
+  const actions = (row: User): RowAction[] => {
+    const name = row.username;
+    return [
+      {
+        id: 'reset_password',
+        label: t('brood.users.reset_password'),
+        inline: true,
+        open: () => reset.show(row),
+      },
+      row.is_admin
+        ? {
+            id: 'revoke_admin',
+            label: t('brood.users.revoke_admin'),
+            confirm: t('brood.users.confirm_revoke_admin', { name }),
+            run: () => accessApi.setAdministrator(name, false),
+          }
+        : {
+            id: 'grant_admin',
+            label: t('brood.users.grant_admin'),
+            confirm: t('brood.users.confirm_grant_admin', { name }),
+            run: () => accessApi.setAdministrator(name, true),
+          },
+      row.disabled
+        ? {
+            id: 'enable',
+            label: t('brood.users.enable'),
+            run: () => accessApi.setDisabled(name, false),
+          }
+        : {
+            id: 'disable',
+            label: t('brood.users.disable'),
+            danger: true,
+            confirm: t('brood.users.confirm_disable', { name }),
+            run: () => accessApi.setDisabled(name, true),
+          },
+      {
+        id: 'delete',
+        label: t('common.delete'),
+        danger: true,
+        confirm: t('brood.users.confirm_delete', { name }),
+        run: () => accessApi.deleteUser(name),
+      },
+    ];
+  };
+
   return (
-    <div className={styles.page}>
-      <PageHeader
-        title={t('brood.users.title')}
-        actions={
-          <Button
-            onClick={() => {
-              clear();
-              setCreating(true);
-            }}
-          >
-            {t('brood.users.create')}
-          </Button>
-        }
-      />
-      <LoadState {...users} ready={users.data !== null} retry={users.refresh}>
-        {rows.length === 0 ? (
-          <EmptyState title={t('brood.users.empty')} />
-        ) : (
-          <Table>
-            <TableHeader>
-              <tr>
-                <TableHead>{t('brood.users.username')}</TableHead>
-                <TableHead>{t('brood.users.display_name')}</TableHead>
-                <TableHead>{t('brood.users.role')}</TableHead>
-                <TableHead>{t('brood.users.state')}</TableHead>
-                <TableHead />
-              </tr>
-            </TableHeader>
-            <TableBody>
-              {rows.map((user) => (
-                <TableRow key={user.username}>
-                  <TableCell>
-                    <span className={styles.nameLink}>{user.username}</span>
-                  </TableCell>
-                  <TableCell>{user.display_name || DASH}</TableCell>
-                  <TableCell>
-                    {t(user.is_admin ? 'brood.users.administrator' : 'brood.users.user')}
-                  </TableCell>
-                  <TableCell>
-                    {t(user.disabled ? 'brood.users.disabled' : 'brood.users.enabled')}
-                  </TableCell>
-                  <TableCell>
-                    <div className={styles.rowActions}>
-                      {user.disabled
-                        ? action(
-                            user,
-                            'enable',
-                            () => void run(() => accessApi.setDisabled(user.username, false))
-                          )
-                        : action(user, 'disable', () =>
-                            confirm({
-                              title: t('brood.users.disable'),
-                              message: t('brood.users.confirm_disable', { name: user.username }),
-                              action: () => accessApi.setDisabled(user.username, true),
-                            })
-                          )}
-                      {user.is_admin
-                        ? action(user, 'revoke_admin', () =>
-                            confirm({
-                              title: t('brood.users.revoke_admin'),
-                              message: t('brood.users.confirm_revoke_admin', {
-                                name: user.username,
-                              }),
-                              action: () => accessApi.setAdministrator(user.username, false),
-                            })
-                          )
-                        : action(user, 'grant_admin', () =>
-                            confirm({
-                              title: t('brood.users.grant_admin'),
-                              message: t('brood.users.confirm_grant_admin', {
-                                name: user.username,
-                              }),
-                              action: () => accessApi.setAdministrator(user.username, true),
-                            })
-                          )}
-                      {action(user, 'reset_password', () => {
-                        clear();
-                        setReset({ open: true, username: user.username });
-                      })}
-                      {action(
-                        user,
-                        'delete',
-                        () =>
-                          confirm({
-                            title: t('brood.users.delete'),
-                            message: t('brood.users.confirm_delete', { name: user.username }),
-                            action: () => accessApi.deleteUser(user.username),
-                          }),
-                        true
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </LoadState>
-      <FormModal
-        open={creating}
-        title={t('brood.users.create')}
-        submitLabel={t('brood.create')}
-        canSubmit={username.trim() !== '' && password !== ''}
-        submit={() =>
-          run(() =>
-            accessApi.createUser({
-              username: username.trim(),
-              password,
-              display_name: displayName.trim(),
-              is_admin: admin,
-            })
-          )
-        }
-        close={() => setCreating(false)}
-      >
-        <Input
-          label={t('brood.users.username')}
-          value={username}
-          autoFocus
-          autoComplete="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          onChange={(event) => setUsername(event.target.value)}
-        />
-        <Input
-          label={t('brood.users.display_name')}
-          value={displayName}
-          autoComplete="off"
-          onChange={(event) => setDisplayName(event.target.value)}
-        />
-        <Input
-          label={t('brood.users.password')}
-          type="password"
-          value={password}
-          autoComplete="new-password"
-          onChange={(event) => setPassword(event.target.value)}
-        />
-        <label className={styles.check}>
-          <input
-            type="checkbox"
-            checked={admin}
-            onChange={(event) => setAdmin(event.target.checked)}
-          />
-          {t('brood.users.administrator')}
-        </label>
-      </FormModal>
-      <FormModal
-        open={reset.open}
-        title={t('brood.users.reset_password_for', { name: reset.username })}
-        submitLabel={t('brood.users.reset_password')}
-        canSubmit={password !== ''}
-        submit={() => run(() => accessApi.resetPassword(reset.username, password))}
-        close={() => setReset({ ...reset, open: false })}
-      >
-        <Input
-          label={t('brood.users.new_password')}
-          hint={t('brood.users.reset_password_hint')}
-          type="password"
-          value={password}
-          autoFocus
-          autoComplete="new-password"
-          onChange={(event) => setPassword(event.target.value)}
-        />
-      </FormModal>
-    </div>
+    <TablePage
+      title={t('brood.users.title')}
+      description={t('brood.users.description')}
+      primary={{ label: t('brood.users.create'), onClick: () => create.show(null) }}
+      resource={users}
+      rowKey={(row) => row.username}
+      rowName={(row) => row.username}
+      columns={columns}
+      defaultSort={SORT}
+      empty={t('brood.users.empty')}
+      actions={actions}
+      afterAction={refresh}
+    >
+      {create.mount((dialog) => (
+        <CreateUser {...dialog} after={refresh} />
+      ))}
+      {reset.mount((dialog, user) => (
+        <ResetPassword {...dialog} user={user} after={refresh} />
+      ))}
+    </TablePage>
   );
 }

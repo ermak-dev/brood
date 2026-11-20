@@ -1,0 +1,397 @@
+@use '../../../styles/mixins' as *;
+@use '../../../styles/variables' as *;
+
+/* The table page of a brood entity: filter bar, sortable table, row
+ * actions with the overflow menu, and the dialogs with their forms. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ─── filter bar ────────────────────────────────────────────────────── */
+
+.filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.search {
+  position: relative;
+  flex: 0 1 280px;
+  min-width: 180px;
+  color: var(--text-secondary);
+
+  svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  input {
+    padding: 7px 10px 7px 32px;
+    font-size: var(--fs-13);
+  }
+}
+
+.filterSelect {
+  min-width: 170px;
+  max-width: 260px;
+}
+
+.count {
+  margin-left: auto;
+  font-size: var(--fs-12);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ─── table ─────────────────────────────────────────────────────────── */
+
+.table {
+  font-variant-numeric: tabular-nums;
+
+  tbody td {
+    padding-top: 8px;
+    padding-bottom: 8px;
+    vertical-align: middle;
+  }
+
+  /* The actions never wrap and take only the width they need. */
+  .actionsCell {
+    width: 1%;
+    white-space: nowrap;
+  }
+
+  a:not(:global(.btn)) {
+    color: var(--text-primary);
+    text-decoration: underline;
+    text-decoration-color: var(--text-quaternary);
+    text-underline-offset: 3px;
+
+    &:hover,
+    &:focus-visible {
+      text-decoration-color: currentColor;
+    }
+  }
+}
+
+.sortButton {
+  @include button-reset;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--text-primary);
+  }
+}
+
+.sortMark {
+  display: inline-flex;
+  opacity: 0.3;
+}
+
+.sortActive {
+  color: var(--text-primary);
+  font-weight: 650;
+
+  .sortMark {
+    opacity: 1;
+  }
+}
+
+.name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.truncate {
+  display: inline-block;
+  /* Fixed, not a percentage: in a table cell a percentage does not limit
+   * the column, and the long value would push the actions out of view. */
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.mono {
+  font-family: $font-mono;
+  font-size: var(--fs-12);
+}
+
+.problemText {
+  color: var(--problem-badge-fg);
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+/* ─── row actions ───────────────────────────────────────────────────── */
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+
+  :global(.btn-sm) {
+    padding: 5px 10px;
+    font-size: var(--fs-13);
+  }
+}
+
+/* Unavailable, but still focusable: its title says why. */
+:global(.btn).unavailable {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+:global(.btn).menuTrigger {
+  padding: 5px 7px;
+}
+
+.menu {
+  position: fixed;
+  z-index: $z-dropdown + 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-lg;
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-lg);
+}
+
+.menuItem {
+  @include button-reset;
+  padding: 7px 10px;
+  border-radius: $radius-md;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--bg-secondary);
+    outline: none;
+  }
+
+  &[aria-disabled='true'] {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+/* Destructive items come last, behind a rule, in the failure colour. */
+.menuItemDanger {
+  color: var(--viz-failure);
+
+  :not(.menuItemDanger) + & {
+    margin-top: 5px;
+    border-top: 1px solid var(--border-color);
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    padding-top: 9px;
+  }
+}
+
+/* ─── states ────────────────────────────────────────────────────────── */
+
+.failure {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--problem-badge-border);
+  border-radius: $radius-md;
+  background: var(--problem-badge-bg);
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--problem-badge-fg);
+  overflow-wrap: anywhere;
+}
+
+.loadFailure {
+  @extend .failure;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+
+  p {
+    margin: 0;
+  }
+}
+
+/* ─── dialogs and forms ─────────────────────────────────────────────── */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+
+  /* The upstream .form-group spaces itself; here the form does. */
+  :global(.form-group) {
+    margin-bottom: 0;
+
+    label {
+      font-size: var(--fs-13);
+      font-weight: 600;
+    }
+
+    &:has(:required) label::after {
+      content: ' *';
+      color: var(--viz-failure);
+    }
+
+    :global(.error-box) {
+      margin-top: 4px;
+      padding: 0;
+      border: 0;
+      background: none;
+      font-size: var(--fs-12);
+      color: var(--problem-badge-fg);
+    }
+  }
+}
+
+.confirmText {
+  margin: 0;
+  max-width: var(--measure);
+  font-size: var(--fs-14);
+  line-height: var(--lh-14);
+  overflow-wrap: anywhere;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.required::after {
+  content: ' *';
+  color: var(--viz-failure);
+}
+
+.fieldHint {
+  margin: 0;
+  max-width: var(--measure);
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  color: var(--text-secondary);
+}
+
+.fieldError {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  color: var(--problem-badge-fg);
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+@include mobile {
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.textarea {
+  min-height: 110px;
+  resize: vertical;
+  font-family: $font-mono;
+  font-size: var(--fs-12);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-13);
+  font-weight: 600;
+}
+
+/* Members of a project inside its edit form. */
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-color);
+  border-radius: $radius-md;
+
+  li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 4px 4px 12px;
+    font-size: var(--fs-13);
+
+    + li {
+      border-top: 1px solid var(--border-color);
+    }
+  }
+}
+
+.addRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+
+  :global(.form-group) {
+    flex: 1 1 auto;
+  }
+}

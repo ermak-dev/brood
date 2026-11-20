@@ -1,28 +1,25 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/Button';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/Table';
 import { poolsApi, type NewConnection, type Pool, type PoolAction } from '@/services/brood/pools';
-import { useActions, useResource } from './hooks';
-import { DASH, Field, FormModal, LoadState, PageHeader, StatusBadge, type BadgeTone } from './ui';
-import styles from './brood.module.scss';
+import { useResource } from './hooks';
+import { Field, FormDialog } from './table/dialogs';
+import { useDialog, useForm } from './table/formState';
+import { DASH, Truncate } from './table/format';
+import { TablePage, type Column, type RowAction } from './table/TablePage';
+import { StatusBadge, type BadgeTone } from './ui';
+import styles from './table/table.module.scss';
 
 const GIB = 1073741824;
+const SORT = { column: 'name', desc: false };
 
 /** Used of total, in the unit of the column; decimal strings from the server. */
 const usage = (used: string, total: string, unit = 1) =>
   `${Math.round((Number(used) / unit) * 10) / 10} / ${Math.round((Number(total) / unit) * 10) / 10}`;
 
-type PoolState = 'inactive' | 'unavailable' | 'enabled' | 'draining';
+type PoolState = 'unavailable' | 'draining' | 'inactive' | 'enabled';
+
+/** In the order of the sort by state: what needs a look comes first. */
+const STATES: PoolState[] = ['unavailable', 'draining', 'inactive', 'enabled'];
 
 function poolState(pool: Pool): PoolState {
   if (!pool.managedPool) return 'inactive';
@@ -42,6 +39,7 @@ const TEXT_FIELDS = [
   'endpoint',
   'tokenID',
   'tokenSecret',
+  'caPEM',
   'node',
   'resourcePool',
   'storage',
@@ -51,33 +49,15 @@ const TEXT_FIELDS = [
 ] as const;
 const NUMBER_FIELDS = ['actors', 'cpu', 'memoryGiB', 'diskGiB'] as const;
 
-type DraftField = (typeof TEXT_FIELDS)[number] | (typeof NUMBER_FIELDS)[number] | 'caPEM';
+type DraftField = (typeof TEXT_FIELDS)[number] | (typeof NUMBER_FIELDS)[number];
 type Draft = Record<DraftField, string>;
 
-const EMPTY: Draft = {
-  name: '',
-  endpoint: '',
-  tokenID: '',
-  tokenSecret: '',
-  caPEM: '',
-  node: '',
-  resourcePool: '',
-  storage: '',
-  network: '',
-  template: '',
-  templateDigest: '',
-  actors: '',
-  cpu: '',
-  memoryGiB: '',
-  diskGiB: '',
-};
-
-const complete = (draft: Draft) =>
-  [...TEXT_FIELDS, 'caPEM' as const].every((field) => draft[field].trim() !== '') &&
-  NUMBER_FIELDS.every((field) => /^[1-9][0-9]{0,8}$/.test(draft[field].trim()));
+const EMPTY = Object.fromEntries(
+  [...TEXT_FIELDS, ...NUMBER_FIELDS].map((field) => [field, ''])
+) as Draft;
 
 /** The pool budget goes as the server stores it: millicores and bytes as
- * decimal strings, workers and disk GiB as numbers. */
+ * decimal strings, agents and disk GiB as numbers. */
 function payload(draft: Draft): NewConnection {
   const text = (field: DraftField) => draft[field].trim();
   return {
@@ -103,37 +83,58 @@ function payload(draft: Draft): NewConnection {
 
 function ConnectionForm({
   open,
-  run,
   close,
+  after,
 }: {
   open: boolean;
-  run: (action: () => Promise<unknown>) => Promise<boolean>;
   close: () => void;
+  after: () => unknown;
 }) {
   const { t } = useTranslation();
-  const [draft, setDraft] = useState(EMPTY);
-  const input = (field: DraftField, numeric = false) => (
+  const form = useForm(EMPTY, (draft) => ({
+    ...Object.fromEntries(
+      TEXT_FIELDS.map((field) => [
+        field,
+        draft[field].trim() ? undefined : t('brood.form.required'),
+      ])
+    ),
+    ...Object.fromEntries(
+      NUMBER_FIELDS.map((field) => [
+        field,
+        /^[1-9][0-9]{0,8}$/.test(draft[field].trim())
+          ? undefined
+          : t('brood.form.positive_integer'),
+      ])
+    ),
+    ...(draft.endpoint.trim() && !/^https:\/\/\S+$/.test(draft.endpoint.trim())
+      ? { endpoint: t('brood.pools.endpoint_invalid') }
+      : {}),
+  }));
+  const input = (field: Exclude<DraftField, 'caPEM'>, numeric = false) => (
     <Input
       key={field}
       label={t(`brood.pools.fields.${field}`)}
-      value={draft[field]}
+      required
       type={field === 'tokenSecret' ? 'password' : 'text'}
       inputMode={numeric ? 'numeric' : undefined}
       autoComplete={field === 'tokenSecret' ? 'new-password' : 'off'}
       autoCapitalize="off"
       spellCheck={false}
-      autoFocus={field === 'name'}
-      onChange={(event) => setDraft({ ...draft, [field]: event.target.value })}
+      {...form.field(field)}
     />
   );
+  const { error: caError, ...ca } = form.field('caPEM');
+  const name = form.values.name.trim();
   return (
-    <FormModal
+    <FormDialog
       open={open}
-      title={t('brood.pools.add')}
-      submitLabel={t('brood.create')}
-      canSubmit={complete(draft)}
-      submit={() => run(() => poolsApi.createConnection(payload(draft)))}
       close={close}
+      title={t('brood.pools.add')}
+      submitLabel={t('brood.pools.add')}
+      valid={form.valid}
+      submit={() => poolsApi.createConnection(payload(form.values))}
+      success={t('brood.pools.added', { name })}
+      after={after}
       width={680}
     >
       <p className={styles.fieldHint}>{t('brood.pools.form_hint')}</p>
@@ -143,15 +144,15 @@ function ConnectionForm({
         {input('tokenID')}
         {input('tokenSecret')}
       </div>
-      <Field label={t('brood.pools.fields.caPEM')}>
+      <Field label={t('brood.pools.fields.caPEM')} required error={caError}>
         {(id) => (
           <textarea
             id={id}
             className={`input ${styles.textarea}`}
-            value={draft.caPEM}
             spellCheck={false}
             autoComplete="off"
-            onChange={(event) => setDraft({ ...draft, caPEM: event.target.value })}
+            aria-invalid={Boolean(caError)}
+            {...ca}
           />
         )}
       </Field>
@@ -164,135 +165,111 @@ function ConnectionForm({
         {input('templateDigest')}
         {NUMBER_FIELDS.map((field) => input(field, true))}
       </div>
-    </FormModal>
+    </FormDialog>
   );
 }
 
 export function PoolsPage() {
   const { t } = useTranslation();
   const pools = useResource(poolsApi.list);
-  const { run, confirm, busy } = useActions(pools.refresh);
-  // Each opening is a new form (session): the secret does not outlive its dialog.
-  const [dialog, setDialog] = useState({ open: false, session: 0 });
-  const rows = pools.data ?? [];
-  const act = (pool: Pool, action: PoolAction) => (
-    <Button
-      variant="secondary"
-      size="sm"
-      disabled={busy}
-      aria-label={t(`brood.pools.${action}_named`, { name: pool.name })}
-      onClick={() => void run(() => poolsApi.act(pool.name, action))}
-    >
-      {t(`brood.pools.${action}`)}
-    </Button>
-  );
-  const remove = (pool: Pool, kind: 'pool' | 'connection', action: () => Promise<unknown>) => (
-    <Button
-      variant="ghost"
-      size="sm"
-      className={styles.dangerText}
-      disabled={busy}
-      aria-label={t(`brood.pools.delete_${kind}_named`, { name: pool.name })}
-      onClick={() =>
-        confirm({
-          title: t(`brood.pools.delete_${kind}`),
-          message: t(`brood.pools.confirm_delete_${kind}`, { name: pool.name }),
-          action,
-        })
-      }
-    >
-      {t(`brood.pools.delete_${kind}`)}
-    </Button>
-  );
+  const create = useDialog();
+  const stateLabel = (pool: Pool) => t(`brood.pools.states.${poolState(pool)}`);
+
+  const used = (
+    id: string,
+    read: (pool: NonNullable<Pool['managedPool']>) => string
+  ): Column<Pool> => ({
+    id,
+    header: t(`brood.pools.${id}`),
+    numeric: true,
+    cell: (row) => (row.managedPool ? read(row.managedPool) : DASH),
+  });
+  const columns: Column<Pool>[] = [
+    {
+      id: 'name',
+      header: t('brood.name'),
+      cell: (row) => <span className={styles.name}>{row.name}</span>,
+      text: (row) => row.name,
+      sort: (row) => row.name,
+    },
+    {
+      id: 'connection',
+      header: t('brood.pools.connection'),
+      cell: (row) => <Truncate mono text={`${row.endpoint} · ${row.node}`} />,
+      text: (row) => `${row.endpoint} ${row.node}`,
+    },
+    {
+      id: 'state',
+      header: t('brood.pools.state'),
+      cell: (row) => (
+        <span
+          title={
+            !row.managedPool && !row.runtimeAvailable ? t('brood.pools.no_runtime') : undefined
+          }
+        >
+          <StatusBadge tone={stateTone[poolState(row)]}>{stateLabel(row)}</StatusBadge>
+        </span>
+      ),
+      text: stateLabel,
+      sort: (row) => STATES.indexOf(poolState(row)),
+    },
+    used('agents', (pool) => usage(pool.usedActors, pool.maxActors)),
+    used('cpu', (pool) => usage(pool.usedCPUMillicores, pool.cpuMillicores, 1000)),
+    used('memory', (pool) => usage(pool.usedMemoryBytes, pool.memoryBytes, GIB)),
+    used('disk', (pool) => usage(pool.usedDiskBytes, pool.diskBytes, GIB)),
+  ];
+
+  const actions = (row: Pool): RowAction[] => {
+    const act = (action: PoolAction, disabled?: string): RowAction => ({
+      id: action,
+      label: t(`brood.pools.${action}`),
+      inline: true,
+      disabled,
+      run: () => poolsApi.act(row.name, action),
+    });
+    const { uid } = row;
+    return [
+      !row.managedPool
+        ? act('activate', row.runtimeAvailable ? undefined : t('brood.pools.no_runtime'))
+        : poolState(row) === 'draining'
+          ? act('enable')
+          : act('drain'),
+      row.managedPool
+        ? {
+            id: 'deactivate',
+            label: t('brood.pools.deactivate'),
+            danger: true,
+            confirm: t('brood.pools.confirm_deactivate', { name: row.name }),
+            run: () => poolsApi.deletePool(row.name),
+          }
+        : {
+            id: 'delete',
+            label: t('brood.pools.delete_connection'),
+            danger: true,
+            // A connection from the server's .env has no record to delete.
+            disabled: uid === undefined ? t('brood.pools.from_env') : undefined,
+            confirm: t('brood.pools.confirm_delete_connection', { name: row.name }),
+            run: () => poolsApi.deleteConnection(uid ?? ''),
+          },
+    ];
+  };
+
   return (
-    <div className={styles.page}>
-      <PageHeader
-        title={t('brood.pools.title')}
-        actions={
-          <Button onClick={() => setDialog({ open: true, session: dialog.session + 1 })}>
-            {t('brood.pools.add')}
-          </Button>
-        }
-      />
-      <LoadState {...pools} ready={pools.data !== null} retry={pools.refresh}>
-        {rows.length === 0 ? (
-          <EmptyState title={t('brood.pools.empty')} />
-        ) : (
-          <Table>
-            <TableHeader>
-              <tr>
-                <TableHead>{t('brood.name')}</TableHead>
-                <TableHead>{t('brood.pools.connection')}</TableHead>
-                <TableHead>{t('brood.pools.state')}</TableHead>
-                <TableHead alignRight>{t('brood.pools.workers')}</TableHead>
-                <TableHead alignRight>{t('brood.pools.cpu')}</TableHead>
-                <TableHead alignRight>{t('brood.pools.memory')}</TableHead>
-                <TableHead alignRight>{t('brood.pools.disk')}</TableHead>
-                <TableHead />
-              </tr>
-            </TableHeader>
-            <TableBody>
-              {rows.map((pool) => {
-                const state = poolState(pool);
-                const managed = pool.managedPool;
-                return (
-                  <TableRow key={pool.name}>
-                    <TableCell>
-                      <span className={styles.nameLink}>{pool.name}</span>
-                    </TableCell>
-                    <TableCell className={styles.mono}>
-                      {pool.endpoint} · {pool.node}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge tone={stateTone[state]}>
-                        {t(`brood.pools.states.${state}`)}
-                      </StatusBadge>
-                      {!managed && !pool.runtimeAvailable && (
-                        <p className={styles.errorText}>{t('brood.pools.no_runtime')}</p>
-                      )}
-                    </TableCell>
-                    <TableCell alignRight>
-                      {managed ? usage(managed.usedActors, managed.maxActors) : DASH}
-                    </TableCell>
-                    <TableCell alignRight>
-                      {managed
-                        ? usage(managed.usedCPUMillicores, managed.cpuMillicores, 1000)
-                        : DASH}
-                    </TableCell>
-                    <TableCell alignRight>
-                      {managed ? usage(managed.usedMemoryBytes, managed.memoryBytes, GIB) : DASH}
-                    </TableCell>
-                    <TableCell alignRight>
-                      {managed ? usage(managed.usedDiskBytes, managed.diskBytes, GIB) : DASH}
-                    </TableCell>
-                    <TableCell>
-                      <div className={styles.rowActions}>
-                        {!managed && pool.runtimeAvailable && act(pool, 'activate')}
-                        {managed && state === 'draining' && act(pool, 'enable')}
-                        {managed && state !== 'draining' && act(pool, 'drain')}
-                        {managed
-                          ? remove(pool, 'pool', () => poolsApi.deletePool(pool.name))
-                          : pool.uid !== undefined &&
-                            remove(pool, 'connection', () =>
-                              poolsApi.deleteConnection(pool.uid ?? '')
-                            )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </LoadState>
-      {dialog.session > 0 && (
-        <ConnectionForm
-          key={dialog.session}
-          open={dialog.open}
-          run={run}
-          close={() => setDialog({ ...dialog, open: false })}
-        />
-      )}
-    </div>
+    <TablePage
+      title={t('brood.pools.title')}
+      description={t('brood.pools.description')}
+      primary={{ label: t('brood.pools.add'), onClick: () => create.show(null) }}
+      resource={pools}
+      rowKey={(row) => row.name}
+      rowName={(row) => row.name}
+      columns={columns}
+      defaultSort={SORT}
+      empty={t('brood.pools.empty')}
+      actions={actions}
+    >
+      {create.mount((dialog) => (
+        <ConnectionForm {...dialog} after={pools.refresh} />
+      ))}
+    </TablePage>
   );
 }

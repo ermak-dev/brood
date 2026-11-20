@@ -1,9 +1,8 @@
 @use '../../styles/mixins' as *;
 @use '../../styles/variables' as *;
 
-/* brood pages: projects, a project, a swarm, pools, users and the profile.
- * Page header in the language of the upstream pages; blocks are the shared
- * Card and Table. */
+/* What the brood pages and the profile share: the page header, badges and
+ * the blocks of the profile. The entity tables live in table/. */
 
 .page {
   display: flex;
@@ -41,6 +40,14 @@
   letter-spacing: -0.02em;
   color: var(--text-primary);
   overflow-wrap: anywhere;
+}
+
+.description {
+  margin: 0;
+  max-width: var(--measure);
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-secondary);
 }
 
 .meta {
@@ -142,13 +149,6 @@
   background: var(--neutral-badge-bg);
 }
 
-.form {
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-  min-width: 0;
-}
-
 .section {
   display: flex;
   flex-direction: column;
@@ -181,48 +181,12 @@
   color: var(--text-secondary);
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.fieldLabel {
-  font-size: var(--fs-13);
-  line-height: var(--lh-13);
-  font-weight: 600;
-  color: var(--text-primary);
-}
 .fieldHint {
   margin: 0;
   max-width: var(--measure);
   font-size: var(--fs-12);
   line-height: var(--lh-12);
   color: var(--text-secondary);
-}
-
-/* Поля форм без внешнего отступа .form-group апстрима: раскладкой ведает форма;
- * подпись -- того же кегля, что у Field, чтобы поля не разнились. */
-.form :global(.form-group) {
-  margin-bottom: 0;
-
-  label {
-    font-size: var(--fs-13);
-    font-weight: 600;
-  }
-}
-
-.grid2 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 14px;
-}
-
-@include mobile {
-  .grid2 {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* Карточка -- первый уровень (#254); вложенные в неё блоки (.notice,
@@ -302,55 +266,11 @@
   }
 }
 
-/* ─── сегментный переключатель (язык ModeSwitch апстрима) ──────────── */
-
 :global(.btn).dangerText,
 :global(.btn).dangerText:hover:not(:disabled),
 :global([data-theme]) :global(.btn.btn-ghost).dangerText,
 :global([data-theme]) :global(.btn.btn-ghost).dangerText:hover:not(:disabled) {
   color: var(--viz-failure);
-}
-
-/* ─── brood ─────────────────────────────────────────────────────────── */
-
-.crumbs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: var(--fs-13);
-  line-height: var(--lh-13);
-  color: var(--text-secondary);
-
-  a {
-    color: inherit;
-
-    &:hover,
-    &:focus-visible {
-      color: var(--text-primary);
-    }
-  }
-}
-
-.nameLink {
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
-
-.rowActions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.errorText {
-  margin: 4px 0 0;
-  max-width: var(--measure);
-  font-size: var(--fs-12);
-  line-height: var(--lh-12);
-  color: var(--problem-badge-fg);
-  overflow-wrap: anywhere;
 }
 
 .failure {
@@ -367,39 +287,4 @@
   p {
     margin: 0;
   }
-}
-
-.formActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.inlineForm {
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-
-  :global(.form-group) {
-    flex: 1 1 200px;
-    max-width: 320px;
-    margin-bottom: 0;
-  }
-}
-
-.textarea {
-  min-height: 120px;
-  resize: vertical;
-  font-family: $font-mono;
-  font-size: var(--fs-12);
-}
-
-.check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--fs-13);
-  font-weight: 600;
 }

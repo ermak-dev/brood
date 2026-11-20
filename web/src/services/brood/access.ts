@@ -1,7 +1,7 @@
 /**
  * brood: users, projects, members and swarms of the Go server.
  *
- * Shapes follow go/brood/server/api.go, capacity_api.go, members_read.go,
+ * Shapes follow go/brood/server/api.go, api_lists.go, capacity_api.go, members_read.go,
  * git_repository_api.go and go/brood/auth/service.go. The server stays the
  * authorization authority; a refusal carries its reason in `detail`.
  */
@@ -43,13 +43,15 @@ export const LIMIT_FIELDS = [
   'max_memory_bytes',
 ] as const satisfies ReadonlyArray<keyof ProjectLimits>;
 
+/** A row of the flat swarm list (go/brood/server/api_lists.go). */
 export interface Swarm {
   id: string;
   project_id: string;
+  project_name: string;
   owner_username: string;
   name: string;
-  /** Workers that are not deleted; only list rows carry it. */
-  managedActorCount?: number;
+  created_at: string;
+  agentCount: number;
 }
 
 const segment = encodeURIComponent;
@@ -84,10 +86,9 @@ export const accessApi = {
   setLimits: (id: string, limits: ProjectLimits) =>
     request<void>('PUT', `${projectPath(id)}/capacity`, limits),
 
-  swarms: (projectId: string) => request<Swarm[]>('GET', `${projectPath(projectId)}/swarms`),
+  /** Every live swarm for an administrator, the caller's own otherwise. */
+  swarms: () => request<Swarm[]>('GET', '/api/swarms'),
   createSwarm: (projectId: string, name: string) =>
-    request<Swarm>('POST', `${projectPath(projectId)}/swarms`, { name }),
-  /** Someone else's swarm is indistinguishable from a missing one (404). */
-  swarm: (id: string) => request<Swarm>('GET', swarmPath(id)),
+    request<unknown>('POST', `${projectPath(projectId)}/swarms`, { name }),
   deleteSwarm: (id: string) => request<void>('DELETE', swarmPath(id)),
 };
