@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"brood.dev/go/brood/app"
@@ -79,10 +80,22 @@ func writeDetail(w http.ResponseWriter, status int, detail string) {
 	}{Detail: detail})
 }
 
+// publicDetail снимает с текста отказа служебное имя причины ("conflict: "):
+// человеку нужна сама причина, статус HTTP несёт её род.
+func publicDetail(err error) string {
+	detail := err.Error()
+	for _, sentinel := range []error{app.ErrConflict, app.ErrExists, app.ErrNotFound, app.ErrNotAllowed, app.ErrState, app.ErrInvalidWorkload, app.ErrInvalidCapacity} {
+		if rest, ok := strings.CutPrefix(detail, sentinel.Error()+": "); ok {
+			return rest
+		}
+	}
+	return detail
+}
+
 // apiError переводит отказ домена в статус HTTP. Внутренние сбои
 // логируются с причиной, наружу — только «internal error».
 func apiError(w http.ResponseWriter, r *http.Request, err error) {
-	detail := err.Error()
+	detail := publicDetail(err)
 	var status int
 	var capacityError *app.CapacityExceededError
 	switch {

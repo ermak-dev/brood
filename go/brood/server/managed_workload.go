@@ -168,10 +168,10 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 		return plan, nil
 	}
 	if !o.server.managed.poolAvailable(o.pool) {
-		return plan, fmt.Errorf("%w: installed Proxmox runtime unavailable", app.ErrConflict)
+		return plan, fmt.Errorf("%w: the Proxmox connection of this pool is not configured or changed; an administrator should check the Pools page", app.ErrConflict)
 	}
 	if o.pool.State != "enabled" {
-		return plan, fmt.Errorf("%w: managed pool is draining", app.ErrConflict)
+		return plan, fmt.Errorf("%w: the pool is being drained and takes no new agents; choose another pool or ask an administrator to enable it", app.ErrConflict)
 	}
 	resources := o.actor.Resources
 	if o.action == "create" {
@@ -203,7 +203,7 @@ func (o *managedWorkloadOperation) Apply() error {
 	var a store.ManagedActor
 	if o.action == "create" {
 		if m.hub == nil {
-			return fmt.Errorf("%w: guest relay unavailable", app.ErrConflict)
+			return fmt.Errorf("%w: the server cannot accept agent connections: BROOD_PUBLIC_ORIGIN and BROOD_PROXMOX_RELAY_SECRET must be set", app.ErrConflict)
 		}
 		id, err := client.NextID(o.context)
 		if err != nil {
@@ -266,7 +266,7 @@ func (o *managedWorkloadOperation) Apply() error {
 		// проверяется прямо перед удалением, а не берётся из прошлого прохода.
 		unborn := o.action == "delete" && a.Stage == "create" && a.UPID == "" && a.Operation == "create" && client.ConfirmAbsent(o.context, a.CTID) == nil
 		if a.Stage != "done" && !waiting && !unborn && (o.action != "delete" || a.UPID == "" || a.Stage == "delete" || a.Operation == "reset") {
-			return fmt.Errorf("%w: previous provider outcome is uncertain; allocation retained", app.ErrConflict)
+			return &app.APIError{Status: http.StatusConflict, Detail: "The previous operation on this agent has no confirmed result in Proxmox, so a new one is not started. If the container does not exist in Proxmox, delete the agent; otherwise wait for Proxmox to finish and retry."}
 		}
 		if a.Stage != "done" && a.UPID != "" {
 			if taskErr := client.WaitTask(o.context, a.UPID); taskErr != nil {
@@ -284,7 +284,7 @@ func (o *managedWorkloadOperation) Apply() error {
 			return err
 		}
 		if o.action != "delete" && observed == "absent" {
-			return fmt.Errorf("%w: owned container is absent; delete the retained allocation before creating another", app.ErrConflict)
+			return fmt.Errorf("%w: the container of this agent no longer exists in Proxmox; delete the agent and create it again", app.ErrConflict)
 		}
 		// Update перезапускает работающую CT; остановленную поднимает start.
 		if o.action == "update" && observed != "running" {
@@ -370,7 +370,7 @@ func (o *managedWorkloadOperation) Apply() error {
 			if errors.As(err, &held) {
 				return fmt.Errorf("%w: %w", app.ErrConflict, held)
 			}
-			return fmt.Errorf("%w: managed task must be reconciled before changing intent", app.ErrConflict)
+			return &app.APIError{Status: http.StatusConflict, Detail: "The agent changed while the request was processed. Reload the list and retry."}
 		}
 		noteLifecycleIntent(o.context, lifecycleIntentAccepted)
 		if o.action == "stop" || o.action == "delete" || o.action == "reset" || o.action == "update" {
@@ -471,7 +471,7 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if r.Method == http.MethodPut {
-		writeDetail(w, 409, "managed profile definition is immutable")
+		writeDetail(w, 409, "an agent cannot be edited; create a new one")
 		return
 	}
 	action := "delete"
@@ -482,7 +482,7 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 			return
 		}
 		if action == "suspend" {
-			writeDetail(w, 409, "claude-proxmox does not support memory checkpoints; use stop to retain workspace")
+			writeDetail(w, 409, "suspend is not supported; stop the agent instead, its workspace is kept")
 			return
 		}
 		if action == "resume" {

@@ -276,13 +276,13 @@ func managedAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &origin):
 		writeDetail(w, 422, origin.Error())
 	case errors.Is(err, store.ErrNotFound):
-		writeDetail(w, 404, "managed resource not found")
+		writeDetail(w, 404, "agent or pool not found; it may have been deleted, reload the list")
 	case errors.Is(err, proxmox.ErrPermission):
 		writeDetail(w, 503, managedProviderError(err))
 	case errors.Is(err, proxmox.ErrOwnership), errors.Is(err, proxmox.ErrUncertain), errors.Is(err, proxmox.ErrTaskFailed):
 		writeDetail(w, 409, managedProviderError(err))
 	case errors.Is(err, store.ErrPoolCapacity), errors.Is(err, store.ErrPoolUnavailable), errors.Is(err, store.ErrManagedChildren), errors.Is(err, store.ErrManagedBinding), errors.Is(err, store.ErrRevisionConflict), store.IsUniqueViolation(err):
-		writeDetail(w, 409, err.Error())
+		writeDetail(w, 409, publicDetail(err))
 	default:
 		apiError(w, r, err)
 	}
@@ -294,7 +294,7 @@ func (g *Gateway) CheckSwarmDeletion(id string) error {
 		return err
 	}
 	if has {
-		return fmt.Errorf("%w: managed actor allocations or uncertain cleanup remain", app.ErrSwarmNotEmpty)
+		return &app.APIError{Status: http.StatusConflict, Detail: "The swarm still has agents. Delete them on the Agents page first."}
 	}
 	return nil
 }

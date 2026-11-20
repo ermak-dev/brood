@@ -140,17 +140,15 @@ func (s *Server) issueActorView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "terminal mode must be ro or rw", http.StatusBadRequest)
 		return
 	}
-	if uid != "" && mode == "" {
-		serveTerminalModeChoice(w, r)
-		return
-	}
+	// Режим выбирает ссылка панели: rw — терминал с вводом (по умолчанию),
+	// ro — снимок экрана без ввода. Промежуточной страницы выбора нет.
 	v.readOnly = mode == "ro"
 	if v.readOnly && uid == "" {
 		http.Error(w, "read-only snapshots require a managed actor", http.StatusUnprocessableEntity)
 		return
 	}
 	if !s.validManagedView(r.Context(), v) {
-		http.Error(w, "outstanding child work holds the writable terminal; use mode=ro for a read-only snapshot", http.StatusConflict)
+		http.Error(w, "the terminal is not available: the agent is not running or your access changed; reload the agents list", http.StatusConflict)
 		return
 	}
 	s.views.mu.Lock()

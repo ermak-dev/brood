@@ -89,7 +89,7 @@ const managedPassTimeout = 20 * time.Second
 // Отсчёт от UpdatedAt актора: привязка UPID его обновляет.
 const managedTaskPendingLimit = 15 * time.Minute
 
-const managedTaskPendingError = "Proxmox task has not finished; allocation retained"
+const managedTaskPendingError = "Proxmox is still working on the operation. brood keeps waiting; no action is needed."
 
 // errManagedTaskPending — задача ещё идёт; истёк только срок прохода.
 var errManagedTaskPending = errors.New("managed Proxmox task is still running")
@@ -277,24 +277,67 @@ func (m *managedProvider) recordTask(ctx context.Context, a store.ManagedActor, 
 	}
 	return a, nil
 }
+
+// Диагностика агента для человека: что произошло, изменилось ли что-нибудь
+// и что делать дальше. Код рядом с текстом позволяет панели показать
+// перевод и подсказку; сырой ответ провайдера сюда не попадает.
+const (
+	managedOwnershipError  = "The container in Proxmox no longer matches what brood created: its description, disk or network was changed, or it left the brood resource pool. brood changed nothing. Restore the container in Proxmox or delete the agent."
+	managedPermissionError = "Proxmox refused the operation because the brood API token lacks a permission. Nothing was changed. An administrator should check the roles of the token, then retry."
+	managedTaskFailedError = "Proxmox started the operation and reported that it failed. Open the task log of the container in Proxmox for the reason, then retry or delete the agent."
+	managedAgentWaiting    = "The container is running but does not answer over SSH yet. brood installs the agent as soon as it answers; no action is needed."
+	managedUncertainError  = "Proxmox did not confirm whether the operation started: the request failed or timed out. brood does not repeat it blindly. If the container does not exist in Proxmox, delete the agent; otherwise wait and reload."
+	managedUnavailable     = "brood could not reach Proxmox to check the container. It retries automatically; no action is needed unless this persists."
+)
+
 func managedProviderError(err error) string {
 	switch {
 	case errors.Is(err, proxmox.ErrOwnership):
-		return "container ownership or approved configuration does not match; allocation retained"
+		return managedOwnershipError
 	case errors.Is(err, proxmox.ErrPermission):
-		return "Proxmox permission denied; allocation retained"
+		return managedPermissionError
 	case errors.Is(err, proxmox.ErrTaskFailed):
-		return "Proxmox task failed; allocation retained"
+		return managedTaskFailedError
 	case errors.Is(err, errManagedTaskPending):
 		return managedTaskPendingError
 	case errors.Is(err, errAgentWaiting):
-		return "Proxmox did not confirm the bootstrap configuration of the stopped container; it is written again before the start"
+		return managedAgentWaiting
 	case errors.Is(err, proxmox.ErrUncertain):
-		return "Proxmox operation outcome is uncertain; recorded CTID and reservation retained"
+		return managedUncertainError
 	default:
-		return "Proxmox reconciliation unavailable; allocation retained"
+		return managedUnavailable
 	}
 }
+
+// managedErrorCode — устойчивый код диагностики для панели; пусто — текст
+// без известного кода.
+func managedErrorCode(message string) string {
+	switch message {
+	case "":
+		return ""
+	case managedOwnershipError:
+		return "ownership"
+	case managedPermissionError:
+		return "permission"
+	case managedTaskFailedError:
+		return "task_failed"
+	case managedTaskPendingError:
+		return "task_pending"
+	case managedAgentWaiting:
+		return "agent_waiting"
+	case managedUncertainError:
+		return "uncertain"
+	case managedUnavailable:
+		return "provider_unavailable"
+	case managedReadinessError:
+		return "agent_not_connected"
+	}
+	if strings.HasPrefix(message, "agent installation failed") {
+		return "agent_install"
+	}
+	return "other"
+}
+
 func inspectManaged(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (proxmox.CTConfig, error) {
 	return client.InspectOwned(ctx, managedOwned(a))
 }
@@ -493,7 +536,7 @@ func (e *waitingRefusal) Error() string {
 	if e.last != "" {
 		last = "last attempt failed: " + e.last
 	}
-	return fmt.Sprintf("%s refused: actor %q is waiting to %s %s (%s); reconcile retries the %s on every pass%s", e.action, e.name, verb, container, last, verb, cancel)
+	return fmt.Sprintf("Agent %q is already waiting to %s %s (%s). brood retries the %s automatically%s.", e.name, verb, container, last, verb, cancel)
 }
 
 func (e *waitingRefusal) Unwrap() error { return app.ErrConflict }
@@ -879,7 +922,7 @@ type managedReadiness struct {
 	since       time.Time
 }
 
-const managedReadinessError = "guest terminal is not ready; use stop/resume to recover"
+const managedReadinessError = "The agent did not connect within two minutes after its container started. Stop and start the agent; if it repeats, check the brood-agent service in the container console in Proxmox."
 
 func (m *managedProvider) waitReadiness(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
 	value, _ := m.readiness.LoadOrStore(a.UID, managedReadiness{a.OperationID, time.Now()})
@@ -1014,7 +1057,7 @@ func managedActorJSON(a store.ManagedActor, p store.ManagedPool, swarmID, origin
 	case "error":
 		state = "ACTOR_STATE_CRASHED"
 	}
-	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "swarm": swarmID}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Diagnostic()}, "origin": a.Origin, "originMode": originMode, "createdAt": a.CreatedAt}
+	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "swarm": swarmID}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Diagnostic(), "errorCode": managedErrorCode(a.Diagnostic())}, "origin": a.Origin, "originMode": originMode, "createdAt": a.CreatedAt}
 }
 
 func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm) ([]any, error) {

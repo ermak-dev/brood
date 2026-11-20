@@ -14,11 +14,11 @@ import (
 )
 
 var (
-	ErrRevisionConflict = errors.New("managed inventory revision conflict")
-	ErrPoolUnavailable  = errors.New("managed pool is not enabled")
-	ErrPoolCapacity     = errors.New("managed pool capacity exhausted")
+	ErrRevisionConflict = errors.New("the agent changed while the request was processed; reload and retry")
+	ErrPoolUnavailable  = errors.New("the pool is not enabled; an administrator must enable it on the Pools page")
+	ErrPoolCapacity     = errors.New("the pool has no free capacity for another agent; delete an agent or ask an administrator to raise the pool capacity")
 	ErrManagedBinding   = errors.New("managed allocation binding is immutable")
-	ErrManagedChildren  = errors.New("managed pool has allocated actors")
+	ErrManagedChildren  = errors.New("the pool still has agents; delete them first")
 )
 
 // ManagedSourceSnapshot is public connection identity, never authentication material.
