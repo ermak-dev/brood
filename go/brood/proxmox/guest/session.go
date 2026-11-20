@@ -139,14 +139,8 @@ func newSessionHandler(connection context.Context, refresh func(context.Context)
 						return terminalFailure("legacy replacement is unavailable for a held inbox session; session unchanged")
 					}
 				}
-				if replace && refresh != nil {
-					bound, cancel := context.WithCancel(ctx)
-					stop := context.AfterFunc(connection, cancel)
-					defer cancel()
-					defer stop()
-					if connection.Err() != nil || refresh(bound) != nil || bound.Err() != nil {
-						return terminalFailure("project secrets refresh failed; session unchanged")
-					}
+				if replace && !refreshSessionSecrets(ctx, connection, refresh) {
+					return terminalFailure("project secrets refresh failed; session unchanged")
 				}
 				// Перезапуск вне шага — свободная сессия (#224): режим снимается
 				// до остановки старой, иначе новая унаследовала бы его.
@@ -165,6 +159,20 @@ func newSessionHandler(connection context.Context, refresh func(context.Context)
 			return run(ctx, req)
 		}
 	}
+}
+
+// refreshSessionSecrets stages a projection only while both the request and
+// the connection still authorize the session replacement.
+func refreshSessionSecrets(ctx, authority context.Context, refresh func(context.Context) error) bool {
+	if refresh == nil {
+		return true
+	}
+	bound, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(authority, cancel)
+	defer cancel()
+	defer stop()
+	return authority.Err() == nil && bound.Err() == nil && refresh(bound) == nil &&
+		bound.Err() == nil && authority.Err() == nil
 }
 
 // HandleSession handles stateless operations. Terminal requests require the

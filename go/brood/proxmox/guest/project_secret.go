@@ -99,17 +99,30 @@ func FetchProjectSecrets(ctx context.Context, cfg relay.ClientConfig) (projectse
 // RefreshProjectSecrets fetches and atomically stages the next app's bundle.
 // Only guest root may call it; the projection never contains machine credentials.
 func RefreshProjectSecrets(ctx context.Context, cfg relay.ClientConfig) error {
-	if os.Geteuid() != 0 {
-		return secretFailure()
-	}
-	bundle, err := FetchProjectSecrets(ctx, cfg)
+	publish, err := PrepareProjectSecrets(ctx, cfg)
 	if err != nil {
-		return secretFailure()
-	}
-	if err = prepareRunDirectory(); err != nil {
 		return err
 	}
-	return publishProjectSecrets(projectSecretDirectory, bundle, 0, 1000)
+	return publish()
+}
+
+// PrepareProjectSecrets fetches and validates the projection as guest root.
+// The returned publisher is the only filesystem effect. A workspace step must
+// call it in the quiet window so the outgoing actor cannot read the new bundle.
+func PrepareProjectSecrets(ctx context.Context, cfg relay.ClientConfig) (func() error, error) {
+	if os.Geteuid() != 0 {
+		return nil, secretFailure()
+	}
+	bundle, err := FetchProjectSecrets(ctx, cfg)
+	if err != nil || ctx.Err() != nil {
+		return nil, secretFailure()
+	}
+	return func() error {
+		if err := prepareRunDirectory(); err != nil {
+			return err
+		}
+		return publishProjectSecrets(projectSecretDirectory, bundle, 0, 1000)
+	}, nil
 }
 
 // prepareRunDirectory creates /run/brood as root:1000 0750 for the app wrapper.

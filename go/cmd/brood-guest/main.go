@@ -71,6 +71,7 @@ type dependencies struct {
 	app               func() error
 	inboxApp          func() error
 	secrets           func(context.Context, relay.ClientConfig) error
+	prepareSecrets    func(context.Context, relay.ClientConfig) (func() error, error)
 	actor             func() error
 	heldActor         func() error
 	attach            func(context.Context) error
@@ -421,8 +422,8 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	}
 	// Подпись — от bootstrap-идентичности root, остановка — через сам runtime.
 	var attestor *guest.WorkspaceAttestor
+	owner, ok := runtime.(*guest.Runtime)
 	if c.stepLaunchBinding || startInbox != nil {
-		owner, ok := runtime.(*guest.Runtime)
 		if !ok || owner == nil {
 			cancel()
 			err := errors.New("guest step launch binding requires the owning runtime")
@@ -442,8 +443,15 @@ func supervise(parent context.Context, c config, d dependencies) error {
 			}
 		}
 		attestor = owner.NewStepLaunchWorkspaceAttestor(c.relay, c.workspace)
+	} else if ok && owner != nil {
+		attestor = owner.NewWorkspaceAttestor(cfg, c.workspace)
 	} else {
 		attestor = guest.NewWorkspaceAttestor(cfg, c.workspace, runtime.Quiesce)
+	}
+	if d.prepareSecrets != nil {
+		attestor.PrepareSecrets = func(ctx context.Context) (func() error, error) {
+			return d.prepareSecrets(ctx, cfg)
+		}
 	}
 	c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
 		return releaseSessions(artifactRoot, guest.NewSupervisorSessionHandler(connection, refresh, attestor))
@@ -588,7 +596,8 @@ func main() {
 		return profile.Start, nil
 	}, app: func() error { return guest.RunProjectApp(os.Stderr) }, inboxApp: func() error { return guest.RunInboxProjectApp(os.Stderr) }, boot: guest.RunSessionAutostart, autorun: func(ctx context.Context) {
 		guest.AutostartSession(ctx, func(err error) { fmt.Fprintln(os.Stderr, err) })
-	}, secrets: guest.RefreshProjectSecrets, actor: guest.RunActor, heldActor: guest.RunHeldActor, attach: guest.RunPTYAttach, message: runMessageHelper,
+	}, secrets: guest.RefreshProjectSecrets, prepareSecrets: guest.PrepareProjectSecrets,
+		actor: guest.RunActor, heldActor: guest.RunHeldActor, attach: guest.RunPTYAttach, message: runMessageHelper,
 		inbox: func(ctx context.Context) error { return guest.RunInboxHelper(ctx, os.Stdin, os.Stdout) }, session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 			return guest.StartModelGateway(ctx, cfg)
 		}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
