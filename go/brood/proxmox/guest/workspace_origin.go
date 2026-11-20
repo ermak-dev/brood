@@ -18,18 +18,18 @@ import (
 )
 
 // FetchWorkspaceOrigin reads only this actor generation's server-assigned origin.
-func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts []string) (WorkspaceOrigin, error) {
-	return fetchWorkspaceOrigin(parent, cfg, hosts, false)
+func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig) (WorkspaceOrigin, error) {
+	return fetchWorkspaceOrigin(parent, cfg, false)
 }
 
 // FetchWorkspaceBootstrap explicitly negotiates ephemeral bootstrap support.
 // Only a supervisor that suppresses free autostart and prepares the exact source
 // before the first model session may call it. The legacy receiver never opts in.
-func FetchWorkspaceBootstrap(parent context.Context, cfg relay.ClientConfig, hosts []string) (WorkspaceOrigin, error) {
-	return fetchWorkspaceOrigin(parent, cfg, hosts, true)
+func FetchWorkspaceBootstrap(parent context.Context, cfg relay.ClientConfig) (WorkspaceOrigin, error) {
+	return fetchWorkspaceOrigin(parent, cfg, true)
 }
 
-func fetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts []string, bootstrap bool) (WorkspaceOrigin, error) {
+func fetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, bootstrap bool) (WorkspaceOrigin, error) {
 	fail := func() (WorkspaceOrigin, error) { return WorkspaceOrigin{}, originFailure() }
 	route, err := newServerRoute(cfg)
 	if err != nil {
@@ -63,7 +63,7 @@ func fetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, hosts 
 		return fail()
 	}
 	origin, err := decodeWorkspaceOrigin(data, bootstrap)
-	if err != nil || ValidateWorkspaceOrigin(origin.Origin, origin.Mode, hosts) != nil {
+	if err != nil || ValidateWorkspaceOrigin(origin.Origin, origin.Mode) != nil {
 		return fail()
 	}
 	return origin, nil
@@ -187,11 +187,11 @@ func decodeModels(raw json.RawMessage) (actormodel.Models, bool) {
 }
 
 // RefreshWorkspaceOrigin stages the verified response for the UID 1000 wrapper.
-func RefreshWorkspaceOrigin(ctx context.Context, cfg relay.ClientConfig, hosts []string) (WorkspaceOrigin, error) {
+func RefreshWorkspaceOrigin(ctx context.Context, cfg relay.ClientConfig) (WorkspaceOrigin, error) {
 	if os.Geteuid() != 0 {
 		return WorkspaceOrigin{}, errors.New("workspace origin requires guest root")
 	}
-	origin, err := FetchWorkspaceOrigin(ctx, cfg, hosts)
+	origin, err := FetchWorkspaceOrigin(ctx, cfg)
 	if err != nil {
 		return WorkspaceOrigin{}, err
 	}

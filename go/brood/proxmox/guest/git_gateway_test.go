@@ -284,7 +284,4 @@ func TestGitGatewayRequiresSupervisorIdentity(t *testing.T) {
 			t.Errorf("invalid supervisor identity accepted: %+v", cfg.URL)
 		}
 	}
-	if !strings.Contains(nftRules(), `oifname "lo" ip daddr 127.0.0.0/8 meta l4proto { tcp, udp } accept`) || !strings.Contains(nftRules(), `iifname != "lo" tcp dport { 3128, 5353, 8080, 8317, 8318 } reject`) {
-		t.Fatal("Git gateway missing from fixed loopback policy")
-	}
 }

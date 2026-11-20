@@ -119,7 +119,7 @@ func TestWorkspaceAttestSecretPublishFailureDoesNotStartStep(t *testing.T) {
 
 func TestWorkspaceAttestPublishesPreparedSecretsOnlyWhenTheOldAppIsStopped(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	var old *fakeProcess
 	var held *heldPTYTestProcess
 	launch := c.Dependencies.Launch
@@ -179,7 +179,7 @@ func TestWorkspaceAttestPublishesPreparedSecretsOnlyWhenTheOldAppIsStopped(t *te
 
 func TestWorkspaceAttestSecretHandoffRejectsRevokedRequestBeforeStoppingActor(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	r, err := Start(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestWorkspaceAttestSecretHandoffCarriesAuthorityWithoutBindings(t *testing.
 
 func TestWorkspaceAttestSecretRefreshKeepsOrdinaryLaunchUnbound(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	r, err := Start(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
@@ -254,7 +254,7 @@ func TestWorkspaceAttestSecretRefreshKeepsOrdinaryLaunchUnbound(t *testing.T) {
 
 func TestWorkspaceAttestSecretPublicationFailureEndsOrdinaryRuntime(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	r, err := Start(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)

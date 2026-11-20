@@ -78,19 +78,26 @@ func runActorPTY(executable string, driftty, oneShot bool) error {
 	defer cancel()
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- host.Serve(ctx, listener) }()
-	terminal := exec.Command("/usr/bin/ttyd", actorArgs(executable, driftty)...)
-	terminal.Env = actorEnv()
-	terminal.Dir = "/workspace/home"
-	terminal.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
-	if err := terminal.Start(); err != nil {
-		cancel()
-		listener.Close()
-		return errors.New("cannot start actor terminal transport")
+	// Без ttyd (его нет в пакетах Debian, кладёт установщик) PTY-хост живёт
+	// один: сессия, сообщения и MCP работают, нет только терминала в браузере.
+	// О пропаже сообщает PrepareHost; здесь nil-канал просто не срабатывает.
+	var terminal *exec.Cmd
+	var terminalDone chan error
+	if _, err := os.Stat(ttydPath); !os.IsNotExist(err) {
+		terminal = exec.Command(ttydPath, actorArgs(executable, driftty)...)
+		terminal.Env = actorEnv()
+		terminal.Dir = "/workspace/home"
+		terminal.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+		if err := terminal.Start(); err != nil {
+			cancel()
+			listener.Close()
+			return errors.New("cannot start actor terminal transport")
+		}
+		terminalDone = make(chan error, 1)
+		go func() { terminalDone <- terminal.Wait() }()
 	}
-	terminalDone := make(chan error, 1)
-	go func() { terminalDone <- terminal.Wait() }()
 	var result error
-	terminalExited, hostExited := false, false
+	terminalExited, hostExited := terminal == nil, false
 	select {
 	case result = <-terminalDone:
 		terminalExited = true

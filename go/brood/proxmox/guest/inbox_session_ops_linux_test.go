@@ -17,7 +17,7 @@ func TestInboxSessionReplacementRefusesBeforeTouchingTheHeldApp(t *testing.T) {
 	for _, op := range []string{"restart", "recycle"} {
 		t.Run(op, func(t *testing.T) {
 			var events []string
-			cfg, _ := testConfig(&events)
+			cfg := testConfig(&events)
 			withHeldPTYTestLauncher(cfg, func(*heldPTYTestProcess) {})
 			r, err := Start(context.Background(), cfg)
 			if err != nil {

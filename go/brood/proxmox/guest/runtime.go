@@ -6,36 +6,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
-
-	"brood.dev/go/brood/proxmox/egress"
 )
 
-// Dependencies is the trusted root boundary. Tests replace it without changing
-// the host firewall; production callers must use SystemDependencies unchanged.
+// Dependencies is the trusted root boundary. Tests replace it without touching
+// the host; production callers must use SystemDependencies unchanged.
 type Dependencies struct {
 	EUID      func() int
-	Lookup    Lookup
 	Workspace func() error
-	Rules     func(context.Context, string) error
-	Services  func(context.Context, *Policy) (Services, error)
 	Launch    func(context.Context, ActorSpec) (Process, error)
 }
 
 // SystemDependencies operates only inside a dedicated guest CT with exclusive
-// actor UID 1000. Root needs CAP_NET_ADMIN, CAP_SETUID, CAP_SETGID, CAP_CHOWN,
-// CAP_DAC_OVERRIDE, CAP_FOWNER and CAP_KILL, normal /proc access and pidfd support.
-// The guest network namespace must support inet nftables NAT/filter/conntrack,
-// including IPv6 loopback. The parent must complete DHCP before Start and leave
-// the normal DHCP resolver in resolv.conf; pointing it at this DNS service would
-// recurse. These dependencies never change DHCP, resolv.conf or host policy.
-// The trusted root relay may reach its configured private-LAN public origin;
-// that origin must not be added to the actor policy as a private-address bypass.
+// actor UID 1000. Root needs CAP_SETUID, CAP_SETGID, CAP_CHOWN,
+// CAP_DAC_OVERRIDE, CAP_FOWNER and CAP_KILL, normal /proc access and pidfd
+// support. The network belongs to the distribution: these dependencies never
+// configure addresses, the resolver or a firewall, and the actor uses the
+// container network without restriction.
 func SystemDependencies() *Dependencies {
 	return systemDependencies("/workspace", 1000, 1000, systemStepPolicy())
 }
@@ -45,9 +35,6 @@ func SystemDependencies() *Dependencies {
 func systemDependencies(workspace string, uid, gid int, step stepPolicy) *Dependencies {
 	return &Dependencies{
 		EUID: os.Geteuid,
-		Lookup: func(ctx context.Context, host string) ([]net.IP, error) {
-			return net.DefaultResolver.LookupIP(ctx, "ip", host)
-		},
 		Workspace: func() error {
 			if err := prepareWorkspace(workspace, uid, gid); err != nil {
 				return err
@@ -59,21 +46,18 @@ func systemDependencies(workspace string, uid, gid int, step stepPolicy) *Depend
 			}
 			return nil
 		},
-		Rules: systemRules, Services: startServices, Launch: launchActor,
+		Launch: launchActor,
 	}
 }
 
-// Config carries no relay or PVE credentials. Hosts is the legacy public-host
-// allowlist and cannot be combined with Network. A nonnil Network may be offline.
-// Executable defaults to the running supervisor.
+// Config carries no relay or PVE credentials. Executable defaults to the
+// running supervisor.
 type Config struct {
-	Network      *egress.Policy
-	Hosts        []string
 	Executable   string
 	Dependencies *Dependencies
 }
 
-// Runtime owns the actor and root enforcement services. Start means the child
+// Runtime owns the actor process tree. Start means the child
 // was launched, not that ttyd is ready; the parent may probe TerminalDialTarget.
 type Runtime struct {
 	done    chan struct{}
@@ -172,7 +156,7 @@ func (*Runtime) TerminalDialTarget() string { return "127.0.0.1:8080" }
 // Wait returns after child termination and ordered cleanup, including on failure.
 func (r *Runtime) Wait() error { <-r.done; return r.err }
 
-// Close stops the whole actor before closing root services or removing rules.
+// Close stops the whole actor and waits for the ordered cleanup.
 func (r *Runtime) Close() error {
 	r.once.Do(func() {
 		close(r.stop)
@@ -181,11 +165,10 @@ func (r *Runtime) Close() error {
 	return r.Wait()
 }
 
-// Start refuses missing dependencies and installs enforcement before any child.
-// An existing brood_guest nft table is an error, never overwritten or adopted.
+// Start refuses missing dependencies and prepares the workspace before any child.
 func Start(ctx context.Context, c Config) (*Runtime, error) {
 	d := c.Dependencies
-	if d == nil || d.EUID == nil || d.Lookup == nil || d.Workspace == nil || d.Rules == nil || d.Services == nil || d.Launch == nil {
+	if d == nil || d.EUID == nil || d.Workspace == nil || d.Launch == nil {
 		return nil, errors.New("guest supervisor dependencies are required")
 	}
 	if d.EUID() != 0 {
@@ -200,50 +183,8 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 	if !filepath.IsAbs(c.Executable) {
 		return nil, errors.New("guest executable must be absolute")
 	}
-	var policy *Policy
-	var err error
-	if c.Network != nil {
-		if len(c.Hosts) != 0 {
-			return nil, errors.New("legacy hosts and selected network policy cannot be combined")
-		}
-		policy, err = NewNetworkPolicy(c.Network.Rules(), d.Lookup)
-	} else {
-		policy, err = NewPolicy(c.Hosts, d.Lookup)
-	}
-	if err != nil {
-		return nil, err
-	}
 	if err := d.Workspace(); err != nil {
 		return nil, err
-	}
-	if err := d.Rules(ctx, nftRules()); err != nil {
-		return nil, err
-	}
-	cleanupRules := func() error {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return d.Rules(cleanupCtx, "delete table inet brood_guest\n")
-	}
-	serviceCtx, cancel := context.WithCancel(context.Background())
-	services, err := d.Services(serviceCtx, policy)
-	if err != nil || services == nil {
-		cancel()
-		if services != nil {
-			err = errors.Join(err, services.Close())
-		}
-		return nil, errors.Join(errors.New("guest enforcement services failed"), err, cleanupRules())
-	}
-	fail := func(err error) (*Runtime, error) {
-		cancel()
-		return nil, errors.Join(err, services.Close(), cleanupRules())
-	}
-	if err := ctx.Err(); err != nil {
-		return fail(err)
-	}
-	select {
-	case err := <-services.Done():
-		return fail(errors.Join(errors.New("guest enforcement service stopped"), err))
-	default:
 	}
 	spec := actorSpec(c.Executable)
 	process, err := d.Launch(ctx, spec)
@@ -251,12 +192,11 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		startErr := errors.Join(errors.New("guest actor start failed"), err)
 		if process != nil {
 			if closeErr := process.Close(); closeErr != nil {
-				cancel()
-				return nil, errors.Join(startErr, closeErr, services.Close())
+				return nil, errors.Join(startErr, closeErr)
 			}
 			startErr = errors.Join(startErr, process.Wait())
 		}
-		return fail(startErr)
+		return nil, startErr
 	}
 	r := &Runtime{done: make(chan struct{}), stop: make(chan struct{}), quiesce: make(chan quiesceRequest)}
 	wait := func(p Process, launch *stepLaunch) chan error {
@@ -293,9 +233,6 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				r.err = err
 				childExited = true
 				running = false
-			case err := <-services.Done():
-				r.err = errors.Join(errors.New("guest enforcement service stopped"), err)
-				running = false
 			case <-ctx.Done():
 				r.err = ctx.Err()
 				running = false
@@ -313,9 +250,8 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				r.revokeStepLaunch(heldLaunch)
 				heldLaunch, heldRevoked = nil, nil
 				if err := process.Close(); err != nil {
-					cancel()
-					r.err = errors.Join(errors.New("revoked inbox holder could not be proven stopped"), err, services.Close())
-					return // Retain enforcement while descendants may still exist.
+					r.err = errors.Join(errors.New("revoked inbox holder could not be proven stopped"), err)
+					return
 				}
 				<-childDone
 				if err := clearInboxPolicy(); err != nil || ctx.Err() != nil || r.stopping() {
@@ -341,10 +277,9 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				heldLaunch, heldRevoked = nil, nil
 				r.revokeStepLaunch(nil)
 				if err := process.Close(); err != nil {
-					// Как при остановке: недоказанная смерть потомков оставляет enforcement.
+					// Как при остановке: недоказанная смерть потомков завершает runtime.
 					q.reply <- errors.New("actor processes could not be proven stopped; workspace not inspected")
-					cancel()
-					r.err = errors.Join(errors.New("guest actor stop for quiesce failed"), err, services.Close())
+					r.err = errors.Join(errors.New("guest actor stop for quiesce failed"), err)
 					return
 				}
 				// Код выхода убитого актора — ожидаемое следствие, не отказ.
@@ -413,9 +348,8 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 					// actor stopped before restoring a holder without an inbox launch.
 					if stopErr := process.Close(); stopErr != nil {
 						q.reply <- errors.New("revoked inbox actor could not be proven stopped")
-						cancel()
-						r.err = errors.Join(stopErr, services.Close())
-						return // Retain enforcement while descendants may still exist.
+						r.err = stopErr
+						return
 					}
 					<-childDone
 					if err := clearInboxPolicy(); err != nil {
@@ -447,17 +381,14 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 		}
 		r.revokeStepLaunch(nil)
 		if err := process.Close(); err != nil {
-			// Retain enforcement if descendants cannot be proven dead.
-			cancel()
-			r.err = errors.Join(r.err, err, services.Close())
+			r.err = errors.Join(r.err, err)
 			return
 		}
 		if !childExited {
 			// SIGKILL is expected after an intentional stop, not a new failure.
 			<-childDone
 		}
-		cancel()
-		r.err = errors.Join(r.err, clearInboxPolicy(), services.Close(), cleanupRules())
+		r.err = errors.Join(r.err, clearInboxPolicy())
 	}()
 	return r, nil
 }

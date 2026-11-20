@@ -69,11 +69,8 @@ func TestConfigStage(t *testing.T) {
 // не заданные зависимости отказываются вызываться.
 func supervisorDeps(t *testing.T, events *[]string, stop func()) dependencies {
 	t.Helper()
-	network, runtime := newFake(), newFake()
-	return dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) {
-		*events = append(*events, "network")
-		return network, nil
-	}, start: func(context.Context, []string) (actorRuntime, error) {
+	runtime := newFake()
+	return dependencies{euid: func() int { return 0 }, start: func(context.Context) (actorRuntime, error) {
 		*events = append(*events, "services")
 		return runtime, nil
 	}, relay: func(ctx context.Context, _ relay.ClientConfig) error {
@@ -98,19 +95,15 @@ func TestBootstrapStageFetchesThenReexecesBeforeServices(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var events []string
-	network := newFake()
-	d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) {
-		events = append(events, "network")
-		return network, nil
-	}, start: func(context.Context, []string) (actorRuntime, error) {
+	d := dependencies{euid: func() int { return 0 }, start: func(context.Context) (actorRuntime, error) {
 		events = append(events, "services")
 		return newFake(), nil
 	}, relay: func(context.Context, relay.ClientConfig) error {
 		events = append(events, "relay")
 		return nil
-	}, artifacts: func(_ context.Context, cfg relay.ClientConfig, hosts []string, release guest.ArtifactRelease) error {
+	}, artifacts: func(_ context.Context, cfg relay.ClientConfig, release guest.ArtifactRelease) error {
 		events = append(events, "artifacts")
-		if cfg.Token != "private-token" || !reflect.DeepEqual(hosts, []string{"github.com"}) {
+		if cfg.Token != "private-token" {
 			t.Error("artifacts fetch did not receive the supervisor relay config")
 		}
 		server := &fakeServer{set: set}
@@ -123,11 +116,7 @@ func TestBootstrapStageFetchesThenReexecesBeforeServices(t *testing.T) {
 			t.Errorf("runtime executable %q, want %q", executable, want)
 		}
 		assertActive(t, root, set)
-		// Настоящий exec не возвращается: всё, что bootstrap должен закрыть,
-		// закрыто до него, а runtime получает исходный bootstrap env.
-		if !network.closed {
-			t.Error("DHCP client of the bootstrap stage survives exec")
-		}
+		// Настоящий exec не возвращается: runtime получает исходный bootstrap env.
 		runtime, err := parseConfig(env)
 		if err != nil || runtime.stage != "runtime" || runtime.relay.Token != "private-token" {
 			t.Errorf("runtime env does not parse as the runtime stage: %v %+v", err, runtime.stage)
@@ -153,7 +142,7 @@ func TestBootstrapStageFetchesThenReexecesBeforeServices(t *testing.T) {
 	}, d); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(events, []string{"network", "artifacts", "reexec"}) {
+	if !reflect.DeepEqual(events, []string{"artifacts", "reexec"}) {
 		t.Fatalf("events %v", events)
 	}
 	if strings.HasPrefix(os.Getenv("PATH"), "/opt/brood/bin:") {
@@ -170,9 +159,7 @@ func TestBootstrapFailureFailsClosed(t *testing.T) {
 			artifactRoot = newRoot(t)
 			set := newReleaseSet("closed")
 			reexeced := false
-			d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) {
-				return newFake(), nil // сеть теперь стартует раньше артефактов (#155)
-			}, artifacts: func(_ context.Context, _ relay.ClientConfig, _ []string, release guest.ArtifactRelease) error {
+			d := dependencies{euid: func() int { return 0 }, artifacts: func(_ context.Context, _ relay.ClientConfig, release guest.ArtifactRelease) error {
 				switch failure {
 				case "artifacts":
 					return errors.New("private-token")
@@ -208,7 +195,7 @@ func TestRuntimeStageSkipsBootstrapAndPrependsPath(t *testing.T) {
 	defer cancel()
 	var events []string
 	d := supervisorDeps(t, &events, cancel)
-	d.artifacts = func(context.Context, relay.ClientConfig, []string, guest.ArtifactRelease) error {
+	d.artifacts = func(context.Context, relay.ClientConfig, guest.ArtifactRelease) error {
 		t.Fatal("runtime stage fetched artifacts")
 		return nil
 	}
@@ -219,7 +206,7 @@ func TestRuntimeStageSkipsBootstrapAndPrependsPath(t *testing.T) {
 	if err := dispatch(ctx, nil, func() []string { return stageEnv(t, "runtime") }, d); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(events, []string{"network", "services", "relay"}) {
+	if !reflect.DeepEqual(events, []string{"services", "relay"}) {
 		t.Fatalf("events %v", events)
 	}
 	if got := os.Getenv("PATH"); got != "/opt/brood/bin:/usr/local/bin:/usr/bin:/bin" {
@@ -325,7 +312,7 @@ func TestFetchArtifactsRefusesWrongDigestBeforePublish(t *testing.T) {
 	// Подмена в пути: размер из манифеста и ELF-магия на месте, sha256 другой.
 	delivery.override("bro", []byte("\x7fELFclienX"))
 	var executable string
-	if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err == nil || executable != "" {
+	if err := guest.FetchArtifacts(context.Background(), cfg, releaseFrom(root, &executable)); err == nil || executable != "" {
 		t.Fatalf("artifact with a wrong sha256 accepted: %q %v", executable, err)
 	}
 	if published, _ := os.ReadDir(filepath.Join(root, "releases")); len(published) != 0 {
@@ -336,7 +323,7 @@ func TestFetchArtifactsRefusesWrongDigestBeforePublish(t *testing.T) {
 	}
 	// Следующий старт получает верный артефакт и ставит весь набор.
 	delivery.override("bro", nil)
-	if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err != nil {
+	if err := guest.FetchArtifacts(context.Background(), cfg, releaseFrom(root, &executable)); err != nil {
 		t.Fatalf("correct delivery after a refused one: %v", err)
 	}
 	for name, want := range files {
@@ -365,7 +352,7 @@ func TestStopStartAfterDeploySwitchesRelease(t *testing.T) {
 	boot := func(want releaseSet, requests []string) {
 		t.Helper()
 		var executable string
-		if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err != nil {
+		if err := guest.FetchArtifacts(context.Background(), cfg, releaseFrom(root, &executable)); err != nil {
 			t.Fatal(err)
 		}
 		if executable != filepath.Join(root, "releases", want.id(t), "brood-guest") {
@@ -389,7 +376,7 @@ func TestStopStartAfterDeploySwitchesRelease(t *testing.T) {
 	// Сервер недоступен: старт отказывает, а не грузит установленный набор.
 	delivery.deploy(map[string][]byte{})
 	var executable string
-	if err := guest.FetchArtifacts(context.Background(), cfg, nil, releaseFrom(root, &executable)); err == nil || executable != "" {
+	if err := guest.FetchArtifacts(context.Background(), cfg, releaseFrom(root, &executable)); err == nil || executable != "" {
 		t.Fatalf("start without a verified server manifest: %q %v", executable, err)
 	}
 }

@@ -627,11 +627,11 @@ func TestParseCheckoutRequest(t *testing.T) {
 		t.Fatal(r, err)
 	}
 	e := newCheckoutEngine(r)
-	if e.source != GatewayURL || e.protocol != "http" || e.proxied || e.root != fixedWorkspace || e.home != actorHome {
+	if e.source != GatewayURL || e.protocol != "http" || e.root != fixedWorkspace || e.home != actorHome {
 		t.Fatalf("gateway engine: %+v", e)
 	}
 	r.Mode = "direct"
-	if e = newCheckoutEngine(r); e.source != r.Origin || e.protocol != "https" || !e.proxied {
+	if e = newCheckoutEngine(r); e.source != r.Origin || e.protocol != "https" {
 		t.Fatalf("direct engine: %+v", e)
 	}
 	for _, raw := range []string{

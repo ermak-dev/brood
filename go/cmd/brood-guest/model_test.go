@@ -11,17 +11,16 @@ import (
 func TestModelGatewayStartsBeforeActorAndClosesOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	network, runtime, model := newFake(), newFake(), newFake()
+	runtime, model := newFake(), newFake()
 	started := false
-	d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { return network, nil },
-		model: func(_ context.Context, c relay.ClientConfig) (service, error) {
-			if c.Token == "" {
-				t.Fatal("missing scoped supervisor token")
-			}
-			started = true
-			return model, nil
-		},
-		start: func(context.Context, []string) (actorRuntime, error) {
+	d := dependencies{euid: func() int { return 0 }, model: func(_ context.Context, c relay.ClientConfig) (service, error) {
+		if c.Token == "" {
+			t.Fatal("missing scoped supervisor token")
+		}
+		started = true
+		return model, nil
+	},
+		start: func(context.Context) (actorRuntime, error) {
 			if !started {
 				t.Fatal("actor started before model gateway")
 			}
@@ -33,7 +32,7 @@ func TestModelGatewayStartsBeforeActorAndClosesOnShutdown(t *testing.T) {
 	if err := dispatch(ctx, nil, func() []string { return append(validEnv(t), "BROOD_GUEST_STAGE=runtime") }, d); err != nil {
 		t.Fatal(err)
 	}
-	if !model.closed || !runtime.closed || !network.closed {
+	if !model.closed || !runtime.closed {
 		t.Fatal("guest services were not closed")
 	}
 }

@@ -29,15 +29,14 @@ func TestAutostartHelperDispatch(t *testing.T) {
 func TestSupervisorAutostartsAfterActorAndSurvivesFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	network, runtime := newFake(), newFake()
+	runtime := newFake()
 	events := make(chan string, 8)
-	d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { return network, nil },
-		secrets: func(context.Context, relay.ClientConfig) error { events <- "secrets"; return nil },
-		origin: func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error) {
+	d := dependencies{euid: func() int { return 0 }, secrets: func(context.Context, relay.ClientConfig) error { events <- "secrets"; return nil },
+		origin: func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error) {
 			events <- "origin"
 			return guest.WorkspaceOrigin{}, nil
 		},
-		start: func(context.Context, []string) (actorRuntime, error) { events <- "actor"; return runtime, nil },
+		start: func(context.Context) (actorRuntime, error) { events <- "actor"; return runtime, nil },
 		relay: func(ctx context.Context, _ relay.ClientConfig) error {
 			// Автостарт уже вернулся неудачей; supervisor обязан жить дальше.
 			select {
@@ -62,7 +61,7 @@ func TestSupervisorAutostartsAfterActorAndSurvivesFailure(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"secrets", "origin", "actor", "autostart"}) {
 		t.Fatalf("events %v", got)
 	}
-	if !runtime.closed || !network.closed {
+	if !runtime.closed {
 		t.Fatal("services leaked")
 	}
 }

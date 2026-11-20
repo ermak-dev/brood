@@ -14,7 +14,7 @@ import (
 // HYPOTHESIS: Loss of launch authority was treated as a broken actor process.
 func TestInboxPTYStartGateRestoresOrdinaryActorAfterConnectionLoss(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	connection, disconnect := context.WithCancel(context.Background())
 	defer disconnect()
 	var held *heldPTYTestProcess

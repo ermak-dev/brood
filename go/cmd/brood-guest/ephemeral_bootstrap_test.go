@@ -40,16 +40,15 @@ func TestSupervisorPausesEphemeralFreeAutostartUntilRootAttestation(t *testing.T
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			network, runtime := newFake(), &ephemeralBootRuntime{fakeService: newFake()}
+			runtime := &ephemeralBootRuntime{fakeService: newFake()}
 			var autostarts atomic.Int32
 			var response relay.SessionResponse
 			origin := guest.WorkspaceOrigin{Origin: "https://git.example.org/group/repo.git", Mode: "gateway"}
 			if ephemeral {
 				origin.Ephemeral = &guest.EphemeralWorkspace{Commit: strings.Repeat("a", 40)}
 			}
-			d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { return network, nil },
-				origin:  func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error) { return origin, nil },
-				start:   func(context.Context, []string) (actorRuntime, error) { return runtime, nil },
+			d := dependencies{euid: func() int { return 0 }, origin: func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error) { return origin, nil },
+				start:   func(context.Context) (actorRuntime, error) { return runtime, nil },
 				autorun: func(context.Context) { autostarts.Add(1) },
 				relay: func(ctx context.Context, config relay.ClientConfig) error {
 					if config.SessionFactory == nil {
@@ -75,7 +74,7 @@ func TestSupervisorPausesEphemeralFreeAutostartUntilRootAttestation(t *testing.T
 			if ephemeral && (response.OK || !strings.Contains(response.Text, "bootstrap commit") || runtime.quiesces.Load() != 0) {
 				t.Fatalf("supervisor lost negotiated pin: response=%+v effects=%d", response, runtime.quiesces.Load())
 			}
-			if !network.closed || !runtime.closed {
+			if !runtime.closed {
 				t.Fatal("paused supervisor leaked services")
 			}
 		})

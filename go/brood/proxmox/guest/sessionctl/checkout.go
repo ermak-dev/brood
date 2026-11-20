@@ -107,7 +107,6 @@ type checkoutEngine struct {
 	scratch  string
 	source   string
 	protocol string
-	proxied  bool
 	// identity, when set, is enforced on the clone's user keys and recorded.
 	identity gitidentity.Identity
 }
@@ -115,7 +114,7 @@ type checkoutEngine struct {
 func newCheckoutEngine(r CheckoutRequest) *checkoutEngine {
 	e := &checkoutEngine{root: fixedWorkspace, home: actorHome, source: GatewayURL, protocol: "http", identity: r.GitIdentity}
 	if r.Mode == "direct" {
-		e.source, e.protocol, e.proxied = r.Origin, "https", true
+		e.source, e.protocol = r.Origin, "https"
 	}
 	return e
 }
@@ -304,9 +303,6 @@ func (e *checkoutEngine) has(ctx context.Context, commit string) bool {
 // when the server refuses unadvertised objects. The caller checks the result.
 func (e *checkoutEngine) fetch(ctx context.Context, commit string) {
 	env := []string{"GIT_ALLOW_PROTOCOL=" + e.protocol}
-	if e.proxied {
-		env = append(env, "HTTPS_PROXY=http://127.0.0.1:3128", "https_proxy=http://127.0.0.1:3128", "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost")
-	}
 	args := []string{"-c", "protocol." + e.protocol + ".allow=always", "-c", "http.followRedirects=false", "fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--", e.source}
 	if _, err := e.git(ctx, checkoutFetchTimeout, env, append(args, commit)...); err == nil && e.has(ctx, commit) {
 		return

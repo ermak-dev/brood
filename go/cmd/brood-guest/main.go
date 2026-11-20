@@ -1,13 +1,16 @@
 //go:build linux
 
-// Command brood-guest supervises the dedicated Proxmox coding guest.
-// The project directory starts empty; seed bundles are deliberately not installed.
+// Command brood-guest is the brood agent inside a worker container: a stock
+// Debian 12 system container where systemd runs it as root in
+// brood-agent.service with BROOD_GUEST_* read from /etc/brood/agent.env.
+// The distribution configures the network and the actor uses it without
+// restriction; the agent prepares the actor account, directories and Debian
+// packages itself at start. The project directory starts empty.
 package main
 
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,15 +25,12 @@ import (
 	"syscall"
 	"time"
 
-	"brood.dev/go/brood/proxmox/egress"
 	"brood.dev/go/brood/proxmox/guest"
 	"brood.dev/go/brood/proxmox/guest/deliverylog"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
 type config struct {
-	network           *egress.Policy
-	hosts             []string
 	relay             relay.ClientConfig
 	deliveryDirectory string
 	stepLaunchBinding bool
@@ -82,21 +82,32 @@ type dependencies struct {
 	broker            func(context.Context) (swarmBroker, error)
 	model             func(context.Context, relay.ClientConfig) (service, error)
 	git               func(context.Context, relay.ClientConfig) (service, error)
-	origin            func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error)
+	origin            func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error)
 	// artifacts читает манифест сервера и отдаёт его установщику набора
 	// (#155, #184); reexec подменяет процесс на runtime-стадию набора.
-	artifacts func(context.Context, relay.ClientConfig, []string, guest.ArtifactRelease) error
+	artifacts func(context.Context, relay.ClientConfig, guest.ArtifactRelease) error
 	reexec    func(executable string, env []string) error
 	// boot — UID 1000 цель --brood-guest-autostart; autorun — root-цикл,
 	// который её запускает до появления сессии Claude.
-	boot        func(context.Context) error
-	autorun     func(context.Context)
-	euid        func() int
-	network     func(context.Context) (service, error)
-	start       func(context.Context, []string) (actorRuntime, error)
-	startPolicy func(context.Context, *egress.Policy) (actorRuntime, error)
+	boot    func(context.Context) error
+	autorun func(context.Context)
+	euid    func() int
+	// prepareHost доводит стоковый Debian до того, что ждёт runtime (учётная
+	// запись актора, каталоги, пакеты), до секретов и до актора; nil в тестах.
+	prepareHost func(context.Context) error
+	start       func(context.Context) (actorRuntime, error)
 	relay       func(context.Context, relay.ClientConfig) error
 }
+
+// helperEnv — служебное окружение root-процесса агента: main заменяет им то,
+// что передал systemd, чтобы BROOD_GUEST_* не утекли потомкам.
+func helperEnv() []string {
+	return []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C"}
+}
+
+// ignoredEnv — переменные прежней egress-политики. Сеть актора больше не
+// ограничена: старый сервер ещё может их прислать, агент их не читает.
+var ignoredEnv = map[string]bool{"BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true}
 
 func parseConfig(env []string) (config, error) {
 	var c config
@@ -104,16 +115,19 @@ func parseConfig(env []string) (config, error) {
 		stepLaunchBindingEnv = "BROOD_GUEST_STEP_LAUNCH_BINDING"
 		supervisorInboxEnv   = "BROOD_GUEST_SUPERVISOR_INBOX"
 	)
-	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true, stepLaunchBindingEnv: true, supervisorInboxEnv: true}
-	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_ALLOWED_HOSTS": true, "BROOD_GUEST_EGRESS_POLICY": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true, stepLaunchBindingEnv: true, supervisorInboxEnv: true}
+	names := map[string]bool{"BROOD_GUEST_RELAY_URL": true, "BROOD_GUEST_ACTOR_UID": true, "BROOD_GUEST_GENERATION": true, "BROOD_GUEST_RELAY_TOKEN": true, "BROOD_GUEST_RELAY_HOST_KEY": true, "BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true, stepLaunchBindingEnv: true, supervisorInboxEnv: true}
+	optional := map[string]bool{"BROOD_GUEST_CA_PEM_B64": true, "BROOD_GUEST_DELIVERY_STATE_DIR": true, stepLaunchBindingEnv: true, supervisorInboxEnv: true}
 	values := map[string]string{}
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
 		if !strings.HasPrefix(key, "BROOD_GUEST_") {
 			continue
 		}
+		if ok && ignoredEnv[key] {
+			continue
+		}
 		// BROOD_GUEST_STAGE приходит только из env процесса supervisor,
-		// не от PVE bootstrap: в allowlist его нет.
+		// не из agent.env: в allowlist его нет.
 		if !ok || !names[key] && key != "BROOD_GUEST_STAGE" {
 			return c, errors.New("unknown guest configuration variable")
 		}
@@ -160,40 +174,6 @@ func parseConfig(env []string) (config, error) {
 	generation, err := strconv.ParseInt(values["BROOD_GUEST_GENERATION"], 10, 64)
 	if err != nil || generation <= 0 || strconv.FormatInt(generation, 10) != values["BROOD_GUEST_GENERATION"] {
 		return c, errors.New("invalid BROOD_GUEST_GENERATION")
-	}
-	selected, hasSelected := values["BROOD_GUEST_EGRESS_POLICY"]
-	legacy, hasLegacy := values["BROOD_GUEST_ALLOWED_HOSTS"]
-	if hasSelected && hasLegacy {
-		return c, errors.New("selected egress policy and legacy hosts cannot be combined")
-	}
-	if hasSelected {
-		var err error
-		c.network, err = egress.Decode([]byte(selected))
-		if err != nil {
-			return c, errors.New("invalid BROOD_GUEST_EGRESS_POLICY")
-		}
-		// Только предварительная проверка origin использует имена; runtime
-		// получает полную policy, а не её расширенную host-only проекцию.
-		hosts := map[string]bool{}
-		for _, rule := range c.network.Rules() {
-			for _, host := range rule.Hostnames {
-				hosts[host] = true
-			}
-		}
-		for host := range hosts {
-			c.hosts = append(c.hosts, host)
-		}
-		sort.Strings(c.hosts)
-	} else {
-		if !hasLegacy || legacy == "" {
-			return c, errors.New("BROOD_GUEST_ALLOWED_HOSTS or BROOD_GUEST_EGRESS_POLICY is required")
-		}
-		if err := json.Unmarshal([]byte(legacy), &c.hosts); err != nil {
-			return c, errors.New("invalid BROOD_GUEST_ALLOWED_HOSTS JSON array")
-		}
-		if _, err := guest.NewPolicy(c.hosts, func(context.Context, string) ([]net.IP, error) { return nil, nil }); err != nil {
-			return c, errors.New("invalid BROOD_GUEST_ALLOWED_HOSTS hostnames")
-		}
 	}
 	ca, err := base64.StdEncoding.Strict().DecodeString(values["BROOD_GUEST_CA_PEM_B64"])
 	if err != nil {
@@ -277,29 +257,25 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	return errors.New("guest supervisor must run as root")
 }
 func supervise(parent context.Context, c config, d dependencies) error {
-	if c.stage == "runtime" && c.network != nil && d.startPolicy == nil {
-		return errors.New("guest selected network policy is unavailable")
-	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	// Сеть нужна раньше артефактов (#155): CT получает адрес по DHCP, без
-	// него bootstrap не достигнет сервера.
-	network, err := d.network(ctx)
-	if err != nil {
-		return errors.New("guest DHCP initialization failed")
+	// Сеть настраивает дистрибутив: агент её не трогает. Пока она не
+	// поднялась, bootstrap отказывает, и systemd перезапускает сервис.
+	// Подготовку ведут обе стадии: bootstrap без неё может не иметь корневых
+	// сертификатов для сервера, а требования runtime принадлежат скачанному
+	// набору, а не бинарю установщика. Когда всё на месте, это несколько stat.
+	if d.prepareHost != nil {
+		if err := d.prepareHost(ctx); err != nil {
+			return errors.New("guest host preparation failed: " + err.Error())
+		}
 	}
-	networkDone := make(chan error, 1)
-	go func() { networkDone <- network.Wait(); cancel() }()
 	if c.stage != "runtime" {
 		// Стадия bootstrap (#155): проверенные артефакты и переход в runtime
 		// до секретов и сервисов актора; отказ fail closed.
-		// Успешный exec не возвращает: сеть закрывается внутри до exec, иначе
-		// DHCP-клиент bootstrap-стадии пережил бы его рядом с runtime-клиентом.
-		err := bootstrapArtifacts(ctx, c, d, network)
-		cancel()
-		boundedClose(network)
-		return err
+		// Успешный exec не возвращает.
+		return bootstrapArtifacts(ctx, c, d)
 	}
+	var err error
 	// Артефакты runtime-стадии уже в /opt/brood/bin (ссылка на проверенный
 	// набор, #184): bro и claude видны хелперам через PATH, не через
 	// копирование в /usr/local/bin.
@@ -312,7 +288,6 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		c.deliveryDirectory, err = d.deliveryDirectory(ctx)
 		if err != nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest delivery image configuration unavailable or unsafe")
 		}
 	}
@@ -320,7 +295,6 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	if c.supervisorInbox {
 		if c.deliveryDirectory == "" {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest supervisor inbox requires durable delivery state")
 		}
 		if d.prepareInbox != nil {
@@ -328,14 +302,12 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		}
 		if err != nil || startInbox == nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest supervisor inbox requires a prepared managed loader")
 		}
 	}
 	if c.deliveryDirectory != "" {
 		if d.deliveryJournal == nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest delivery journal initialization unavailable")
 		}
 		journal, err := d.deliveryJournal(ctx, c.deliveryDirectory, deliverylog.Scope{ActorUID: c.relay.ActorUID, Incarnation: c.relay.Generation})
@@ -344,13 +316,11 @@ func supervise(parent context.Context, c config, d dependencies) error {
 				journal.Close()
 			}
 			cancel()
-			boundedClose(network)
 			return errors.New("guest delivery journal initialization failed")
 		}
 		defer journal.Close()
 		if journal.Identifier() == "" {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest delivery journal identity unavailable")
 		}
 		c.relay.HandleMessage = guest.NewDurableMessageHandler(journal)
@@ -363,16 +333,14 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	if d.secrets != nil {
 		if err := d.secrets(ctx, c.relay); err != nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest project secrets initialization failed")
 		}
 		refresh = func(ctx context.Context) error { return d.secrets(ctx, cfg) }
 	}
 	if d.origin != nil {
-		origin, err := d.origin(ctx, c.relay, c.hosts)
+		origin, err := d.origin(ctx, c.relay)
 		if err != nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest workspace origin initialization failed")
 		}
 		c.workspace = origin
@@ -381,7 +349,6 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		broker, err := d.broker(ctx)
 		if err != nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest swarm broker initialization failed")
 		}
 		defer broker.Close()
@@ -392,33 +359,25 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		model, err := d.model(ctx, c.relay)
 		if err != nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest model gateway initialization failed")
 		}
 		defer boundedClose(model)
 		go func() { model.Wait(); cancel() }()
 	}
-	// Только gateway-режим открывает 8318: direct-клон идёт через egress proxy.
+	// Только gateway-режим открывает 8318: direct-клон ходит к origin сам.
 	if d.git != nil && c.workspace.Mode == "gateway" {
 		git, err := d.git(ctx, c.relay)
 		if err != nil {
 			cancel()
-			boundedClose(network)
 			return errors.New("guest Git gateway initialization failed")
 		}
 		defer boundedClose(git)
 		go func() { git.Wait(); cancel() }()
 	}
-	var runtime actorRuntime
-	if c.network != nil {
-		runtime, err = d.startPolicy(ctx, c.network)
-	} else {
-		runtime, err = d.start(ctx, c.hosts)
-	}
+	runtime, err := d.start(ctx)
 	if err != nil {
 		cancel()
-		boundedClose(network)
-		return errors.New("guest policy or actor initialization failed")
+		return errors.New("guest actor initialization failed")
 	}
 	// Подпись — от bootstrap-идентичности root, остановка — через сам runtime.
 	var attestor *guest.WorkspaceAttestor
@@ -428,9 +387,9 @@ func supervise(parent context.Context, c config, d dependencies) error {
 			cancel()
 			err := errors.New("guest step launch binding requires the owning runtime")
 			if runtime == nil || ok {
-				return errors.Join(err, boundedClose(network))
+				return err
 			}
-			return errors.Join(err, boundedClose(runtime, network))
+			return errors.Join(err, boundedClose(runtime))
 		}
 		if startInbox != nil {
 			broker, err := startInbox(ctx, owner, &c.relay)
@@ -439,7 +398,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 			}
 			if err != nil || broker == nil || c.relay.HandleInbox == nil || c.relay.InboxReceiverID == "" {
 				cancel()
-				return errors.Join(errors.New("guest supervisor inbox broker initialization failed"), boundedClose(runtime, network))
+				return errors.Join(errors.New("guest supervisor inbox broker initialization failed"), boundedClose(runtime))
 			}
 		}
 		attestor = owner.NewStepLaunchWorkspaceAttestor(c.relay, c.workspace)
@@ -461,7 +420,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	relayDone := make(chan error, 1)
 	if runtime.TerminalDialTarget() != "127.0.0.1:8080" {
 		cancel()
-		boundedClose(runtime, network)
+		boundedClose(runtime)
 		return errors.New("invalid guest terminal target")
 	}
 	go func() { relayDone <- d.relay(ctx, c.relay); cancel() }()
@@ -476,7 +435,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	}()
 	<-ctx.Done()
 	cancel()
-	cleanupErr := boundedClose(runtime, network)
+	cleanupErr := boundedClose(runtime)
 	// Не отдаём произвольные ошибки библиотек: bootstrap может попасть в их текст.
 	select {
 	case <-relayDone:
@@ -494,7 +453,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 	if parent.Err() != nil {
 		return nil
 	}
-	return errors.New("guest DHCP, actor service or relay stopped unexpectedly")
+	return errors.New("guest actor service or relay stopped unexpectedly")
 }
 
 // artifactRoot: корень наборов артефактов Bootstrap (#155, #184);
@@ -505,7 +464,7 @@ var artifactRoot = "/opt/brood"
 // на него /opt/brood/bin (#184) и переходит в runtime-стадию этого набора.
 // Причины отказов статичны и ограничены: bootstrap не стартует сервисы без
 // проверенного серверного манифеста и набора (fail closed).
-func bootstrapArtifacts(ctx context.Context, c config, d dependencies, network service) error {
+func bootstrapArtifacts(ctx context.Context, c config, d dependencies) error {
 	if d.artifacts == nil || d.reexec == nil {
 		return errors.New("guest bootstrap unavailable")
 	}
@@ -515,20 +474,19 @@ func bootstrapArtifacts(ctx context.Context, c config, d dependencies, network s
 		executable, releaseErr = installRelease(ctx, artifactRoot, manifest, download, warnBootstrap)
 		return releaseErr
 	}
-	if err := d.artifacts(ctx, c.relay, c.hosts, release); err != nil || executable == "" {
+	if err := d.artifacts(ctx, c.relay, release); err != nil || executable == "" {
 		if releaseErr != nil {
 			return errors.New("guest bootstrap failed: " + releaseErr.Error())
 		}
 		return errors.New("guest bootstrap failed: artifacts not delivered")
 	}
-	boundedClose(network)
 	if err := d.reexec(executable, runtimeEnv(c)); err != nil {
 		return errors.New("guest bootstrap failed: runtime stage not started")
 	}
 	return nil
 }
 
-// warnBootstrap печатает в консоль CT то, что не остановило старт: текст
+// warnBootstrap печатает в журнал сервиса то, что не остановило старт: текст
 // статичный, как у отказов bootstrap.
 func warnBootstrap(err error) {
 	fmt.Fprintln(os.Stderr, "guest bootstrap warning: "+err.Error())
@@ -602,10 +560,14 @@ func main() {
 			return guest.StartModelGateway(ctx, cfg)
 		}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 			return guest.StartGitGateway(ctx, cfg)
-		}, origin: refreshWorkspaceBootstrap, euid: os.Geteuid, network: startDHCP, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
-			return guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: guest.SystemDependencies()})
-		}, startPolicy: func(ctx context.Context, network *egress.Policy) (actorRuntime, error) {
-			return guest.Start(ctx, guest.Config{Network: network, Dependencies: guest.SystemDependencies()})
+		}, origin: refreshWorkspaceBootstrap, euid: os.Geteuid, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, prepareHost: func(ctx context.Context) error {
+			notices, err := guest.PrepareHost(ctx)
+			for _, notice := range notices {
+				fmt.Fprintln(os.Stderr, "guest host notice: "+notice)
+			}
+			return err
+		}, start: func(ctx context.Context) (actorRuntime, error) {
+			return guest.Start(ctx, guest.Config{Dependencies: guest.SystemDependencies()})
 		}, relay: relay.RunClient}
 	err := dispatch(ctx, os.Args[1:], func() []string {
 		env := os.Environ()

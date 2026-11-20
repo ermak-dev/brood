@@ -31,15 +31,14 @@ func (q *quiesceRuntime) Quiesce(context.Context, func(context.Context) error) e
 func TestWorkspaceAttestationUsesRuntimeQuiesce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	network, runtime := newFake(), &quiesceRuntime{fakeService: newFake()}
+	runtime := &quiesceRuntime{fakeService: newFake()}
 	origin := "https://git.example.com/group/project"
 	args, _ := json.Marshal(map[string]string{"swarm": "01JSWARM0000000000000000AA", "step": "request-1", "origin": origin, "commit": strings.Repeat("ab", 20), "challenge": base64.RawURLEncoding.EncodeToString(make([]byte, 32))})
 	var got relay.SessionResponse
-	d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { return network, nil },
-		origin: func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error) {
-			return guest.WorkspaceOrigin{Origin: origin, Mode: "direct"}, nil
-		},
-		start: func(context.Context, []string) (actorRuntime, error) { return runtime, nil },
+	d := dependencies{euid: func() int { return 0 }, origin: func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error) {
+		return guest.WorkspaceOrigin{Origin: origin, Mode: "direct"}, nil
+	},
+		start: func(context.Context) (actorRuntime, error) { return runtime, nil },
 		relay: func(ctx context.Context, c relay.ClientConfig) error {
 			got = c.SessionFactory(ctx)(ctx, relay.SessionRequest{Operation: relay.WorkspaceAttestOperation, Arguments: args, Caller: "server"})
 			cancel()

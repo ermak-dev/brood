@@ -5,19 +5,12 @@ package guest
 import (
 	"context"
 	"errors"
-	"io"
-	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"reflect"
-	"strings"
 	"testing"
-	"time"
 )
 
-// Failed termination must retain the root policy, including for detached tmux.
 func TestDrainDetachedActor(t *testing.T) {
 	calls := 0
 	if err := drainActorProcesses(context.Background(), func() (bool, error) { calls++; return calls < 3, nil }); err != nil || calls != 3 {
@@ -54,9 +47,9 @@ type signalProcess struct {
 }
 
 func (p signalProcess) Wait() error { <-p.done; return p.err }
-func TestCloseRetainsRulesOnTerminationFailure(t *testing.T) {
+func TestCloseReportsTerminationFailure(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	var child *fakeProcess
 	c.Dependencies.Launch = func(context.Context, ActorSpec) (Process, error) {
 		child = &fakeProcess{done: make(chan struct{}), events: &events}
@@ -69,17 +62,11 @@ func TestCloseRetainsRulesOnTerminationFailure(t *testing.T) {
 	if err = h.Close(); err == nil {
 		t.Fatal("termination failure hidden")
 	}
-	if strings.Contains(strings.Join(events, ","), "rules-delete") {
-		t.Fatal(events)
-	}
-	if !strings.Contains(strings.Join(events, ","), "services-close") {
-		t.Fatal("failed termination left proxy running")
-	}
 	_ = child.Close()
 }
 func TestIntentionalKillIsNotWaitFailure(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	cmd := exec.Command("/bin/sh", "-c", "kill -KILL $$")
 	err := cmd.Run()
 	if err == nil {
@@ -97,16 +84,16 @@ func TestIntentionalKillIsNotWaitFailure(t *testing.T) {
 	}
 }
 func TestMissingDependencyAndCanceledContext(t *testing.T) {
-	for _, field := range []string{"EUID", "Lookup", "Workspace", "Rules", "Services", "Launch"} {
+	for _, field := range []string{"EUID", "Workspace", "Launch"} {
 		var events []string
-		c, _ := testConfig(&events)
+		c := testConfig(&events)
 		reflect.ValueOf(c.Dependencies).Elem().FieldByName(field).SetZero()
 		if h, err := Start(context.Background(), c); h != nil || err == nil || len(events) != 0 {
 			t.Fatalf("%s: %v %v", field, events, err)
 		}
 	}
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if h, err := Start(ctx, c); h != nil || !errors.Is(err, context.Canceled) || len(events) != 0 {
@@ -127,52 +114,5 @@ func TestWorkspaceUnsafeModesAndFiles(t *testing.T) {
 	}
 	if err := prepareWorkspace(root, os.Getuid(), os.Getgid()); err == nil {
 		t.Fatal("project file accepted")
-	}
-}
-func TestHTTPRedirectNotFollowed(t *testing.T) {
-	p, _ := NewPolicy([]string{"example.com"}, publicLookup)
-	dials := 0
-	proxy, _ := NewProxy(p, func(context.Context, string, string) (net.Conn, error) {
-		dials++
-		a, b := net.Pipe()
-		go func() {
-			defer b.Close()
-			buf := make([]byte, 4096)
-			_, _ = b.Read(buf)
-			_, _ = io.WriteString(b, "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/private\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-		}()
-		return a, nil
-	})
-	rec := httptest.NewRecorder()
-	proxy.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://example.com/", nil))
-	if rec.Code != 302 || dials != 1 {
-		t.Fatalf("%d %d", rec.Code, dials)
-	}
-}
-func TestConnectCloseInterruptsTunnel(t *testing.T) {
-	p, _ := NewPolicy([]string{"example.com"}, publicLookup)
-	peer := make(chan net.Conn, 1)
-	proxy, _ := NewProxy(p, func(context.Context, string, string) (net.Conn, error) { a, b := net.Pipe(); peer <- b; return a, nil })
-	server := httptest.NewServer(proxy)
-	defer server.Close()
-	defer proxy.Close()
-	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(time.Second))
-	_, _ = io.WriteString(conn, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
-	buf := make([]byte, len("HTTP/1.1 200 Connection Established\r\n\r\n"))
-	if _, err = io.ReadFull(conn, buf); err != nil {
-		t.Fatal(err)
-	}
-	b := <-peer
-	defer b.Close()
-	if err = proxy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = conn.Read(buf); err == nil {
-		t.Fatal("tunnel still open")
 	}
 }

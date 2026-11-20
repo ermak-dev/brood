@@ -48,6 +48,9 @@ type Config struct {
 	Network         string
 	TemplateStorage string
 	TemplatePrefix  string
+	// BaseTemplate optionally authorizes exactly one stock vztmpl volid, such as
+	// "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst", for system images.
+	BaseTemplate string
 }
 
 func (Config) String() string     { return "proxmox.Config{redacted}" }
@@ -95,6 +98,9 @@ func (BootstrapEnv) MarshalJSON() ([]byte, error) { return []byte(`"[redacted]"`
 // CTSpec exposes no raw PVE options. Resource bounds are 1..128 cores,
 // 16..1048576 MiB memory and 1..16384 GiB disk. MAC, if omitted, is derived from
 // the full ownership identity and remains stable across request retries.
+// SSHPublicKeys holds OpenSSH authorized-key lines without options that PVE
+// installs for root at creation. Nesting enables features=nesting=1, which
+// systemd needs inside an unprivileged system container.
 type CTSpec struct {
 	VMID      int
 	Hostname  string
@@ -105,6 +111,9 @@ type CTSpec struct {
 	DiskGiB   int
 	MAC       string
 	Env       BootstrapEnv `json:"-"`
+
+	SSHPublicKeys string
+	Nesting       bool
 }
 
 func (CTSpec) String() string     { return "proxmox.CTSpec{redacted}" }
@@ -127,6 +136,9 @@ type CTConfig struct {
 	Hostname     string `json:"hostname"`
 	Unprivileged int    `json:"unprivileged"`
 	RootFS       string `json:"rootfs"`
+	// Template reports PVE's "template: 1" flag. It is filled from the raw
+	// configuration, not decoded by name.
+	Template bool `json:"-"`
 }
 
 // CTStatus reports PVE runtime status only, never guest or actor readiness.
@@ -183,6 +195,9 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	if !templateFile.MatchString(cfg.TemplatePrefix) || strings.Contains(cfg.TemplatePrefix, "..") {
 		return nil, errors.New("explicit owned PVE template prefix is required")
+	}
+	if cfg.BaseTemplate != "" && !validBaseTemplate(cfg.BaseTemplate) {
+		return nil, errors.New("invalid PVE base template volume")
 	}
 	var roots *x509.CertPool
 	if cfg.CAPEM != "" {
@@ -399,7 +414,10 @@ func (c *Client) createForm(s CTSpec) (url.Values, error) {
 	}
 	prefix := c.cfg.TemplateStorage + ":vztmpl/"
 	file, ok := strings.CutPrefix(s.Template, prefix)
-	if !ok || !templateFile.MatchString(file) || strings.Contains(file, "..") || !strings.HasPrefix(file, c.cfg.TemplatePrefix) || len(s.Template) > 255 {
+	owned := ok && templateFile.MatchString(file) && !strings.Contains(file, "..") && strings.HasPrefix(file, c.cfg.TemplatePrefix) && len(s.Template) <= 255
+	// Базовый шаблон разрешён только точным совпадением с настройкой.
+	base := c.cfg.BaseTemplate != "" && s.Template == c.cfg.BaseTemplate && validBaseTemplate(c.cfg.BaseTemplate)
+	if !owned && !base {
 		return nil, errors.New("template is outside the configured owned vztmpl namespace")
 	}
 	mac := s.MAC
@@ -416,9 +434,19 @@ func (c *Client) createForm(s CTSpec) (url.Values, error) {
 	if err != nil {
 		return nil, err
 	}
+	keys, err := authorizedKeys(s.SSHPublicKeys)
+	if err != nil {
+		return nil, err
+	}
 	form := url.Values{"vmid": {strconv.Itoa(s.VMID)}, "hostname": {s.Hostname}, "ostemplate": {s.Template}, "description": {OwnedDescription(s.Owner)}, "pool": {c.cfg.ResourcePool}, "storage": {c.cfg.Storage}, "unprivileged": {"1"}, "rootfs": {c.cfg.Storage + ":" + strconv.Itoa(s.DiskGiB)}, "cores": {strconv.Itoa(s.Cores)}, "memory": {strconv.Itoa(s.MemoryMiB)}, "swap": {"0"}, "start": {"0"}, "net0": {"name=eth0,bridge=" + c.cfg.Network + ",ip=dhcp,hwaddr=" + mac}}
 	if env != "" {
 		form.Set("env", env)
+	}
+	if keys != "" {
+		form.Set("ssh-public-keys", keys)
+	}
+	if s.Nesting {
+		form.Set("features", "nesting=1")
 	}
 	return form, nil
 }
@@ -502,6 +530,7 @@ func (c *Client) getConfig(ctx context.Context, id int, current bool) (CTConfig,
 	if json.Unmarshal(b, &cfg) != nil {
 		return CTConfig{}, nil, errors.New("invalid PVE container configuration")
 	}
+	cfg.Template, _ = templateFlag(raw)
 	return cfg, raw, nil
 }
 
@@ -528,24 +557,35 @@ func (c *Client) assertOwned(ctx context.Context, ref OwnedCT) error {
 }
 
 func (c *Client) ownedDigest(ctx context.Context, ref OwnedCT, requireCAS bool) (string, error) {
+	cfg, err := c.ownedConfig(ctx, ref, requireCAS)
+	return cfg.Digest, err
+}
+
+// ownedConfig — полная проверка владения; возвращает конфигурацию, общую для
+// обоих видов PVE. Template истинно, только если оба вида его подтверждают.
+func (c *Client) ownedConfig(ctx context.Context, ref OwnedCT, requireCAS bool) (CTConfig, error) {
 	if !validVMID(ref.VMID) || !ref.Owner.valid() {
-		return "", ErrOwnership
+		return CTConfig{}, ErrOwnership
 	}
 	// PVE's default config view overlays pending values. Both must authorize the
 	// mutation; matching digests bind the two views to the same config file.
 	var digest string
+	var owned CTConfig
+	template := true
 	for _, current := range []bool{true, false} {
 		cfg, raw, err := c.getConfig(ctx, ref.VMID, current)
 		if err != nil {
-			return "", err
+			return CTConfig{}, err
 		}
 		if err := c.validateOwnedConfig(ref, cfg, raw); err != nil {
-			return "", err
+			return CTConfig{}, err
 		}
 		if requireCAS && (!configDigest.MatchString(cfg.Digest) || (!current && cfg.Digest != digest)) {
-			return "", errors.New("PVE configuration digest missing, invalid, or changed; reconcile before configuring bootstrap")
+			return CTConfig{}, errors.New("PVE configuration digest missing, invalid, or changed; reconcile before configuring bootstrap")
 		}
 		digest = cfg.Digest
+		template = template && cfg.Template
+		owned = cfg
 	}
 	var pools []struct {
 		PoolID  string `json:"poolid"`
@@ -556,18 +596,19 @@ func (c *Client) ownedDigest(ctx context.Context, ref OwnedCT, requireCAS bool) 
 		} `json:"members"`
 	}
 	if err := c.request(ctx, http.MethodGet, "/pools?"+url.Values{"poolid": {c.cfg.ResourcePool}, "type": {"lxc"}}.Encode(), nil, &pools); err != nil {
-		return "", err
+		return CTConfig{}, err
 	}
 	for _, p := range pools {
 		if p.PoolID == c.cfg.ResourcePool {
 			for _, m := range p.Members {
 				if m.VMID == ref.VMID && m.Node == c.cfg.Node && m.Type == "lxc" {
-					return digest, nil
+					owned.Template = template
+					return owned, nil
 				}
 			}
 		}
 	}
-	return "", ErrOwnership
+	return CTConfig{}, ErrOwnership
 }
 
 func (c *Client) validateOwnedConfig(ref OwnedCT, cfg CTConfig, raw map[string]json.RawMessage) error {
@@ -575,13 +616,15 @@ func (c *Client) validateOwnedConfig(ref OwnedCT, cfg CTConfig, raw map[string]j
 	if strings.TrimSuffix(cfg.Description, "\n") != OwnedDescription(ref.Owner) || cfg.Unprivileged != 1 {
 		return ErrOwnership
 	}
-	volume := strings.Split(cfg.RootFS, ",")[0]
-	rootPattern := `^` + regexp.QuoteMeta(c.cfg.Storage) + `:(?:subvol|vm)-` + strconv.Itoa(ref.VMID) + `-disk-[0-9]+(?:\.raw)?$`
-	if ok, _ := regexp.MatchString(rootPattern, volume); !ok {
-		return ErrOwnership
-	}
 	oci, safe := trustedOCIProfile(raw)
 	if !safe {
+		return ErrOwnership
+	}
+	template, ok := templateFlag(raw)
+	if !ok {
+		return ErrOwnership
+	}
+	if !c.ownedRootVolume(strings.Split(cfg.RootFS, ",")[0], ref.VMID, oci, template) {
 		return ErrOwnership
 	}
 	var network string
@@ -589,11 +632,54 @@ func (c *Client) validateOwnedConfig(ref OwnedCT, cfg CTConfig, raw map[string]j
 		return ErrOwnership
 	}
 	for k, v := range raw {
-		if (strings.HasPrefix(k, "net") && k != "net0") || strings.HasPrefix(k, "mp") || strings.HasPrefix(k, "dev") || strings.HasPrefix(k, "unused") || strings.HasPrefix(k, "lxc.") || k == "hookscript" || (k == "features" && string(v) != `""`) {
+		if (strings.HasPrefix(k, "net") && k != "net0") || strings.HasPrefix(k, "mp") || strings.HasPrefix(k, "dev") || strings.HasPrefix(k, "unused") || strings.HasPrefix(k, "lxc.") || k == "hookscript" {
 			return ErrOwnership
+		}
+		if k == "features" {
+			// Профиль OCI — без features; системный контейнер — ровно nesting=1.
+			var features string
+			if json.Unmarshal(v, &features) != nil || (features != "" && (oci || features != "nesting=1")) {
+				return ErrOwnership
+			}
 		}
 	}
 	return nil
+}
+
+// templateFlag читает булев ключ template: PVE отдаёт его числом, реже строкой.
+func templateFlag(raw map[string]json.RawMessage) (template, ok bool) {
+	v, exists := raw["template"]
+	if !exists {
+		return false, true
+	}
+	switch string(bytes.TrimSpace(v)) {
+	case "1", `"1"`:
+		return true, true
+	case "0", `"0"`:
+		return false, true
+	}
+	return false, false
+}
+
+// ownedRootVolume принимает том самого CT. Вне профиля OCI — ещё базовый том
+// шаблона и связанный клон, чей volid несёт родителя: base-<src>-disk-N/vm-<id>-disk-N.
+// basevol — имя базового subvol на ZFS.
+func (c *Client) ownedRootVolume(volume string, vmid int, oci, template bool) bool {
+	id := strconv.Itoa(vmid)
+	own := `(?:subvol|vm)-` + id + `-disk-[0-9]+(?:\.raw)?`
+	patterns := []string{own}
+	if !oci {
+		patterns = append(patterns, `(?:base|basevol)-[1-9][0-9]{2,8}-disk-[0-9]+(?:\.raw)?/`+own)
+		if template {
+			patterns = append(patterns, `(?:base|basevol)-`+id+`-disk-[0-9]+(?:\.raw)?`)
+		}
+	}
+	for _, p := range patterns {
+		if ok, _ := regexp.MatchString(`^`+regexp.QuoteMeta(c.cfg.Storage)+`:`+p+`$`, volume); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // trustedOCIProfile permits only the fixed guest image's PVE-generated settings.

@@ -34,12 +34,10 @@ func TestSupervisorInboxOptInIsInertUntilRuntimePreparation(t *testing.T) {
 }
 
 func TestSupervisorInboxOptInWithoutDurableStateNeverStartsAnActor(t *testing.T) {
-	network := newFake()
 	deps := dependencies{
 		euid:              func() int { return 0 },
-		network:           func(context.Context) (service, error) { return network, nil },
 		deliveryDirectory: func(context.Context) (string, error) { return "", nil },
-		start: func(context.Context, []string) (actorRuntime, error) {
+		start: func(context.Context) (actorRuntime, error) {
 			t.Error("actor started without inbox storage")
 			return nil, errors.New("unexpected actor startup")
 		},
@@ -51,7 +49,7 @@ func TestSupervisorInboxOptInWithoutDurableStateNeverStartsAnActor(t *testing.T)
 	env := append(validEnv(t), "BROOD_GUEST_STAGE=runtime", testInboxOptIn+"=1")
 	t.Setenv("PATH", "/usr/bin:/bin")
 	err := dispatch(context.Background(), nil, func() []string { return env }, deps)
-	if err == nil || !strings.Contains(err.Error(), "inbox requires durable delivery state") || !network.closed {
+	if err == nil || !strings.Contains(err.Error(), "inbox requires durable delivery state") {
 		t.Fatalf("missing inbox storage did not refuse startup with a reason: %v", err)
 	}
 }

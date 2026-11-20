@@ -28,7 +28,7 @@ func TestImageDeliveryConfigurationIsReadOnlyAfterArtifactReexec(t *testing.T) {
 		return "", errors.New("must not be called")
 	}
 	set := newReleaseSet("delivery-image")
-	d.artifacts = func(ctx context.Context, _ relay.ClientConfig, _ []string, release guest.ArtifactRelease) error {
+	d.artifacts = func(ctx context.Context, _ relay.ClientConfig, release guest.ArtifactRelease) error {
 		events = append(events, "artifacts")
 		server := &fakeServer{set: set}
 		return release(ctx, set.manifest(), server.download)
@@ -54,7 +54,7 @@ func TestImageDeliveryConfigurationIsReadOnlyAfterArtifactReexec(t *testing.T) {
 	if err := dispatch(ctx, nil, func() []string { return validEnv(t) }, d); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"network", "artifacts", "reexec", "network", "image-config", "services", "relay"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"artifacts", "reexec", "image-config", "services", "relay"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("configuration crossed bootstrap/runtime boundary: %v", events)
 	}
 }
@@ -98,7 +98,7 @@ func TestRuntimeImageDirectoryOpensJournalBeforeSecretsAndAdvertisesIt(t *testin
 	if err := supervise(ctx, runtimeDeliveryConfig(t, ""), d); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"network", "image-config", "journal", "secrets", "services", "relay"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"image-config", "journal", "secrets", "services", "relay"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("image delivery initialization order: %v", events)
 	}
 	if opened == nil {
@@ -120,7 +120,7 @@ func TestInvalidImageConfigurationFailsBeforeSecretsActorAndRelay(t *testing.T) 
 		return nil
 	}
 	err := supervise(context.Background(), runtimeDeliveryConfig(t, ""), d)
-	if err == nil || strings.Contains(err.Error(), "canary") || !reflect.DeepEqual(events, []string{"network"}) {
+	if err == nil || strings.Contains(err.Error(), "canary") || len(events) != 0 {
 		t.Fatalf("unsafe image configuration continued or leaked details: %v, %v", err, events)
 	}
 }
@@ -143,7 +143,7 @@ func TestExplicitBootstrapDeliveryDirectoryOverridesImageConfiguration(t *testin
 	if err := supervise(ctx, runtimeDeliveryConfig(t, "/explicit/delivery"), d); err == nil {
 		t.Fatal("failed explicit journal silently fell back to image or legacy")
 	}
-	if !reflect.DeepEqual(events, []string{"network"}) {
+	if len(events) != 0 {
 		t.Fatalf("failed explicit journal reached services: %v", events)
 	}
 }

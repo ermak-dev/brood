@@ -77,7 +77,6 @@ func workspaceOriginJSON(origin, mode string) string {
 func TestWorkspaceOriginFetch(t *testing.T) {
 	server := newWorkspaceOriginServer(t)
 	cfg := server.config()
-	hosts := []string{"github.com"}
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	for _, want := range []WorkspaceOrigin{
 		{Origin: cloneTestOrigin, Mode: "gateway"},
@@ -85,7 +84,7 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 		{},
 	} {
 		server.serve(workspaceOriginJSON(want.Origin, want.Mode), http.StatusOK)
-		got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts)
+		got, err := FetchWorkspaceOrigin(context.Background(), cfg)
 		if err != nil || got != want {
 			t.Fatalf("fetch %+v: %+v %v", want, got, err)
 		}
@@ -94,7 +93,7 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 	withIdentity := `{"origin":"` + cloneTestOrigin + `","mode":"gateway","gitIdentity":{"name":"brood worker2","email":"worker2@brood.corp.example"}}`
 	server.serve(withIdentity, http.StatusOK)
 	wantIdentity := WorkspaceOrigin{Origin: cloneTestOrigin, Mode: "gateway", GitIdentity: gitidentity.Identity{Name: "brood worker2", Email: "worker2@brood.corp.example"}}
-	if got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts); err != nil || got != wantIdentity {
+	if got, err := FetchWorkspaceOrigin(context.Background(), cfg); err != nil || got != wantIdentity {
 		t.Fatalf("fetch with identity: %+v %v", got, err)
 	}
 	bad := map[string]string{
@@ -126,7 +125,6 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 		"root path":               workspaceOriginJSON("https://git.example.org/", "gateway"),
 		"control character":       workspaceOriginJSON("https://git.example.org/re\tpo.git", "gateway"),
 		"too long":                workspaceOriginJSON("https://git.example.org/"+strings.Repeat("a", 1024), "gateway"),
-		"unapproved direct":       workspaceOriginJSON("https://git.example.org/repo.git", "direct"),
 		"unknown field":           `{"origin":"","mode":"","token":"private-token"}`,
 		"missing mode":            `{"origin":""}`,
 		"missing origin":          `{"mode":""}`,
@@ -142,7 +140,7 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 	for name, body := range bad {
 		t.Run(name, func(t *testing.T) {
 			server.serve(body, http.StatusOK)
-			got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts)
+			got, err := FetchWorkspaceOrigin(context.Background(), cfg)
 			if err == nil || got != (WorkspaceOrigin{}) || strings.Contains(err.Error(), "private-token") || strings.Contains(err.Error(), cfg.Token) {
 				t.Fatalf("not safely rejected: %+v %v", got, err)
 			}
@@ -150,7 +148,7 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 	}
 	for _, status := range []int{http.StatusUnauthorized, http.StatusNotFound, http.StatusServiceUnavailable} {
 		server.serve(workspaceOriginJSON(cloneTestOrigin, "gateway"), status)
-		if got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts); err == nil || got != (WorkspaceOrigin{}) {
+		if got, err := FetchWorkspaceOrigin(context.Background(), cfg); err == nil || got != (WorkspaceOrigin{}) {
 			t.Fatalf("status %d accepted: %+v", status, got)
 		}
 	}
@@ -160,7 +158,7 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 	server.mu.Lock()
 	server.redirect = sink.URL
 	server.mu.Unlock()
-	if _, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts); err == nil || redirected {
+	if _, err := FetchWorkspaceOrigin(context.Background(), cfg); err == nil || redirected {
 		t.Fatalf("redirect followed: %v %v", err, redirected)
 	}
 	server.mu.Lock()
@@ -169,7 +167,7 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 	server.serve(workspaceOriginJSON(cloneTestOrigin, "gateway"), http.StatusOK)
 	untrusted := cfg
 	untrusted.CAPEM = nil
-	if _, err := FetchWorkspaceOrigin(context.Background(), untrusted, hosts); err == nil {
+	if _, err := FetchWorkspaceOrigin(context.Background(), untrusted); err == nil {
 		t.Fatal("untrusted TLS accepted")
 	}
 	server.mu.Lock()
@@ -184,7 +182,7 @@ func TestWorkspaceOriginFetch(t *testing.T) {
 	} {
 		c := cfg
 		broken(&c)
-		if _, err := FetchWorkspaceOrigin(context.Background(), c, hosts); err == nil {
+		if _, err := FetchWorkspaceOrigin(context.Background(), c); err == nil {
 			t.Fatalf("invalid bootstrap %s accepted", name)
 		}
 	}
@@ -202,7 +200,7 @@ func TestRefreshWorkspaceOriginRequiresRoot(t *testing.T) {
 	}
 	server := newWorkspaceOriginServer(t)
 	server.serve(workspaceOriginJSON(cloneTestOrigin, "gateway"), http.StatusOK)
-	if got, err := RefreshWorkspaceOrigin(context.Background(), server.config(), []string{"github.com"}); err == nil || got != (WorkspaceOrigin{}) {
+	if got, err := RefreshWorkspaceOrigin(context.Background(), server.config()); err == nil || got != (WorkspaceOrigin{}) {
 		t.Fatalf("unprivileged refresh: %+v %v", got, err)
 	}
 	server.mu.Lock()

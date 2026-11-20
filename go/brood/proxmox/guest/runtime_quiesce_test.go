@@ -24,7 +24,7 @@ func (p *failingCloseProcess) Close() error {
 
 func TestQuiesceStopsActorRunsAndRelaunches(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	h, err := Start(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestQuiesceStopsActorRunsAndRelaunches(t *testing.T) {
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"workspace", "rules-install", "services-start", "process-start", "process-close", "run", "process-start", "process-close", "run", "process-start", "process-close", "services-close", "rules-delete"}
+	want := []string{"workspace", "process-start", "process-close", "run", "process-start", "process-close", "run", "process-start", "process-close"}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("events %v", events)
 	}
@@ -50,7 +50,7 @@ func TestQuiesceStopsActorRunsAndRelaunches(t *testing.T) {
 
 func TestQuiesceFailsClosedWhenActorStopIsUnproven(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	c.Dependencies.Launch = func(context.Context, ActorSpec) (Process, error) {
 		events = append(events, "process-start")
 		return &failingCloseProcess{fakeProcess{done: make(chan struct{}), events: &events}}, nil
@@ -67,14 +67,11 @@ func TestQuiesceFailsClosedWhenActorStopIsUnproven(t *testing.T) {
 	if err := h.Wait(); err == nil {
 		t.Fatal("runtime survived an unproven actor stop")
 	}
-	if strings.Contains(strings.Join(events, ","), "rules-delete") {
-		t.Fatalf("enforcement removed while actor processes may live: %v", events)
-	}
 }
 
 func TestQuiesceRelaunchFailureStopsRuntime(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	launches := 0
 	c.Dependencies.Launch = func(context.Context, ActorSpec) (Process, error) {
 		launches++
@@ -94,14 +91,11 @@ func TestQuiesceRelaunchFailureStopsRuntime(t *testing.T) {
 	if err := h.Wait(); err == nil || !strings.Contains(err.Error(), "relaunch") {
 		t.Fatalf("runtime result: %v", err)
 	}
-	if events[len(events)-1] != "rules-delete" {
-		t.Fatalf("no actor process remains, enforcement must be torn down in order: %v", events)
-	}
 }
 
 func TestQuiesceCallbackCanceledByRuntimeStop(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	h, err := Start(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)

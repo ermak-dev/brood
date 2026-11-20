@@ -59,23 +59,22 @@ func runtimeDeliveryConfig(t *testing.T, directory string) config {
 func TestSupervisorAdvertisesDeliveryOnlyAfterJournalAndClosesItOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	network, runtime := newFake(), newFake()
+	runtime := newFake()
 	path := t.TempDir()
 	if err := os.Chmod(path, 0700); err != nil {
 		t.Fatal(err)
 	}
 	var journal *deliverylog.Journal
 	started := false
-	d := dependencies{network: func(context.Context) (service, error) { return network, nil },
-		deliveryJournal: func(ctx context.Context, got string, scope deliverylog.Scope) (*deliverylog.Journal, error) {
-			if got != "/private/delivery" || scope.ActorUID != "actor-1" || scope.Incarnation != 1 || started {
-				t.Error("journal initialization escaped bootstrap scope/order")
-			}
-			var err error
-			journal, err = deliverylog.Open(ctx, path, scope, 2)
-			return journal, err
-		},
-		start: func(context.Context, []string) (actorRuntime, error) { started = true; return runtime, nil },
+	d := dependencies{deliveryJournal: func(ctx context.Context, got string, scope deliverylog.Scope) (*deliverylog.Journal, error) {
+		if got != "/private/delivery" || scope.ActorUID != "actor-1" || scope.Incarnation != 1 || started {
+			t.Error("journal initialization escaped bootstrap scope/order")
+		}
+		var err error
+		journal, err = deliverylog.Open(ctx, path, scope, 2)
+		return journal, err
+	},
+		start: func(context.Context) (actorRuntime, error) { started = true; return runtime, nil },
 		relay: func(ctx context.Context, cfg relay.ClientConfig) error {
 			if journal == nil || !cfg.MessageDeduplication || cfg.MessageJournalID != journal.Identifier() || cfg.HandleMessage == nil {
 				t.Error("relay started without retained journal and handler")
@@ -94,7 +93,7 @@ func TestSupervisorAdvertisesDeliveryOnlyAfterJournalAndClosesItOnShutdown(t *te
 	if _, err := journal.Begin(context.Background(), "closed", []byte("work")); !errors.Is(err, deliverylog.ErrClosed) {
 		t.Fatal("journal survived supervisor shutdown")
 	}
-	if !network.closed || !runtime.closed {
+	if !runtime.closed {
 		t.Fatal("runtime resources leaked")
 	}
 }
@@ -102,9 +101,8 @@ func TestSupervisorAdvertisesDeliveryOnlyAfterJournalAndClosesItOnShutdown(t *te
 func TestSupervisorDeliveryInitializationFailsBeforeActorOrRelay(t *testing.T) {
 	for _, failure := range []string{"unavailable", "nil", "legacy", "missing-opener"} {
 		t.Run(failure, func(t *testing.T) {
-			network := newFake()
 			called := false
-			d := dependencies{network: func(context.Context) (service, error) { return network, nil }, start: func(context.Context, []string) (actorRuntime, error) { called = true; return newFake(), nil }, relay: func(context.Context, relay.ClientConfig) error { called = true; return nil }}
+			d := dependencies{start: func(context.Context) (actorRuntime, error) { called = true; return newFake(), nil }, relay: func(context.Context, relay.ClientConfig) error { called = true; return nil }}
 			if failure != "missing-opener" {
 				d.deliveryJournal = func(ctx context.Context, _ string, scope deliverylog.Scope) (*deliverylog.Journal, error) {
 					if failure == "unavailable" {
@@ -124,7 +122,7 @@ func TestSupervisorDeliveryInitializationFailsBeforeActorOrRelay(t *testing.T) {
 				}
 			}
 			err := supervise(context.Background(), runtimeDeliveryConfig(t, "/private/delivery"), d)
-			if err == nil || strings.Contains(err.Error(), "private-token") || called || !network.closed {
+			if err == nil || strings.Contains(err.Error(), "private-token") || called {
 				t.Fatalf("unsafe delivery startup failure: %v downstream=%v", err, called)
 			}
 		})
@@ -134,11 +132,11 @@ func TestSupervisorDeliveryInitializationFailsBeforeActorOrRelay(t *testing.T) {
 func TestSupervisorWithoutExplicitDeliveryDirectoryKeepsLegacyRelay(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	network, runtime := newFake(), newFake()
-	d := dependencies{network: func(context.Context) (service, error) { return network, nil }, deliveryJournal: func(context.Context, string, deliverylog.Scope) (*deliverylog.Journal, error) {
+	runtime := newFake()
+	d := dependencies{deliveryJournal: func(context.Context, string, deliverylog.Scope) (*deliverylog.Journal, error) {
 		t.Error("legacy boot opened journal")
 		return nil, nil
-	}, start: func(context.Context, []string) (actorRuntime, error) { return runtime, nil }, relay: func(ctx context.Context, cfg relay.ClientConfig) error {
+	}, start: func(context.Context) (actorRuntime, error) { return runtime, nil }, relay: func(ctx context.Context, cfg relay.ClientConfig) error {
 		if cfg.MessageDeduplication || cfg.MessageJournalID != "" {
 			t.Error("legacy boot advertised durable capability")
 		}

@@ -10,15 +10,15 @@ import (
 	"brood.dev/go/brood/proxmox/relay"
 )
 
-func refreshWorkspaceBootstrap(ctx context.Context, config relay.ClientConfig, hosts []string) (guest.WorkspaceOrigin, error) {
-	return fetchAndPublishWorkspaceBootstrap(ctx, config, hosts, guest.PublishWorkspaceOrigin)
+func refreshWorkspaceBootstrap(ctx context.Context, config relay.ClientConfig) (guest.WorkspaceOrigin, error) {
+	return fetchAndPublishWorkspaceBootstrap(ctx, config, guest.PublishWorkspaceOrigin)
 }
 
-func fetchAndPublishWorkspaceBootstrap(ctx context.Context, config relay.ClientConfig, hosts []string, publish func(guest.WorkspaceOrigin) error) (guest.WorkspaceOrigin, error) {
+func fetchAndPublishWorkspaceBootstrap(ctx context.Context, config relay.ClientConfig, publish func(guest.WorkspaceOrigin) error) (guest.WorkspaceOrigin, error) {
 	if publish == nil {
 		return guest.WorkspaceOrigin{}, errors.New("workspace bootstrap publisher is unavailable")
 	}
-	origin, err := guest.FetchWorkspaceBootstrap(ctx, config, hosts)
+	origin, err := guest.FetchWorkspaceBootstrap(ctx, config)
 	if err != nil {
 		return guest.WorkspaceOrigin{}, err
 	}

@@ -205,7 +205,7 @@ func parseProxmoxRuntime(fields map[string]json.RawMessage) (*proxmoxRuntimeConf
 		return bad()
 	}
 	r := &proxmoxRuntimeConfig{}
-	if json.Unmarshal(fields["template"], &r.template) != nil || !regexp.MustCompile(`^[A-Za-z0-9_-]+:vztmpl/brood-claude-proxmox-[A-Za-z0-9][A-Za-z0-9._-]*$`).MatchString(r.template) {
+	if json.Unmarshal(fields["template"], &r.template) != nil || !regexp.MustCompile(`^[A-Za-z0-9_-]+:vztmpl/[A-Za-z0-9][A-Za-z0-9._-]*$`).MatchString(r.template) {
 		return bad()
 	}
 	if json.Unmarshal(fields["templateDigest"], &r.digest) != nil || !regexp.MustCompile(`^sha256:[a-f0-9]{64}$`).MatchString(r.digest) {

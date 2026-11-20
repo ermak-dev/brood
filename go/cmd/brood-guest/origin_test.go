@@ -7,7 +7,7 @@ package main
 // BROOD_GUEST_ORIGIN and BROOD_GUEST_ORIGIN_MODE are unknown variables. The
 // root supervisor fetches the origin once from the server, after the project
 // secrets cold fetch and before the broker, the gateways and the actor, with
-// the bootstrap identity and the approved hosts. The Git gateway starts only
+// the bootstrap identity. The Git gateway starts only
 // for a fetched gateway mode, before the actor; a failed fetch or gateway stops
 // the guest before the actor without leaking the cause.
 
@@ -48,16 +48,15 @@ func TestGitGatewayOnlyInGatewayModeBeforeActor(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			network, runtime, model, git := newFake(), newFake(), newFake(), newFake()
+			runtime, model, git := newFake(), newFake(), newFake()
 			var events []string
-			d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { return network, nil },
-				secrets: func(context.Context, relay.ClientConfig) error {
-					events = append(events, "secrets")
-					return nil
-				},
-				origin: func(_ context.Context, c relay.ClientConfig, hosts []string) (guest.WorkspaceOrigin, error) {
-					if c.Token != "private-token" || c.ActorUID != "actor-1" || c.Generation != 1 || c.URL != "wss://brood.example" || !reflect.DeepEqual(hosts, []string{"github.com"}) {
-						t.Error("origin fetch without the bootstrap identity or approved hosts")
+			d := dependencies{euid: func() int { return 0 }, secrets: func(context.Context, relay.ClientConfig) error {
+				events = append(events, "secrets")
+				return nil
+			},
+				origin: func(_ context.Context, c relay.ClientConfig) (guest.WorkspaceOrigin, error) {
+					if c.Token != "private-token" || c.ActorUID != "actor-1" || c.Generation != 1 || c.URL != "wss://brood.example" {
+						t.Error("origin fetch without the bootstrap identity")
 					}
 					events = append(events, "origin")
 					return fetchedOrigins[mode], nil
@@ -73,7 +72,7 @@ func TestGitGatewayOnlyInGatewayModeBeforeActor(t *testing.T) {
 					events = append(events, "git")
 					return git, nil
 				},
-				start: func(context.Context, []string) (actorRuntime, error) {
+				start: func(context.Context) (actorRuntime, error) {
 					events = append(events, "actor")
 					return runtime, nil
 				},
@@ -100,46 +99,42 @@ func TestGitGatewayOnlyInGatewayModeBeforeActor(t *testing.T) {
 func TestOriginOrGitGatewayFailureStopsBeforeActor(t *testing.T) {
 	for _, failure := range []string{"origin", "git"} {
 		t.Run(failure, func(t *testing.T) {
-			network := newFake()
-			d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { return network, nil },
-				origin: func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error) {
-					if failure == "origin" {
-						return guest.WorkspaceOrigin{}, errors.New("private-token")
-					}
-					return fetchedOrigins["gateway"], nil
-				},
+			d := dependencies{euid: func() int { return 0 }, origin: func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error) {
+				if failure == "origin" {
+					return guest.WorkspaceOrigin{}, errors.New("private-token")
+				}
+				return fetchedOrigins["gateway"], nil
+			},
 				git: func(context.Context, relay.ClientConfig) (service, error) {
 					if failure == "origin" {
 						t.Fatal("Git gateway started without a fetched origin")
 					}
 					return nil, errors.New("private-token")
 				},
-				start: func(context.Context, []string) (actorRuntime, error) {
+				start: func(context.Context) (actorRuntime, error) {
 					t.Fatal("actor started without its workspace origin or Git gateway")
 					return nil, nil
 				},
 			}
 			t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
 			err := dispatch(context.Background(), nil, func() []string { return append(validEnv(t), "BROOD_GUEST_STAGE=runtime") }, d)
-			if err == nil || strings.Contains(err.Error(), "private-token") || !network.closed {
-				t.Fatalf("unsafe or leaked failure: %v closed=%v", err, network.closed)
+			if err == nil || strings.Contains(err.Error(), "private-token") {
+				t.Fatalf("unsafe or leaked failure: %v", err)
 			}
 		})
 	}
 }
 
 func TestSecretFailureStopsBeforeOriginFetch(t *testing.T) {
-	network := newFake()
-	d := dependencies{euid: func() int { return 0 }, network: func(context.Context) (service, error) { return network, nil },
-		secrets: func(context.Context, relay.ClientConfig) error { return errors.New("private-token") },
-		origin: func(context.Context, relay.ClientConfig, []string) (guest.WorkspaceOrigin, error) {
+	d := dependencies{euid: func() int { return 0 }, secrets: func(context.Context, relay.ClientConfig) error { return errors.New("private-token") },
+		origin: func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error) {
 			t.Fatal("origin fetched after a failed secrets cold fetch")
 			return guest.WorkspaceOrigin{}, nil
 		},
 	}
 	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
 	err := dispatch(context.Background(), nil, func() []string { return append(validEnv(t), "BROOD_GUEST_STAGE=runtime") }, d)
-	if err == nil || strings.Contains(err.Error(), "private-token") || !network.closed {
-		t.Fatalf("unsafe or leaked failure: %v closed=%v", err, network.closed)
+	if err == nil || strings.Contains(err.Error(), "private-token") {
+		t.Fatalf("unsafe or leaked failure: %v", err)
 	}
 }

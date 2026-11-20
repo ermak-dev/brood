@@ -1,6 +1,7 @@
 package server
 
 import (
+	"brood.dev/go/brood/proxmox/sshboot"
 	"bufio"
 	"context"
 	"crypto/hmac"
@@ -10,8 +11,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +37,10 @@ type proxmoxAPI interface {
 	Status(context.Context, int) (proxmox.CTStatus, error)
 	WaitTask(context.Context, string) error
 	Start(context.Context, proxmox.OwnedCT) (string, error)
-	ConfigureBootstrap(context.Context, proxmox.OwnedCT, proxmox.BootstrapEnv) error
+	Addresses(context.Context, int) ([]netip.Addr, error)
+	Clone(context.Context, proxmox.OwnedCT, proxmox.CTSpec) (string, error)
+	Resize(context.Context, proxmox.OwnedCT, int, int) error
+	ConvertToTemplate(context.Context, proxmox.OwnedCT) error
 	Stop(context.Context, proxmox.OwnedCT) (string, error)
 	Delete(context.Context, proxmox.OwnedCT) (string, error)
 	Close()
@@ -62,9 +66,12 @@ type managedRuntime struct {
 	workers   sync.WaitGroup
 	verified  sync.Map // actor UID -> incarnation verified by this server process
 	readiness sync.Map // UID актора -> ожидание readiness текущей операции start
-	// bootstrapped — UID актора -> managedBootstrap: подтверждённая запись
-	// bootstrap env start update этим процессом (#133).
-	bootstrapped sync.Map
+	// identity — SSH-ключ установки для входа в контейнеры; agentInstalled —
+	// UID воркера -> операция, в которой агент поставлен этим процессом;
+	// agentHostKeys — ключ хоста контейнера, принятый при первом входе.
+	identity       *sshboot.Identity
+	agentInstalled sync.Map
+	agentHostKeys  sync.Map
 	// Швы прохода reconcile: nil и 0 значат time.Now и managedPassTimeout.
 	now         func() time.Time
 	passTimeout time.Duration
@@ -82,11 +89,6 @@ const managedTaskPendingError = "Proxmox task has not finished; allocation retai
 
 // errManagedTaskPending — задача ещё идёт; истёк только срок прохода.
 var errManagedTaskPending = errors.New("managed Proxmox task is still running")
-
-// errBootstrapUnconfirmed — PVE не подтвердил запись bootstrap env
-// остановленной CT перед Start (#133, #275); Start не отправлялся, и запись
-// повторяется.
-var errBootstrapUnconfirmed = errors.New("bootstrap configuration write is unconfirmed")
 
 func (m *managedRuntime) clock() time.Time {
 	if m.now == nil {
@@ -133,6 +135,11 @@ func (m *managedProvider) initialize(cfg Config) error {
 		}
 	}
 	m.clients = map[string]proxmoxAPI{}
+	identity, err := loadAgentIdentity(cfg.DBPath)
+	if err != nil {
+		return errors.New("installation SSH identity is unavailable: " + err.Error())
+	}
+	m.identity = identity
 	m.newClient = func(c proxmox.Config) (proxmoxAPI, error) { return proxmox.NewClient(c) }
 	if m.registry == nil || len(m.registry.relaySecret) < 32 {
 		return nil
@@ -233,23 +240,12 @@ func (m *managedProvider) client(p store.ManagedPool) (proxmoxAPI, error) {
 		}
 	}
 	templateStorage, _, _ := strings.Cut(p.Template.URI, ":vztmpl/")
-	client, err := m.newClient(proxmox.Config{Endpoint: cfg.endpoint, TokenID: cfg.tokenID, TokenSecret: secret, CAPEM: cfg.caPEM, Node: cfg.node, ResourcePool: cfg.resourcePool, Storage: cfg.storage, Network: cfg.network, TemplateStorage: templateStorage, TemplatePrefix: "brood-claude-proxmox-"})
+	client, err := m.newClient(proxmox.Config{Endpoint: cfg.endpoint, TokenID: cfg.tokenID, TokenSecret: secret, CAPEM: cfg.caPEM, Node: cfg.node, ResourcePool: cfg.resourcePool, Storage: cfg.storage, Network: cfg.network, TemplateStorage: templateStorage, TemplatePrefix: "brood-", BaseTemplate: p.Template.URI})
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid installed PVE client configuration", app.ErrConflict)
 	}
 	m.clients[p.UID] = client
 	return client, nil
-}
-
-// managedGuestHosts is the legacy public egress policy of claude-proxmox.
-// Selected policies replace it rather than extending it. Actor input and the
-// installation's private origin never expand either policy.
-const managedGuestHosts = `["api.anthropic.com","claude.ai","console.anthropic.com","platform.claude.com","downloads.claude.ai","github.com","api.github.com","codeload.github.com","raw.githubusercontent.com","objects.githubusercontent.com","release-assets.githubusercontent.com","gitlab.com","registry.npmjs.org","npmjs.org","www.npmjs.com","nodejs.org","bun.sh","bun.com","pypi.org","files.pythonhosted.org","proxy.golang.org","sum.golang.org","storage.googleapis.com","go.dev","dl.google.com","crates.io","index.crates.io","static.crates.io","static.rust-lang.org","sh.rustup.rs","deb.debian.org","security.debian.org","archive.ubuntu.com","security.ubuntu.com"]`
-
-func (m *managedProvider) createSpec(a store.ManagedActor) proxmox.CTSpec {
-	origin := strings.TrimSuffix(m.registry.publicOrigin, "/")
-	spec := proxmox.CTSpec{VMID: a.CTID, Hostname: "brood-" + a.UID, Template: a.Template.URI, Owner: managedOwned(a).Owner, Cores: int(a.Resources.CPUMillicores / 1000), MemoryMiB: int(a.Resources.MemoryBytes / mib), DiskGiB: int(a.Resources.DiskBytes / gib), Env: proxmox.BootstrapEnv{"BROOD_GUEST_ACTOR_UID": a.UID, "BROOD_GUEST_GENERATION": managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_URL": "wss" + strings.TrimPrefix(origin, "https") + "/api/proxmox/guest/" + a.UID + "/" + managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_TOKEN": guestToken(m.registry.relaySecret, a.UID, a.Incarnation), "BROOD_GUEST_CA_PEM_B64": base64.StdEncoding.EncodeToString([]byte(m.publicCA)), "BROOD_GUEST_ALLOWED_HOSTS": managedGuestHosts, "BROOD_GUEST_RELAY_HOST_KEY": strings.TrimSpace(m.hub.HostKey())}}
-	return spec
 }
 
 func (m *managedProvider) saveObservation(ctx context.Context, a store.ManagedActor, phase, upid, detail string) (store.ManagedActor, error) {
@@ -286,7 +282,7 @@ func managedProviderError(err error) string {
 		return "Proxmox task failed; allocation retained"
 	case errors.Is(err, errManagedTaskPending):
 		return managedTaskPendingError
-	case errors.Is(err, errBootstrapUnconfirmed):
+	case errors.Is(err, errAgentWaiting):
 		return "Proxmox did not confirm the bootstrap configuration of the stopped container; it is written again before the start"
 	case errors.Is(err, proxmox.ErrUncertain):
 		return "Proxmox operation outcome is uncertain; recorded CTID and reservation retained"
@@ -330,7 +326,7 @@ func (m *managedProvider) launch(ctx context.Context, client proxmoxAPI, a store
 	var err error
 	switch a.Stage {
 	case "create":
-		upid, err = client.Create(ctx, m.createSpec(a))
+		upid, err = client.Create(ctx, m.agentSpec(a))
 	case "start":
 		// Стадию start записывает beginStart: Start ещё не запрошен.
 		return m.launchStart(ctx, client, a, "")
@@ -637,6 +633,11 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 			}
 		}
 		if m.hub == nil || !m.hub.Connected(a.UID, a.Incarnation) || !m.probe(ctx, a) {
+			// Агента в контейнер ставит сервер по SSH; пока контейнер не
+			// отвечает, это ожидание, отказ установки — диагностика воркера.
+			if err := m.installAgent(ctx, client, a); err != nil && !errors.Is(err, errAgentWaiting) {
+				return m.saveObservation(ctx, a, "error", "", err.Error())
+			}
 			return m.waitReadiness(ctx, a)
 		}
 		m.readiness.Delete(a.UID)
@@ -738,22 +739,6 @@ func (m *managedProvider) resumeStart(ctx context.Context, client proxmoxAPI, a 
 // раз.
 func (m *managedProvider) launchStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor, digest string) (store.ManagedActor, error) {
 	owned := managedOwned(a)
-	env := m.createSpec(a).Env
-	if !m.bootstrapCurrent(a, env, digest) {
-		if err := client.ConfigureBootstrap(ctx, owned, env); err != nil {
-			// Запись bootstrap меняет только env остановленной CT через
-			// digest CAS и CT не запускает. Её неоднозначный исход (5xx,
-			// разорванное соединение, остановка сервера посреди PUT) — не
-			// неизвестный start: Start не отправлялся, и следующий проход
-			// снова проверит владение, digest и остановленную CT и запишет
-			// то же содержимое.
-			if errors.Is(err, proxmox.ErrUncertain) {
-				err = errBootstrapUnconfirmed
-			}
-			return m.leavePending(ctx, a, a.Phase, err)
-		}
-		m.rememberBootstrap(ctx, client, a, env)
-	}
 	a, err := m.saveObservation(ctx, a, "provisioning", "", "")
 	if err != nil {
 		return a, err
@@ -859,52 +844,6 @@ func (m *managedProvider) leavePending(ctx context.Context, a store.ManagedActor
 // операция operationID записала env (его SHA-256: значения секретны), и
 // после записи конфигурация CT имела digest. Запись живёт в памяти процесса:
 // после перезапуска сервера первый повтор пишет env снова.
-type managedBootstrap struct {
-	operationID string
-	env         [sha256.Size]byte
-	digest      string
-}
-
-func bootstrapFingerprint(env proxmox.BootstrapEnv) [sha256.Size]byte {
-	keys := make([]string, 0, len(env))
-	for key := range env {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	sum := sha256.New()
-	for _, key := range keys {
-		// Ключи и значения bootstrap env не содержат NUL (BootstrapEnv).
-		sum.Write([]byte(key + "\x00" + env[key] + "\x00"))
-	}
-	return [sha256.Size]byte(sum.Sum(nil))
-}
-
-// bootstrapCurrent сообщает, что env уже записан этой операцией и
-// конфигурация CT с тех пор не менялась: digest наблюдения тот же, что после
-// подтверждённой записи. PVE меняет digest с каждой записью конфигурации,
-// поэтому повтор записи ничего бы не изменил.
-func (m *managedProvider) bootstrapCurrent(a store.ManagedActor, env proxmox.BootstrapEnv, digest string) bool {
-	value, ok := m.bootstrapped.Load(a.UID)
-	if !ok || digest == "" {
-		return false
-	}
-	done := value.(managedBootstrap)
-	return done.operationID == a.OperationID && done.digest == digest && done.env == bootstrapFingerprint(env)
-}
-
-// rememberBootstrap запоминает digest конфигурации сразу после
-// подтверждённой записи env. Без чтения записи нет, и следующий повтор
-// пишет env снова. Правку мимо brood между записью и этим чтением digest не
-// отличит: аллокации не меняют конкурентно (proxmox.Client.ConfigureBootstrap).
-func (m *managedProvider) rememberBootstrap(ctx context.Context, client proxmoxAPI, a store.ManagedActor, env proxmox.BootstrapEnv) {
-	config, err := inspectManaged(ctx, client, a)
-	if err != nil || config.Digest == "" {
-		m.bootstrapped.Delete(a.UID)
-		return
-	}
-	m.bootstrapped.Store(a.UID, managedBootstrap{operationID: a.OperationID, env: bootstrapFingerprint(env), digest: config.Digest})
-}
-
 type managedReadiness struct {
 	operationID string
 	since       time.Time

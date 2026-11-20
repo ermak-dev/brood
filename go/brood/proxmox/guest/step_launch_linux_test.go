@@ -42,7 +42,7 @@ func stepLaunchTestAttestor(r *Runtime, rec *attestRecorder) *WorkspaceAttestor 
 
 func TestStepLaunchBindsOnlyTheAttestedActorRelaunch(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	r, err := Start(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestStepLaunchRefusesIncompleteTransitions(t *testing.T) {
 	for _, effect := range []string{"checkout", "step", "ensure", "relaunch", "request canceled", "connection canceled", "superseded"} {
 		t.Run(effect, func(t *testing.T) {
 			var events []string
-			c, _ := testConfig(&events)
+			c := testConfig(&events)
 			if effect == "relaunch" {
 				launch := c.Dependencies.Launch
 				c.Dependencies.Launch = func(ctx context.Context, spec ActorSpec) (Process, error) {
@@ -160,7 +160,7 @@ func TestStepLaunchRevokesOnLossOfAuthority(t *testing.T) {
 	for _, effect := range []string{"disconnect", "runtime stop", "actor exit", "restart", "recycle", "partial policy clear"} {
 		t.Run(effect, func(t *testing.T) {
 			var events []string
-			c, _ := testConfig(&events)
+			c := testConfig(&events)
 			var process Process
 			launch := c.Dependencies.Launch
 			c.Dependencies.Launch = func(ctx context.Context, spec ActorSpec) (Process, error) {
@@ -302,7 +302,7 @@ func inboxPTYTestAttestor(r *Runtime, rec *attestRecorder) *WorkspaceAttestor {
 
 func TestInboxPTYStartGateRecordsExactLaunchBeforeServing(t *testing.T) {
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	var r *Runtime
 	var held *heldPTYTestProcess
 	var pending *stepLaunch
@@ -365,7 +365,7 @@ func TestInboxPTYStartGateDoesNotServeOnFailedBinding(t *testing.T) {
 	for _, failure := range []string{"identity unavailable", "request canceled", "connection canceled", "release failed"} {
 		t.Run(failure, func(t *testing.T) {
 			var events []string
-			c, _ := testConfig(&events)
+			c := testConfig(&events)
 			connection, disconnect := context.WithCancel(context.Background())
 			defer disconnect()
 			// Keep the two lifetimes independent to exercise each check.
@@ -440,7 +440,7 @@ func TestInboxPTYStartGateLeavesOrdinaryRelaunchUngated(t *testing.T) {
 	for _, kind := range []string{"tracking only", "ordinary persistent", "persistent restoration", "result observation"} {
 		t.Run(kind, func(t *testing.T) {
 			var events []string
-			c, _ := testConfig(&events)
+			c := testConfig(&events)
 			held := false
 			withHeldPTYTestLauncher(c, func(*heldPTYTestProcess) { held = true })
 			r, err := Start(context.Background(), c)

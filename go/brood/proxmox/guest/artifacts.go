@@ -235,7 +235,7 @@ type ArtifactDownload func(ctx context.Context, artifact Artifact, install Artif
 // сверяет digest до публикации (#265). Загрузка успешна только когда
 // установщик вернулся без ошибки, получил ровно size байт и sha256 совпал.
 // Причины отказов статичны: без тел и токенов.
-func FetchArtifacts(parent context.Context, cfg relay.ClientConfig, hosts []string, release ArtifactRelease) error {
+func FetchArtifacts(parent context.Context, cfg relay.ClientConfig, release ArtifactRelease) error {
 	fail := artifactFailure
 	route, err := newServerRoute(cfg)
 	if err != nil {

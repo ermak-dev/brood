@@ -4,7 +4,7 @@ package guest
 
 // FEATURE: First-start clone of the actor origin (#147).
 // SPEC: The UID 1000 wrapper clones into private staging under home/.config/brood,
-// through the local Git gateway (gateway) or the egress proxy (direct), records
+// through the local Git gateway (gateway) or straight from the origin (direct), records
 // the canonical origin there, and publishes only into an empty workspace before
 // file secrets. Failed staging is removed without touching live work. Retry is
 // automatic only while empty; interrupted nonempty live work requires explicit reset.
@@ -272,7 +272,7 @@ func TestCloneResidueOfKilledWrapperIsPreserved(t *testing.T) {
 	}
 }
 
-func TestCloneRoutesGatewayLocallyAndDirectThroughEgressProxy(t *testing.T) {
+func TestCloneRoutesGatewayLocallyAndDirectToOrigin(t *testing.T) {
 	for _, mode := range []string{"gateway", "direct"} {
 		t.Run(mode, func(t *testing.T) {
 			project, home := privateTemp(t), privateTemp(t)
@@ -321,11 +321,13 @@ func TestCloneRoutesGatewayLocallyAndDirectThroughEgressProxy(t *testing.T) {
 					t.Errorf("clone env misses %s: %s", want, env)
 				}
 			}
-			proxied := strings.Contains(env, "HTTPS_PROXY=http://127.0.0.1:3128") && strings.Contains(env, "https_proxy=http://127.0.0.1:3128")
-			if mode == "direct" && (!proxied || !slices.Contains(envs[0], "GIT_ALLOW_PROTOCOL=https")) {
-				t.Fatalf("direct clone bypasses the egress proxy: %s", env)
+			if strings.Contains(strings.ToLower(env), "proxy=") {
+				t.Fatalf("clone env names a proxy: %s", env)
 			}
-			if mode == "gateway" && (strings.Contains(strings.ToLower(env), "proxy=http") || !slices.Contains(envs[0], "GIT_ALLOW_PROTOCOL=http")) {
+			if mode == "direct" && !slices.Contains(envs[0], "GIT_ALLOW_PROTOCOL=https") {
+				t.Fatalf("direct clone protocol: %s", env)
+			}
+			if mode == "gateway" && !slices.Contains(envs[0], "GIT_ALLOW_PROTOCOL=http") {
 				t.Fatalf("gateway clone leaves loopback: %s", env)
 			}
 		})

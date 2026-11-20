@@ -243,7 +243,7 @@ func TestFetchArtifacts(t *testing.T) {
 	cfg := server.config()
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	var records []artifactInstall
-	if err := FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&records, false))); err != nil {
+	if err := FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&records, false))); err != nil {
 		t.Fatal(err)
 	}
 	if len(records) != 3 {
@@ -260,7 +260,7 @@ func TestFetchArtifacts(t *testing.T) {
 	}
 	// Повторная загрузка проходит: манифест и тела не менялись.
 	records = nil
-	if err := FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&records, false))); err != nil || len(records) != 3 {
+	if err := FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&records, false))); err != nil || len(records) != 3 {
 		t.Fatalf("second fetch: %v %+v", err, records)
 	}
 }
@@ -277,51 +277,51 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 		server.mu.Lock()
 		server.serve["bro"] = append(artifactBody("bro-payload"), 'X')
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("not elf", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["bro"] = []byte("#!/bin/sh\nprivate-token\n")
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("truncated stream", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["claude"] = files["claude"][:len(files["claude"])-2]
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("stream longer than size", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["bro"] = append(append([]byte{}, files["bro"]...), 'X')
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("empty stream", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.serve["brood-guest"] = []byte{}
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("install refused", func(t *testing.T) {
 		_, cfg := newFixture(t)
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, true))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, true))))
 	})
 	t.Run("install did not consume", func(t *testing.T) {
 		_, cfg := newFixture(t)
 		skipping := func(context.Context, string, io.Reader, int64, string) error { return nil }
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(skipping)))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(skipping)))
 	})
 	t.Run("artifact status", func(t *testing.T) {
 		server, cfg := newFixture(t)
 		server.mu.Lock()
 		server.files["bro"] = nil
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	for name, manifest := range map[string]string{
 		"manifest status":  "",
@@ -335,7 +335,7 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 				}
 				return http.StatusOK
 			}())
-			boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+			boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 		})
 	}
 	t.Run("redirect denied", func(t *testing.T) {
@@ -346,7 +346,7 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 		server.mu.Lock()
 		server.redirect = sink.URL
 		server.mu.Unlock()
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 		if redirected {
 			t.Fatal("redirect followed")
 		}
@@ -354,12 +354,12 @@ func TestFetchArtifactsRejectsBadDelivery(t *testing.T) {
 	t.Run("untrusted certificate", func(t *testing.T) {
 		_, cfg := newFixture(t)
 		cfg.CAPEM = nil
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 	t.Run("invalid route", func(t *testing.T) {
 		_, cfg := newFixture(t)
 		cfg.Token = "short"
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, installEach(recordInstall(&[]artifactInstall{}, false))))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, installEach(recordInstall(&[]artifactInstall{}, false))))
 	})
 }
 
@@ -442,7 +442,7 @@ func TestFetchArtifactsHandsManifestToRelease(t *testing.T) {
 		}
 		return nil
 	}
-	if err := FetchArtifacts(context.Background(), cfg, nil, reuse); err != nil {
+	if err := FetchArtifacts(context.Background(), cfg, reuse); err != nil {
 		t.Fatal(err)
 	}
 	if got := server.requestsSnapshot(); !slices.Equal(got, manifestOnly) {
@@ -460,7 +460,7 @@ func TestFetchArtifactsHandsManifestToRelease(t *testing.T) {
 			release := func(ctx context.Context, _ ArtifactManifest, download ArtifactDownload) error {
 				return download(ctx, foreign, recordInstall(&[]artifactInstall{}, false))
 			}
-			boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, release))
+			boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, release))
 			if got := server.requestsSnapshot()[before:]; !slices.Equal(got, manifestOnly) {
 				t.Fatalf("foreign artifact requested: %v", got)
 			}
@@ -470,6 +470,6 @@ func TestFetchArtifactsHandsManifestToRelease(t *testing.T) {
 		refuse := func(context.Context, ArtifactManifest, ArtifactDownload) error {
 			return fmt.Errorf("private-token payload")
 		}
-		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, nil, refuse))
+		boundedArtifactError(t, FetchArtifacts(context.Background(), cfg, refuse))
 	})
 }

@@ -28,7 +28,7 @@ func TestStepInboxPolicyFollowsHeldLaunchAndNeverOrdinaryHolder(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			var events []string
-			c, _ := testConfig(&events)
+			c := testConfig(&events)
 			connection, disconnect := context.WithCancel(context.Background())
 			defer disconnect()
 			active := false
@@ -101,7 +101,7 @@ func TestStepInboxDisconnectAfterAttestationRestoresOrdinaryHolder(t *testing.T)
 	}
 
 	var events []string
-	c, _ := testConfig(&events)
+	c := testConfig(&events)
 	type holderStart struct {
 		process Process
 		managed string

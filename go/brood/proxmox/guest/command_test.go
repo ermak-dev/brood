@@ -4,25 +4,11 @@ package guest
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"slices"
 	"testing"
 )
-
-// Command failures must retain a cause instead of silently disabling enforcement.
-func TestNFTRetainsFailureCause(t *testing.T) {
-	reason := errors.New("CAP_NET_ADMIN unavailable")
-	err := applyRules(context.Background(), nftRules(), func(context.Context, string, []string, string) error { return reason })
-	if !errors.Is(err, reason) {
-		t.Fatalf("nft cause lost: %v", err)
-	}
-	if err = applyRules(context.Background(), nftRules(), nil); err == nil {
-		t.Fatal("missing nft command accepted")
-	}
-}
 
 func TestActorCanFindPinnedGoAndKeepsBoundedBuilds(t *testing.T) {
 	for _, want := range []string{"PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "GOTOOLCHAIN=local", "GOMAXPROCS=4", "GOFLAGS=-p=2", "DISABLE_AUTOUPDATER=1"} {

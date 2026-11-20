@@ -42,7 +42,7 @@ func TestSupervisorBootstrapOriginNegotiatesBeforeProjection(t *testing.T) {
 			config := relay.ClientConfig{URL: "wss" + strings.TrimPrefix(server.URL, "https") + "/api/proxmox/guest/actor/1", ActorUID: "actor", Generation: 1, Token: strings.Repeat("t", 43), CAPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})}
 			var published guest.WorkspaceOrigin
 			calls := 0
-			got, err := fetchAndPublishWorkspaceBootstrap(context.Background(), config, nil, func(origin guest.WorkspaceOrigin) error {
+			got, err := fetchAndPublishWorkspaceBootstrap(context.Background(), config, func(origin guest.WorkspaceOrigin) error {
 				calls++
 				published = origin
 				if scenario == "publish-failure" {

@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"os"
 	"strings"
 	"testing"
@@ -26,8 +25,7 @@ func TestSupervisorInboxOptInStartsOnlyAfterPreparation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			network, child := newFake(), newFake()
-			services := inboxFixtureServices{done: make(chan error)}
+			child := newFake()
 			path := t.TempDir()
 			if err := os.Chmod(path, 0700); err != nil {
 				t.Fatal(err)
@@ -38,7 +36,6 @@ func TestSupervisorInboxOptInStartsOnlyAfterPreparation(t *testing.T) {
 			var owner *guest.Runtime
 			const receiver = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 			d := dependencies{
-				network: func(context.Context) (service, error) { return network, nil },
 				deliveryJournal: func(ctx context.Context, _ string, scope deliverylog.Scope) (*deliverylog.Journal, error) {
 					return deliverylog.Open(ctx, path, scope, 2)
 				},
@@ -59,17 +56,15 @@ func TestSupervisorInboxOptInStartsOnlyAfterPreparation(t *testing.T) {
 						return inboxFixtureCloser(func() error { stopped = true; return nil }), nil
 					}, nil
 				},
-				start: func(ctx context.Context, hosts []string) (actorRuntime, error) {
+				start: func(ctx context.Context) (actorRuntime, error) {
 					if !ready || !prepared {
 						t.Fatal("actor started before valid protected loader state")
 					}
 					started = true
 					var err error
-					owner, err = guest.Start(ctx, guest.Config{Hosts: hosts, Dependencies: &guest.Dependencies{
-						EUID: func() int { return 0 }, Lookup: func(context.Context, string) ([]net.IP, error) { return nil, nil },
-						Workspace: func() error { return nil }, Rules: func(context.Context, string) error { return nil },
-						Services: func(context.Context, *guest.Policy) (guest.Services, error) { return services, nil },
-						Launch:   func(context.Context, guest.ActorSpec) (guest.Process, error) { return child, nil },
+					owner, err = guest.Start(ctx, guest.Config{Dependencies: &guest.Dependencies{
+						EUID: func() int { return 0 }, Workspace: func() error { return nil },
+						Launch: func(context.Context, guest.ActorSpec) (guest.Process, error) { return child, nil },
 					}})
 					return owner, err
 				},
@@ -85,22 +80,17 @@ func TestSupervisorInboxOptInStartsOnlyAfterPreparation(t *testing.T) {
 			t.Setenv("PATH", "/usr/bin:/bin")
 			err := supervise(ctx, c, d)
 			if !ready {
-				if err == nil || !prepared || started || stopped || relayed || !network.closed || strings.Contains(err.Error(), "private-loader-test-sentinel") {
+				if err == nil || !prepared || started || stopped || relayed || strings.Contains(err.Error(), "private-loader-test-sentinel") {
 					t.Fatalf("unprepared loader did not fail closed with safe diagnostics: %v", err)
 				}
 				return
 			}
-			if err != nil || !prepared || !started || !relayed || !stopped || !network.closed || !child.closed {
+			if err != nil || !prepared || !started || !relayed || !stopped || !child.closed {
 				t.Fatalf("prepared startup did not own and close the exact relay endpoint: %v", err)
 			}
 		})
 	}
 }
-
-type inboxFixtureServices struct{ done chan error }
-
-func (s inboxFixtureServices) Done() <-chan error { return s.done }
-func (inboxFixtureServices) Close() error         { return nil }
 
 type inboxFixtureCloser func() error
 

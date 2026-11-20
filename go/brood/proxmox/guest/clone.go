@@ -102,9 +102,9 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 	defer os.RemoveAll(staging)
 	ctx, cancel := context.WithTimeout(parent, s.Timeout)
 	defer cancel()
-	source, env := s.Gateway, cloneEnv(s.Home, "http", false)
+	source, env := s.Gateway, cloneEnv(s.Home, "http")
 	if s.Mode == "direct" {
-		source, env = s.Origin, cloneEnv(s.Home, "https", true)
+		source, env = s.Origin, cloneEnv(s.Home, "https")
 	}
 	fixed := []string{"-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "core.hooksPath=/dev/null"}
 	cloneErr := cloneStagedWorkspace(ctx, git, env, fixed, source, staging, s.Commit)
@@ -201,12 +201,8 @@ func publishClone(state int, staging, project string) error {
 	return unix.Fsync(target)
 }
 
-func cloneEnv(home, protocol string, proxied bool) []string {
-	env := []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false", "GIT_ALLOW_PROTOCOL=" + protocol}
-	if proxied {
-		env = append(env, "HTTPS_PROXY=http://127.0.0.1:3128", "https_proxy=http://127.0.0.1:3128", "NO_PROXY=127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost")
-	}
-	return env
+func cloneEnv(home, protocol string) []string {
+	return []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false", "GIT_ALLOW_PROTOCOL=" + protocol}
 }
 
 func emptyWorkspace(path string) (bool, error) {

@@ -59,7 +59,6 @@ func TestClaudeModelEnv(t *testing.T) {
 func TestWorkspaceOriginFetchModels(t *testing.T) {
 	server := newWorkspaceOriginServer(t)
 	cfg := server.config()
-	hosts := []string{"github.com"}
 	both := actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}
 	for body, want := range map[string]WorkspaceOrigin{
 		`{"origin":"` + cloneTestOrigin + `","mode":"gateway","models":{"model":"glm-5.3","smallModel":"glm-5.3-flash"}}`: {Origin: cloneTestOrigin, Mode: "gateway", Models: both},
@@ -68,7 +67,7 @@ func TestWorkspaceOriginFetchModels(t *testing.T) {
 		`{"origin":"","mode":"","models":{"model":"glm-5.3"}}`:                                                            {Models: actormodel.Models{Model: "glm-5.3"}},
 	} {
 		server.serve(body, http.StatusOK)
-		if got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts); err != nil || got != want {
+		if got, err := FetchWorkspaceOrigin(context.Background(), cfg); err != nil || got != want {
 			t.Fatalf("fetch %s: %+v %v", body, got, err)
 		}
 	}
@@ -88,14 +87,14 @@ func TestWorkspaceOriginFetchModels(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			server.serve(`{"origin":"","mode":"","models":`+models+`}`, http.StatusOK)
-			got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts)
+			got, err := FetchWorkspaceOrigin(context.Background(), cfg)
 			if err == nil || got != (WorkspaceOrigin{}) || strings.Contains(err.Error(), "private") {
 				t.Fatalf("not safely rejected: %+v %v", got, err)
 			}
 		})
 	}
 	server.serve(`{"origin":"","mode":"","models":{"model":"glm-5.3"},"models":{"model":"glm-5.3"}}`, http.StatusOK)
-	if got, err := FetchWorkspaceOrigin(context.Background(), cfg, hosts); err == nil {
+	if got, err := FetchWorkspaceOrigin(context.Background(), cfg); err == nil {
 		t.Fatalf("models twice accepted: %+v", got)
 	}
 }

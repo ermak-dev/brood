@@ -39,7 +39,7 @@ func TestOptInWorkspaceBootstrapReadsOnlyPinnedCommit(t *testing.T) {
 	pin := strings.Repeat("a", 40)
 	body := fmt.Sprintf(`{"origin":%q,"mode":"gateway","ephemeral":{"commit":%q}}`, cloneTestOrigin, pin)
 	server := workspaceBootstrapFixture(t, body, "ephemeral-v1")
-	got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server), nil)
+	got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server))
 	if err != nil || got.Origin != cloneTestOrigin || got.Mode != "gateway" || got.Ephemeral == nil || got.Ephemeral.Commit != pin {
 		t.Fatalf("pinned bootstrap unavailable: %+v %v", got, err)
 	}
@@ -56,7 +56,7 @@ func TestOptInWorkspaceBootstrapReadsOnlyPinnedCommit(t *testing.T) {
 func TestLegacyWorkspaceReceiverNeitherAdvertisesNorAcceptsEphemeral(t *testing.T) {
 	body := fmt.Sprintf(`{"origin":%q,"mode":"gateway","ephemeral":{"commit":%q}}`, cloneTestOrigin, strings.Repeat("a", 40))
 	server := workspaceBootstrapFixture(t, body, "")
-	got, err := FetchWorkspaceOrigin(context.Background(), gitTestConfig(server), nil)
+	got, err := FetchWorkspaceOrigin(context.Background(), gitTestConfig(server))
 	if err == nil || got != (WorkspaceOrigin{}) {
 		t.Fatalf("legacy silently accepted unsupported bootstrap: %+v %v", got, err)
 	}
@@ -64,7 +64,7 @@ func TestLegacyWorkspaceReceiverNeitherAdvertisesNorAcceptsEphemeral(t *testing.
 
 func TestOptInWorkspaceBootstrapStillAcceptsLegacyPersistentResponse(t *testing.T) {
 	server := workspaceBootstrapFixture(t, fmt.Sprintf(`{"origin":%q,"mode":"gateway"}`, cloneTestOrigin), "ephemeral-v1")
-	got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server), nil)
+	got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server))
 	if err != nil || got.Origin != cloneTestOrigin || got.Ephemeral != nil {
 		t.Fatalf("legacy persistent response changed: %+v %v", got, err)
 	}
@@ -83,7 +83,7 @@ func TestOptInWorkspaceBootstrapRefusesMalformedOrBroaderScope(t *testing.T) {
 		t.Run(object, func(t *testing.T) {
 			body := fmt.Sprintf(`{"origin":%q,"mode":"gateway","ephemeral":%s}`, cloneTestOrigin, object)
 			server := workspaceBootstrapFixture(t, body, "ephemeral-v1")
-			got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server), nil)
+			got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server))
 			if err == nil || got != (WorkspaceOrigin{}) {
 				t.Fatalf("untrusted bootstrap accepted: %+v %v", got, err)
 			}
@@ -94,7 +94,7 @@ func TestOptInWorkspaceBootstrapRefusesMalformedOrBroaderScope(t *testing.T) {
 		fmt.Sprintf(`{"origin":%q,"mode":"gateway","ephemeral":{"commit":%q},"ephemeral":{"commit":%q}}`, cloneTestOrigin, pin, pin),
 	} {
 		server := workspaceBootstrapFixture(t, body, "ephemeral-v1")
-		got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server), nil)
+		got, err := FetchWorkspaceBootstrap(context.Background(), gitTestConfig(server))
 		if err == nil || got != (WorkspaceOrigin{}) {
 			t.Fatalf("ambiguous bootstrap accepted: %+v %v", got, err)
 		}

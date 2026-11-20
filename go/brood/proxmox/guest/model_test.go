@@ -56,15 +56,12 @@ func TestGuestModelGatewayPinsOriginAndKeepsMachineTokenOutOfActor(t *testing.T)
 	if calls.Load() != 1 {
 		t.Fatal("forbidden route reached upstream")
 	}
-	for _, want := range []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8317", "ANTHROPIC_AUTH_TOKEN=brood-local", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1", "NO_PROXY=127.0.0.1,localhost"} {
+	for _, want := range []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8317", "ANTHROPIC_AUTH_TOKEN=brood-local", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1"} {
 		if !slices.Contains(actorEnv(), want) {
 			t.Errorf("missing actor gateway setting %s", want)
 		}
 	}
 	if strings.Contains(strings.Join(actorEnv(), "\n"), token) {
 		t.Fatal("machine token leaked into actor environment")
-	}
-	if !strings.Contains(nftRules(), `oifname "lo" ip daddr 127.0.0.0/8 meta l4proto { tcp, udp } accept`) || !strings.Contains(nftRules(), `iifname != "lo" tcp dport { 3128, 5353, 8080, 8317, 8318 } reject`) {
-		t.Fatal("model gateway missing from fixed loopback policy")
 	}
 }

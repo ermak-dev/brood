@@ -37,18 +37,10 @@ type WorkspaceOrigin struct {
 }
 
 // ValidateWorkspaceOrigin checks the bootstrap pair. It mirrors the server's
-// canonical-origin contract locally; a direct origin must be an approved host.
-func ValidateWorkspaceOrigin(origin, mode string, hosts []string) error {
-	if err := checkWorkspaceOrigin(WorkspaceOrigin{Origin: origin, Mode: mode}); err != nil || mode != "direct" {
-		return err
-	}
-	u, _ := url.Parse(origin)
-	for _, host := range hosts {
-		if approved, err := canonicalHost(host); err == nil && approved == u.Hostname() {
-			return nil
-		}
-	}
-	return errors.New("direct workspace origin host is not an approved guest host")
+// canonical-origin contract locally; the actor network is unrestricted, so a
+// direct origin may name any host.
+func ValidateWorkspaceOrigin(origin, mode string) error {
+	return checkWorkspaceOrigin(WorkspaceOrigin{Origin: origin, Mode: mode})
 }
 
 // checkWorkspaceOrigin treats the identity like the mode: it never stands alone.

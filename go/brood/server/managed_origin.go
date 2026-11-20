@@ -2,27 +2,14 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 
 	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/store"
 )
 
-// managedPublicHosts — разбор managedGuestHosts: direct-режим допустим только
-// для точных публичных имён политики гостя, а не для их поддоменов.
-var managedPublicHosts = func() map[string]bool {
-	var hosts []string
-	if err := json.Unmarshal([]byte(managedGuestHosts), &hosts); err != nil {
-		panic("server: managed guest host policy is not JSON: " + err.Error())
-	}
-	set := make(map[string]bool, len(hosts))
-	for _, host := range hosts {
-		set[host] = true
-	}
-	return set
-}()
-
-func managedPublicHost(host string) bool { return managedPublicHosts[host] }
+// managedPublicHost: сеть воркера не ограничена, поэтому direct-режим
+// допустим для любого хоста.
+func managedPublicHost(string) bool { return true }
 
 // originRefusal — отказ создания актора из-за origin (422). Причина
 // называет правило, но не повторяет origin: он мог содержать userinfo.
@@ -30,7 +17,7 @@ type originRefusal struct{ detail string }
 
 func (e *originRefusal) Error() string { return "actor origin refused: " + e.detail }
 
-const originModeRefusal = "origin must be the project repository with server Git access (a project Git credential or BROOD_GIT_REMOTES) or a repository on an allowed public Git host"
+const originModeRefusal = "origin must be the project repository with server Git access (a project Git credential or BROOD_GIT_REMOTES) or an HTTPS repository the worker can reach directly"
 
 // originMode пересчитывает режим доступа origin по текущему Git-доступу
 // проекта. Пустой origin режима не имеет.

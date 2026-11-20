@@ -486,6 +486,27 @@ def manifests(image, worker_images=None, proxy=False, registry=None, proxmox=Fal
     return [role, binding, *objects]
 
 
+# Сети контейнеров воркеров: сервер заходит в них по SSH ставить агента.
+GUEST_SSH_CIDRS = "BROOD_GUEST_SSH_CIDRS"
+
+
+def guest_ssh_egress(raw):
+    """Egress сервера к SSH контейнеров воркеров: CIDR через запятую из BROOD_GUEST_SSH_CIDRS."""
+    rules = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            network = ipaddress.ip_network(item, strict=True)
+        except ValueError:
+            raise RuntimeError(f"{GUEST_SSH_CIDRS} must list networks in CIDR form") from None
+        if network.is_loopback or network.is_unspecified or network.is_multicast or network.is_link_local or network.prefixlen == 0:
+            raise RuntimeError(f"{GUEST_SSH_CIDRS} must not include loopback, link-local or the whole address space")
+        rules.append({"to": [{"ipBlock": {"cidr": str(network)}}], "ports": [{"port": 22, "protocol": "TCP"}]})
+    return rules
+
+
 class Deploy:
     def __init__(self, cluster, get=config.get, project=config.PROJECT, resolver=None):
         self.cluster, self.get, self.project = cluster, get, Path(project)
@@ -578,6 +599,7 @@ class Deploy:
         if telegram_raw:
             environment[TELEGRAM_API] = telegram_raw
         telegram_rules = telegram_egress(telegram_raw, self.resolver)
+        guest_rules = guest_ssh_egress(self.get(GUEST_SSH_CIDRS))
         domain = actor_git_domain(self.get(ACTOR_GIT_DOMAIN))
         if domain:
             environment[ACTOR_GIT_DOMAIN] = domain
@@ -639,7 +661,7 @@ class Deploy:
             deployment = next(obj for obj in objects if obj["kind"] == "Deployment")
             deployment["spec"]["template"]["metadata"]["annotations"] = {"brood.dev/server-env-sha256": checksum}
             objects[-1]["spec"]["egress"].extend(
-                [*api_rules, *pve_rules, *actor_rules, *git_rules, *telegram_rules])
+                [*api_rules, *pve_rules, *actor_rules, *git_rules, *telegram_rules, *guest_rules])
             if proxy_url:
                 objects.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
                     "metadata": {"name": "brood-go-cliproxy", "namespace": "brood", "labels": OWNER.copy()},
