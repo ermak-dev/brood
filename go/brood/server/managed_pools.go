@@ -310,7 +310,7 @@ func managedTemplateJSON(pool store.ManagedPool) map[string]any {
 	return map[string]any{"metadata": map[string]any{"name": managedTemplatePrefix + pool.Name, "uid": managedTemplatePrefix + pool.UID, "version": managedDecimal(pool.Revision)}, "provider": "proxmox", "profile": managedProfile, "readOnly": true, "capabilities": managedCapabilities(), "resources": map[string]any{"limits": map[string]string{"cpuMillicores": managedDecimal(resources.CPUMillicores), "memoryBytes": managedDecimal(resources.MemoryBytes)}}}
 }
 func managedCapabilities() map[string]bool {
-	return map[string]bool{"workspace": true, "terminal": true, "controlledNetwork": true, "docker": false, "kind": false, "memoryCheckpoint": false}
+	return map[string]bool{"workspace": true, "terminal": true, "memoryCheckpoint": false}
 }
 
 func (m *managedProvider) templatePool(ctx context.Context, name string) (store.ManagedPool, error) {

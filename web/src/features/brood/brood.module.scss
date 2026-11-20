@@ -1,0 +1,405 @@
+@use '../../styles/mixins' as *;
+@use '../../styles/variables' as *;
+
+/* brood pages: projects, a project, a swarm, pools, users and the profile.
+ * Page header in the language of the upstream pages; blocks are the shared
+ * Card and Table. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* ─── заголовок ─────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  min-width: 0;
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* Шкала (#254): размеры и межстрочные -- токены --fs-N и --lh-N из
+ * themes.scss; у страницы заголовок 28/32, на телефоне 20/26. */
+.title {
+  margin: 0;
+  font-size: var(--fs-28);
+  line-height: var(--lh-28);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-family: $font-mono;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+
+  &::before {
+    content: '▍';
+    color: var(--viz-success);
+    font-size: var(--fs-13);
+    line-height: 1;
+    align-self: center;
+    margin-right: 1px;
+  }
+}
+
+.metaDot {
+  color: var(--text-quaternary);
+  user-select: none;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mono {
+  font-family: $font-mono;
+  font-size: var(--fs-12);
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid var(--neutral-badge-border);
+  border-radius: $radius-full;
+  background: var(--neutral-badge-bg);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  line-height: var(--lh-12);
+  white-space: nowrap;
+  color: var(--neutral-badge-fg);
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: currentColor;
+  }
+}
+
+/* Семантические тоны (#254, словарь -- BadgeTone в ui.tsx):
+ * attention ждёт человека, progress работает, problem встало, neutral
+ * ничего не требует. Цвета -- токены --<тон>-badge-* темы: текст на две
+ * ступени темнее оттенка, пара текст/подложка не ниже 4,5:1. */
+.tone-attention {
+  color: var(--attention-badge-fg);
+  border-color: var(--attention-badge-border);
+  background: var(--attention-badge-bg);
+}
+
+.tone-progress {
+  color: var(--progress-badge-fg);
+  border-color: var(--progress-badge-border);
+  background: var(--progress-badge-bg);
+}
+
+.tone-problem {
+  color: var(--problem-badge-fg);
+  border-color: var(--problem-badge-border);
+  background: var(--problem-badge-bg);
+}
+
+.tone-neutral {
+  color: var(--neutral-badge-fg);
+  border-color: var(--neutral-badge-border);
+  background: var(--neutral-badge-bg);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: var(--lh-14);
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+/* Пояснения не шире 72 знаков: строка на всю карточку читается хуже. */
+.sectionHint {
+  margin: 2px 0 0;
+  max-width: var(--measure);
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-secondary);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.fieldHint {
+  margin: 0;
+  max-width: var(--measure);
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  color: var(--text-secondary);
+}
+
+/* Поля форм без внешнего отступа .form-group апстрима: раскладкой ведает форма;
+ * подпись -- того же кегля, что у Field, чтобы поля не разнились. */
+.form :global(.form-group) {
+  margin-bottom: 0;
+
+  label {
+    font-size: var(--fs-13);
+    font-weight: 600;
+  }
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+@include mobile {
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Карточка -- первый уровень (#254); вложенные в неё блоки (.notice,
+ * .code, .panelGroupDanger) берут --card-inset-*: вложенность видна цветом,
+ * не пятой одинаковой рамкой. Текст внутри -- не шире --measure. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--card-bg);
+
+  > p {
+    max-width: var(--measure);
+  }
+}
+
+.details {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+
+  dt {
+    color: var(--text-secondary);
+  }
+
+  dd {
+    margin: 0;
+    min-width: 0;
+    max-width: var(--measure);
+    overflow-wrap: anywhere;
+  }
+}
+
+@include mobile {
+  .details {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+
+    dd {
+      margin-bottom: 8px;
+    }
+  }
+}
+
+.notice {
+  margin: 0;
+  max-width: var(--measure);
+  padding: 10px 12px;
+  border: 1px solid var(--card-inset-border);
+  border-left: 3px solid var(--viz-success);
+  border-radius: $radius-md;
+  background: var(--card-inset-bg);
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-secondary);
+}
+
+.operationFailure {
+  border-left-color: var(--viz-failure);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+
+  p,
+  ul,
+  dl {
+    margin: 8px 0;
+  }
+  dd {
+    margin-left: 0;
+  }
+}
+
+/* ─── сегментный переключатель (язык ModeSwitch апстрима) ──────────── */
+
+:global(.btn).dangerText,
+:global(.btn).dangerText:hover:not(:disabled),
+:global([data-theme]) :global(.btn.btn-ghost).dangerText,
+:global([data-theme]) :global(.btn.btn-ghost).dangerText:hover:not(:disabled) {
+  color: var(--viz-failure);
+}
+
+/* ─── brood ─────────────────────────────────────────────────────────── */
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--text-secondary);
+
+  a {
+    color: inherit;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--text-primary);
+    }
+  }
+}
+
+.nameLink {
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.rowActions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.errorText {
+  margin: 4px 0 0;
+  max-width: var(--measure);
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+  color: var(--problem-badge-fg);
+  overflow-wrap: anywhere;
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: var(--fs-13);
+  line-height: var(--lh-13);
+  color: var(--problem-badge-fg);
+  overflow-wrap: anywhere;
+
+  p {
+    margin: 0;
+  }
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.inlineForm {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+
+  :global(.form-group) {
+    flex: 1 1 200px;
+    max-width: 320px;
+    margin-bottom: 0;
+  }
+}
+
+.textarea {
+  min-height: 120px;
+  resize: vertical;
+  font-family: $font-mono;
+  font-size: var(--fs-12);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-13);
+  font-weight: 600;
+}

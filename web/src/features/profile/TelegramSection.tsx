@@ -1,14 +1,12 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
+import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
-import { LoadState, StatusBadge } from '@/features/access/shared';
+import { LoadState, Section, StatusBadge } from '@/features/brood/ui';
 import { CopyButton } from '@/features/oauth/components/CopyButton';
-import { ConfirmDialog } from '@/features/substrate/components/ConfirmDialog';
-import { Section } from '@/features/substrate/components/form';
 import { errorMessage } from '@/services/brood/http';
+import { useNotificationStore } from '@/stores';
 import type { TelegramChat, TelegramLinkCode, TelegramProfile } from '@/services/brood/telegram';
 import {
   EMPTY_DRAFT,
@@ -16,9 +14,7 @@ import {
   linkBlocker,
   liveCode,
   removal,
-  subscriptionRows,
   telegramTone,
-  toggledEvents,
   tokenDraft,
   tokenProblem,
   tokenValue,
@@ -26,11 +22,11 @@ import {
   type Removal,
 } from './telegramState';
 import { useTelegramProfile } from './useTelegramProfile';
-import styles from '@/features/substrate/substrate.module.scss';
+import styles from '@/features/brood/brood.module.scss';
 import local from './profile.module.scss';
 
 /** Отказ показывается у действия, которое его получило. */
-type Action = 'token' | 'link' | 'remove' | 'events';
+type Action = 'token' | 'link' | 'remove';
 
 /** Имя поля токена в форме: значение берётся из него при отправке. */
 const TOKEN_FIELD = 'telegram-bot-token';
@@ -169,7 +165,7 @@ function LinkStep({ profile, code, now, busy, issuing, refusal, onIssue }: LinkS
 }
 
 /** Секция Telegram профиля (#285): бот привязки и состояние, токен своего
- * бота (write-only), привязка чата кодом, подписки и отвязка. */
+ * бота (write-only), привязка чата кодом и отвязка. */
 export function TelegramSection() {
   const { t } = useTranslation();
   const [notice, setNotice] = useState('');
@@ -196,8 +192,7 @@ export function TelegramSection() {
   const [tokenTouched, setTokenTouched] = useState(false);
   const [running, setRunning] = useState<Action | null>(null);
   const [refusal, setRefusal] = useState<{ action: Action; reason: string } | null>(null);
-  const [confirmKind, setConfirmKind] = useState<Removal>('unlink');
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
 
   const unsavedDialog = useMemo(
     () => ({
@@ -213,20 +208,6 @@ export function TelegramSection() {
     shouldBlock: draft.filled && running !== 'token',
     dialog: unsavedDialog,
   });
-
-  // Переключатель в фокусе на время записи выключен, и браузер уводит фокус
-  // на body: второй Space листал бы страницу. После ответа фокус
-  // возвращается к нему, если пользователь не увёл его сам.
-  const eventsId = useId();
-  const switchId = (kind: string) => `${eventsId}-${kind}`;
-  const [refocus, setRefocus] = useState('');
-  useEffect(() => {
-    if (busy || !refocus) return;
-    setRefocus('');
-    const target = document.getElementById(refocus);
-    const active = document.activeElement;
-    if (target && (!active || active === document.body)) target.focus();
-  }, [busy, refocus]);
 
   /** Действие с одним исходом на странице: строка состояния или отказ у
    * этого действия. */
@@ -268,32 +249,43 @@ export function TelegramSection() {
       return '';
     });
 
-  /** Подписка уходит полным набором; профиль ответа ложится, как у
-   * остальных записей секции. */
-  const switchEvent = async (kind: string, on: boolean) => {
-    if (busy || !profile) return;
-    const events = toggledEvents(profile.events, kind, on);
-    await perform('events', async () => {
-      await model.saveEvents(events);
-      return '';
-    });
-    setRefocus(switchId(kind));
-  };
-
-  const confirmRemoval = () => {
-    setConfirmOpen(false);
-    void perform('remove', async () => {
-      await model.remove();
-      return t(
-        confirmKind === 'remove_bot' ? 'profile.telegram.removed' : 'profile.telegram.unlinked'
-      );
+  /** DELETE снимает свой бот вместе с привязкой или только привязку:
+   * подтверждение называет, что именно. */
+  const confirmRemoval = (kind: Removal) => {
+    if (!profile) return;
+    const bot = handle(profile.botUsername);
+    const label = t(
+      kind === 'remove_bot' ? 'profile.telegram.remove_bot' : 'profile.telegram.unlink'
+    );
+    showConfirmation({
+      title: t(
+        kind === 'remove_bot'
+          ? 'profile.telegram.remove_bot_title'
+          : 'profile.telegram.unlink_title'
+      ),
+      message:
+        kind === 'unlink'
+          ? t('profile.telegram.unlink_message', { chat: chatLabel(profile.chat) })
+          : profile.state === 'linked'
+            ? t('profile.telegram.remove_bot_message', { bot })
+            : t('profile.telegram.remove_bot_unlinked_message', { bot }),
+      confirmText: label,
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: () =>
+        perform('remove', async () => {
+          await model.remove();
+          return t(
+            kind === 'remove_bot' ? 'profile.telegram.removed' : 'profile.telegram.unlinked'
+          );
+        }),
     });
   };
 
   if (!profile) {
     return (
       <Section title={t('profile.telegram.title')} hint={t('profile.telegram.hint')}>
-        <LoadState loading={!error} error={error} retry={model.refresh}>
+        <LoadState loading={!error} error={error} ready={false} retry={model.refresh}>
           {null}
         </LoadState>
       </Section>
@@ -380,10 +372,7 @@ export function TelegramSection() {
               className={styles.dangerText}
               disabled={busy}
               loading={running === 'remove'}
-              onClick={() => {
-                setConfirmKind(kind);
-                setConfirmOpen(true);
-              }}
+              onClick={() => confirmRemoval(kind)}
             >
               {t(kind === 'remove_bot' ? 'profile.telegram.remove_bot' : 'profile.telegram.unlink')}
             </Button>
@@ -402,7 +391,11 @@ export function TelegramSection() {
         {failure('remove')}
       </div>
 
-      <Section title={t('profile.telegram.link_title')} hint={t('profile.telegram.link_hint')}>
+      <Section
+        nested
+        title={t('profile.telegram.link_title')}
+        hint={t('profile.telegram.link_hint')}
+      >
         <LinkStep
           profile={profile}
           code={code}
@@ -414,7 +407,7 @@ export function TelegramSection() {
         />
       </Section>
 
-      <Section title={t('profile.telegram.token_title')} hint={tokenHint}>
+      <Section nested title={t('profile.telegram.token_title')} hint={tokenHint}>
         <form className={local.tokenForm} onSubmit={save} noValidate>
           <Input
             id={tokenId}
@@ -449,48 +442,6 @@ export function TelegramSection() {
           {failure('token')}
         </form>
       </Section>
-
-      <Section title={t('profile.telegram.events_title')} hint={t('profile.telegram.events_hint')}>
-        <ul className={local.events}>
-          {subscriptionRows(profile.events).map((row) => (
-            <li key={row.kind}>
-              {/* Переключатель показывает состояние сервера: набор меняет
-                  ответ записи, а не щелчок. Вид сервера новее панель не
-                  переключает: выключенный, он пропал бы из списка. */}
-              <ToggleSwitch
-                id={switchId(row.kind)}
-                checked={row.on}
-                disabled={busy || !row.known}
-                onChange={(on) => void switchEvent(row.kind, on)}
-                label={row.known ? t(`profile.telegram.events.${row.kind}`) : row.kind}
-              />
-            </li>
-          ))}
-        </ul>
-        {failure('events')}
-      </Section>
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title={t(
-          confirmKind === 'remove_bot'
-            ? 'profile.telegram.remove_bot_title'
-            : 'profile.telegram.unlink_title'
-        )}
-        confirmText={t(
-          confirmKind === 'remove_bot' ? 'profile.telegram.remove_bot' : 'profile.telegram.unlink'
-        )}
-        onConfirm={confirmRemoval}
-        onCancel={() => setConfirmOpen(false)}
-      >
-        <p>
-          {confirmKind === 'unlink'
-            ? t('profile.telegram.unlink_message', { chat: chatLabel(profile.chat) })
-            : profile.state === 'linked'
-              ? t('profile.telegram.remove_bot_message', { bot })
-              : t('profile.telegram.remove_bot_unlinked_message', { bot })}
-        </p>
-      </ConfirmDialog>
     </Section>
   );
 }

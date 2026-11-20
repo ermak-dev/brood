@@ -4,12 +4,8 @@
  * сервер своими часами (link_code_pending), а момент «сейчас» для отсчёта
  * срока передаёт страница, уже с поправкой к часам сервера.
  */
-import type { BadgeTone } from '@/features/access/state';
-import {
-  TELEGRAM_EVENTS,
-  type TelegramLinkCode,
-  type TelegramProfile,
-} from '@/services/brood/telegram';
+import type { BadgeTone } from '@/features/brood/ui';
+import type { TelegramLinkCode, TelegramProfile } from '@/services/brood/telegram';
 
 /** Момент в миллисекундах; брак -- NaN. */
 const moment = (value: string | undefined) => (value ? Date.parse(value) : Number.NaN);
@@ -97,35 +93,6 @@ export function codeCountdown(expiresAt: string | undefined, nowMs: number): Cod
   const left = expires - nowMs;
   if (left <= 0) return { expired: true, minutes: 0 };
   return { expired: false, minutes: left < 60_000 ? 0 : Math.round(left / 60_000) };
-}
-
-export interface SubscriptionRow {
-  kind: string;
-  on: boolean;
-  /** Вид, которого панель не знает (сервер новее): подпись -- имя вида. */
-  known: boolean;
-}
-
-/** Подписки: известные виды в порядке сервера, затем виды сервера новее. */
-export function subscriptionRows(events: readonly string[]): SubscriptionRow[] {
-  const known: readonly string[] = TELEGRAM_EVENTS;
-  return [
-    ...known.map((kind) => ({ kind, on: events.includes(kind), known: true })),
-    ...events
-      .filter((kind) => !known.includes(kind))
-      .map((kind) => ({ kind, on: true, known: false })),
-  ];
-}
-
-/** Полный набор подписок после переключателя (#296): запись подписок
- * заменяет набор целиком. Известные виды -- в порядке сервера, каждый раз;
- * виды сервера новее остаются, как пришли: панель их не переключает. */
-export function toggledEvents(events: readonly string[], kind: string, on: boolean): string[] {
-  const known: readonly string[] = TELEGRAM_EVENTS;
-  const wanted = (event: string) => (event === kind ? on : events.includes(event));
-  return [
-    ...new Set([...known.filter(wanted), ...events.filter((event) => !known.includes(event))]),
-  ];
 }
 
 /** Форма токена BotFather, как её проверяет клиент Bot API сервера. */

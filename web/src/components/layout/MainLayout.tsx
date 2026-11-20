@@ -25,11 +25,8 @@ import {
   useConfigStore,
   useLanguageStore,
   useNotificationStore,
-  useProjectStore,
-  useSwarmActivityStore,
   useThemeStore,
 } from '@/stores';
-import { waitingCount } from '@/features/access/swarmActivity';
 import { AUTH_FILES_CHANGED_EVENT } from '@/features/authFiles/authFilesEvents';
 import {
   collectPluginResourceEntries,
@@ -41,10 +38,9 @@ import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { getSidebarShortcutLabel, isSidebarToggleShortcut } from '@/utils/sidebarShortcut';
-import { ProjectSwitcher } from '@/features/substrate/components/ProjectSwitcher';
 import { ProfileLink } from '@/features/profile/ProfileLink';
-import { useAdministrator } from '@/features/access/shared';
-import { visibleAccessPath } from '@/features/access/permissions';
+import { useAdministrator } from '@/features/brood/hooks';
+import { visiblePath } from '@/features/brood/routes';
 import type { Theme } from '@/types';
 
 interface SidebarNavLinkItem {
@@ -76,8 +72,6 @@ const NAV_TOOLTIP_VIEWPORT_MARGIN = 8;
 interface SidebarNavGroup {
   id: string;
   labelKey: string;
-  /** Готовая подпись (имя проекта) вместо перевода ключа. */
-  label?: string;
   items: SidebarNavItem[];
 }
 
@@ -306,12 +300,6 @@ export function MainLayout() {
   // оператора у «Swarms» (#255, #269: правило плитки «Ждут вас» обзора);
   // исполнение несёт строка списка (#234), а страница роёв отдаёт сюда свой
   // список.
-  const project = useProjectStore((state) => state.project);
-  const loadActivity = useSwarmActivityStore((state) => state.load);
-  const activityProject = useSwarmActivityStore((state) => state.project);
-  const projectName = useSwarmActivityStore((state) => state.name);
-  const activitySwarms = useSwarmActivityStore((state) => state.swarms);
-  const waitingSwarms = activityProject === project ? waitingCount(activitySwarms) : 0;
 
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
@@ -478,10 +466,6 @@ export function MainLayout() {
     });
   }, [fetchConfig, isSuperuser]);
 
-  useEffect(() => {
-    void loadActivity(project);
-  }, [loadActivity, project, apiBase]);
-
   const loadPluginResources = useCallback(async () => {
     if (!isSuperuser || connectionStatus !== 'connected' || !supportsPlugin) {
       setPluginResources([]);
@@ -585,21 +569,12 @@ export function MainLayout() {
     ...navSections({
       administrator: isSuperuser,
       plugins: supportsPlugin,
-      projectName: activityProject === project ? projectName : undefined,
-      waitingSwarms,
     }).map((section) => ({
       id: section.id,
       labelKey: section.labelKey,
-      label: section.label,
-      items: section.entries.map(({ icon: Icon, badge, badgeLabelKey, ...entry }) => ({
+      items: section.entries.map(({ icon: Icon, ...entry }) => ({
         ...entry,
         icon: <Icon size={18} />,
-        ...(badge !== undefined
-          ? {
-              badge,
-              badgeLabel: badgeLabelKey ? t(badgeLabelKey, { count: badge }) : undefined,
-            }
-          : {}),
         ...(entry.path === '/auth-files'
           ? {
               badge: authFilesCount ?? undefined,
@@ -625,7 +600,7 @@ export function MainLayout() {
     .map((group) => ({
       ...group,
       items: group.items.filter((item) =>
-        item.kind === 'drawer' ? isSuperuser : visibleAccessPath(item.path, isSuperuser)
+        item.kind === 'drawer' ? isSuperuser : visiblePath(item.path, isSuperuser)
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -671,7 +646,6 @@ export function MainLayout() {
       ...(isSuperuser ? [fetchConfig(true)] : []),
       loadPluginResources(),
       loadAuthFilesCount(),
-      loadActivity(project),
       triggerHeaderRefresh(),
     ]);
     const rejected = results.find((result) => result.status === 'rejected');
@@ -950,8 +924,6 @@ export function MainLayout() {
         </div>
 
         <div className="header-actions floating-actions">
-          {/* brood: глобальный переключатель активного проекта (atespace). */}
-          <ProjectSwitcher />
           <Button
             variant="ghost"
             size="sm"
@@ -1103,7 +1075,7 @@ export function MainLayout() {
             {visibleNavGroups.map((group, idx) => (
               <div className="nav-group" key={group.id}>
                 {showSidebarLabels ? (
-                  <div className="nav-group-label">{group.label ?? t(group.labelKey)}</div>
+                  <div className="nav-group-label">{t(group.labelKey)}</div>
                 ) : (
                   idx > 0 && <div className="nav-group-divider" aria-hidden="true" />
                 )}

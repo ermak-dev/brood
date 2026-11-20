@@ -9,7 +9,6 @@ import * as broodSession from '@/services/brood/session';
 import { useConfigStore } from './useConfigStore';
 import { useModelsStore } from './useModelsStore';
 import { useQuotaStore } from './useQuotaStore';
-import { useProjectStore } from './useProjectStore';
 import { detectApiBaseFromLocation } from '@/utils/connection';
 
 interface AuthStoreState extends AuthState {
@@ -36,7 +35,6 @@ function disconnect(): void {
   clearCaches();
   // Черновики редакторов принадлежат сессии пользователя, как и кэши.
   unsavedDrafts.clear();
-  useProjectStore.getState().bindUser('');
   useAuthStore.setState({
     isAuthenticated: false,
     username: '',
@@ -57,7 +55,6 @@ function connect(session: broodSession.BroodSession): void {
     clearCaches();
   }
   apiClient.setConfig({ apiBase, managementKey: '' });
-  useProjectStore.getState().bindUser(session.username);
   useAuthStore.setState({
     isAuthenticated: true,
     username: session.username,

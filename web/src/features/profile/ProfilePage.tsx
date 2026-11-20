@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next';
-import { useAdministrator } from '@/features/access/shared';
-import { PageHeader } from '@/features/substrate/components/PageHeader';
+import { useAdministrator } from '@/features/brood/hooks';
+import { PageHeader } from '@/features/brood/ui';
 import { useAuthStore } from '@/stores';
 import { TelegramSection } from './TelegramSection';
-import styles from '@/features/substrate/substrate.module.scss';
+import styles from '@/features/brood/brood.module.scss';
 
 /** Профиль вошедшего пользователя (#285): кто вошёл и его секции. Всё на
  * странице -- о самом пользователе; права других сервер не показывает. */

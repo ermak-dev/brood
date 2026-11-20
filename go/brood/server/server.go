@@ -239,6 +239,8 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /api/admin/users", s.handleAdminUsers)
 	s.mux.HandleFunc("GET /api/projects", s.handleProjects)
 	s.mux.HandleFunc("POST /api/projects", s.handleProjects)
+	s.mux.HandleFunc("GET /api/projects/{id}", s.handleProjectDetail)
+	s.mux.HandleFunc("PUT /api/projects/{id}/capacity", s.handleShardCapacity)
 	s.mux.HandleFunc("DELETE /api/projects/{id}", s.handleProjectDelete)
 	s.mux.HandleFunc("GET /api/projects/{id}/members", s.handleMemberList)
 	s.mux.HandleFunc("POST /api/projects/{id}/members", s.handleMembers)

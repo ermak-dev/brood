@@ -1,7 +1,7 @@
 @use '../../styles/mixins' as *;
 
 /* Секция Telegram профиля (#285). Карточки, сведения и пояснения -- из
- * substrate.module.scss; здесь только раскладка: сведения слева, отвязка
+ * brood.module.scss; здесь только раскладка: сведения слева, отвязка
  * справа; блок выданного кода -- вложенный уровень (--card-inset-*). */
 
 .summary {
@@ -81,15 +81,4 @@
       font-weight: 600;
     }
   }
-}
-
-.events {
-  display: grid;
-  font-size: var(--fs-13);
-  line-height: var(--lh-13);
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 10px 16px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }

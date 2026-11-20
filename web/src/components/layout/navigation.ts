@@ -1,35 +1,25 @@
 import type { ComponentType } from 'react';
 import {
-  IconSidebarActors,
   IconSidebarAuthFiles,
   IconSidebarConfig,
   IconSidebarDashboard,
   IconSidebarLogs,
   IconSidebarOauth,
-  IconSidebarOverview,
   IconSidebarPlugins,
-  IconSidebarPolicy,
-  IconSidebarProjectList,
+  IconSidebarPools,
   IconSidebarProjects,
   IconSidebarProviders,
   IconSidebarQuota,
   IconSidebarStore,
-  IconSidebarSwarms,
   IconSidebarSystem,
-  IconSidebarTemplates,
   IconSidebarUsers,
-  IconSidebarWorkerPools,
-  IconSidebarWorkers,
   type IconProps,
 } from '@/components/ui/icons';
-import { visibleAccessPath } from '@/features/access/permissions';
+import { visiblePath } from '@/features/brood/routes';
 
+/** A swarm is reached through its project: its page keeps Projects active. */
 export function isNavigationActive(path: string, pathname: string, routerActive: boolean): boolean {
-  if (/^\/projects\/[^/]+\/?$/.test(pathname)) {
-    if (path === '/project') return true;
-    if (path === '/projects') return false;
-  }
-  return routerActive;
+  return routerActive || (path === '/projects' && pathname.startsWith('/swarms/'));
 }
 
 export interface NavEntry {
@@ -37,87 +27,25 @@ export interface NavEntry {
   labelKey: string;
   metaKey?: string;
   icon: ComponentType<IconProps>;
-  /** Счётчик у пункта (#255: рои, ждущие ответа) и ключ его подписи для
-   * читалки с {{count}}; без счётчика пункт как прежде. */
-  badge?: number;
-  badgeLabelKey?: string;
 }
 
 export interface NavSection {
-  id: 'project' | 'infrastructure' | 'administration' | 'gateway' | 'system';
+  id: 'brood' | 'gateway' | 'system';
   labelKey: string;
-  /** Готовая подпись вместо ключа: группа проекта названа его именем. */
-  label?: string;
   entries: NavEntry[];
 }
 
-// Группа — уровень объекта: ресурсы выбранного проекта, инфраструктура
-// установки, администрирование, AI-шлюз и сама система. Видимость решает
-// visibleAccessPath: участнику остаются проект с его ресурсами и каталог
-// проектов, остальное — администратору; сервер проверяет каждый запрос.
-// Обзор проекта открывает панель (#197), статистика шлюза живёт в его группе.
+// A project and a swarm are reached from the project list, so the brood group
+// lists only the roots. visiblePath hides the administrator's entries from
+// everyone else; the server checks each request.
 const sections = (plugins: boolean): NavSection[] => [
   {
-    id: 'project',
-    labelKey: 'nav_groups.project',
+    id: 'brood',
+    labelKey: 'nav_groups.brood',
     entries: [
-      {
-        path: '/',
-        labelKey: 'nav.overview',
-        metaKey: 'nav_meta.overview',
-        icon: IconSidebarOverview,
-      },
-      {
-        path: '/project',
-        labelKey: 'nav.project',
-        metaKey: 'nav_meta.project',
-        icon: IconSidebarProjects,
-      },
-      { path: '/swarms', labelKey: 'access.swarms', icon: IconSidebarSwarms },
-      {
-        path: '/actors',
-        labelKey: 'nav.actors',
-        metaKey: 'nav_meta.actors',
-        icon: IconSidebarActors,
-      },
-      {
-        path: '/templates',
-        labelKey: 'nav.templates',
-        metaKey: 'nav_meta.templates',
-        icon: IconSidebarTemplates,
-      },
-    ],
-  },
-  {
-    id: 'infrastructure',
-    labelKey: 'nav_groups.infrastructure',
-    entries: [
-      {
-        path: '/worker-pools',
-        labelKey: 'nav.worker_pools',
-        metaKey: 'nav_meta.worker_pools',
-        icon: IconSidebarWorkerPools,
-      },
-      {
-        path: '/workers',
-        labelKey: 'nav.workers',
-        metaKey: 'nav_meta.workers',
-        icon: IconSidebarWorkers,
-      },
-      { path: '/substrate-policy', labelKey: 'access.substrate_policy', icon: IconSidebarPolicy },
-    ],
-  },
-  {
-    id: 'administration',
-    labelKey: 'nav_groups.administration',
-    entries: [
-      {
-        path: '/projects',
-        labelKey: 'access.projects',
-        metaKey: 'nav_meta.projects',
-        icon: IconSidebarProjectList,
-      },
-      { path: '/users', labelKey: 'access.users', icon: IconSidebarUsers },
+      { path: '/projects', labelKey: 'nav.projects', icon: IconSidebarProjects },
+      { path: '/pools', labelKey: 'nav.pools', icon: IconSidebarPools },
+      { path: '/users', labelKey: 'nav.users', icon: IconSidebarUsers },
     ],
   },
   {
@@ -188,33 +116,19 @@ const sections = (plugins: boolean): NavSection[] => [
   },
 ];
 
-/** Группы меню для роли: пункты, закрытые роли, и опустевшие группы
- * не показываются. Страницы плагинов добавляет MainLayout отдельно.
- * Группа проекта несёт имя выбранного проекта, а «Swarms» -- число роёв,
- * ждущих оператора (#255, правило waitsForOperator -- то же, что у плитки
- * «Ждут вас» обзора, #269); ноль счётчика не рисует. */
+/** Menu groups for the role: entries closed to it and emptied groups are not
+ * shown. MainLayout adds plugin pages separately. */
 export function navSections({
   administrator,
   plugins,
-  projectName,
-  waitingSwarms = 0,
 }: {
   administrator: boolean;
   plugins: boolean;
-  projectName?: string;
-  waitingSwarms?: number;
 }): NavSection[] {
   return sections(plugins)
     .map((section) => ({
       ...section,
-      ...(section.id === 'project' && projectName ? { label: projectName } : {}),
-      entries: section.entries
-        .filter((entry) => visibleAccessPath(entry.path, administrator))
-        .map((entry) =>
-          entry.path === '/swarms' && waitingSwarms > 0
-            ? { ...entry, badge: waitingSwarms, badgeLabelKey: 'nav.waiting_swarms' }
-            : entry
-        ),
+      entries: section.entries.filter((entry) => visiblePath(entry.path, administrator)),
     }))
     .filter((section) => section.entries.length > 0);
 }

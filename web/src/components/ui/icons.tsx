@@ -302,14 +302,6 @@ export function IconChevronLeft({ size = 20, ...props }: IconProps) {
   );
 }
 
-export function IconChevronRight({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <path d="m9 18 6-6-6-6" />
-    </svg>
-  );
-}
-
 export function IconSearch({ size = 20, ...props }: IconProps) {
   return (
     <svg {...baseSvgProps} width={size} height={size} {...props}>
@@ -508,42 +500,11 @@ export function IconSidebarQuota({ size = 20, ...props }: IconProps) {
 
 export const IconSidebarLogs = IconScrollText;
 
-/** brood: обзор проекта, стартовая страница (#197; Lucide house) */
-export function IconSidebarOverview({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
-      <path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-    </svg>
-  );
-}
-
-/** brood: проект (atespace Substrate) */
+/** brood: проекты */
 export function IconSidebarProjects({ size = 20, ...props }: IconProps) {
   return (
     <svg {...baseSvgProps} width={size} height={size} {...props}>
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
-    </svg>
-  );
-}
-
-/** brood: каталог проектов установки (Lucide folders) */
-export function IconSidebarProjectList({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z" />
-      <path d="M2 8v11a2 2 0 0 0 2 2h14" />
-    </svg>
-  );
-}
-
-/** brood: рой — три соты с общими стенками */
-export function IconSidebarSwarms({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <path d="M8 3.9 12 6.2v4.6L8 13.1 4 10.8V6.2Z" />
-      <path d="M16 3.9 20 6.2v4.6L16 13.1 12 10.8V6.2Z" />
-      <path d="M12 10.8 16 13.1v4.6L12 20 8 17.7v-4.6Z" />
     </svg>
   );
 }
@@ -570,56 +531,13 @@ export function IconSidebarUsers({ size = 20, ...props }: IconProps) {
   );
 }
 
-/** brood: акторы (Actor Substrate) */
-export function IconSidebarActors({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <rect width="8" height="8" x="3" y="3" rx="2" />
-      <rect width="8" height="8" x="13" y="3" rx="2" />
-      <rect width="8" height="8" x="3" y="13" rx="2" />
-      <path d="M17 13v8M13 17h8" />
-    </svg>
-  );
-}
-
-/** brood: шаблоны акторов (ActorTemplate) */
-export function IconSidebarTemplates({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <rect width="18" height="18" x="3" y="3" rx="2" />
-      <path d="M3 9h18M9 9v12" />
-    </svg>
-  );
-}
-
-/** brood: воркер — одна машина пула (Lucide cpu) */
-export function IconSidebarWorkers({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <rect width="16" height="16" x="4" y="4" rx="2" />
-      <rect width="6" height="6" x="9" y="9" rx="1" />
-      <path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" />
-    </svg>
-  );
-}
-
-/** brood: пул воркеров (WorkerPool) — связанные машины */
-export function IconSidebarWorkerPools({ size = 20, ...props }: IconProps) {
+/** brood: пул Proxmox — связанные машины */
+export function IconSidebarPools({ size = 20, ...props }: IconProps) {
   return (
     <svg {...baseSvgProps} width={size} height={size} {...props}>
       <rect width="8" height="8" x="2" y="6" rx="1" />
       <rect width="8" height="8" x="14" y="6" rx="1" />
       <path d="M6 6V3h12v3M6 14v4h12v-4" />
-    </svg>
-  );
-}
-
-/** brood: политика доступа (AccessPolicy) */
-export function IconSidebarPolicy({ size = 20, ...props }: IconProps) {
-  return (
-    <svg {...baseSvgProps} width={size} height={size} {...props}>
-      <path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10Z" />
-      <path d="m9 11 2 2 4-4" />
     </svg>
   );
 }

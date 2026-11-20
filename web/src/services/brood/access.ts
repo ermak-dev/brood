@@ -1,174 +1,93 @@
+/**
+ * brood: users, projects, members and swarms of the Go server.
+ *
+ * Shapes follow go/brood/server/api.go, capacity_api.go, members_read.go,
+ * git_repository_api.go and go/brood/auth/service.go. The server stays the
+ * authorization authority; a refusal carries its reason in `detail`.
+ */
 import { request } from './http';
-import type { SnapshotIdentity } from './pipelines';
 
-export interface AccessProject {
+export interface User {
+  username: string;
+  display_name: string;
+  is_admin: boolean;
+  disabled: boolean;
+}
+
+export interface NewUser {
+  username: string;
+  password: string;
+  display_name: string;
+  is_admin: boolean;
+}
+
+export interface Project {
   id: string;
   name: string;
-  /** Число роёв проекта в списке роёв вызывающего (#234): его несёт только
-   * строка `GET /api/projects`, у созданного проекта поля нет. */
+  /** Swarms of the project the caller sees; only list rows carry it. */
   swarmCount?: number;
 }
 
-export type SwarmRole = 'owner' | 'editor' | 'viewer';
-
-export interface ShardCapacity {
-  worker_selector: Record<string, string>;
+/** Limits are decimal strings; null means unlimited. */
+export interface ProjectLimits {
   max_swarms: string | null;
   max_actors: string | null;
   max_cpu_millicores: string | null;
   max_memory_bytes: string | null;
 }
 
-export interface ShardUsage {
-  swarms: string;
-  actors: string;
-  cpu_millicores: string;
-  memory_bytes: string;
-}
+export const LIMIT_FIELDS = [
+  'max_swarms',
+  'max_actors',
+  'max_cpu_millicores',
+  'max_memory_bytes',
+] as const satisfies ReadonlyArray<keyof ProjectLimits>;
 
-export interface ProjectDetail extends AccessProject {
-  capacity: ShardCapacity;
-  usage: ShardUsage | null;
-  usage_available: boolean;
-  usage_error?: string;
-}
-
-export interface SwarmMember {
-  user_id: string;
-  username: string;
-  display_name: string;
-  role: SwarmRole;
-  disabled: boolean;
-}
-
-export interface AccessSwarm {
+export interface Swarm {
   id: string;
   project_id: string;
-  owner_id: string;
   owner_username: string;
-  role: SwarmRole;
-  retry?: 'create' | 'delete' | '';
   name: string;
-  atespace_name: string;
-  state: string;
-  created_at: string;
-  updated_at: string;
-  /** Сводка исполнения в строке списка (#234): её несёт только строка
-   * `GET /api/projects/{id}/swarms`, у одного роя и созданного полей нет. */
-  execution?: string;
-  openRequests?: number;
-  /** Ответы актору с доставкой `failed` или `unconfirmed` (#266): ждут повтора
-   * доставки. Старый сервер поля не шлёт. */
-  undeliveredAnswers?: number;
-  /** Личность определения снимка роя (#268): записана первым запуском, у
-   * роя без неё поля нет. Это не текущее определение каталога. */
-  definition?: SnapshotIdentity;
-  /** Число явных участников роя (#268), длина `GET /api/swarms/{id}/members`. */
-  memberCount?: number;
-  /** Число неудалённых managed-акторов роя (#268). Native-акторов в нём нет:
-   * это не число всех акторов роя. */
+  /** Workers that are not deleted; only list rows carry it. */
   managedActorCount?: number;
-  /** Момент последнего исполнения роя (#268), RFC 3339 UTC: начало текущего
-   * прохода, остановка или окончание последнего. У роя без прохода и у части
-   * прежних проходов поля нет. */
-  executionAt?: string;
-}
-
-export interface AccessUser {
-  username: string;
-  display_name: string;
-  is_admin: boolean;
-  disabled: boolean;
-}
-
-export interface CreateUser {
-  username: string;
-  password: string;
-  display_name: string;
-  is_admin: boolean;
-  disabled?: boolean;
-}
-
-/** Git remote установки (BROOD_GIT_REMOTES). Токен сервер не отдаёт; панель
- * и не читает ничего, кроме origin и признака настроенных учётных данных. */
-export interface GitRemote {
-  origin: string;
-  credentialConfigured: boolean;
 }
 
 const segment = encodeURIComponent;
 const projectPath = (id: string) => `/api/projects/${segment(id)}`;
-
-async function readRepository(id: string): Promise<string> {
-  const body = await request<{ origin?: unknown } | null>('GET', `${projectPath(id)}/repository`);
-  if (typeof body?.origin !== 'string') {
-    throw new Error('Server returned an invalid project repository');
-  }
-  return body.origin;
-}
-
-async function readGitRemotes(): Promise<GitRemote[]> {
-  const body = await request<{ items?: unknown } | null>('GET', '/api/git-remotes');
-  const items = Array.isArray(body?.items) ? body.items : null;
-  const remotes = items?.map((item: unknown) => {
-    const row = item as { origin?: unknown; credentialConfigured?: unknown } | null;
-    return typeof row?.origin === 'string' && typeof row.credentialConfigured === 'boolean'
-      ? { origin: row.origin, credentialConfigured: row.credentialConfigured }
-      : null;
-  });
-  if (!remotes || remotes.some((remote) => remote === null)) {
-    throw new Error('Server returned an invalid Git remote list');
-  }
-  return remotes as GitRemote[];
-}
 const swarmPath = (id: string) => `/api/swarms/${segment(id)}`;
 const userPath = (username: string) => `/api/admin/users/${segment(username)}`;
 
-// Повтор создания с тем же именем и повтор удаления возобновляют операцию.
-// Отдельного маршрута retry нет: сервер восстанавливает исходную операцию.
 export const accessApi = {
-  users: () => request<AccessUser[]>('GET', '/api/admin/users'),
-  user: (username: string) => request<AccessUser>('GET', userPath(username)),
-  updateUser: (username: string, properties: Omit<AccessUser, 'username'>) =>
-    request<void>('PUT', userPath(username), properties),
+  users: () => request<User[]>('GET', '/api/admin/users'),
+  createUser: (body: NewUser) => request<unknown>('POST', '/api/admin/users', body),
   deleteUser: (username: string) => request<void>('DELETE', userPath(username)),
-  createUser: (body: CreateUser) =>
-    request<Omit<AccessUser, 'disabled'>>('POST', '/api/admin/users', body),
   setDisabled: (username: string, disabled: boolean) =>
     request<void>('POST', `${userPath(username)}/${disabled ? 'disable' : 'enable'}`),
-  setRole: (username: string, isAdmin: boolean) =>
+  setAdministrator: (username: string, isAdmin: boolean) =>
     request<void>('POST', `${userPath(username)}/role`, { is_admin: isAdmin }),
-  members: (projectId: string) => request<AccessUser[]>('GET', `${projectPath(projectId)}/members`),
   resetPassword: (username: string, password: string) =>
     request<void>('POST', `${userPath(username)}/password-reset`, { new_password: password }),
-  projects: () => request<AccessProject[]>('GET', '/api/projects'),
-  project: (id: string) => request<ProjectDetail>('GET', projectPath(id)),
-  setCapacity: (id: string, capacity: ShardCapacity) =>
-    request<void>('PUT', `${projectPath(id)}/capacity`, capacity),
-  /** Repository проекта: '' — не выбран. Читают участники проекта. */
-  repository: readRepository,
-  /** Только администратор: '' очищает выбор. */
-  setRepository: (id: string, origin: string) =>
-    request<void>('PUT', `${projectPath(id)}/repository`, { origin }),
-  /** Только администратор: remotes, из которых выбирается repository. */
-  gitRemotes: readGitRemotes,
-  createProject: (name: string) => request<AccessProject>('POST', '/api/projects', { name }),
+
+  projects: () => request<Project[]>('GET', '/api/projects'),
+  createProject: (name: string) => request<Project>('POST', '/api/projects', { name }),
   deleteProject: (id: string) => request<void>('DELETE', projectPath(id)),
-  addMember: (projectId: string, username: string) =>
-    request<void>('POST', `${projectPath(projectId)}/members`, { username }),
-  removeMember: (projectId: string, username: string) =>
-    request<void>('DELETE', `${projectPath(projectId)}/members/${segment(username)}`),
-  swarms: (projectId: string) => request<AccessSwarm[]>('GET', `${projectPath(projectId)}/swarms`),
-  /** Один рой по ID; чужой рой сервер не отличает от отсутствующего (404). */
-  swarm: (id: string) => request<AccessSwarm>('GET', swarmPath(id)),
-  swarmMembers: (id: string) => request<SwarmMember[]>('GET', `${swarmPath(id)}/members`),
-  setSwarmMember: (id: string, username: string, role: SwarmRole) =>
-    request<void>('POST', `${swarmPath(id)}/members`, { username, role }),
-  removeSwarmMember: (id: string, username: string) =>
-    request<void>('DELETE', `${swarmPath(id)}/members/${segment(username)}`),
+  members: (id: string) => request<User[]>('GET', `${projectPath(id)}/members`),
+  addMember: (id: string, username: string) =>
+    request<void>('POST', `${projectPath(id)}/members`, { username }),
+  removeMember: (id: string, username: string) =>
+    request<void>('DELETE', `${projectPath(id)}/members/${segment(username)}`),
+  /** The repository declared by the project's Broodfile; '' when none. */
+  repository: async (id: string) =>
+    (await request<{ origin: string }>('GET', `${projectPath(id)}/repository`)).origin,
+  limits: async (id: string) =>
+    (await request<{ capacity: ProjectLimits }>('GET', projectPath(id))).capacity,
+  setLimits: (id: string, limits: ProjectLimits) =>
+    request<void>('PUT', `${projectPath(id)}/capacity`, limits),
+
+  swarms: (projectId: string) => request<Swarm[]>('GET', `${projectPath(projectId)}/swarms`),
   createSwarm: (projectId: string, name: string) =>
-    request<AccessSwarm>('POST', `${projectPath(projectId)}/swarms`, { name }),
+    request<Swarm>('POST', `${projectPath(projectId)}/swarms`, { name }),
+  /** Someone else's swarm is indistinguishable from a missing one (404). */
+  swarm: (id: string) => request<Swarm>('GET', swarmPath(id)),
   deleteSwarm: (id: string) => request<void>('DELETE', swarmPath(id)),
-  transferSwarm: (id: string, username: string) =>
-    request<void>('POST', `${swarmPath(id)}/transfer`, { username }),
 };

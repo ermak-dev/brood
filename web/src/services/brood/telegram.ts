@@ -2,9 +2,7 @@
  * brood: профиль Telegram вошедшего пользователя (#285, API #281).
  *
  * GET /api/me/telegram читает профиль; PUT принимает ровно {"token"} и
- * отвечает профилем; PUT /api/me/telegram/events принимает ровно {"events"},
- * полный набор подписок, и отвечает профилем (#296, API #295); DELETE
- * снимает свой бот и привязку чата; POST /api/me/telegram/link выдаёт
+ * отвечает профилем; DELETE снимает свой бот и привязку чата; POST /api/me/telegram/link выдаёт
  * одноразовый код привязки. Маршруты действуют только для самого
  * вызывающего, за сессией и CSRF. Токен бота write-only:
  * его не несёт ни ответ, ни отказ, и здесь он нигде не хранится. Отказ --
@@ -13,18 +11,6 @@
  */
 
 import { requestWithHeaders } from './http';
-
-/** Виды уведомлений, на которые подписывается пользователь, в порядке
- * сервера (store.TelegramEventKinds). */
-export const TELEGRAM_EVENTS = [
-  'request_opened',
-  'request_answered',
-  'answer_delivery',
-  'pass_started',
-  'pass_finished',
-  'step_failed',
-  'actor_question',
-] as const;
 
 /** Привязанный личный чат. Имя собеседника без @ сервер берёт из строки
  * привязки (#294): имя из /start с кодом, затем из последнего сообщения или
@@ -49,8 +35,6 @@ export interface TelegramProfile {
   state: string;
   /** Публичная причина состояния `error`. */
   reason?: string;
-  /** Виды уведомлений, на которые подписан пользователь. */
-  events: string[];
   chat: TelegramChat | null;
   /** Выданный раньше код ещё ждёт /start. */
   linkCodePending: boolean;
@@ -107,9 +91,7 @@ export function parseTelegramProfile(value: unknown): TelegramProfile {
     typeof value.own_bot !== 'boolean' ||
     typeof value.state !== 'string' ||
     value.state === '' ||
-    typeof value.link_code_pending !== 'boolean' ||
-    !Array.isArray(value.events) ||
-    !value.events.every((event) => typeof event === 'string')
+    typeof value.link_code_pending !== 'boolean'
   ) {
     throw new Error(INVALID_PROFILE);
   }
@@ -117,7 +99,6 @@ export function parseTelegramProfile(value: unknown): TelegramProfile {
     botUsername: value.bot_username,
     ownBot: value.own_bot,
     state: value.state,
-    events: [...value.events],
     chat: parseChat(value.chat),
     linkCodePending: value.link_code_pending,
   };
@@ -178,9 +159,6 @@ export const telegramApi = {
   profile: () => served(parseTelegramProfile, 'GET', PROFILE_PATH),
   /** Токен уходит на сервер и больше никуда: ответ -- профиль без него. */
   setToken: (token: string) => served(parseTelegramProfile, 'PUT', PROFILE_PATH, { token }),
-  /** Подписки целиком: запись заменяет набор, ответ -- профиль. */
-  setEvents: (events: string[]) =>
-    served(parseTelegramProfile, 'PUT', `${PROFILE_PATH}/events`, { events }),
   remove: () => served(parseTelegramProfile, 'DELETE', PROFILE_PATH),
   issueLinkCode: () => served(parseTelegramLinkCode, 'POST', `${PROFILE_PATH}/link`),
 };
