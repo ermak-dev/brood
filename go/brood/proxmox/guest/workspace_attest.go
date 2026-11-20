@@ -21,6 +21,8 @@ import (
 // for the actor stop, relaunch and session start around it.
 const checkoutHelperTimeout = 9 * time.Minute
 
+var errStepSecretPublication = errors.New("project secrets could not be published; workspace not inspected")
+
 // WorkspaceAttestor signs workspace attestations as the guest root. Token is the
 // incarnation's relay token: it never reaches a helper or the response.
 type WorkspaceAttestor struct {
@@ -31,6 +33,9 @@ type WorkspaceAttestor struct {
 	Origin WorkspaceOrigin
 	// Quiesce runs its callback while no actor process exists (Runtime.Quiesce).
 	Quiesce func(context.Context, func(context.Context) error) error `json:"-"`
+	// PrepareSecrets fetches an unpublished project projection. The returned
+	// function publishes it only in the quiet window, after the old app stops.
+	PrepareSecrets func(context.Context) (func() error, error) `json:"-"`
 	// Prepare builds a pinned empty ephemeral workspace in the same quiet window.
 	Prepare  func(context.Context, sessionctl.CheckoutRequest) error                             `json:"-"`
 	Checkout func(context.Context, sessionctl.CheckoutRequest) (sessionctl.CheckoutFacts, error) `json:"-"`
@@ -43,6 +48,7 @@ type WorkspaceAttestor struct {
 	Free func() error                     `json:"-"`
 
 	stepRuntime     *Runtime
+	trackStepLaunch bool
 	inboxReceiverID string
 }
 
@@ -124,22 +130,38 @@ func (a *WorkspaceAttestor) attest(ctx, authority context.Context, req relay.Ses
 	if ctx.Err() != nil || authority.Err() != nil {
 		return attestFailure("workspace attestation canceled; nothing changed")
 	}
+	var publishSecrets func() error
+	if a.PrepareSecrets != nil {
+		prepared := refreshSessionSecrets(ctx, authority, func(ctx context.Context) error {
+			var err error
+			publishSecrets, err = a.PrepareSecrets(ctx)
+			return err
+		})
+		if !prepared || publishSecrets == nil {
+			return attestFailure("project secrets refresh failed; session unchanged")
+		}
+	}
 	// После остановки актора эффекты доводятся до конца и без сервера: прерванный
 	// checkout или актор без сессии хуже потерянного ответа. Их ограничивают
 	// собственные бюджеты helper и runtime, а не запрос.
 	work := context.WithoutCancel(ctx)
 	var facts sessionctl.CheckoutFacts
 	var checkoutErr, policyErr error
-	apply := func(ctx context.Context) error {
+	apply := func(quiet context.Context) error {
+		// The fetch has no actor-readable effects. Only the proven quiet window
+		// may publish the bundle, and only while this request still authorizes it.
+		if publishSecrets != nil && (ctx.Err() != nil || authority.Err() != nil || quiet.Err() != nil || publishSecrets() != nil) {
+			return errStepSecretPublication
+		}
 		request := sessionctl.CheckoutRequest{Commit: claim.Commit, Origin: a.Origin.Origin, Mode: a.Origin.Mode, GitIdentity: a.Origin.GitIdentity}
 		if ephemeral {
-			bounded, cancel := context.WithTimeout(ctx, checkoutHelperTimeout)
+			bounded, cancel := context.WithTimeout(quiet, checkoutHelperTimeout)
 			defer cancel()
-			ctx = bounded
-			checkoutErr = a.Prepare(ctx, request)
+			quiet = bounded
+			checkoutErr = a.Prepare(quiet, request)
 		}
 		if checkoutErr == nil {
-			facts, checkoutErr = a.Checkout(ctx, request)
+			facts, checkoutErr = a.Checkout(quiet, request)
 		}
 		// Ещё в окне тишины: rc-файлы актора не читает ни один процесс, а
 		// сессия стартует уже в своём режиме. Отказ проверки — не шаг.
@@ -157,7 +179,7 @@ func (a *WorkspaceAttestor) attest(ctx, authority context.Context, req relay.Ses
 		quiesceErr = a.Quiesce(work, apply)
 	} else {
 		step = &stepLaunchRequest{claim: claim, request: ctx, authority: authority, inbox: a.inboxReceiverID != "", applied: func() bool {
-			return facts.Commit == claim.Commit && policyErr == nil
+			return a.trackStepLaunch && facts.Commit == claim.Commit && policyErr == nil
 		}}
 		quiesceErr = a.stepRuntime.transition(work, apply, step)
 		defer func() { a.stepRuntime.finishStepLaunch(step.launch, ctx, attested) }()

@@ -82,7 +82,7 @@ type Runtime struct {
 	once    sync.Once
 	err     error
 
-	stepOperation sync.Mutex // Serializes opted-in attestation and explicit session replacement.
+	stepOperation sync.Mutex // Serializes workspace attestation and explicit session replacement.
 	stepMu        sync.Mutex
 	stepLaunch    *stepLaunch
 	inboxPolicy   *stepInboxSessionPolicy // Installed before advertising the prepared inbox.
@@ -117,14 +117,24 @@ func (r *Runtime) Quiesce(ctx context.Context, fn func(context.Context) error) e
 	return r.transition(ctx, fn, nil)
 }
 
+var errWorkspaceRequestRevoked = errors.New("workspace attestation canceled before quiesce; session unchanged")
+
 func (r *Runtime) transition(ctx context.Context, fn func(context.Context) error, step *stepLaunchRequest) error {
 	q := quiesceRequest{ctx: ctx, run: fn, reply: make(chan error, 1), step: step}
+	var requestDone, authorityDone <-chan struct{}
+	if step != nil {
+		requestDone, authorityDone = step.request.Done(), step.authority.Done()
+	}
 	select {
 	case r.quiesce <- q:
 	case <-r.done:
 		return errors.New("guest runtime stopped")
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-requestDone:
+		return errWorkspaceRequestRevoked
+	case <-authorityDone:
+		return errWorkspaceRequestRevoked
 	}
 	return <-q.reply
 }
@@ -324,6 +334,10 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				}
 				r.heldInboxApp.Store(false)
 			case q := <-r.quiesce:
+				if q.step != nil && (q.step.request.Err() != nil || q.step.authority.Err() != nil) {
+					q.reply <- errWorkspaceRequestRevoked
+					continue
+				}
 				heldLaunch, heldRevoked = nil, nil
 				r.revokeStepLaunch(nil)
 				if err := process.Close(); err != nil {
@@ -343,6 +357,14 @@ func Start(ctx context.Context, c Config) (*Runtime, error) {
 				}
 				r.heldInboxApp.Store(false)
 				runErr := r.runQuiet(ctx, q)
+				if errors.Is(runErr, errStepSecretPublication) {
+					// A failed atomic publication can leave the new projection on
+					// disk. Do not start even an ordinary holder on uncertain state.
+					q.reply <- runErr
+					r.err = runErr
+					childExited, running = true, false
+					continue
+				}
 				if ctx.Err() != nil || r.stopping() {
 					q.reply <- errors.Join(errors.New("guest runtime stopped during quiesce"), runErr)
 					r.err = ctx.Err()

@@ -33,11 +33,19 @@ type stepLaunchRequest struct {
 	launch    *stepLaunch // Set by the runtime before replying to quiesce.
 }
 
+// NewWorkspaceAttestor creates a workspace attestor for this runtime without
+// enabling step launch bindings or inbox transport.
+func (r *Runtime) NewWorkspaceAttestor(cfg relay.ClientConfig, origin WorkspaceOrigin) *WorkspaceAttestor {
+	a := NewWorkspaceAttestor(cfg, origin, r.Quiesce)
+	a.stepRuntime = r
+	return a
+}
+
 // NewStepLaunchWorkspaceAttestor opts the root supervisor into tracking its
 // own step relaunches. It does not enable inbox transport or change PTY ownership.
 func (r *Runtime) NewStepLaunchWorkspaceAttestor(cfg relay.ClientConfig, origin WorkspaceOrigin) *WorkspaceAttestor {
-	a := NewWorkspaceAttestor(cfg, origin, r.Quiesce)
-	a.stepRuntime = r
+	a := r.NewWorkspaceAttestor(cfg, origin)
+	a.trackStepLaunch = true
 	if cfg.HandleInbox != nil {
 		a.inboxReceiverID = cfg.InboxReceiverID
 	}
