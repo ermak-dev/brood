@@ -406,6 +406,10 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 	if role == "" {
 		role = "worker"
 	}
+	if name == telegramOperator {
+		// Имя operator на шине занято владельцем роя.
+		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "actor name operator is reserved for the human owner of the swarm"}
+	}
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: name, action: "create", role: role, parent: parent}
 	s.managed.admission.Lock()
 	defer s.managed.admission.Unlock()

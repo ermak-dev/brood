@@ -58,9 +58,7 @@ const telegramLiveLink = `u.disabled = 0 AND l.state = 'linked'
 // что у просмотра роя в app: рой не удалён, и пользователь — администратор
 // либо участник проекта с ролью в рое. Отключённого пользователя отсекает
 // telegramLiveLink.
-const telegramSwarmReader = `w.state <> 'deleted' AND (u.is_admin = 1
-	OR (EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = w.project_id AND pm.user_id = u.id)
-		AND EXISTS (SELECT 1 FROM swarm_members m WHERE m.swarm_id = w.id AND m.user_id = u.id)))`
+const telegramSwarmReader = `w.state <> 'deleted' AND (u.is_admin = 1 OR w.owner_id = u.id)`
 
 // telegramSwarmManager: пользователь u вправе управлять роем w — то же
 // правило, что у ответа на запрос (requireSwarmManager) и у управления роем в
@@ -68,9 +66,7 @@ const telegramSwarmReader = `w.state <> 'deleted' AND (u.is_admin = 1
 // ролью owner или editor в рое. Отключённого пользователя отсекает
 // telegramLiveLink. Только такому получателю уведомление предлагает кнопки
 // ответа (#283); право ответа перепроверяет транзакция ответа.
-const telegramSwarmManager = `w.state = 'active' AND (u.is_admin = 1
-	OR (EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = w.project_id AND pm.user_id = u.id)
-		AND EXISTS (SELECT 1 FROM swarm_members m WHERE m.swarm_id = w.id AND m.user_id = u.id AND m.role IN ('owner', 'editor'))))`
+const telegramSwarmManager = `w.state = 'active' AND (u.is_admin = 1 OR w.owner_id = u.id)`
 
 // telegramSubscribed: привязка l подписана на вид, который даёт выражение
 // SQL kind.

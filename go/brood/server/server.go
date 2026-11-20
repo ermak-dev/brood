@@ -25,6 +25,8 @@ var staticFS embed.FS
 // Options — явные зависимости сборки; тесты подставляют фейк провижинера
 // и logger. Нулевой Options годится: всё замещается умолчаниями.
 type Options struct {
+	// telegram — ритм поллеров Telegram и часы; нулевые поля берут умолчания.
+	telegram telegramOptions
 	// Logger — slog запросов и внутренних отказов; nil — умолчание slog.
 	Logger *slog.Logger
 	// argon2 — стоимость настоящего хэширования в тестах пакета;
@@ -43,8 +45,12 @@ type Server struct {
 	auth    *auth.Service
 	proxy   *proxy.Proxy
 	views   actorViews
-	mux     *http.ServeMux
-	cancel  context.CancelFunc
+	// telegram — поллеры ботов, telegramChannel — канал шины между
+	// владельцем роя и его агентами.
+	telegram        *telegramBots
+	telegramChannel *telegramChannel
+	mux             *http.ServeMux
+	cancel          context.CancelFunc
 
 	// artifactsDir — каталог доставки артефактов бутстрапа гостя.
 	artifactsDir string
@@ -98,6 +104,9 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		return nil, errors.New("workspace operation recovery failed")
 	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
+	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
+	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
+	srv.telegram.channel = srv.telegramChannel
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
 		catalog.Close()
@@ -135,6 +144,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountGitCredentials()
 	srv.mountGitRepositories()
 	srv.mountProjectOwnership()
+	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
@@ -142,6 +152,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)
 	srv.managed.start(proxyCtx)
+	srv.telegram.start(proxyCtx)
 	return srv, nil
 }
 
@@ -171,6 +182,7 @@ func (s *Server) Close() error {
 	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
 	// Поллеры и отправитель Telegram пишут в базу: остановлены до её
 	// закрытия.
+	s.telegram.close()
 	s.proxy.Close()
 	s.managed.close()
 	var errs []error

@@ -98,7 +98,7 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 			Self   string  `json:"self"`
 			Scope  string  `json:"scope"`
 			Actors []actor `json:"actors"`
-		}{Self: from.Name, Scope: "managed actors in this swarm", Actors: []actor{}}
+		}{Self: from.Name, Scope: "managed actors in this swarm; send to operator reaches the human owner of the swarm", Actors: []actor{}}
 		for _, a := range actors {
 			if a.Phase != "deleted" {
 				roster.Actors = append(roster.Actors, actor{Name: a.Name, State: a.Phase, Role: a.Role})
@@ -110,6 +110,13 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 		}
 		return relay.SwarmResponse{OK: true, Text: string(data)}
 	case "send":
+		if req.To == telegramOperator {
+			// Адресат operator — владелец роя; канал к нему — Telegram.
+			if err := m.server.telegramChannel.toOwner(ctx, from, req.Message); err != nil {
+				return relay.SwarmResponse{Text: "not delivered to the operator: " + err.Error()}
+			}
+			return relay.SwarmResponse{OK: true, Text: "delivered to the operator's Telegram chat"}
+		}
 		to, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, req.To)
 		if err != nil || to.UID == from.UID {
 			return relay.SwarmResponse{Text: "recipient is not another managed actor in this swarm"}

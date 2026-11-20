@@ -44,6 +44,16 @@ func (m *managedProvider) swarmMessageRouter() relay.MessageRouter {
 		if req.From != from.Name {
 			return relay.MessageResponse{OK: false, Verdict: "from does not match the sending actor"}
 		}
+		if req.To == telegramOperator {
+			// Адресат operator — владелец роя; канал к нему — Telegram.
+			if m.server.telegramChannel == nil {
+				return relay.MessageResponse{OK: false, Verdict: "the operator channel is not configured"}
+			}
+			if err := m.server.telegramChannel.toOwner(ctx, from, req.Body); err != nil {
+				return relay.MessageResponse{OK: false, Verdict: "not delivered to the operator: " + err.Error()}
+			}
+			return relay.MessageResponse{OK: true, Verdict: "delivered to the operator's Telegram chat"}
+		}
 		to, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, req.To)
 		if err != nil {
 			return relay.MessageResponse{OK: false, Verdict: fmt.Sprintf("no actor %s in this swarm", req.To)}

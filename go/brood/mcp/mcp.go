@@ -19,7 +19,7 @@ var ErrInvalidArguments = errors.New("Invalid tool arguments")
 
 const maxFrameBytes = 1 << 20
 const version = "2025-03-26"
-const instructions = "This is Brood orchestration, not upstream Mop or NATS control. Call agents() to identify your name, role and peers before dispatching work; only an authorized master may create peers with add(name). Delegate bounded tasks with mcp__brood__send and identify peers with mcp__brood__agents. Built-in session messaging does not reach remote actors. Running does not mean idle or a clean workspace. An accepted operation is not completed; unconfirmed means the outcome is unknown. Check before retrying uncertain operations. Do not bypass permissions or request operator credentials."
+const instructions = "This is Brood orchestration, not upstream Mop or NATS control. Call agents() to identify your name, role and peers before dispatching work; only an authorized master may create peers with add(name). Delegate bounded tasks with mcp__brood__send and identify peers with mcp__brood__agents. To write to the human owner of the swarm use mcp__brood__send with to=operator; it is delivered to their Telegram chat. Built-in session messaging does not reach remote actors. Running does not mean idle or a clean workspace. An accepted operation is not completed; unconfirmed means the outcome is unknown. Check before retrying uncertain operations. Do not bypass permissions or request operator credentials."
 
 // GuestSpecs returns catalog commands available through a guest adapter.
 // The executor remains responsible for authorization.

@@ -50,10 +50,10 @@ func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string
 	return result, err
 }
 
-// operatorMessageBody помечает сообщение оператора: адрес отправителя — не
-// актор, ответить ему через send нельзя.
+// operatorMessageBody помечает сообщение оператора и называет адрес ответа:
+// send на имя operator уходит владельцу роя.
 func operatorMessageBody(message string) string {
-	return message + "\n\n[brood] This message is from a human operator, not an actor reply address. Replying to operator names through actor send is not supported."
+	return message + "\n\n[brood] This message is from the human operator of your swarm. To answer, use send with to=\"operator\"."
 }
 
 // deliverOperatorMessage — канал оператора к актору роя: им идут send и
