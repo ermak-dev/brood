@@ -520,7 +520,9 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	if err != nil {
 		return a, err
 	}
-	if a.SourceFingerprint != p.SourceFingerprint || a.Template != p.Template {
+	// Воркер из базового шаблона обязан совпадать с шаблоном пула; клон
+	// образа проекта называет свой образ, и владение им проверяет клиент.
+	if _, clone := store.ProjectImageFromURI(a.Template.URI); a.SourceFingerprint != p.SourceFingerprint || (!clone && a.Template != p.Template) {
 		return a, proxmox.ErrOwnership
 	}
 	// Незапрошенный Start не отправлялся: его можно запросить.
