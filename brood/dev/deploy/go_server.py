@@ -285,6 +285,8 @@ REVISION = "deployment.kubernetes.io/revision"
 # Поток ~310 МБ в норме уходит за десятки секунд; 600 с — с запасом на медленный
 # API server, но не 48 минут зависшего exec (#246).
 ARTIFACT_PUBLISH_TIMEOUT = 600
+# Граница протокола публикации brood artifacts и передатчика CI.
+CLAUDE_TRANSFER_MAX_BYTES = 512 << 20
 UNEXPECTED_OBJECTS = "guest bootstrap artifact publish cannot choose a pod: unexpected deployment/brood-go objects"
 
 
@@ -674,6 +676,10 @@ class Deploy:
         try:
             directory = incoming.lstat()
         except FileNotFoundError:
+            # Штатная SSH-команда выставляет SHA релиза; только ручной запуск
+            # без переданного каталога может обращаться к CDN на получателе.
+            if self.get("BROOD_RELEASE_SHA"):
+                raise RuntimeError("missing transferred Claude artifact for SSH release") from None
             claude = self._download_bootstrap_claude(work, pins)
         except OSError:
             raise RuntimeError("invalid transferred Claude artifact") from None
@@ -687,6 +693,8 @@ class Deploy:
                 raise RuntimeError("invalid transferred Claude artifact") from None
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise RuntimeError("invalid transferred Claude artifact")
+            if metadata.st_size > CLAUDE_TRANSFER_MAX_BYTES:
+                raise RuntimeError("transferred Claude artifact exceeds 512 MiB")
         try:
             binary = claude.read_bytes()
         except OSError:

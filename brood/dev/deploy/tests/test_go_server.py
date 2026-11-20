@@ -449,6 +449,54 @@ class GoManifestTests(unittest.TestCase):
                 self.assertFalse(any("apply" in invocation.args for invocation in shell.output.call_args_list))
                 shell.output_bytes.assert_not_called()
 
+    # BUG: SSH-релиз без переданного каталога пытается скачать бинарник на получателе.
+    # HYPOTHESIS: Получатель не различает штатный SSH-релиз и локальный запуск.
+    # SOLUTION: В релизе с SHA переданный артефакт обязателен.
+    def test_managed_bootstrap_requires_transferred_claude_before_apply(self):
+        deploy, calls, _ = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
+        get = deploy.get
+        deploy.get = lambda key: "c" * 40 if key == "BROOD_RELEASE_SHA" else get(key)
+        shell = deploy.cluster.shell
+        normal_output = shell.output.side_effect
+
+        def output(*argv, **kwargs):
+            self.assertNotEqual(argv[0], "curl", "an SSH release must not download on the receiver")
+            return normal_output(*argv, **kwargs)
+
+        shell.output.side_effect = output
+        before_apply = Mock()
+        with patch.object(go_server, "Infrastructure") as infra, \
+                patch.object(deploy, "_registry_access", return_value=None):
+            infra.return_value._tls.return_value = {}
+            infra.return_value._api_egress.return_value = []
+            with self.assertRaisesRegex(RuntimeError, "missing transferred Claude artifact"):
+                deploy.run(before_apply=before_apply)
+        before_apply.assert_not_called()
+        self.assertFalse(any("apply" in argv or "rollout" in argv for argv in calls))
+        shell.output_bytes.assert_not_called()
+
+    # BUG: Слишком большой серверный файл дочитывается до проверки пина.
+    # HYPOTHESIS: lstat проверяет тип, но не размер файла.
+    # SOLUTION: Ограничить размер перед чтением и проверкой хеша.
+    def test_oversized_transferred_claude_is_refused_before_reading(self):
+        deploy, calls, root = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
+        incoming = deploy.project / ".brood-deploy-artifacts"
+        incoming.mkdir()
+        binary = incoming / "claude"
+        with binary.open("wb") as file:
+            file.truncate((512 << 20) + 1)
+        read = Path.read_bytes
+
+        def read_bytes(path):
+            self.assertNotEqual(path, binary, "oversized artifact must not be read")
+            return read(path)
+
+        with patch.object(Path, "read_bytes", read_bytes):
+            with self.assertRaisesRegex(RuntimeError, "transferred Claude artifact exceeds 512 MiB"):
+                deploy.prepare_bootstrap_artifacts(root)
+        self.assertFalse(any(argv[0] == "curl" for argv in calls))
+        deploy.cluster.shell.output_bytes.assert_not_called()
+
     def test_foreign_tls_secret_created_during_prepare_stops_before_apply(self):
         deploy, _, _ = self.publisher({}, Mock(side_effect=AssertionError("unexpected publication")))
         shell = deploy.cluster.shell
