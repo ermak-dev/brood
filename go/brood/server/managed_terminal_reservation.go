@@ -63,11 +63,10 @@ func (s *Server) beginManagedTerminal(r *http.Request) (proxy.UpgradeReservation
 		if err != nil {
 			return err
 		}
-		sw, err := s.store.GetSwarm(ctx, target.SwarmID)
-		if err != nil {
-			return err
+		if sw, err := s.store.GetSwarm(ctx, target.SwarmID); err != nil || sw.State != "active" {
+			return app.ErrNotAllowed
 		}
-		if current.UID != target.UID || current.Incarnation != target.Incarnation || current.AtespaceUID != target.AtespaceUID || current.Desired != "running" || current.Phase != "running" || current.Stage != "done" || current.Operation != "start" || sw.AtespaceUID == nil || *sw.AtespaceUID != target.AtespaceUID {
+		if current.UID != target.UID || current.Incarnation != target.Incarnation || current.Desired != "running" || current.Phase != "running" || current.Stage != "done" || current.Operation != "start" {
 			return app.ErrNotAllowed
 		}
 		return nil

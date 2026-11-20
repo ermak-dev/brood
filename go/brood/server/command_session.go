@@ -100,14 +100,6 @@ func (m *managedProvider) callCommandSession(ctx context.Context, target store.M
 }
 
 func (s *Server) authorizeSessionCoordination(ctx context.Context, target store.ManagedActor, sourceUID string, generation int64, userID, operation string) error {
-	// Общая граница mutating session-команд для оператора и гостя: slash и
-	// terminal input не являются неявным recovery обходом child hold.
-	if err := s.store.CheckActorChildObligations(ctx, target.UID); err != nil {
-		if errors.Is(err, store.ErrCoordinationConflict) {
-			return command.Refuse(app.ErrConflict, "outstanding child obligations hold this actor; cancel unsent children or reconcile running children before mutating its session")
-		}
-		return app.ErrConflict
-	}
 	claims, err := s.store.ActorCoordinationClaims(ctx, target.UID)
 	if err != nil {
 		return app.ErrConflict
@@ -199,17 +191,14 @@ func commandSessionValid(ctx context.Context) bool {
 
 func (s *Server) operatorSessionAuthority(ctx context.Context, userID, swarmID string, target store.ManagedActor) error {
 	sw, err := s.store.GetSwarm(ctx, swarmID)
-	if err != nil || sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != target.AtespaceUID {
+	if err != nil || sw.State != "active" {
 		return app.ErrNotAllowed
-	}
-	if err := s.checkSwarmNamespace(ctx, toAppSwarm(sw)); err != nil {
-		return err
 	}
 	allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
 	if err != nil || !allowed {
 		return app.ErrNotAllowed
 	}
-	if current, err := s.store.GetManagedActor(ctx, target.UID); err != nil || current.Incarnation != target.Incarnation || current.Desired != "running" || current.AtespaceUID != target.AtespaceUID {
+	if current, err := s.store.GetManagedActor(ctx, target.UID); err != nil || current.Incarnation != target.Incarnation || current.Desired != "running" {
 		return app.ErrNotAllowed
 	}
 	if !commandSessionValid(ctx) {
@@ -230,15 +219,11 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 	if err != nil {
 		return command.Result{}, err
 	}
-	sw, err := s.store.GetSwarm(ctx, swarmID)
-	if err != nil {
-		return command.Result{}, err
-	}
-	if err := s.checkSwarmNamespace(ctx, toAppSwarm(sw)); err != nil {
+	if _, err := s.store.GetSwarm(ctx, swarmID); err != nil {
 		return command.Result{}, err
 	}
 	target, err := s.store.LookupManagedActor(ctx, swarmID, name)
-	if err != nil || sw.AtespaceUID == nil || target.AtespaceUID != *sw.AtespaceUID {
+	if err != nil {
 		return command.Result{}, app.ErrNotFound
 	}
 	owner := s.authorizeSwarmOwnerIntent(ctx, userID, swarmID) == nil
@@ -276,7 +261,7 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 				return store.ActorOperation{}, err
 			}
 			defer release()
-			return s.store.AcquireOwnerActorOperation(ctx, target, store.NewID(), caller, inv.Name, userID, func(ctx context.Context) error {
+			return s.store.AcquireOwnerActorOperation(ctx, target, store.NewID(), caller, inv.Name, func(ctx context.Context) error {
 				return s.authorizeSwarmOwnerIntent(ctx, userID, swarmID)
 			})
 		}

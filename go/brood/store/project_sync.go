@@ -20,13 +20,11 @@ var ErrProjectSyncIdentityChanged = errors.New("project sync identity changed")
 // GitCredential names a server-only project Git credential; "" clears the
 // reference and nil keeps the stored one.
 type ProjectDeclaration struct {
-	Name           string
-	Repository     string
-	Description    *string
-	Capacity       *ProjectCapacity
-	GitCredential  *string
-	ManagedNetwork *string
-	Workflows      map[string]string
+	Name          string
+	Repository    string
+	Description   *string
+	Capacity      *ProjectCapacity
+	GitCredential *string
 }
 
 // ProjectSyncResult describes the committed inventory change. GitCredential
@@ -66,13 +64,6 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 			return result, err
 		}
 	}
-	if declaration.ManagedNetwork != nil {
-		normalized, err := normalizeManagedNetwork(*declaration.ManagedNetwork)
-		if err != nil {
-			return result, err
-		}
-		declaration.ManagedNetwork = &normalized
-	}
 	if reference := declaration.GitCredential; reference != nil && *reference != "" {
 		if err := gitcredential.ValidateName(*reference); err != nil || declaration.Repository == "" {
 			return result, errors.New("invalid project declaration")
@@ -104,14 +95,7 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 		description := ""
 		reference := ""
 		var capacity ProjectCapacity
-		network := ""
 		if !created {
-			if declaration.ManagedNetwork != nil {
-				network, err = s.ProjectManagedNetwork(ctx, project.ID)
-				if err != nil {
-					return err
-				}
-			}
 			repository, err = s.ProjectRepository(ctx, project.ID)
 			if err != nil {
 				return err
@@ -134,8 +118,7 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 		descriptionChanged := declaration.Description != nil && description != *declaration.Description
 		capacityChanged := declaration.Capacity != nil && !sameProjectCapacity(capacity, *declaration.Capacity)
 		referenceChanged := declaration.GitCredential != nil && reference != *declaration.GitCredential
-		networkChanged := declaration.ManagedNetwork != nil && network != *declaration.ManagedNetwork
-		changed := created || repositoryChanged || descriptionChanged || capacityChanged || referenceChanged || networkChanged
+		changed := created || repositoryChanged || descriptionChanged || capacityChanged || referenceChanged
 		if !user.IsAdmin {
 			member, err := s.IsMember(ctx, project.ID, actorID)
 			if err != nil {
@@ -171,11 +154,6 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 				return err
 			}
 		}
-		if networkChanged {
-			if err := s.setProjectManagedNetwork(ctx, project.ID, *declaration.ManagedNetwork); err != nil {
-				return err
-			}
-		}
 		result = ProjectSyncResult{Project: project, Repository: declaration.Repository, GitCredential: reference, Created: created, Changed: changed}
 		return nil
 	})
@@ -183,11 +161,5 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 }
 
 func sameProjectCapacity(a, b ProjectCapacity) bool {
-	if len(a.WorkerSelector) == 0 {
-		a.WorkerSelector = nil
-	}
-	if len(b.WorkerSelector) == 0 {
-		b.WorkerSelector = nil
-	}
 	return reflect.DeepEqual(a, b)
 }

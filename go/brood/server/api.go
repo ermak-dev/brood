@@ -15,9 +15,7 @@ import (
 
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
-	"brood.dev/go/brood/kube"
 	"brood.dev/go/brood/store"
-	"brood.dev/go/brood/substrate"
 )
 
 // projectJSON — публичная форма проекта.
@@ -33,23 +31,10 @@ type projectRowJSON struct {
 	SwarmCount int64 `json:"swarmCount"`
 }
 
-// swarmRowJSON — строка списка роёв: рой, исполнение его графа, число
-// открытых запросов оператору, узловых и актора (#234), число ответов
-// актору с доставкой failed или unconfirmed (#266), личность определения
-// снимка, число участников и неудалённых managed-акторов и момент последнего
-// исполнения (#268). Поля definition у роя без записанной личности нет, как
-// у прогона старого провода; поля executionAt нет у роя, момент которого не
-// записан. Native-акторы и шаблоны в числа не входят: имя managedActorCount
-// не даёт панели принять часть за целое.
+// swarmRowJSON — строка списка роёв: рой и число его живых воркеров.
 type swarmRowJSON struct {
 	swarmJSON
-	Execution          string               `json:"execution"`
-	OpenRequests       int64                `json:"openRequests"`
-	UndeliveredAnswers int64                `json:"undeliveredAnswers"`
-	Definition         *swarmDefinitionJSON `json:"definition,omitempty"`
-	MemberCount        int64                `json:"memberCount"`
-	ManagedActorCount  int64                `json:"managedActorCount"`
-	ExecutionAt        string               `json:"executionAt,omitempty"`
+	ManagedActorCount int64 `json:"managedActorCount"`
 }
 
 // swarmJSON — публичная форма роя.
@@ -60,9 +45,7 @@ type swarmJSON struct {
 	OwnerUsername string `json:"owner_username"`
 	Role          string `json:"role"`
 	Name          string `json:"name"`
-	AtespaceName  string `json:"atespace_name"`
 	State         string `json:"state"`
-	Retry         string `json:"retry"`
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
 }
@@ -71,7 +54,7 @@ type swarmJSON struct {
 func toSwarmJSON(sw app.Swarm, ownerUsername string) swarmJSON {
 	return swarmJSON{
 		ID: sw.ID, ProjectID: sw.ProjectID, OwnerID: sw.OwnerID, OwnerUsername: ownerUsername, Name: sw.Name,
-		AtespaceName: sw.AtespaceName, State: string(sw.State), Retry: sw.Retry,
+		State: string(sw.State), Role: "owner",
 		CreatedAt: sw.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: sw.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -97,14 +80,8 @@ func apiError(w http.ResponseWriter, r *http.Request, err error) {
 	detail := err.Error()
 	var status int
 	var capacityError *app.CapacityExceededError
-	var inventoryError *shardInventoryError
 	switch {
-	case errors.As(err, &inventoryError):
-		status, detail = http.StatusServiceUnavailable, inventoryError.Error()
-		if logger := auth.LoggerFromContext(r.Context()); logger != nil {
-			logger.Error("shard inventory unavailable", "cause", inventoryError.cause)
-		}
-	case errors.Is(err, app.ErrInvalidRole), errors.Is(err, app.ErrInvalidWorkload), errors.Is(err, app.ErrInvalidCapacity):
+	case errors.Is(err, app.ErrInvalidWorkload), errors.Is(err, app.ErrInvalidCapacity):
 		status = http.StatusBadRequest
 	case errors.As(err, &capacityError):
 		status = http.StatusConflict
@@ -116,18 +93,13 @@ func apiError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, app.ErrState), errors.Is(err, app.ErrSwarmNotEmpty), errors.Is(err, store.ErrProjectHasSwarms), isMemberExists(err):
 		status = http.StatusConflict
 	default:
-		var apiErr *substrate.APIError
-		var kubeErr *kube.KubeError
+		var apiErr *app.APIError
 		var cfgErr *ConfigError
 		switch {
 		case errors.As(err, &apiErr):
 			status, detail = apiErr.Status, apiErr.Detail
-		case errors.As(err, &kubeErr):
-			status, detail = kubeErr.Status, kubeErr.Detail
 		case errors.As(err, &cfgErr):
 			status, detail = http.StatusServiceUnavailable, cfgErr.Error()
-		case notConfigured(err):
-			status = http.StatusServiceUnavailable
 		default:
 			if lg := auth.LoggerFromContext(r.Context()); lg != nil {
 				lg.Error("internal error", "err", err.Error())
@@ -391,17 +363,7 @@ func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []ap
 			username = owner.Username
 			owners[sw.OwnerID] = username
 		}
-		role, err := s.effectiveSwarmRole(r, sw.ID)
-		if err != nil {
-			apiError(w, r, err)
-			return
-		}
-		row := toSwarmJSON(sw, username)
-		row.Role = role
-		item := swarmRowJSON{swarmJSON: row, Execution: summary.Execution, OpenRequests: summary.OpenRequests, UndeliveredAnswers: summary.UndeliveredAnswers, MemberCount: summary.MemberCount, ManagedActorCount: summary.ManagedActorCount, ExecutionAt: summary.ExecutionAt}
-		if summary.DefinitionName != "" {
-			item.Definition = &swarmDefinitionJSON{Name: summary.DefinitionName, Version: summary.DefinitionVersion, Revision: summary.DefinitionRevision}
-		}
+		item := swarmRowJSON{swarmJSON: toSwarmJSON(sw, username), ManagedActorCount: summary.ManagedActorCount}
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -413,14 +375,7 @@ func (s *Server) writeSwarm(w http.ResponseWriter, r *http.Request, status int, 
 		apiError(w, r, err)
 		return
 	}
-	role, err := s.effectiveSwarmRole(r, sw.ID)
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	row := toSwarmJSON(sw, owner.Username)
-	row.Role = role
-	writeJSON(w, status, row)
+	writeJSON(w, status, toSwarmJSON(sw, owner.Username))
 }
 
 // handleSwarm — GET/DELETE /api/swarms/{id}: рой с проверкой доступа.

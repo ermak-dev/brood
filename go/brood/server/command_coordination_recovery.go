@@ -19,9 +19,6 @@ func (s *Server) executeOperatorCoordinationCommand(ctx context.Context, userID,
 	if err != nil || sw.State != "active" {
 		return command.Result{}, app.ErrNotFound
 	}
-	if err := s.checkSwarmNamespace(ctx, toAppSwarm(sw)); err != nil {
-		return command.Result{}, err
-	}
 	var args struct {
 		To        string `json:"to"`
 		Name      string `json:"name"`

@@ -11,8 +11,6 @@ import (
 	"brood.dev/go/brood/gitorigin"
 	"brood.dev/go/brood/proxmox"
 	"brood.dev/go/brood/store"
-	"brood.dev/go/brood/substrate"
-	ateapi "go.ate.dev/substrate/api/ateapi/v1"
 )
 
 type managedWorkloadOperation struct {
@@ -21,7 +19,6 @@ type managedWorkloadOperation struct {
 	swarm        app.Swarm
 	pool         store.ManagedPool
 	name, action string
-	input        *ateapi.Actor
 	actor        store.ManagedActor
 	saved        store.ManagedActor
 	userID       string
@@ -45,10 +42,7 @@ func (o *managedWorkloadOperation) intentID() string {
 }
 
 func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
-	out, err := nativeShardReservations(ctx, s.ateapi, swarms)
-	if err != nil {
-		return nil, err
-	}
+	out := []app.ActorReservation{}
 	for _, sw := range swarms {
 		if sw.State == app.StateDeleted {
 			continue
@@ -61,9 +55,6 @@ func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]a
 			if a.Phase == "deleted" {
 				continue
 			}
-			if a.AtespaceUID != sw.AtespaceUID {
-				return nil, &shardInventoryError{cause: app.ErrConflict}
-			}
 			out = append(out, app.ActorReservation{SwarmID: sw.ID, Name: a.Name, CPUMillicores: a.Resources.CPUMillicores, MemoryBytes: a.Resources.MemoryBytes})
 		}
 	}
@@ -72,9 +63,6 @@ func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]a
 
 func (o *managedWorkloadOperation) authorize() error {
 	// Namespace — сетевое чтение: полномочия могли отозвать, пока оно шло.
-	if err := o.server.checkSwarmNamespace(o.context, o.swarm); err != nil {
-		return err
-	}
 	userID := o.userID
 	if userID == "" {
 		user, ok := auth.UserFromContext(o.context)
@@ -137,21 +125,8 @@ func (s *Server) authorizeSwarmManagerIntent(ctx context.Context, userID, swarmI
 	if err != nil {
 		return err
 	}
-	if !user.IsAdmin {
-		member, err := s.store.IsMember(ctx, swarm.ProjectID, userID)
-		if err != nil {
-			return err
-		}
-		if !member {
-			return app.ErrNotAllowed
-		}
-		role, err := s.store.GetSwarmRole(ctx, swarm.ID, userID)
-		if errors.Is(err, store.ErrNotFound) || (err == nil && role != app.RoleOwner && role != app.RoleEditor) {
-			return app.ErrNotAllowed
-		}
-		if err != nil {
-			return err
-		}
+	if !user.IsAdmin && swarm.OwnerID != userID {
+		return app.ErrNotAllowed
 	}
 	if !commandSessionValid(ctx) {
 		return app.ErrNotAllowed
@@ -159,22 +134,10 @@ func (s *Server) authorizeSwarmManagerIntent(ctx context.Context, userID, swarmI
 	return ctx.Err()
 }
 
+// authorizeSwarmOwnerIntent — то же правило: управляет роем его владелец
+// или администратор.
 func (s *Server) authorizeSwarmOwnerIntent(ctx context.Context, userID, swarmID string) error {
-	if err := s.authorizeSwarmManagerIntent(ctx, userID, swarmID); err != nil {
-		return err
-	}
-	user, err := s.store.GetUser(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if user.IsAdmin {
-		return nil
-	}
-	role, err := s.store.GetSwarmRole(ctx, swarmID, userID)
-	if err != nil || role != app.RoleOwner {
-		return app.ErrNotAllowed
-	}
-	return nil
+	return s.authorizeSwarmManagerIntent(ctx, userID, swarmID)
 }
 
 func (o *managedWorkloadOperation) beginLifecycle(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
@@ -185,23 +148,12 @@ func (o *managedWorkloadOperation) beginLifecycle(ctx context.Context, a store.M
 		}
 	}
 	if o.parent != nil {
-		return o.server.store.BeginDelegatedManagedActorOperation(ctx, *o.parent, a, o.intentID(), o.action, userID, func(ctx context.Context) error {
-			current, err := o.server.store.GetSwarm(ctx, o.swarm.ID)
-			if err != nil {
-				return err
-			}
-			if current.ProjectID != o.swarm.ProjectID || current.AtespaceUID == nil || *current.AtespaceUID != o.swarm.AtespaceUID {
-				return app.ErrNotAllowed
-			}
-			return o.server.authorizeSwarmManagerIntent(ctx, userID, o.swarm.ID)
-		})
+		// Мастер управляет своим дочерним воркером в общем порядке шины.
+		return o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
 	}
-	if o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID) == nil {
-		return o.server.store.BeginOwnerManagedActorOperation(ctx, a, o.intentID(), o.action, userID, func(ctx context.Context) error {
-			return o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID)
-		})
-	}
-	return o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
+	return o.server.store.BeginOwnerManagedActorOperation(ctx, a, o.intentID(), o.action, func(ctx context.Context) error {
+		return o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID)
+	})
 }
 
 func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmission, error) {
@@ -212,7 +164,7 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	// Update перезапускает уже зарезервированного актора: ёмкость не
 	// меняется, доступность пула проверяют клиент и намерение.
 	if o.action == "stop" || o.action == "delete" || o.action == "reset" || o.action == "update" {
-		plan.TemplateOnly = true
+		plan.NoAllocation = true
 		return plan, nil
 	}
 	if !o.server.managed.poolAvailable(o.pool) {
@@ -221,21 +173,6 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	if o.pool.State != "enabled" {
 		return plan, fmt.Errorf("%w: managed pool is draining", app.ErrConflict)
 	}
-	_, nativeErr := o.server.ateapi.GetActor(o.context, o.swarm.AtespaceName, o.name)
-	var api *substrate.APIError
-	if nativeErr == nil {
-		return plan, fmt.Errorf("%w: native actor name is already in use", app.ErrExists)
-	}
-	if !errors.As(nativeErr, &api) || api.Status != 404 {
-		return plan, nativeErr
-	}
-	_, nativeErr = o.server.ateapi.GetActorTemplate(o.context, o.swarm.AtespaceName, managedTemplatePrefix+o.pool.Name)
-	if nativeErr == nil {
-		return plan, fmt.Errorf("%w: native template conflicts with managed profile", app.ErrConflict)
-	}
-	if !errors.As(nativeErr, &api) || api.Status != 404 {
-		return plan, nativeErr
-	}
 	resources := o.actor.Resources
 	if o.action == "create" {
 		var err error
@@ -243,7 +180,6 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 		if err != nil {
 			return plan, err
 		}
-		plan.WorkerSelector = o.input.GetWorkerSelector().GetMatchLabels()
 	}
 	plan.CPUMillicores = resources.CPUMillicores
 	plan.MemoryBytes = resources.MemoryBytes
@@ -253,20 +189,13 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	return plan, err
 }
 
-func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
+func (o *managedWorkloadOperation) Apply() error {
 	if err := o.authorize(); err != nil {
 		return err
 	}
 	m := o.server.managed
 	m.lifecycle.Lock()
 	defer m.lifecycle.Unlock()
-	if o.action == "create" || o.action == "start" || o.action == "reset" || o.action == "update" {
-		for key, value := range selector {
-			if o.pool.Labels[key] != value {
-				return fmt.Errorf("%w: managed pool does not match required worker selector", app.ErrInvalidWorkload)
-			}
-		}
-	}
 	client, err := m.client(o.pool)
 	if err != nil {
 		return err
@@ -294,7 +223,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if o.parent != nil {
 			parentUID = o.parent.UID
 		}
-		a, err = o.server.reserveManagedActorOrigin(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, AtespaceUID: o.swarm.AtespaceUID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
+		a, err = o.server.reserveManagedActorOrigin(o.context, store.ManagedActor{Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
 		if err != nil {
 			return err
 		}
@@ -303,7 +232,7 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 		if err != nil {
 			return err
 		}
-		if a.Revision != o.actor.Revision || a.AtespaceUID != o.swarm.AtespaceUID {
+		if a.Revision != o.actor.Revision {
 			return store.ErrRevisionConflict
 		}
 		if o.action == "start" && a.Stage == "done" && a.Phase == "running" && a.Desired == "running" {
@@ -461,29 +390,23 @@ func (o *managedWorkloadOperation) Apply(selector map[string]string) error {
 	return err
 }
 
-func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, creation actorCreation) {
-	// The generated profile is the entire execution definition. Native knobs are
-	// not an alternate route for OCI, mounts, egress overrides or arbitrary env.
-	if input.GetSourceTag() != nil || input.GetMetadata().GetUid() != "" || input.GetMetadata().GetVersion() != 0 || input.GetMetadata().GetCreateTime() != nil || input.GetMetadata().GetUpdateTime() != nil || input.GetMetadata().GetDeleteTime() != nil {
-		writeDetail(w, 400, "managed actors accept only name, approved actorTemplate and workerSelector")
-		return
-	}
-	a, err := s.createManaged(r.Context(), userID, sw, input, pool, creation.role, creation.origin, nil)
+func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, name string, pool store.ManagedPool, creation actorCreation) {
+	a, err := s.createManaged(r.Context(), userID, sw, name, pool, creation.role, creation.origin, nil)
 	if err != nil {
 		managedAPIError(w, r, err)
 		return
 	}
-	writeJSON(w, 201, managedActorJSON(a, pool, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin, a.NetworkPolicy)))
+	writeJSON(w, 201, managedActorJSON(a, pool, sw.ID, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin)))
 }
 
 // createManaged is shared by human creation and UID-bound delegated creation.
 // A delegated name retry returns its original reservation without provider writes;
 // a retry naming a different origin conflicts. Origin resolution precedes admission.
-func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm, input *ateapi.Actor, pool store.ManagedPool, role, origin string, parent *store.ManagedActor) (store.ManagedActor, error) {
+func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm, name string, pool store.ManagedPool, role, origin string, parent *store.ManagedActor) (store.ManagedActor, error) {
 	if role == "" {
 		role = "worker"
 	}
-	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: input.GetMetadata().GetName(), action: "create", input: input, role: role, parent: parent}
+	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: name, action: "create", role: role, parent: parent}
 	s.managed.admission.Lock()
 	defer s.managed.admission.Unlock()
 	if err := op.authorize(); err != nil {
@@ -492,7 +415,7 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 	if parent != nil {
 		a, err := s.store.LookupManagedActor(ctx, sw.ID, op.name)
 		if err == nil {
-			if a.ParentUID != parent.UID || a.PoolUID != pool.UID || a.Template != parent.Template || a.AtespaceUID != sw.AtespaceUID {
+			if a.ParentUID != parent.UID || a.PoolUID != pool.UID || a.Template != parent.Template {
 				return store.ManagedActor{}, app.ErrExists
 			}
 			if origin != "" {
@@ -520,32 +443,18 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 }
 
 func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, a store.ManagedActor) {
-	if a.AtespaceUID != sw.AtespaceUID {
-		writeDetail(w, 409, "managed actor namespace binding changed")
-		return
-	}
-	if _, err := s.ateapi.GetActor(r.Context(), sw.AtespaceName, a.Name); err == nil {
-		writeDetail(w, 409, "native actor conflicts with managed allocation")
-		return
-	} else {
-		var api *substrate.APIError
-		if !errors.As(err, &api) || api.Status != 404 {
-			apiError(w, r, err)
-			return
-		}
-	}
 	p, err := s.store.GetManagedPool(r.Context(), a.PoolUID)
 	if err != nil {
 		managedAPIError(w, r, err)
 		return
 	}
 	if r.Method == http.MethodGet {
-		mode, err := s.originMode(r.Context(), sw.ProjectID, a.Origin, a.NetworkPolicy)
+		mode, err := s.originMode(r.Context(), sw.ProjectID, a.Origin)
 		if err != nil {
 			managedAPIError(w, r, err)
 			return
 		}
-		writeJSON(w, 200, managedActorJSON(a, p, sw.AtespaceName, mode))
+		writeJSON(w, 200, managedActorJSON(a, p, sw.ID, mode))
 		return
 	}
 	if r.Method == http.MethodPut {
@@ -576,5 +485,5 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		w.WriteHeader(202)
 		return
 	}
-	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.AtespaceName, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin, op.saved.NetworkPolicy)))
+	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.ID, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin)))
 }

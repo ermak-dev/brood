@@ -50,18 +50,15 @@ func (m *managedProvider) authorizeCoordination(ctx context.Context, from store.
 	if err != nil {
 		return store.Swarm{}, err
 	}
-	if current.Incarnation != from.Incarnation || current.SwarmID != from.SwarmID || current.AtespaceUID != from.AtespaceUID || current.DelegatorID != from.DelegatorID || current.Name != from.Name {
+	if current.Incarnation != from.Incarnation || current.SwarmID != from.SwarmID || current.DelegatorID != from.DelegatorID || current.Name != from.Name {
 		return store.Swarm{}, app.ErrNotAllowed
 	}
 	sw, err := m.server.store.GetSwarm(ctx, current.SwarmID)
 	if err != nil {
 		return store.Swarm{}, err
 	}
-	if sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != current.AtespaceUID {
+	if sw.State != "active" {
 		return store.Swarm{}, command.Refusef(app.ErrConflict, "managed swarm binding changed")
-	}
-	if err := m.server.checkSwarmNamespace(ctx, toAppSwarm(sw)); err != nil {
-		return store.Swarm{}, err
 	}
 	// Namespace RPC can outlive the human grant; authorize after it as well.
 	if err := m.authorizeMaster(ctx, from); err != nil {
@@ -126,7 +123,7 @@ func (m *managedProvider) dispatchTarget(ctx context.Context, from, target store
 	if err != nil {
 		return err
 	}
-	if current.Incarnation != target.Incarnation || current.Name != target.Name || current.UID == from.UID || current.SwarmID != from.SwarmID || current.AtespaceUID != from.AtespaceUID || current.Phase != "running" || current.Desired != "running" || current.Operation != "start" || current.Stage != "done" {
+	if current.Incarnation != target.Incarnation || current.Name != target.Name || current.UID == from.UID || current.SwarmID != from.SwarmID || current.Phase != "running" || current.Desired != "running" || current.Operation != "start" || current.Stage != "done" {
 		return command.Refusef(app.ErrConflict, "recipient is not another active managed generation in this swarm")
 	}
 	return nil
@@ -270,9 +267,6 @@ func (m *managedProvider) executeLanding(ctx context.Context, from store.Managed
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
 		if args.Action == "take" {
-			if err := m.server.refuseEvalEffect(tx, from.SwarmID, "actor-executed landing take"); err != nil {
-				return command.Refuse(nil, err.Error())
-			}
 			holder, e = m.server.store.TakeLandingToken(tx, coordinationClaim(from, sw, args.RequestID))
 			if e != nil {
 				return e

@@ -249,10 +249,6 @@ const managedGuestHosts = `["api.anthropic.com","claude.ai","console.anthropic.c
 func (m *managedProvider) createSpec(a store.ManagedActor) proxmox.CTSpec {
 	origin := strings.TrimSuffix(m.registry.publicOrigin, "/")
 	spec := proxmox.CTSpec{VMID: a.CTID, Hostname: "brood-" + a.UID, Template: a.Template.URI, Owner: managedOwned(a).Owner, Cores: int(a.Resources.CPUMillicores / 1000), MemoryMiB: int(a.Resources.MemoryBytes / mib), DiskGiB: int(a.Resources.DiskBytes / gib), Env: proxmox.BootstrapEnv{"BROOD_GUEST_ACTOR_UID": a.UID, "BROOD_GUEST_GENERATION": managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_URL": "wss" + strings.TrimPrefix(origin, "https") + "/api/proxmox/guest/" + a.UID + "/" + managedDecimal(a.Incarnation), "BROOD_GUEST_RELAY_TOKEN": guestToken(m.registry.relaySecret, a.UID, a.Incarnation), "BROOD_GUEST_CA_PEM_B64": base64.StdEncoding.EncodeToString([]byte(m.publicCA)), "BROOD_GUEST_ALLOWED_HOSTS": managedGuestHosts, "BROOD_GUEST_RELAY_HOST_KEY": strings.TrimSpace(m.hub.HostKey())}}
-	if a.NetworkPolicy != "" {
-		delete(spec.Env, "BROOD_GUEST_ALLOWED_HOSTS")
-		spec.Env["BROOD_GUEST_EGRESS_POLICY"] = a.NetworkPolicy
-	}
 	return spec
 }
 
@@ -375,7 +371,7 @@ func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedA
 	ctx, cancel := context.WithTimeout(parent, m.actorPassTimeout())
 	_, err := m.reconcileActor(ctx, a)
 	cancel()
-	if err == nil || parent.Err() != nil || errors.Is(err, errEphemeralObservationHeld) {
+	if err == nil || parent.Err() != nil {
 		return
 	}
 	current, getErr := m.server.store.GetManagedActor(parent, a.UID)
@@ -502,18 +498,6 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	if current.Revision != a.Revision {
 		return a, store.ErrRevisionConflict
 	}
-	if current.Class == store.ActorClassEphemeral && current.Operation != "create" {
-		if out, handled, err := m.reconcileEphemeralOperation(ctx, current); handled {
-			return out, err
-		}
-	}
-	if current.Class == store.ActorClassEphemeral && current.Operation == "create" {
-		a = current
-		queued, err := m.ephemeralCreateQueued(ctx, a)
-		if err != nil || queued {
-			return a, err
-		}
-	}
 	// Согласованный терминальный отказ требует нового явного намерения.
 	// Диагностика сохраняется даже при недоступной конфигурации провайдера.
 	if a.Stage == "done" && a.Phase == "error" && a.Error == managedProviderError(proxmox.ErrTaskFailed) {
@@ -607,9 +591,6 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		}
 		if err != nil {
 			return a, err
-		}
-		if a.Class == store.ActorClassEphemeral && a.Operation == "create" {
-			return a, nil
 		}
 		a, err = m.beginStart(ctx, a, store.NewID())
 		if err != nil {
@@ -711,15 +692,6 @@ func (m *managedProvider) confirmStartRunning(ctx context.Context, a store.Manag
 // проходу, как start update (#133); provisioning ставит launchStart перед
 // самим Start.
 func (m *managedProvider) beginStart(ctx context.Context, a store.ManagedActor, operationID string) (store.ManagedActor, error) {
-	if a.Operation == "reset" {
-		link, err := m.server.store.GetDerivedOwnerManagedActorOperation(ctx, a.UID, a.Incarnation, a.OperationID)
-		if err == nil && link.Operation == "reset" {
-			return m.continueOwnerResetStart(ctx, a, operationID, link)
-		}
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return a, err
-		}
-	}
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
 		a, e = m.server.store.BeginManagedActorOperation(tx, a.UID, a.Revision, operationID, "start")
@@ -1048,7 +1020,7 @@ func (m *managedProvider) actorByName(ctx context.Context, swarm, name string) (
 
 // managedActorJSON renders a managed actor; originMode is the caller's current
 // recomputation for a.Origin ("" when the origin has no admissible mode).
-func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace, originMode string) map[string]any {
+func managedActorJSON(a store.ManagedActor, p store.ManagedPool, swarmID, originMode string) map[string]any {
 	state := "ACTOR_STATE_UNSPECIFIED"
 	// Stop, ещё не запрошенный у PVE (#275), — та же остановка, что stopping
 	// или deleting: CT работает лишь до запроса. Незапрошенный Delete (#277)
@@ -1073,10 +1045,10 @@ func managedActorJSON(a store.ManagedActor, p store.ManagedPool, atespace, origi
 	case "error":
 		state = "ACTOR_STATE_CRASHED"
 	}
-	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "atespace": atespace}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name, "atespace": atespace}, "provider": "proxmox", "class": a.Class, "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Diagnostic()}, "origin": a.Origin, "originMode": originMode}
+	return map[string]any{"metadata": map[string]any{"name": a.Name, "uid": a.UID, "version": managedDecimal(a.Revision), "swarm": swarmID}, "actorTemplate": map[string]any{"name": managedTemplatePrefix + p.Name}, "provider": "proxmox", "role": a.Role, "profile": a.Template.Profile, "generation": managedDecimal(a.Incarnation), "phase": a.Phase, "desired": a.Desired, "placement": map[string]any{"node": p.Source.Node, "ctid": a.CTID, "pool": p.Name}, "capabilities": managedCapabilities(), "templateDefinition": map[string]any{"profile": a.Template.Profile, "digest": a.Template.Digest, "resources": map[string]string{"cpuMillicores": managedDecimal(a.Resources.CPUMillicores), "memoryBytes": managedDecimal(a.Resources.MemoryBytes), "diskBytes": managedDecimal(a.Resources.DiskBytes)}}, "status": map[string]any{"state": state, "errorMessage": a.Diagnostic()}, "origin": a.Origin, "originMode": originMode}
 }
 
-func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNames map[string]bool) ([]any, error) {
+func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm) ([]any, error) {
 	actors, err := m.server.store.ListManagedActors(ctx, sw.ID)
 	if err != nil {
 		return nil, err
@@ -1090,17 +1062,11 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm, nativeNa
 		if a.Phase == "deleted" {
 			continue
 		}
-		if a.AtespaceUID != sw.AtespaceUID {
-			return nil, app.ErrConflict
-		}
-		if nativeNames[a.Name] {
-			return nil, fmt.Errorf("%w: native actor conflicts with managed allocation", app.ErrConflict)
-		}
 		p, err := m.server.store.GetManagedPool(ctx, a.PoolUID)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, managedActorJSON(a, p, sw.AtespaceName, access.modeWithNetwork(a.Origin, a.NetworkPolicy)))
+		out = append(out, managedActorJSON(a, p, sw.ID, access.mode(a.Origin)))
 	}
 	return out, nil
 }

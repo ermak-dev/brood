@@ -19,7 +19,6 @@ CREATE TABLE managed_actors (
     uid TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     swarm_id TEXT NOT NULL,
-    atespace_uid TEXT NOT NULL,
     pool_uid TEXT NOT NULL REFERENCES managed_pools(uid),
     cluster_identity TEXT NOT NULL,
     source_fingerprint TEXT NOT NULL,
@@ -39,5 +38,25 @@ CREATE TABLE managed_actors (
     revision INTEGER NOT NULL CHECK (revision > 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    deleted_at TEXT
+    deleted_at TEXT,
+    stage TEXT NOT NULL DEFAULT 'reconcile' CHECK (stage IN ('reconcile', 'create', 'start', 'stop', 'delete', 'done')),
+    role TEXT NOT NULL DEFAULT 'worker' CHECK (role IN ('worker', 'master')),
+    delegator_id TEXT NOT NULL DEFAULT '',
+    parent_uid TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE managed_connections (
+    uid TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    endpoint TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    token_secret TEXT NOT NULL,
+    ca_pem TEXT NOT NULL,
+    node TEXT NOT NULL,
+    resource_pool TEXT NOT NULL,
+    storage TEXT NOT NULL,
+    network TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    runtime_config TEXT NOT NULL DEFAULT ''
+)

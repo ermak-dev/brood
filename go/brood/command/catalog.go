@@ -91,24 +91,10 @@ func (s Spec) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 }
 
-// pipelineVisitCompleteSpec reports the outcome of the caller's step. The
-// optional report (#233) is kept on the step once, together with the outcome,
-// and shown to the operator. MaxLength counts characters; the server also
-// bounds the report to 16384 bytes and refuses control characters other than
-// newline and tab.
-var pipelineVisitCompleteSpec = spec("pipeline_visit_complete", "Report the outcome of your assigned pipeline visit.", false, false, true,
-	Arg{Name: "run_id", Type: "string", Required: true, MaxLength: 4096},
-	Arg{Name: "sequence", Type: "integer", Required: true, Min: number(1)},
-	Arg{Name: "request_id", Type: "string", Required: true, MaxLength: 4096},
-	choice(Arg{Name: "outcome", Type: "string", Required: true}, "success", "fail"),
-	Arg{Name: "report", Type: "string", MaxLength: 16384, Description: "What you did and where the result is: branch, merge request or document. Shown to the operator; kept once with the outcome"},
-)
-
 func number(n float64) *float64 { return &n }
 
 var catalog = []Spec{
-	agentsSpec, sendSpec, dispatchSpec, pipelineVisitCompleteSpec, askOperatorSpec, tailSpec, slashSpec,
-	childCreateSpec, childGetSpec, childJoinSpec, childCancelSpec, childCompleteSpec, childSpawnSpec, childJobSpec,
+	agentsSpec, sendSpec, dispatchSpec, tailSpec, slashSpec,
 	sessionHistorySpec, sessionTerminalSpec, addSpec, deleteSpec,
 	stopSpec, startSpec, restartSpec, updateSpec, recycleSpec, wipeSpec, resetSpec,
 	projectAddSpec, projectLimitSpec, landingSpec, nodeSpec,

@@ -34,7 +34,7 @@ const originModeRefusal = "origin must be the project repository with server Git
 
 // originMode пересчитывает режим доступа origin по текущему Git-доступу
 // проекта. Пустой origin режима не имеет.
-func (s *Server) originMode(ctx context.Context, projectID, origin, network string) (string, error) {
+func (s *Server) originMode(ctx context.Context, projectID, origin string) (string, error) {
 	if origin == "" {
 		return "", nil
 	}
@@ -42,14 +42,14 @@ func (s *Server) originMode(ctx context.Context, projectID, origin, network stri
 	if err != nil {
 		return "", err
 	}
-	return access.modeWithNetwork(origin, network), nil
+	return access.mode(origin), nil
 }
 
 // settledOriginMode is originMode for a response after a committed mutation:
 // a failed read must not turn a successful write into an error, so it reports
 // no mode and the next read recomputes it.
-func (s *Server) settledOriginMode(ctx context.Context, projectID, origin, network string) string {
-	mode, err := s.originMode(ctx, projectID, origin, network)
+func (s *Server) settledOriginMode(ctx context.Context, projectID, origin string) string {
+	mode, err := s.originMode(ctx, projectID, origin)
 	if err != nil {
 		return ""
 	}
@@ -68,17 +68,10 @@ func (s *Server) reserveManagedActorOrigin(ctx context.Context, request store.Ma
 		if err != nil {
 			return err
 		}
-		binding, err := s.swarmEvalRuntime(tx, swarm.ID)
-		if err != nil {
-			return err
-		}
-		if err := s.evalWorkspaceOrigin(tx, swarm.ProjectID, actor.Origin, actor.NetworkPolicy, binding); err != nil {
-			return err
-		}
 		if actor.Origin == "" {
 			return nil
 		}
-		mode, err := s.originMode(tx, swarm.ProjectID, actor.Origin, actor.NetworkPolicy)
+		mode, err := s.originMode(tx, swarm.ProjectID, actor.Origin)
 		if err != nil {
 			return err
 		}
@@ -110,11 +103,7 @@ func (s *Server) resolveActorOrigin(ctx context.Context, projectID, requested st
 	if origin == "" {
 		return "", nil
 	}
-	network, err := s.store.ProjectManagedNetwork(ctx, projectID)
-	if err != nil {
-		return "", err
-	}
-	if access.modeWithNetwork(origin, network) == "" {
+	if access.mode(origin) == "" {
 		return "", &originRefusal{detail: originModeRefusal}
 	}
 	return origin, nil

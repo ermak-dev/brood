@@ -29,11 +29,6 @@ type projectRepositoryJSON struct {
 func (s *Server) mountGitRepositories() {
 	s.mux.HandleFunc("GET /api/git-remotes", s.handleGitRemotes)
 	s.mux.HandleFunc("PUT /api/projects/sync", s.handleProjectSync)
-	s.mux.HandleFunc("GET /api/projects/{id}/workflow-catalog", s.handleWorkflowCatalog)
-	s.mux.HandleFunc("GET /api/projects/{id}/workflows/{name}/graph", s.handleWorkflowGraph)
-	s.mux.HandleFunc("GET /api/projects/{id}/workflows", s.handleWorkflows)
-	s.mux.HandleFunc("PUT /api/projects/{id}/workflows", s.handleWorkflows)
-	s.mux.HandleFunc("DELETE /api/projects/{id}/workflows/{name}", s.handleWorkflowDelete)
 	s.mux.HandleFunc("GET /api/projects/{id}/repository", s.handleProjectRepository)
 	s.mux.HandleFunc("PUT /api/projects/{id}/repository", s.handleProjectRepositoryUpdate)
 }

@@ -22,55 +22,10 @@ var ErrNotFound = fmt.Errorf("record not found")
 // ошибки заворачиваются в неё, вызывающие проверяют errors.Is.
 var errIncompatibleSchema = errors.New("incompatible database schema")
 
-// schemaVersion: единственная версия схемы базы (#205). С 27 база прежней
-// версии не пересоздаётся, а мигрирует по цепочке schemaMigrations (#274);
-// версии до 26 цепочки не имеют и отвергаются.
-// 17: swarm_role_bindings (#208).
-// 18: swarm_requests и их триггеры (#209), у swarm_steps нет колонки answer.
-// DDL несовместим с 17: база версии 17 открывается кодом 18 только после
-// пересоздания, поэтому версия растёт, а не остаётся.
-// 19: нет pipeline_preparations, её триггеров и колонок native_* у
-// swarm_steps (#223): модель «актор под узел» закрыта в #208.
-// 20: состояние доставки ответа актору swarm_requests.delivery (#210).
-// 21: project_git_credentials и project_git_credential_refs (#173).
-// 22: шаг актора с подтверждением workspace и причиной (#212): словарь
-// состояний swarm_steps, attested_commit, detail и триггеры
-// swarm_steps_attested.
-// 23: отчёт актора о шаге swarm_steps.report и его ограждение
-// swarm_steps_report_fence (#233).
-// 24: задача прохода swarm_steps.goal на первом шаге прохода и её
-// ограждение swarm_steps_goal_fence (#242).
-// 25: commit источника на проход (#229): swarm_steps.source_commit первого
-// шага прохода, ограда swarm_steps_pass_fence вместо swarm_steps_goal_fence,
-// pipeline_sources без commit_sha, swarm_steps_attested сверяют commit прохода.
-// 26: неизвестный исход доставки ответа swarm_requests.delivery =
-// 'unconfirmed' в CHECK и swarm_requests_fence (#260).
-// 27: индекс swarm_requests_swarm для сводки списка роёв (#266); первая
-// версия с миграцией от предыдущей (#274).
-// 28: момент последнего исполнения роя swarms.execution_at (#268). Колонку
-// добавляет ALTER TABLE шага 27→28, поэтому её определение в schema.sql
-// записано так, как ALTER оставляет текст таблицы в sqlite_master: с новой
-// строки после последней колонки, перед закрывающей скобкой. Иначе свежая
-// база разошлась бы с мигрированной текстом таблицы.
-// 29: вид сессии sessions.kind (web, telegram), привязки Telegram
-// user_telegram_links и исходящие уведомления telegram_outbox с их
-// ограждениями (#279). Колонку вида добавляет ALTER TABLE шага 28→29, и
-// schema.sql повторяет её текст так же, как execution_at.
-// 30: рой по умолчанию привязки Telegram user_telegram_links.default_swarm_id
-// (/use, #284). Колонку добавляет ALTER TABLE шага 29→30, и текст таблицы в
-// реестре Telegram повторяет то, что ALTER оставляет в sqlite_master.
-// 31: имя пользователя Telegram собеседника привязки
-// user_telegram_links.telegram_username (#294) и триггер
-// sessions_telegram_revoke, который снимает его с привязкой. Колонку
-// добавляет ALTER TABLE шага 30→31 так же, как default_swarm_id, а триггер
-// шаг пересоздаёт.
-// 32: поле ответа отправленного уведомления telegram_outbox.force_reply
-// (#298): разметку такого сообщения Telegram не правит. Колонку добавляет
-// ALTER TABLE шага 31→32, ограждение отправленного держит и её.
-// 33: явные GitLab API bindings, grants, журнал эффектов и merge approvals (#302).
-// 34: необратимые terminal состояния typed GitLab proposals (#302).
-// 35: дочерние задачи точного шага/прохода с bounded join и ограждениями (#289).
-const schemaVersion = 64
+// schemaVersion: единственная версия схемы. Миграций нет: база другой
+// версии отвергается, оператор её пересоздаёт. 100 — первая схема без
+// Substrate и графа.
+const schemaVersion = 100
 
 //go:embed schema.sql
 var currentSchema string
@@ -151,7 +106,7 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 		return fmt.Errorf("begin schema initialization: %w", err)
 	}
 	defer conn.Close()
-	return prepareSchema(ctx, conn, schemaVersion, schemaMigrations)
+	return prepareSchema(ctx, conn, schemaVersion)
 }
 
 // checkSchema сверяет определения таблиц, включая ограничения. Пробелы

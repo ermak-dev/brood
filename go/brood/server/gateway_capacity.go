@@ -19,7 +19,7 @@ func (g *Gateway) SetProjectCapacity(actorID, projectID string, capacity app.Sha
 		if err != nil {
 			return err
 		}
-		stored := store.ProjectCapacity{WorkerSelector: capacity.WorkerSelector, MaxSwarms: capacity.MaxSwarms, MaxActors: capacity.MaxActors, MaxCPUMillicores: capacity.MaxCPUMillicores, MaxMemoryBytes: capacity.MaxMemoryBytes}
+		stored := store.ProjectCapacity{MaxSwarms: capacity.MaxSwarms, MaxActors: capacity.MaxActors, MaxCPUMillicores: capacity.MaxCPUMillicores, MaxMemoryBytes: capacity.MaxMemoryBytes}
 		if err := store.ValidateProjectCapacity(stored); err != nil {
 			return fmt.Errorf("%w: %v", app.ErrInvalidCapacity, err)
 		}
@@ -40,5 +40,5 @@ func (g *Gateway) ProjectCapacity(projectID string) (app.ShardCapacity, error) {
 	if err != nil {
 		return app.ShardCapacity{}, err
 	}
-	return app.ShardCapacity{WorkerSelector: capacity.WorkerSelector, MaxSwarms: capacity.MaxSwarms, MaxActors: capacity.MaxActors, MaxCPUMillicores: capacity.MaxCPUMillicores, MaxMemoryBytes: capacity.MaxMemoryBytes}, nil
+	return app.ShardCapacity{MaxSwarms: capacity.MaxSwarms, MaxActors: capacity.MaxActors, MaxCPUMillicores: capacity.MaxCPUMillicores, MaxMemoryBytes: capacity.MaxMemoryBytes}, nil
 }

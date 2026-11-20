@@ -156,9 +156,6 @@ func (s *Server) commandPreflight(ctx context.Context, user store.User, scope st
 		if !found || sw.State != app.StateActive {
 			return command.Refuse(app.ErrConflict, "swarm is not active"), nil
 		}
-		if err := s.checkSwarmNamespace(ctx, sw); err != nil {
-			return nil, err
-		}
 	}
 	if !spec.Guest && !user.IsAdmin {
 		return command.Refuse(app.ErrNotAllowed, "administrator access required"), nil

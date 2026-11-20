@@ -204,40 +204,6 @@ func emptyManagedBody(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func (m *managedProvider) checkTemplateCollisions(ctx context.Context, name string) error {
-	projects, err := m.server.gateway.Projects()
-	if err != nil {
-		return err
-	}
-	for _, project := range projects {
-		swarms, err := m.server.gateway.SwarmsByProject(project.ID)
-		if err != nil {
-			return err
-		}
-		for _, sw := range swarms {
-			if sw.State == app.StateDeleted {
-				continue
-			}
-			if err := m.server.checkSwarmNamespace(ctx, sw); err != nil {
-				return err
-			}
-			templates, err := m.server.ateapi.ListActorTemplates(ctx, sw.AtespaceName)
-			if err != nil {
-				return err
-			}
-			for _, t := range templates {
-				if t.GetMetadata().GetName() == name {
-					return fmt.Errorf("%w: native template conflicts with managed profile", app.ErrConflict)
-				}
-			}
-			if err := m.server.checkSwarmNamespace(ctx, sw); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
@@ -264,10 +230,6 @@ func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, store.ErrNotFound) {
-			if err = m.checkTemplateCollisions(r.Context(), managedTemplatePrefix+name); err != nil {
-				apiError(w, r, err)
-				return
-			}
 			configured.UID = store.NewID()
 			pool, err = s.store.CreateManagedPool(r.Context(), configured)
 			code = 201
@@ -343,9 +305,9 @@ func (s *Server) admitWorkload(userID, swarmID string, op app.WorkloadOperation)
 	return s.app.AdmitWorkload(userID, swarmID, op)
 }
 
-func managedTemplateJSON(pool store.ManagedPool, atespace string) map[string]any {
+func managedTemplateJSON(pool store.ManagedPool) map[string]any {
 	resources, _ := managedActorResources(pool)
-	return map[string]any{"metadata": map[string]any{"name": managedTemplatePrefix + pool.Name, "uid": managedTemplatePrefix + pool.UID, "version": managedDecimal(pool.Revision), "atespace": atespace}, "provider": "proxmox", "profile": managedProfile, "readOnly": true, "capabilities": managedCapabilities(), "workerSelector": map[string]any{"matchLabels": pool.Labels}, "resources": map[string]any{"limits": map[string]string{"cpuMillicores": managedDecimal(resources.CPUMillicores), "memoryBytes": managedDecimal(resources.MemoryBytes)}}}
+	return map[string]any{"metadata": map[string]any{"name": managedTemplatePrefix + pool.Name, "uid": managedTemplatePrefix + pool.UID, "version": managedDecimal(pool.Revision)}, "provider": "proxmox", "profile": managedProfile, "readOnly": true, "capabilities": managedCapabilities(), "resources": map[string]any{"limits": map[string]string{"cpuMillicores": managedDecimal(resources.CPUMillicores), "memoryBytes": managedDecimal(resources.MemoryBytes)}}}
 }
 func managedCapabilities() map[string]bool {
 	return map[string]bool{"workspace": true, "terminal": true, "controlledNetwork": true, "docker": false, "kind": false, "memoryCheckpoint": false}
@@ -358,18 +320,15 @@ func (m *managedProvider) templatePool(ctx context.Context, name string) (store.
 	return m.poolByName(ctx, strings.TrimPrefix(name, managedTemplatePrefix))
 }
 
-func (s *Server) managedTemplates(ctx context.Context, atespace string, nativeNames map[string]bool) ([]any, error) {
+func (s *Server) managedTemplates(ctx context.Context) ([]any, error) {
 	pools, err := s.managed.pools(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := []any{}
 	for _, p := range pools {
-		if nativeNames[managedTemplatePrefix+p.Name] {
-			return nil, fmt.Errorf("%w: native template conflicts with managed profile", app.ErrConflict)
-		}
 		if p.State == "enabled" && s.managed.poolAvailable(p) {
-			out = append(out, managedTemplateJSON(p, atespace))
+			out = append(out, managedTemplateJSON(p))
 		}
 	}
 	return out, nil

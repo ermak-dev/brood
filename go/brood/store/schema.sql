@@ -22,22 +22,14 @@ CREATE TABLE project_members (
 );
 
 CREATE TABLE swarms (
-    id            TEXT PRIMARY KEY,
-    project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    owner_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name          TEXT NOT NULL,
-    atespace_name TEXT NOT NULL UNIQUE,
-    atespace_uid  TEXT,
-    state         TEXT NOT NULL DEFAULT 'provisioning',
-    created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL,
-    retry         TEXT NOT NULL DEFAULT '' CHECK (retry IN ('', 'create', 'delete')),
-    graph         BLOB,
-    execution     TEXT NOT NULL DEFAULT 'idle' CHECK (execution IN ('idle', 'running', 'waiting', 'succeeded', 'failed', 'stopped')),
-    definition_name     TEXT,
-    definition_version  INTEGER,
-    definition_revision TEXT
-, execution_at TEXT);
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    owner_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    state      TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'deleted')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE sessions (
     token_hash TEXT PRIMARY KEY,

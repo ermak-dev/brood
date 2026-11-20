@@ -5,22 +5,18 @@ import (
 	"encoding/json"
 	"io"
 
-	ateapi "go.ate.dev/substrate/api/ateapi/v1"
 	"net/http"
-
-	"brood.dev/go/brood/substrate"
-	"google.golang.org/protobuf/proto"
 )
 
-// actorCreation holds managed creation fields outside the protobuf Actor.
+// actorCreation holds the role and origin of a new worker.
 // originSet distinguishes an explicit empty origin from an absent field.
 type actorCreation struct {
 	role, origin string
 	originSet    bool
 }
 
-// parseActorCreation separates the Brood role and origin from the native actor definition.
-func parseActorCreation(w http.ResponseWriter, r *http.Request, actor *ateapi.Actor) (actorCreation, bool) {
+// parseActorCreation reads the worker definition with its role and origin.
+func parseActorCreation(w http.ResponseWriter, r *http.Request, actor *actorInput) (actorCreation, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxResourceBody))
 	if err != nil {
 		writeDetail(w, 400, "malformed request body")
@@ -74,33 +70,20 @@ func parseActorCreation(w http.ResponseWriter, r *http.Request, actor *ateapi.Ac
 		creation.originSet = true
 		delete(fields, "origin")
 	}
-	if creation.role != "" || creation.originSet {
-		body, _ = json.Marshal(fields)
+	for key, target := range map[string]any{"metadata": &actor.Metadata, "actorTemplate": &actor.ActorTemplate} {
+		raw, exists := fields[key]
+		if !exists {
+			continue
+		}
+		if err := json.Unmarshal(raw, target); err != nil {
+			writeDetail(w, 400, key+" must be an object with a name")
+			return actorCreation{}, false
+		}
+		delete(fields, key)
 	}
-	if err := substrate.Unmarshal(body, actor); err != nil {
-		apiError(w, r, err)
+	for key := range fields {
+		writeDetail(w, 400, "unknown actor field: "+key+"; workers accept metadata.name, actorTemplate.name, role and origin")
 		return actorCreation{}, false
 	}
 	return creation, true
-}
-
-func writeManagedList[T proto.Message](w http.ResponseWriter, native []T, managed []any) {
-	rows := make([]json.RawMessage, 0, len(native)+len(managed))
-	for _, item := range native {
-		data, err := substrate.Marshal(item)
-		if err != nil {
-			writeDetail(w, 500, "cannot encode native inventory")
-			return
-		}
-		rows = append(rows, data)
-	}
-	for _, item := range managed {
-		data, err := json.Marshal(item)
-		if err != nil {
-			writeDetail(w, 500, "cannot encode managed inventory")
-			return
-		}
-		rows = append(rows, data)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": rows})
 }

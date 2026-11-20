@@ -84,12 +84,8 @@ func (s *Server) openGuestRuntime(ctx context.Context, w http.ResponseWriter, r 
 		return g, nil, false
 	}
 	swarm, err := s.store.GetSwarm(ctx, actor.SwarmID)
-	if err != nil || swarm.State != "active" || swarm.AtespaceUID == nil || *swarm.AtespaceUID != actor.AtespaceUID {
+	if err != nil || swarm.State != "active" {
 		writeDetail(w, 401, "guest authorization denied")
-		return g, nil, false
-	}
-	if err := s.checkSwarmNamespace(ctx, toAppSwarm(swarm)); err != nil {
-		writeDetail(w, 503, unavailable)
 		return g, nil, false
 	}
 	if !s.managed.authorizeGuest(uid, generation, token) {
@@ -103,7 +99,7 @@ func (s *Server) openGuestRuntime(ctx context.Context, w http.ResponseWriter, r 
 // того же atespace и всё ещё действующий token.
 func (s *Server) guestRuntimeCurrent(ctx context.Context, g guestRuntime) bool {
 	current, err := s.store.GetSwarm(ctx, g.actor.SwarmID)
-	return err == nil && current.ProjectID == g.swarm.ProjectID && current.State == "active" && current.AtespaceUID != nil && *current.AtespaceUID == g.actor.AtespaceUID && s.managed.authorizeGuest(g.uid, g.generation, g.token)
+	return err == nil && current.ProjectID == g.swarm.ProjectID && current.State == "active" && s.managed.authorizeGuest(g.uid, g.generation, g.token)
 }
 
 // writeGuestRuntime отдаёт готовый JSON с ограниченным сроком записи.
@@ -123,15 +119,7 @@ func (s *Server) serveGuestProjectSecrets(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	binding, err := s.swarmEvalRuntime(ctx, g.swarm.ID)
-	if err != nil {
-		writeDetail(w, 503, "eval isolation policy is unavailable")
-		return
-	}
-	bundle := projectsecret.Bundle{Files: []projectsecret.File{}, Vars: map[string]string{}}
-	if binding == nil {
-		bundle, err = s.store.ReadProjectSecretBundle(ctx, g.swarm.ProjectID)
-	}
+	bundle, err := s.store.ReadProjectSecretBundle(ctx, g.swarm.ProjectID)
 	if err != nil || projectsecret.ValidateBundle(bundle) != nil {
 		writeDetail(w, 503, "project secret delivery unavailable")
 		return
@@ -144,9 +132,6 @@ func (s *Server) serveGuestProjectSecrets(w http.ResponseWriter, r *http.Request
 	if !s.guestRuntimeCurrent(ctx, g) {
 		writeDetail(w, 401, "guest authorization denied")
 		return
-	}
-	if binding != nil {
-		w.Header().Set("X-Brood-Secret-Projection", "isolated-empty")
 	}
 	writeGuestRuntime(w, data)
 }

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -243,14 +244,12 @@ func verifyDatabaseSchema(ctx context.Context, path, wantSHA256 string, afterRea
 	if err := conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return result, errors.New("cannot read snapshot schema version")
 	}
-	// План проверяется до prepareSchema: пустой snapshot (версия 0) Open
-	// создал бы заново, а gate обязан его отвергнуть.
-	if _, err := migrationPlan(int(version), schemaVersion, schemaMigrations); err != nil {
-		return result, err
+	// Миграций нет: gate принимает только базу текущей версии и сверяет
+	// её с реестром; пустой snapshot (версия 0) отвергается.
+	if int(version) != schemaVersion {
+		return result, fmt.Errorf("%w: found version %d, want %d", errIncompatibleSchema, version, schemaVersion)
 	}
-	// Тот же путь, что у Open (#274): старая версия мигрирует по цепочке,
-	// итог сверяется с реестром. Пишется только копия байтов в памяти.
-	if err := prepareSchema(ctx, conn, schemaVersion, schemaMigrations); err != nil {
+	if err := prepareSchema(ctx, conn, schemaVersion); err != nil {
 		return result, err
 	}
 	return DatabaseVerification{SchemaVersion: version, TargetVersion: schemaVersion, Verified: true}, nil

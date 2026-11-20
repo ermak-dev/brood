@@ -7,10 +7,9 @@ import (
 	"strings"
 )
 
-// schemaModule — вклад модуля в общую схему (#205): DDL создания (таблицы,
-// индексы, триггеры) и проверка того, что база текущей версии ему отвечает.
-// Модуль ничего не знает о версиях: единственная версия объявлена в
-// schemaVersion, путь от прежних версий задаёт schemaMigrations (#274).
+// schemaModule — вклад модуля в общую схему: DDL создания (таблицы,
+// индексы, триггеры) и проверка того, что база ему отвечает. Миграций
+// нет: база другой версии отвергается и пересоздаётся оператором.
 type schemaModule struct {
 	id     string
 	create func() string
@@ -18,132 +17,79 @@ type schemaModule struct {
 }
 
 // schemaModules — единый список DDL базы. Порядок важен: внешние ключи
-// требуют создания родительских таблиц раньше дочерних. Тест
-// TestSchemaModulesCoverExpectedTables держит список таблиц полным.
+// требуют создания родительских таблиц раньше дочерних.
 var schemaModules = []schemaModule{
-	{id: "core", create: func() string { return currentSchema }, verify: verifyCoreSchema},
-	{id: "acl", create: aclSchema, verify: verifyACLSchema},
+	{id: "core", create: func() string { return currentSchema + ";" + liveSwarmNameIndex }, verify: verifyCoreSchema},
 	{id: "project-capacity", create: func() string { return projectCapacitySchema }, verify: verifyProjectCapacitySchema},
 	{id: "managed", create: managedFullSchema, verify: verifyManagedSchema},
 	{id: "coordination", create: func() string { return coordinationSchema }, verify: verifyCoordinationSchema},
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
 	{id: "git-credential", create: func() string { return projectGitCredentialSchema }, verify: verifyProjectGitCredentialSchema},
-	{id: "pipelines", create: swarmStepsFullSchema, verify: verifySwarmStepsSchema},
-	{id: "swarm-roles", create: func() string { return swarmRoleBindingSchema }, verify: verifySwarmRoleSchema},
-	{id: "workflow", create: workflowFullSchema, verify: verifyWorkflowSchema},
-	{id: "pipeline-source", create: pipelineSourceFullSchema, verify: verifyPipelineSourcesSchema},
-	{id: "swarm-requests", create: swarmRequestsFullSchema, verify: verifySwarmRequestsSchema},
 	{id: "telegram", create: telegramFullSchema, verify: verifyTelegramSchema},
-	{id: "gitlab", create: gitlabFullSchema, verify: verifyGitLabSchema},
-	{id: "gitlab-proposals", create: gitlabProposalFullSchema, verify: verifyGitLabProposalSchema},
-	{id: "swarm-children", create: swarmChildrenFullSchema, verify: verifySwarmChildrenSchema},
-	{id: "managed-egress", create: managedNetworkFullSchema, verify: verifyManagedNetworkSchema},
-	{id: "workflow-policy", create: workflowPolicyFullSchema, verify: verifyWorkflowPolicySchema},
-	{id: "swarm-pass-policy", create: swarmPassPolicyFullSchema, verify: verifySwarmPassPolicySchema},
-	{id: "pipeline-completion-intent", create: pipelineCompletionIntentFullSchemaV62, verify: verifyPipelineCompletionIntentSchema},
-	{id: "pipeline-result", create: pipelineResultFullSchema, verify: verifyPipelineResultSchema},
-	{id: "pipeline-completion-receipt", create: pipelineCompletionReceiptFullSchema, verify: verifyPipelineCompletionReceiptSchema},
-	{id: "pipeline-policy-candidate", create: pipelinePolicyCandidateFullSchemaV62, verify: verifyPipelinePolicyCandidateSchema},
-	{id: "pipeline-policy-confirmation", create: pipelinePolicyConfirmationFullSchema, verify: verifyPipelinePolicyConfirmationSchema},
-	{id: "actor-delivery", create: actorDeliveryFullSchema, verify: verifyActorDeliverySchema},
-	{id: "swarm-request-pass", create: swarmRequestPassFullSchema, verify: verifySwarmRequestPassSchema},
-	{id: "managed-actor-class", create: managedActorClassGuardSchema, verify: verifyManagedActorClassGuards},
-	{id: "ephemeral-child-intents", create: ephemeralChildIntentFullSchema, verify: verifyEphemeralChildIntentSchema},
-	{id: "ephemeral-child-allocations", create: ephemeralChildAllocationFullSchema, verify: verifyEphemeralChildAllocationSchema},
-	{id: "ephemeral-child-attestations", create: ephemeralChildAttestationFullSchema, verify: verifyEphemeralChildAttestationSchema},
-	{id: "ephemeral-child-create-grants", create: ephemeralChildCreateGrantFullSchema, verify: verifyEphemeralChildCreateGrantSchema},
-	{id: "ephemeral-child-result-seals", create: func() string { return ephemeralChildResultSealV57(ephemeralChildResultSealFullSchemaV55()) }, verify: verifyEphemeralChildResultSealSchema},
-	{id: "ephemeral-child-lifecycles", create: func() string { return ephemeralChildLifecycleV61(ephemeralChildLifecycleFullSchema()) }, verify: verifyEphemeralChildLifecycleSchema},
-	{id: "ephemeral-child-failures", create: func() string { return ephemeralFailedLifecycleV58(ephemeralChildFailureFullSchema()) }, verify: verifyEphemeralChildFailureSchema},
-	{id: "owner-managed-lineage", create: ownerManagedActorLineageFullSchema, verify: verifyOwnerManagedActorLineageSchema},
-	{id: "ephemeral-child-executor-failures", create: ephemeralChildExecutorFailureFullSchema, verify: verifyEphemeralChildExecutorFailureSchema},
-	{id: "swarm-eval", create: swarmEvalFullSchema, verify: verifySwarmEvalSchema},
-	{id: "pipeline-policy-review", create: pipelinePolicyReviewFullSchema, verify: verifyPipelinePolicyReviewSchema},
 	{id: "project-ownership", create: func() string { return projectOwnershipSchema }, verify: verifyProjectOwnershipSchema},
-	{id: "actor-delivery-inbox", create: actorDeliveryInboxFullSchema, verify: verifyActorDeliveryInboxSchema},
 }
 
-// verifySchemaModules сверяет базу с реестром: и при открытии текущей
-// версии, и в конце миграции, до фиксации последнего шага (#274).
-func verifySchemaModules(ctx context.Context, tx *sql.Tx) error {
-	for _, module := range schemaModules {
-		if err := module.verify(ctx, tx); err != nil {
-			return err
+// liveSwarmNameIndex: имя неудалённого роя уникально внутри проекта.
+const liveSwarmNameIndex = `CREATE UNIQUE INDEX swarms_live_name ON swarms(project_id, name) WHERE state <> 'deleted'`
+
+// prepareSchema создаёт пустую базу по реестру или сверяет базу версии
+// want с ним. Любая другая версия — отказ: миграций нет.
+func prepareSchema(ctx context.Context, conn *sql.Conn, want int) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema initialization: %w", err)
+	}
+	defer tx.Rollback()
+	var version, objects int
+	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("inspect schema version: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'`).Scan(&objects); err != nil {
+		return fmt.Errorf("inspect database schema: %w", err)
+	}
+	switch {
+	case version == 0 && objects == 0:
+		for _, module := range schemaModules {
+			if _, err := tx.ExecContext(ctx, module.create()); err != nil {
+				return fmt.Errorf("initialize database schema (%s): %w", module.id, err)
+			}
 		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version=%d`, want)); err != nil {
+			return fmt.Errorf("initialize schema version: %w", err)
+		}
+	case version == want:
+		for _, module := range schemaModules {
+			if err := module.verify(ctx, tx); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("%w: found version %d, want %d; there are no migrations, recreate the database",
+			errIncompatibleSchema, version, want)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema initialization: %w", err)
 	}
 	return nil
 }
 
-// aclSchema — ACL роёв: члены с ролями и уникальность имён неудалённых
-// роёв. В чистой базе owner grant создаёт явная вставка владельца.
-func aclSchema() string {
-	return swarmMembersSchema + ";" + liveSwarmNameIndex + ";" +
-		`INSERT INTO swarm_members (swarm_id, user_id, role) SELECT id, owner_id, 'owner' FROM swarms`
-}
-
-// workflowFullSchema — определения workflow и счётчики ревизий проектов.
-func workflowFullSchema() string {
-	return workflowDefinitionSchema + ";" + workflowRevisionSchema
-}
-
-// managedFullSchema — инвентарь Proxmox: пулы, акторы (включая stage,
-// делегирование и origin), каталог подключений и ограничения уникальности.
+// managedFullSchema — инвентарь Proxmox и его ограничения уникальности.
 func managedFullSchema() string {
-	statements := []string{managedActorClassSchema(), managedConnectionsRuntimeSchema()}
+	statements := []string{managedSchema}
 	for _, object := range managedConstraints {
 		statements = append(statements, object.sql)
 	}
 	return strings.Join(statements, ";")
 }
 
-// pipelineSourceFullSchema — таблица источников запусков и триггеры
-// неизменности источника (#158, #160). Идентичность запуска защищена
-// неизменностью снимка графа роя: у роя один снимок (#206). Правило
-// подтверждения шага (#212) живёт здесь: оно читает источник роя.
-func pipelineSourceFullSchema() string {
-	return pipelineSourceSchema + ";" + pipelineSourceImmutable + ";" +
-		pipelineSourceNoReplace + ";" + pipelineSourceNoDelete + ";" +
-		swarmGraphImmutable + ";" + swarmNoReplace + ";" +
-		policyStepSourceTriggerV62(swarmStepAttested) + ";" + policyStepSourceTriggerV62(swarmStepAttestedInsert)
-}
-
-// swarmNoReplace запрещает подмену строки роя целиком (INSERT OR REPLACE):
-// замена одной строки роя — это подмена прогона. Прямой дубликат ID
-// и так нарушает первичный ключ; триггер закрывает именно REPLACE.
-const swarmNoReplace = `CREATE TRIGGER swarms_no_replace BEFORE INSERT ON swarms WHEN EXISTS (SELECT 1 FROM swarms WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT, 'swarm already exists'); END`
-
-// swarmGraphImmutable делает снимок графа роя и личность определения
-// неизменяемыми после привязки (#206): пока graph IS NULL, привязка
-// возможна; после — любая правка или замена снимка и личности отказ.
-// Это и защита идентичности запуска вместо бывшего
-// pipeline_runs_no_replace: подменить строку роя — подменить прогон.
-const swarmGraphImmutable = `CREATE TRIGGER swarm_graph_immutable BEFORE UPDATE ON swarms WHEN OLD.graph IS NOT NULL AND (NEW.graph IS NOT OLD.graph OR NEW.definition_name IS NOT OLD.definition_name OR NEW.definition_version IS NOT OLD.definition_version OR NEW.definition_revision IS NOT OLD.definition_revision) BEGIN SELECT RAISE(ABORT, 'swarm graph is immutable'); END`
-
-// verifyCoreSchema сверяет базовые таблицы.
+// verifyCoreSchema сверяет базовые таблицы и индекс имён роёв.
 func verifyCoreSchema(ctx context.Context, tx *sql.Tx) error {
-	return checkSchema(ctx, tx, currentSchema)
-}
-
-// verifyACLSchema сверяет ACL и убеждается, что у каждого роя есть
-// owner grant: повреждённая база не перестраивается по owner_id.
-func verifyACLSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, swarmMembersSchema); err != nil {
+	if err := checkSchema(ctx, tx, currentSchema); err != nil {
 		return err
 	}
-	if err := checkObject(ctx, tx, "index", "swarms_live_name", liveSwarmNameIndex); err != nil {
-		return err
-	}
-	var orphaned bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM swarms sw
-		WHERE NOT EXISTS(SELECT 1 FROM swarm_members m
-			WHERE m.swarm_id = sw.id AND m.user_id = sw.owner_id AND m.role = 'owner'))`).Scan(&orphaned); err != nil {
-		return err
-	}
-	if orphaned {
-		return fmt.Errorf("%w: swarm primary owner has no owner grant", errIncompatibleSchema)
-	}
-	return nil
+	return checkObject(ctx, tx, "index", "swarms_live_name", liveSwarmNameIndex)
 }
 
 // verifyProjectCapacitySchema сверяет лимиты проектов.
@@ -153,10 +99,7 @@ func verifyProjectCapacitySchema(ctx context.Context, tx *sql.Tx) error {
 
 // verifyManagedSchema сверяет инвентарь и его ограничения уникальности.
 func verifyManagedSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, managedActorClassSchema()); err != nil {
-		return err
-	}
-	if err := checkSchema(ctx, tx, managedConnectionsRuntimeSchema()); err != nil {
+	if err := checkSchema(ctx, tx, managedSchema); err != nil {
 		return err
 	}
 	for _, object := range managedConstraints {
@@ -177,70 +120,9 @@ func verifyProjectSecretSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkSchema(ctx, tx, projectSecretSchema)
 }
 
-// verifyOriginSchema сверяет repository проектов и origin акторов.
+// verifyOriginSchema сверяет repository проектов.
 func verifyOriginSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, projectRepositorySchema); err != nil {
-		return err
-	}
-	return checkSchema(ctx, tx, managedActorClassSchema())
-}
-
-// verifySwarmStepsSchema сверяет шаги роя и ограждения их отчёта, задачи и
-// commit прохода.
-func verifySwarmStepsSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, swarmStepsSchema); err != nil {
-		return err
-	}
-	if err := checkObject(ctx, tx, "trigger", "swarm_steps_report_fence", swarmStepReportFence); err != nil {
-		return err
-	}
-	return checkObject(ctx, tx, "trigger", "swarm_steps_pass_fence", swarmStepPassFence)
-}
-
-// verifySwarmRoleSchema сверяет привязки ролей роёв.
-func verifySwarmRoleSchema(ctx context.Context, tx *sql.Tx) error {
-	return checkSchema(ctx, tx, swarmRoleBindingSchema)
-}
-
-// verifyWorkflowSchema сверяет определения и счётчики ревизий, включая
-// согласованность счётчиков со строками определений.
-func verifyWorkflowSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, workflowDefinitionSchema); err != nil {
-		return err
-	}
-	if err := checkSchema(ctx, tx, workflowRevisionSchema); err != nil {
-		return err
-	}
-	var invalid bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM workflow_revision_counters WHERE typeof(version) != 'integer' OR version <= 0) OR EXISTS(SELECT 1 FROM workflow_definitions d LEFT JOIN workflow_revision_counters c ON c.project_id=d.project_id WHERE typeof(d.version) != 'integer' OR d.version <= 0 OR c.version IS NULL OR c.version < d.version OR d.revision IS NULL OR length(d.revision) != 32 OR d.revision GLOB '*[^0-9a-f]*')`).Scan(&invalid); err != nil {
-		return err
-	}
-	if invalid {
-		return fmt.Errorf("%w: workflow revision counters differ from definitions", errIncompatibleSchema)
-	}
-	return nil
-}
-
-// verifyPipelineSourcesSchema сверяет таблицу источников и триггеры
-// неизменности.
-func verifyPipelineSourcesSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, pipelineSourceSchema); err != nil {
-		return err
-	}
-	for name, expected := range map[string]string{
-		"pipeline_sources_immutable":  pipelineSourceImmutable,
-		"pipeline_sources_no_replace": pipelineSourceNoReplace,
-		"pipeline_sources_no_delete":  pipelineSourceNoDelete,
-		"swarm_graph_immutable":       swarmGraphImmutable,
-		"swarms_no_replace":           swarmNoReplace,
-		"swarm_steps_attested":        policyStepSourceTriggerV62(swarmStepAttested),
-		"swarm_steps_attested_insert": policyStepSourceTriggerV62(swarmStepAttestedInsert),
-	} {
-		if err := checkObject(ctx, tx, "trigger", name, expected); err != nil {
-			return err
-		}
-	}
-	return nil
+	return checkSchema(ctx, tx, projectRepositorySchema)
 }
 
 // checkObject сверяет определение объекта sqlite_master заданного типа
@@ -257,30 +139,6 @@ func checkObject(ctx context.Context, tx *sql.Tx, kind, name, expected string) e
 	}
 	if normalizeSchemaSQL(actual) != normalizeSchemaSQL(expected) {
 		return fmt.Errorf("%w: %s %s differs from current schema", errIncompatibleSchema, kind, name)
-	}
-	return nil
-}
-
-// verifySwarmRequestsSchema сверяет таблицу запросов, её индексы и
-// ограждение неизменности (#209).
-func verifySwarmRequestsSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, swarmRequestsSchema); err != nil {
-		return err
-	}
-	for _, object := range []struct{ kind, name, sql string }{
-		{"index", "swarm_requests_open_node", swarmRequestOpenNode},
-		{"index", "swarm_requests_step", swarmRequestStep},
-		{"index", "swarm_requests_swarm", swarmRequestSwarm},
-		{"trigger", "swarm_requests_fence", swarmRequestFence},
-		{"trigger", "swarm_requests_no_delete", swarmRequestNoDelete},
-		{"trigger", "swarm_requests_no_replace", swarmRequestNoReplace},
-		{"trigger", "swarm_requests_cancel_guard", swarmRequestCancelGuard},
-		{"trigger", "swarms_gate_stop", swarmGateStop},
-		{"trigger", "swarms_gate_resume", swarmGateResume},
-	} {
-		if err := checkObject(ctx, tx, object.kind, object.name, object.sql); err != nil {
-			return err
-		}
 	}
 	return nil
 }

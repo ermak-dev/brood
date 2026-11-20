@@ -352,25 +352,15 @@ func (s *Server) gitGatewayTarget(ctx context.Context, route gitRoute, token str
 		return denied()
 	}
 	swarm, err := s.store.GetSwarm(ctx, actor.SwarmID)
-	if err != nil || swarm.State != "active" || swarm.AtespaceUID == nil || *swarm.AtespaceUID != actor.AtespaceUID {
+	if err != nil || swarm.State != "active" {
 		return denied()
 	}
 	if namespace {
-		if err := s.checkSwarmNamespace(ctx, toAppSwarm(swarm)); err != nil {
-			return gitTarget{}, http.StatusServiceUnavailable, "Git gateway unavailable"
-		}
 		if !s.managed.authorizeGuest(route.uid, route.generation, token) {
 			return denied()
 		}
 	}
-	binding, err := s.swarmEvalRuntime(ctx, swarm.ID)
-	if err != nil {
-		return gitTarget{}, http.StatusServiceUnavailable, "eval isolation policy is unavailable"
-	}
-	if binding != nil && (route.operation == "git-receive-pack" || route.query == "service=git-receive-pack") {
-		return gitTarget{}, http.StatusForbidden, "eval isolation forbids Git receive-pack"
-	}
-	access, err := s.runtimeGitAccess(ctx, swarm.ProjectID, binding)
+	access, err := s.projectGitAccess(ctx, swarm.ProjectID)
 	if err != nil {
 		var refusal *originRefusal
 		if errors.As(err, &refusal) {

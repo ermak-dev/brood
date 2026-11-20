@@ -42,10 +42,8 @@ func (s *Store) DeleteUserWithoutSwarms(ctx context.Context, id string) error {
 		}
 		var owns bool
 		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM swarms sw WHERE sw.state <> 'deleted' AND (
-				sw.owner_id = ? OR EXISTS(SELECT 1 FROM swarm_members m
-					WHERE m.swarm_id = sw.id AND m.user_id = ? AND m.role = 'owner'))
-		)`, id, id).Scan(&owns); err != nil {
+			SELECT 1 FROM swarms sw WHERE sw.state <> 'deleted' AND sw.owner_id = ?
+		)`, id).Scan(&owns); err != nil {
 			return err
 		}
 		if owns {

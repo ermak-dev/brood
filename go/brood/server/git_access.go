@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"brood.dev/go/brood/gitorigin"
-	"brood.dev/go/brood/proxmox/egress"
 )
 
 // gitAccess — текущий серверный Git-доступ проекта (#173): repository и
@@ -33,17 +32,6 @@ func (a gitAccess) mode(origin string) string {
 		return ""
 	}
 	return gitorigin.Mode(origin, a.repository, func(string) bool { return a.gateway }, managedPublicHost)
-}
-
-func (a gitAccess) modeWithNetwork(origin, network string) string {
-	if network == "" {
-		return a.mode(origin)
-	}
-	policy, err := egress.Decode([]byte(network))
-	if err != nil {
-		return ""
-	}
-	return gitorigin.Mode(origin, a.repository, func(string) bool { return a.gateway }, func(host string) bool { return policy.Allows(egress.TLS, host, 443) })
 }
 
 // projectGitAccess читает repository, ссылку декларации и привязанный

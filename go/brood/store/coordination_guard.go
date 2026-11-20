@@ -93,9 +93,6 @@ func (s *Store) guardActorCoordinationForIntent(ctx context.Context, a ManagedAc
 }
 
 func (s *Store) guardActorCoordinationExceptChild(ctx context.Context, a ManagedActor, intent, failedChildID string) error {
-	if err := s.guardChildLifecycleExcept(ctx, a.UID, failedChildID); err != nil {
-		return err
-	}
 	return s.guardActorCoordinationClaimsForIntent(ctx, a, intent)
 }
 

@@ -11,11 +11,10 @@ import (
 )
 
 type capacityJSON struct {
-	WorkerSelector   map[string]string `json:"worker_selector"`
-	MaxSwarms        *string           `json:"max_swarms"`
-	MaxActors        *string           `json:"max_actors"`
-	MaxCPUMillicores *string           `json:"max_cpu_millicores"`
-	MaxMemoryBytes   *string           `json:"max_memory_bytes"`
+	MaxSwarms        *string `json:"max_swarms"`
+	MaxActors        *string `json:"max_actors"`
+	MaxCPUMillicores *string `json:"max_cpu_millicores"`
+	MaxMemoryBytes   *string `json:"max_memory_bytes"`
 }
 
 type usageJSON struct {
@@ -36,15 +35,11 @@ func limitString(value *int64) *string {
 }
 
 func formatCapacity(capacity app.ShardCapacity) capacityJSON {
-	labels := capacity.WorkerSelector
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	return capacityJSON{WorkerSelector: labels, MaxSwarms: limitString(capacity.MaxSwarms), MaxActors: limitString(capacity.MaxActors), MaxCPUMillicores: limitString(capacity.MaxCPUMillicores), MaxMemoryBytes: limitString(capacity.MaxMemoryBytes)}
+	return capacityJSON{MaxSwarms: limitString(capacity.MaxSwarms), MaxActors: limitString(capacity.MaxActors), MaxCPUMillicores: limitString(capacity.MaxCPUMillicores), MaxMemoryBytes: limitString(capacity.MaxMemoryBytes)}
 }
 
 func parseCapacity(body capacityJSON) (app.ShardCapacity, error) {
-	result := app.ShardCapacity{WorkerSelector: body.WorkerSelector}
+	result := app.ShardCapacity{}
 	for _, field := range []struct {
 		name   string
 		input  *string

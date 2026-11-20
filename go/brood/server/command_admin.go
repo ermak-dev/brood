@@ -129,7 +129,7 @@ func (s *Server) executeAdminCommand(ctx context.Context, userID, swarmID string
 		if dbErr != nil {
 			database = "unavailable"
 		}
-		return adminCommandResult("Remote server runtime checks only; no local database migration or repair was performed.", map[string]any{"database": database, "native_api_configured": s.ateapi != nil, "native_pools_configured": s.pools != nil, "managed_relay_configured": s.managed != nil && s.managed.hub != nil, "models_configured": s.adminModels != nil})
+		return adminCommandResult("Remote server runtime checks only; no local database migration or repair was performed.", map[string]any{"database": database, "managed_relay_configured": s.managed != nil && s.managed.hub != nil, "models_configured": s.adminModels != nil})
 	}
 	return command.Result{}, fmt.Errorf("unknown administration command")
 }
@@ -209,17 +209,8 @@ func (s *Server) commandNodeState(ctx context.Context, userID, name string, up b
 	if err != nil {
 		return command.Result{}, err
 	}
-	if provider == "native" {
-		if up {
-			return command.Result{}, fmt.Errorf("native worker undrain is not supported by the installed API")
-		}
-		if s.ateapi == nil {
-			return command.Result{}, fmt.Errorf("native worker API is not configured")
-		}
-		if _, err := s.ateapi.DrainWorker(ctx, id); err != nil {
-			return command.Result{}, fmt.Errorf("native worker drain failed")
-		}
-		return adminCommandResult("Native worker drain requested; no evacuation or migration is promised.", map[string]any{"name": name, "drain_requested": true, "evacuation_confirmed": false})
+	if provider != "managed" {
+		return command.Result{}, fmt.Errorf("only managed Proxmox pools are supported")
 	}
 	if s.managed == nil {
 		return command.Result{}, fmt.Errorf("managed pool service unavailable")
@@ -256,7 +247,7 @@ func (s *Server) commandNodeState(ctx context.Context, userID, name string, up b
 
 func (s *Server) commandNodeInventory(ctx context.Context) (command.Result, error) {
 	items := []map[string]any{}
-	available := map[string]string{"native_workers": "not_configured", "native_pools": "not_configured", "managed_pools": "available"}
+	available := map[string]string{"managed_pools": "available"}
 	pools, err := s.store.ListManagedPools(ctx)
 	if err != nil {
 		return command.Result{}, errors.New("managed pool inventory unavailable")
@@ -266,29 +257,5 @@ func (s *Server) commandNodeInventory(ctx context.Context) (command.Result, erro
 			items = append(items, map[string]any{"name": "managed:" + p.Name, "provider": "managed", "kind": "Pool", "state": p.State, "max_actors": p.MaxActors})
 		}
 	}
-	if s.ateapi != nil {
-		workers, err := s.ateapi.ListWorkers(ctx)
-		available["native_workers"] = "available"
-		if err != nil {
-			available["native_workers"] = "unavailable"
-		} else {
-			for _, w := range workers {
-				items = append(items, map[string]any{"name": "native:" + w.GetMetadata().GetName(), "provider": "native", "kind": "Worker", "state": w.GetStatus().GetState().String(), "worker_pool": w.GetWorkerPool()})
-			}
-		}
-	}
-	if s.pools != nil {
-		rows, err := s.pools.List(ctx)
-		available["native_pools"] = "available"
-		if err != nil {
-			available["native_pools"] = "unavailable"
-		} else {
-			for _, row := range rows {
-				metadata, _ := row["metadata"].(map[string]any)
-				name, _ := metadata["name"].(string)
-				items = append(items, map[string]any{"name": "native:" + name, "provider": "native", "kind": "WorkerPool", "drain_supported": false})
-			}
-		}
-	}
-	return adminCommandResult("Provider-qualified inventory; native drain accepts Worker names, not WorkerPool names.", map[string]any{"items": items, "sources": available})
+	return adminCommandResult("Managed Proxmox pool inventory.", map[string]any{"items": items, "sources": available})
 }

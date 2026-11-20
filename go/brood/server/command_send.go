@@ -90,11 +90,8 @@ func (s *Server) deliverToActor(ctx context.Context, swarmID string, resolve fun
 	if err != nil {
 		return command.Result{}, false, app.ErrNotFound
 	}
-	if err := s.checkSwarmNamespace(ctx, toAppSwarm(sw)); err != nil {
-		return command.Result{}, false, err
-	}
 	target, err := resolve(ctx)
-	if err != nil || target.SwarmID != sw.ID || sw.AtespaceUID == nil || target.AtespaceUID != *sw.AtespaceUID {
+	if err != nil || target.SwarmID != sw.ID {
 		return command.Result{}, false, app.ErrNotFound
 	}
 	if s.managed.hub == nil || !s.managed.hub.Connected(target.UID, target.Incarnation) || s.managed.deliverMessage == nil {

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"brood.dev/go/brood/app"
-	"brood.dev/go/brood/substrate"
 )
 
 // Дефолты; переопределяются конфигурацией.
@@ -107,7 +106,7 @@ type SwarmLookup interface {
 // актора; реализация — адаптер Substrate. Адрес называет только
 // сервер: пользователь не управляет им.
 type UpstreamResolver interface {
-	ActorUpstream(atespace, actor string) (*url.URL, error)
+	ActorUpstream(swarmID, actor string) (*url.URL, error)
 }
 
 // AuditEvent — факт решения прокси: кто, куда, чем и разрешено ли.
@@ -473,13 +472,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.gate(w, r, user, sw, actor) {
 		return
 	}
-	base, err := p.cfg.Upstream.ActorUpstream(sw.AtespaceName, actor)
+	base, err := p.cfg.Upstream.ActorUpstream(sw.ID, actor)
 	if err != nil {
 		if errors.Is(err, ErrUnknownActor) {
 			http.NotFound(w, r)
 			return
 		}
-		var apiErr *substrate.APIError
+		var apiErr *app.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusServiceUnavailable {
 			http.Error(w, apiErr.Detail, http.StatusServiceUnavailable)
 			return
@@ -601,9 +600,7 @@ func (p *Proxy) cleanOutbound(out *http.Request, orig *http.Request, sw app.Swar
 		}
 	}
 	// Цель задаёт только сервер.
-	out.Header.Set("Ate-Target-Actor", sw.AtespaceName+"/"+actor)
 	out.Header.Set(HeaderActor, actor)
-	out.Header.Set(HeaderAtespace, sw.AtespaceName)
 	// Ответ не для кэшей клиента прокси.
 	out.Header.Del("Accept-Encoding")
 	if p.cfg.RequestHook != nil {

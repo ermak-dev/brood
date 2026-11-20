@@ -1,6 +1,7 @@
 package server
 
 import (
+	"brood.dev/go/brood/app"
 	"context"
 	"errors"
 	"net"
@@ -11,37 +12,25 @@ import (
 
 	"brood.dev/go/brood/proxy"
 	"brood.dev/go/brood/store"
-	"brood.dev/go/brood/substrate"
 )
 
 type managedResolver struct {
 	server *Server
-	native proxy.UpstreamResolver
 }
 
-func (r *managedResolver) ActorUpstream(atespace, name string) (*url.URL, error) {
+func (r *managedResolver) ActorUpstream(swarmID, name string) (*url.URL, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	sw, err := r.server.store.GetSwarmByAtespace(ctx, atespace)
-	if err != nil {
-		return nil, err
-	}
-	a, err := r.server.managed.actorByName(ctx, sw.ID, name)
+	a, err := r.server.managed.actorByName(ctx, swarmID, name)
 	if errors.Is(err, store.ErrNotFound) {
-		return r.native.ActorUpstream(atespace, name)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if sw.AtespaceUID == nil || a.AtespaceUID != *sw.AtespaceUID {
 		return nil, proxy.ErrUnknownActor
 	}
-	if err := r.server.managedNameAvailable(ctx, atespace, name); err != nil {
+	if err != nil {
 		return nil, err
 	}
 	target := &url.URL{Scheme: "http", Host: a.UID + "." + managedDecimal(a.Incarnation) + ".proxmox.invalid:8080"}
 	if !r.server.managed.validTarget(target) {
-		return nil, &substrate.APIError{Status: 503, Detail: "managed terminal is not ready; explicitly resume the actor if stopped"}
+		return nil, &app.APIError{Status: 503, Detail: "managed terminal is not ready; explicitly resume the actor if stopped"}
 	}
 	return target, nil
 }
@@ -55,12 +44,8 @@ func (m *managedProvider) targetActor(ctx context.Context, host string) (store.M
 	if err != nil {
 		return a, err
 	}
-	sw, err := m.server.store.GetSwarm(ctx, a.SwarmID)
-	if err != nil || sw.AtespaceUID == nil || a.AtespaceUID != *sw.AtespaceUID {
+	if sw, err := m.server.store.GetSwarm(ctx, a.SwarmID); err != nil || sw.State != "active" {
 		return a, proxy.ErrUnknownActor
-	}
-	if err := m.server.managedNameAvailable(ctx, sw.AtespaceName, a.Name); err != nil {
-		return a, err
 	}
 	verified, ok := m.verified.Load(uid)
 	if !ok || verified != generation || a.Phase != "running" || a.Desired != "running" || a.Incarnation != generation || m.hub == nil || !m.hub.Connected(uid, generation) {
@@ -115,34 +100,15 @@ func (s *Server) managedViewBinding(ctx context.Context, swarm, name string) (st
 	if a.Phase != "running" || a.Desired != "running" {
 		return "", 0, proxy.ErrUnknownActor
 	}
-	sw, err := s.store.GetSwarm(ctx, swarm)
-	if err != nil || sw.AtespaceUID == nil || a.AtespaceUID != *sw.AtespaceUID {
+	if sw, err := s.store.GetSwarm(ctx, swarm); err != nil || sw.State != "active" {
 		return "", 0, proxy.ErrUnknownActor
-	}
-	if err := s.managedNameAvailable(ctx, sw.AtespaceName, name); err != nil {
-		return "", 0, err
 	}
 	return a.UID, a.Incarnation, nil
 }
-func (s *Server) managedNameAvailable(ctx context.Context, atespace, name string) error {
-	if s.ateapi == nil {
-		return proxy.ErrUnknownActor
-	}
-	_, err := s.ateapi.GetActor(ctx, atespace, name)
-	if err == nil {
-		return &substrate.APIError{Status: 409, Detail: "native actor conflicts with managed allocation"}
-	}
-	var api *substrate.APIError
-	if errors.As(err, &api) && api.Status == 404 {
-		return nil
-	}
-	return err
-}
-
 func (s *Server) validManagedView(ctx context.Context, v actorView) bool {
 	uid, generation, err := s.managedViewBinding(ctx, v.swarm, v.actor)
 	if err != nil || uid != v.managedUID || generation != v.generation {
 		return false
 	}
-	return v.readOnly || uid == "" || s.authorizeSwarmOwnerIntent(ctx, v.userID, v.swarm) == nil || s.store.CheckActorChildObligations(ctx, uid) == nil
+	return v.readOnly || uid == "" || s.authorizeSwarmOwnerIntent(ctx, v.userID, v.swarm) == nil
 }

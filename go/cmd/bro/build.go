@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"brood.dev/go/brood/build"
-	"brood.dev/go/brood/clientapi"
 	"brood.dev/go/brood/gitcredential"
 )
 
@@ -112,15 +111,6 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 	if !selected.RepositoryResolved {
 		return errors.New("project repository is unresolved; configure Git origin or set project.repository in Broodfile (an explicit empty string disables cloning)")
 	}
-	workflows, err := build.WorkflowSnapshots(selected.Document, "Broodfile")
-	if err != nil {
-		return err
-	}
-	if len(workflows) > 0 {
-		if _, err := clientapi.ValidateWorkflowPublication(workflows); err != nil {
-			return fmt.Errorf("workflow publication: %w", err)
-		}
-	}
 	client, sessions, err := newClient("", "")
 	if err != nil {
 		return err
@@ -129,9 +119,6 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 		return errors.New("not logged in; run: bro login <server>")
 	}
 	declaration, _ := selected.Plan["projectConfig"].(map[string]any)
-	if len(workflows) > 0 {
-		declaration["workflows"] = workflows
-	}
 	synchronized, err := client.ProjectSync(ctx, declaration)
 	if err != nil {
 		return fmt.Errorf("project synchronization: %w", sessionError(err))

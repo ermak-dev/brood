@@ -126,20 +126,17 @@ func (c *Catalog) ProjectsForUser(ctx context.Context, userID string) ([]rowProj
 
 // rowSwarm — строка swarms.
 type rowSwarm struct {
-	ID           string
-	ProjectID    string
-	OwnerID      string
-	Name         string
-	AtespaceName string
-	AtespaceUID  string
-	State        string
-	Retry        string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID        string
+	ProjectID string
+	OwnerID   string
+	Name      string
+	State     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // swarmCols — порядок колонок в списках ниже.
-const swarmCols = `id, project_id, owner_id, name, atespace_name, atespace_uid, state, created_at, updated_at, retry`
+const swarmCols = `id, project_id, owner_id, name, state, created_at, updated_at`
 
 // scanSwarms читает строки swarms.
 func scanSwarms(rows *sql.Rows) ([]rowSwarm, error) {
@@ -147,14 +144,9 @@ func scanSwarms(rows *sql.Rows) ([]rowSwarm, error) {
 	var out []rowSwarm
 	for rows.Next() {
 		var s rowSwarm
-		var uid sql.NullString
 		var createdAt, updatedAt string
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.OwnerID, &s.Name,
-			&s.AtespaceName, &uid, &s.State, &createdAt, &updatedAt, &s.Retry); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.OwnerID, &s.Name, &s.State, &createdAt, &updatedAt); err != nil {
 			return nil, err
-		}
-		if uid.Valid {
-			s.AtespaceUID = uid.String
 		}
 		var err error
 		if s.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {

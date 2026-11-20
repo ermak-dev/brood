@@ -7,7 +7,6 @@ import (
 	"context"
 	"embed"
 	"errors"
-	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -16,10 +15,8 @@ import (
 	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/auth"
-	"brood.dev/go/brood/kube"
 	"brood.dev/go/brood/proxy"
 	"brood.dev/go/brood/store"
-	"brood.dev/go/brood/substrate"
 )
 
 //go:embed static/index.html
@@ -28,35 +25,26 @@ var staticFS embed.FS
 // Options — явные зависимости сборки; тесты подставляют фейк провижинера
 // и logger. Нулевой Options годится: всё замещается умолчаниями.
 type Options struct {
-	// Provisioner заменяет Substrate-адаптер (фейк проверок).
-	Provisioner app.Provisioner
 	// Logger — slog запросов и внутренних отказов; nil — умолчание slog.
 	Logger *slog.Logger
 	// argon2 — стоимость настоящего хэширования в тестах пакета;
 	// нулевые параметры сохраняют auth.DefaultArgon2.
 	argon2 auth.Argon2Params
-	// telegram — ритм поллеров Telegram, часы и источник кода привязки;
-	// нулевой берёт умолчания, тесты пакета его подменяют.
-	telegram telegramOptions
 }
 
 // Server — собранный сервер: зависимости и маршруты без запуска сети.
 type Server struct {
-	store     *store.Store
-	managed   *managedProvider
-	git       *gitGateway
-	catalog   *Catalog
-	gateway   *Gateway
-	app       *app.Service
-	auth      *auth.Service
-	pools     *kube.Pools
-	ateapi    *substrate.Client
-	provision app.Provisioner
-	proxy     *proxy.Proxy
-	push      *pushRegistry
-	views     actorViews
-	mux       *http.ServeMux
-	cancel    context.CancelFunc
+	store   *store.Store
+	managed *managedProvider
+	git     *gitGateway
+	catalog *Catalog
+	gateway *Gateway
+	app     *app.Service
+	auth    *auth.Service
+	proxy   *proxy.Proxy
+	views   actorViews
+	mux     *http.ServeMux
+	cancel  context.CancelFunc
 
 	// artifactsDir — каталог доставки артефактов бутстрапа гостя.
 	artifactsDir string
@@ -69,19 +57,6 @@ type Server struct {
 
 	managedLLM  http.Handler
 	adminModels *adminModelClient
-
-	// deliveries сериализует доставку ответа на запрос роя (#210).
-	deliveries    deliveryLocks
-	actorDelivery *actorDeliveryService
-	// steps доставляет инструкции шагов actor-узлов (#212).
-	steps                  *stepDispatcher
-	children               *childDispatcher
-	ephemeralAttestor      *ephemeralChildAttestor
-	ephemeralRecoveryClose func()
-	// telegram держит поллеры ботов Telegram (#281).
-	telegram *telegramBots
-	// sender отправляет уведомления outbox Telegram (#282).
-	sender *telegramSender
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -122,103 +97,35 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	if err := st.RecoverEphemeralChildAttestations(ctx); err != nil {
-		catalog.Close()
-		return nil, errors.New("ephemeral child attestation recovery failed")
-	}
-	if err := st.RecoverPipelineResultObservations(ctx); err != nil {
-		catalog.Close()
-		return nil, errors.New("pipeline result observation recovery failed")
-	}
-	// Попытки шагов, чей эффект у гостя мог оборвать прошлый процесс, —
-	// unconfirmed без повтора (#212); ждущие доставки шаги будит steps.start.
-	if err := st.RecoverActorSteps(ctx); err != nil {
-		catalog.Close()
-		return nil, errors.New("actor step recovery failed")
-	}
-	if err := st.RecoverSwarmChildDeliveries(ctx); err != nil {
-		catalog.Close()
-		return nil, errors.New("child delivery recovery failed")
-	}
-	// Уведомление Telegram, чью отправку оборвал прошлый процесс, могло
-	// дойти: unconfirmed без повтора, до первой попытки отправителя (#282).
-	if err := st.RecoverTelegramOutbox(ctx); err != nil {
-		catalog.Close()
-		return nil, errors.New("telegram outbox recovery failed")
-	}
 	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
-	srv.steps = newStepDispatcher(srv)
-	srv.ephemeralAttestor = newEphemeralChildAttestor()
-	srv.actorDelivery = newActorDeliveryService(srv, time.Now)
-	srv.children = newChildDispatcher(srv)
-	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
-	// Поллер отвечает на запросы путём ответа сервера (#283), а команды
-	// чатов (#284) зовут методы сервера. И то и другое — только из поллеров,
-	// которые стартуют последними, когда сборка закончена.
-	srv.telegram.answers = srv
-	srv.telegram.commands = newTelegramCommands(srv, cfg.PanelOrigin, srv.telegram.opts.now)
-	srv.sender = newTelegramSender(st, cfg, opts.telegram)
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
 		catalog.Close()
 		return nil, err
 	}
 
-	// Substrate: клиент нужен и провижинеру, и actor API. Пробы при
-	// сборке нет: grpc.NewClient подключается первым RPC, недоступность
-	// станет 503 в ответе операции.
-	if cfg.AteapiToken != "" && cfg.AteapiCA != "" {
-		client, err := substrate.New(cfg.AteapiToken, cfg.AteapiCA, cfg.AteapiEndpoint)
-		if err != nil {
-			catalog.Close()
-			return nil, err
-		}
-		srv.ateapi = client
-	}
-
-	provisioner := opts.Provisioner
-	if provisioner == nil {
-		provisioner = NewSubstrateProvisioner(srv.ateapi)
-	}
-	srv.provision = provisioner
 	srv.gateway = StoreGateway(st, catalog)
-	srv.app = app.NewService(srv.gateway, provisioner, time.Now, store.NewID)
+	srv.app = app.NewService(srv.gateway, time.Now, store.NewID)
 
 	authCfg := auth.Config{Secure: cfg.SecureCookies, Secret: cfg.SessionSecret, Argon2: opts.argon2}
 	srv.auth = auth.NewService(st, authCfg, time.Now)
-
-	// WorkerPool: полный набор настроек Kubernetes обязателен, иначе
-	// эндпоинты пула отказывают 503 с именами настроек.
-	if cfg.KubeURL != "" || cfg.KubeToken != "" || cfg.KubeCA != "" {
-		pools, err := kube.NewPools(cfg.KubeURL, cfg.KubeToken, cfg.KubeCA,
-			cfg.WorkerPoolImages, cfg.WorkerPoolImage)
-		if err != nil {
-			catalog.Close()
-			if srv.ateapi != nil {
-				srv.ateapi.Close()
-			}
-			return nil, err
-		}
-		srv.pools = pools
-	}
 
 	// Actor ingress shares session/CSRF protection. A lifecycle-bound
 	// ticker rechecks authorization and the original session, including
 	// ordinary requests still waiting for upstream headers or bodies.
 	srv.proxy = proxy.New(proxy.Config{
 		Swarms:    srv.gateway,
-		Authorize: srv.canUseNative,
+		Authorize: srv.app.Can,
 		// Две native-проверки по 5 секунд должны уложиться в минутный отзыв.
 		RecheckInterval: 45 * time.Second,
 		CurrentUser:     srv.actorViewUser,
 		RequestHook:     srv.actorViewRequest,
 		ResponseHook:    srv.actorViewResponse,
 		BeginUpgrade:    srv.beginManagedTerminal,
-		Upstream:        &managedResolver{server: srv, native: NewSubstrateResolver(srv.ateapi, cfg.AtenetRouter)},
+		Upstream:        &managedResolver{server: srv},
 		DialContext:     srv.managed.dial,
 		UpstreamValid:   srv.managed.validTarget,
 		Revalidate:      srv.validProxySession,
-		RouterTLS:       &proxy.TLSFiles{CertFile: cfg.AtenetCert, KeyFile: cfg.AtenetKey, CAFile: cfg.AtenetCA, ServerName: cfg.AtenetServerName},
 	})
 	srv.mux = http.NewServeMux()
 	srv.mount()
@@ -227,23 +134,14 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProjectSecrets()
 	srv.mountGitCredentials()
 	srv.mountGitRepositories()
-	srv.mountWorkflowPolicy()
 	srv.mountProjectOwnership()
-	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
 	srv.adminModels = newAdminModelClient(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
-	srv.mountPush(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)
 	srv.managed.start(proxyCtx)
-	srv.steps.start(proxyCtx)
-	srv.children.start(proxyCtx)
-	srv.actorDelivery.start(proxyCtx)
-	srv.ephemeralRecoveryClose = srv.startEphemeralChildRecovery(proxyCtx)
-	srv.telegram.start(proxyCtx)
-	srv.sender.start(proxyCtx)
 	return srv, nil
 }
 
@@ -271,20 +169,11 @@ func (s *Server) Close() error {
 		s.cancel()
 	}
 	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
-	s.steps.close()
-	s.children.close()
-	s.stopEphemeralChildRecovery()
-	s.actorDelivery.close()
 	// Поллеры и отправитель Telegram пишут в базу: остановлены до её
 	// закрытия.
-	s.telegram.close()
-	s.sender.close()
 	s.proxy.Close()
 	s.managed.close()
 	var errs []error
-	if s.ateapi != nil {
-		s.ateapi.Close()
-	}
 	errs = append(errs, s.catalog.Close(), s.store.Close())
 	return errors.Join(errs...)
 }
@@ -336,7 +225,6 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.auth.Mount(s.mux)
 	s.mux.HandleFunc("GET /api/admin/users", s.handleAdminUsers)
-	s.mux.HandleFunc("GET /api/identities", s.handleNativeIdentities)
 	s.mux.HandleFunc("GET /api/projects", s.handleProjects)
 	s.mux.HandleFunc("POST /api/projects", s.handleProjects)
 	s.mux.HandleFunc("DELETE /api/projects/{id}", s.handleProjectDelete)
@@ -348,17 +236,10 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /api/swarms/{id}", s.handleSwarm)
 	s.mux.HandleFunc("DELETE /api/swarms/{id}", s.handleSwarm)
 	s.mux.HandleFunc("POST /api/swarms/{id}/transfer", s.handleSwarmTransfer)
-	s.mountWorkerPools()
-	s.mountAccessAPI()
-	s.mountPipelineAPI()
-	s.mountSwarmExecutionAPI()
-	s.mountSwarmRolesAPI()
-	s.mountSwarmRequests()
 	// Actor/template/policy роя, воркеры и глобальная политика — тонкий
 	// прокси к ateapi с проверкой владения роем (#32); он же подключает
 	// маршруты proxy под /api/swarms/{id}/proxy/.
-	s.mountSubstrateAPI()
-	s.mountOrphanRecovery()
+	s.mountActorAPI()
 	s.mountStatic()
 }
 
@@ -377,99 +258,6 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("ok\n"))
 }
-
-// mountWorkerPools — WorkerPool Kubernetes, только админ. Без настроек —
-// 503 с именами настроек (пул порождает привилегированные поды, всё
-// управление закрыто обычным пользователям).
-func (s *Server) mountWorkerPools() {
-	handle := func(allowBody bool, call func(w http.ResponseWriter, r *http.Request, body []byte)) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			user, ok := currentUser(w, r)
-			if !ok {
-				return
-			}
-			if !user.IsAdmin {
-				writeDetail(w, http.StatusForbidden, "administrator access required")
-				return
-			}
-			if s.pools == nil {
-				writeDetail(w, http.StatusServiceUnavailable,
-					"Kubernetes is not configured: KUBE_API_URL, KUBE_API_TOKEN and KUBE_API_CA are required")
-				return
-			}
-			var body []byte
-			if allowBody {
-				var err error
-				body, err = readBody(r)
-				if err != nil {
-					writeDetail(w, http.StatusBadRequest, "malformed JSON body")
-					return
-				}
-			}
-			call(w, r, body)
-		}
-	}
-	s.mux.HandleFunc("GET /api/worker-pool-defaults", handle(false,
-		func(w http.ResponseWriter, _ *http.Request, _ []byte) {
-			writeJSON(w, http.StatusOK, s.pools.Defaults())
-		}))
-	s.mux.HandleFunc("GET /api/worker-pools", handle(false,
-		func(w http.ResponseWriter, r *http.Request, _ []byte) {
-			items, err := s.pools.List(r.Context())
-			if err != nil {
-				apiError(w, r, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"items": items})
-		}))
-	s.mux.HandleFunc("GET /api/worker-pools/{name}", handle(false,
-		func(w http.ResponseWriter, r *http.Request, _ []byte) {
-			item, err := s.pools.Get(r.Context(), r.PathValue("name"))
-			if err != nil {
-				apiError(w, r, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, item)
-		}))
-	s.mux.HandleFunc("GET /api/worker-pools/{name}/diagnostics", handle(false,
-		func(w http.ResponseWriter, r *http.Request, _ []byte) {
-			pods, err := s.pools.Diagnostics(r.Context(), r.PathValue("name"))
-			if err != nil {
-				apiError(w, r, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"pods": pods})
-		}))
-	s.mux.HandleFunc("POST /api/worker-pools", handle(true,
-		func(w http.ResponseWriter, r *http.Request, body []byte) {
-			item, err := s.pools.Create(r.Context(), body)
-			if err != nil {
-				apiError(w, r, err)
-				return
-			}
-			writeJSON(w, http.StatusCreated, item)
-		}))
-	s.mux.HandleFunc("PUT /api/worker-pools/{name}", handle(true,
-		func(w http.ResponseWriter, r *http.Request, body []byte) {
-			item, err := s.pools.Update(r.Context(), r.PathValue("name"), body)
-			if err != nil {
-				apiError(w, r, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, item)
-		}))
-	s.mux.HandleFunc("DELETE /api/worker-pools/{name}", handle(true,
-		func(w http.ResponseWriter, r *http.Request, body []byte) {
-			if err := s.pools.Delete(r.Context(), r.PathValue("name"), body); err != nil {
-				apiError(w, r, err)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-		}))
-}
-
-// readBody читает ограниченное тело запроса.
-func readBody(r *http.Request) ([]byte, error) { return io.ReadAll(r.Body) }
 
 // mountStatic раздаёт встроенную панель: единый самодостаточный index.html
 // с fetch-логином по CONTRACT.md.

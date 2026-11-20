@@ -1,20 +1,6 @@
 package app
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-)
-
-// isNotFound отличает «области нет» от прочих сбоёв провайдера.
-func isNotFound(err error) bool { return errors.Is(err, ErrNotFound) }
-
-// AtespaceName строит неизменяемое имя atespace из ID роя:
-// "swarm-" + ID без дефисов, lower. Рой с данным ID всегда отображается
-// в одно и то же имя, пользователь не может подменить область.
-func AtespaceName(swarmID string) string {
-	return "swarm-" + strings.ToLower(strings.ReplaceAll(swarmID, "-", ""))
-}
+import "fmt"
 
 // CreateProject создаёт проект. Только активный администратор.
 func (s *Service) CreateProject(actorID, name string) (Project, error) {
@@ -105,7 +91,7 @@ func (s *Service) CreateSwarm(userID, projectID, name string) (Swarm, error) {
 	}
 	if found {
 		if existing.OwnerID == userID {
-			return s.resumeCreate(existing)
+			return existing, nil
 		}
 		return Swarm{}, fmt.Errorf("%w: swarm name %s in project", ErrExists, name)
 	}
@@ -126,68 +112,23 @@ func (s *Service) CreateSwarm(userID, projectID, name string) (Swarm, error) {
 		return Swarm{}, err
 	}
 
-	id := s.newID()
 	sw := Swarm{
-		ID:           id,
-		ProjectID:    projectID,
-		OwnerID:      userID,
-		Name:         name,
-		AtespaceName: AtespaceName(id),
-		State:        StateProvisioning,
-		CreatedAt:    s.now(),
-		UpdatedAt:    s.now(),
+		ID:        s.newID(),
+		ProjectID: projectID,
+		OwnerID:   userID,
+		Name:      name,
+		State:     StateActive,
+		CreatedAt: s.now(),
+		UpdatedAt: s.now(),
 	}
 	if err := s.store.SaveSwarm(sw); err != nil {
-		if errors.Is(err, ErrExists) {
-			existing, found, lookupErr := s.findSwarmByName(projectID, name)
-			if lookupErr != nil {
-				return Swarm{}, lookupErr
-			}
-			if found && existing.OwnerID == userID {
-				return s.resumeCreate(existing)
-			}
-		}
 		return Swarm{}, fmt.Errorf("save swarm: %w", err)
 	}
-	return s.resumeCreate(sw)
+	return sw, nil
 }
 
-// resumeCreate доводит создание atespace до конца и переводит рой
-// в active. Сначала сверяет существующую область: имя, занятое чужим
-// UID, не присваивается (стойкая строка после сбоя провижининга —
-// путь reconcile). Сбой оставляет error с retry-операцией.
-func (s *Service) resumeCreate(sw Swarm) (Swarm, error) {
-	if sw.State == StateActive {
-		return sw, nil
-	}
-	if sw.State != StateProvisioning && (sw.State != StateError || sw.Retry != RetryCreate) {
-		return sw, fmt.Errorf("%w: create from %s (retry %s)", ErrState, sw.State, sw.Retry)
-	}
-	if existing, err := s.provisioner.GetAtespace(sw.AtespaceName); err == nil {
-		if sw.AtespaceUID != "" && existing == sw.AtespaceUID {
-			// Наша область уже создана прошлой попыткой.
-			sw.Retry = ""
-			return s.transition(sw, StateActive)
-		}
-		// Имя занято областью с другим UID — чужое не присваиваем.
-		return s.failSwarm(sw, RetryCreate,
-			fmt.Errorf("%w: atespace %s belongs to uid %s", ErrConflict, sw.AtespaceName, existing))
-	} else if !isNotFound(err) {
-		return s.failSwarm(sw, RetryCreate, err)
-	}
-	uid, err := s.provisioner.CreateAtespace(sw.AtespaceName)
-	if err != nil {
-		return s.failSwarm(sw, RetryCreate, err)
-	}
-	sw.AtespaceUID = uid
-	sw.Retry = ""
-	return s.transition(sw, StateActive)
-}
-
-// DeleteSwarm удаляет рой: владелец или активный админ. Идемпотентно:
-// повтор по already-deleted — успех без обращения к Substrate.
-// Имя atespace проверяется по сохранённому UID, чужая одноимённая
-// область не удаляется. Сбой Substrate оставляет error с retry.
+// DeleteSwarm удаляет рой: владелец или активный админ. Идемпотентно.
+// Рой с неудалёнными воркерами хранилище удалить не даёт.
 func (s *Service) DeleteSwarm(userID, swarmID string) error {
 	sw, err := s.swarmForDeletion(userID, swarmID)
 	if err != nil {
@@ -200,7 +141,6 @@ func (s *Service) DeleteSwarm(userID, swarmID string) error {
 		return err
 	}
 	if sw.State == StateDeleted {
-		// Повтор идемпотентен только для авторизованного вызывающего.
 		return nil
 	}
 	if guard, ok := s.store.(interface{ CheckSwarmDeletion(string) error }); ok {
@@ -208,40 +148,12 @@ func (s *Service) DeleteSwarm(userID, swarmID string) error {
 			return err
 		}
 	}
-	switch sw.State {
-	case StateActive, StateError:
-		sw.Retry = RetryDelete
-		sw, err = s.transition(sw, StateDeleting)
-		if err != nil {
-			return err
-		}
-	case StateDeleting:
-		// Повтор незавершённого удаления тем же путём.
-	default:
-		return fmt.Errorf("%w: delete from %s", ErrState, sw.State)
+	sw.State = StateDeleted
+	sw.UpdatedAt = s.now()
+	if err := s.store.UpdateSwarm(sw); err != nil {
+		return fmt.Errorf("update swarm: %w", err)
 	}
-	if err := s.provisioner.DeleteAtespace(sw.AtespaceName, sw.AtespaceUID); err != nil {
-		uid, gerr := s.provisioner.GetAtespace(sw.AtespaceName)
-		if errors.Is(err, ErrSwarmNotEmpty) && gerr == nil && uid != "" && uid == sw.AtespaceUID {
-			// Атомарный отказ позволяет откатить только локальное намерение удаления.
-			sw.State, sw.Retry, sw.UpdatedAt = StateActive, "", s.now()
-			if updateErr := s.store.UpdateSwarm(sw); updateErr != nil {
-				return errors.Join(err, updateErr)
-			}
-			return err
-		}
-		if !isNotFound(gerr) {
-			// Область ещё есть или её состояние неизвестно: фиксируем
-			// ошибку с retry. Чужую область с другим UID DeleteAtespace
-			// не удаляет сам.
-			_, failed := s.failSwarm(sw, RetryDelete, err)
-			return failed
-		}
-		// Области нет — удаление фактически состоялось.
-	}
-	sw.Retry = ""
-	_, err = s.transition(sw, StateDeleted)
-	return err
+	return nil
 }
 
 func (s *Service) swarmForDeletion(userID, swarmID string) (Swarm, error) {
@@ -259,11 +171,7 @@ func (s *Service) swarmForDeletion(userID, swarmID string) (Swarm, error) {
 	if !ok || user.Disabled {
 		return Swarm{}, ErrNotAllowed
 	}
-	allowed, err := s.canOwnSwarm(user, swarm)
-	if err != nil {
-		return Swarm{}, err
-	}
-	if !allowed {
+	if !user.IsAdmin && swarm.OwnerID != userID {
 		return Swarm{}, ErrNotAllowed
 	}
 	return swarm, nil
@@ -286,15 +194,8 @@ func (s *Service) TransferSwarm(actorID, swarmID, newOwnerID string) error {
 	if !ok || sw.State == StateDeleted {
 		return fmt.Errorf("%w: swarm %s", ErrNotFound, swarmID)
 	}
-	allowed, err := s.canOwnSwarm(actor, sw)
-	if err != nil {
-		return err
-	}
-	if !allowed {
+	if !actor.IsAdmin && sw.OwnerID != actorID {
 		return ErrNotAllowed
-	}
-	if sw.State != StateActive {
-		return fmt.Errorf("%w: transfer from %s", ErrState, sw.State)
 	}
 	newOwner, ok, err := s.store.UserByID(newOwnerID)
 	if err != nil {
@@ -376,7 +277,7 @@ func (s *Service) ListSwarmsFor(userID, projectID string) ([]Swarm, error) {
 	if u.IsAdmin {
 		swarms, err = s.store.SwarmsByProject(projectID)
 	} else {
-		swarms, err = s.store.SwarmsByMember(projectID, userID)
+		swarms, err = s.store.SwarmsByOwner(projectID, userID)
 	}
 	if err != nil {
 		return nil, err
@@ -466,30 +367,4 @@ func (s *Service) findSwarmByName(projectID, name string) (Swarm, bool, error) {
 		}
 	}
 	return Swarm{}, false, nil
-}
-
-// transition переводит роя в новое состояние по state machine
-// и перезаписывает строку.
-func (s *Service) transition(sw Swarm, to SwarmState) (Swarm, error) {
-	if !canTransition(sw.State, to) {
-		return sw, fmt.Errorf("%w: %s -> %s", ErrState, sw.State, to)
-	}
-	sw.State = to
-	sw.UpdatedAt = s.now()
-	if err := s.store.UpdateSwarm(sw); err != nil {
-		return sw, fmt.Errorf("update swarm: %w", err)
-	}
-	return sw, nil
-}
-
-// failSwarm фиксирует сбой: состояние error и зарезервированная
-// retry-операция. Возвращает роя и причину сбоя: error-состояние
-// не превращает неудачный вызов в успешный.
-func (s *Service) failSwarm(sw Swarm, retry string, cause error) (Swarm, error) {
-	sw.Retry = retry
-	failed, err := s.transition(sw, StateError)
-	if err != nil {
-		return failed, errors.Join(cause, err)
-	}
-	return failed, cause
 }

@@ -27,10 +27,7 @@ type ActorOperation struct {
 // Call only during exclusive server startup after the preceding server has stopped.
 func (s *Store) RecoverActorOperations(ctx context.Context) error {
 	return s.WithTx(ctx, func(ctx context.Context) error {
-		if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE coordination_claims SET payload=json_set(payload,'$.State','unconfirmed') WHERE kind='workspace' AND slot IS NOT NULL`); err != nil {
-			return err
-		}
-		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE actor_interventions SET state='unconfirmed' WHERE state='inflight'`)
+		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE coordination_claims SET payload=json_set(payload,'$.State','unconfirmed') WHERE kind='workspace' AND slot IS NOT NULL`)
 		return err
 	})
 }
@@ -41,7 +38,7 @@ func (s *Store) CurrentActorOperation(ctx context.Context, uid string) (ActorOpe
 	var payload string
 	err := s.conn(ctx).QueryRowContext(ctx, `SELECT payload FROM coordination_claims WHERE kind='workspace' AND slot=?`, uid).Scan(&payload)
 	if errors.Is(err, sql.ErrNoRows) {
-		return s.currentOwnerActorOperation(ctx, uid)
+		return op, fmt.Errorf("%w: actor operation %q", ErrNotFound, uid)
 	}
 	if err != nil {
 		return op, err
@@ -70,17 +67,11 @@ func (s *Store) AcquireActorSessionOperation(ctx context.Context, target Managed
 	if !sessionMutationOperation(operation) || authorize == nil || human == "" {
 		return ActorOperation{}, newCoordinationConflict("session mutation authority is required")
 	}
-	if source.UID == "" && s.actorOwner(ctx, target.UID, human) == nil {
-		return s.AcquireOwnerActorOperation(ctx, target, id, caller, operation, human, authorize)
-	}
 	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, func(ctx context.Context, current ManagedActor) error {
-		if current.SwarmID != target.SwarmID || current.AtespaceUID != target.AtespaceUID {
+		if current.SwarmID != target.SwarmID {
 			return newCoordinationConflict("session target scope changed")
 		}
 		if err := authorize(ctx); err != nil {
-			return err
-		}
-		if err := s.guardChildLifecycle(ctx, current.UID); err != nil {
 			return err
 		}
 		if _, err := s.CurrentActorOperation(ctx, current.UID); err == nil {
@@ -104,7 +95,7 @@ func (s *Store) AcquireActorSessionOperation(ctx context.Context, target Managed
 
 func (s *Store) acquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string, guard func(context.Context, ManagedActor) error) (ActorOperation, error) {
 	var op ActorOperation
-	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "wipe" && operation != "recycle" && operation != "workspace_attest" && operation != WorkspaceResultOperation && !sessionMutationOperation(operation)) {
+	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "wipe" && operation != "recycle" && operation != "workspace_attest" && !sessionMutationOperation(operation)) {
 		return op, newCoordinationConflict("invalid workspace operation identity")
 	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
@@ -116,7 +107,7 @@ func (s *Store) acquireActorOperation(ctx context.Context, uid string, generatio
 		if err != nil {
 			return err
 		}
-		if a.Incarnation != generation || a.Desired != "running" || a.Phase != "running" || a.Stage != "done" || a.Operation != "start" || sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != a.AtespaceUID {
+		if a.Incarnation != generation || a.Desired != "running" || a.Phase != "running" || a.Stage != "done" || a.Operation != "start" || sw.State != "active" {
 			return newCoordinationConflict("actor incarnation is not ready for workspace control")
 		}
 		if err := guard(ctx, a); err != nil {
@@ -132,9 +123,6 @@ func (s *Store) acquireActorOperation(ctx context.Context, uid string, generatio
 // FinishActorOperation releases a confirmed operation or retains its uncertain outcome.
 // The exact operation identity prevents an old handler from releasing a successor.
 func (s *Store) FinishActorOperation(ctx context.Context, op ActorOperation, confirmed bool) error {
-	if op.Owner {
-		return s.finishOwnerActorOperation(ctx, op, confirmed)
-	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
 		current, err := s.CurrentActorOperation(ctx, op.UID)
 		if err != nil {
@@ -161,6 +149,30 @@ func (s *Store) FinishActorOperation(ctx context.Context, op ActorOperation, con
 		}
 		if n != 1 {
 			return fmt.Errorf("workspace reservation was not retained")
+		}
+		return nil
+	})
+}
+
+// AcquireOwnerActorOperation reserves a workspace or session operation of the
+// swarm owner. Authorize reads local authority with ctx; nil denies. The
+// owner is not held by coordination claims of other actors, only by another
+// active or unconfirmed operation on the same worker.
+func (s *Store) AcquireOwnerActorOperation(ctx context.Context, target ManagedActor, id, caller, operation string, authorize func(context.Context) error) (ActorOperation, error) {
+	if authorize == nil {
+		return ActorOperation{}, newCoordinationConflict("owner authority is required")
+	}
+	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, func(ctx context.Context, current ManagedActor) error {
+		if current.SwarmID != target.SwarmID {
+			return newCoordinationConflict("session target scope changed")
+		}
+		if err := authorize(ctx); err != nil {
+			return err
+		}
+		if _, err := s.CurrentActorOperation(ctx, current.UID); err == nil {
+			return newCoordinationConflict("workspace operation is active or unconfirmed")
+		} else if !errors.Is(err, ErrNotFound) {
+			return err
 		}
 		return nil
 	})

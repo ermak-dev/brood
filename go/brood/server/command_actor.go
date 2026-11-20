@@ -9,8 +9,6 @@ import (
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/store"
-	"brood.dev/go/brood/substrate"
-	ateapi "go.ate.dev/substrate/api/ateapi/v1"
 )
 
 type actorCommandArguments struct {
@@ -61,9 +59,6 @@ func (m *managedProvider) authorizeCommandActor(ctx context.Context, original st
 	if err != nil {
 		return store.ManagedActor{}, app.Swarm{}, err
 	}
-	if err := m.server.checkSwarmNamespace(ctx, swarm); err != nil {
-		return store.ManagedActor{}, app.Swarm{}, err
-	}
 	return a, swarm, nil
 }
 
@@ -75,7 +70,7 @@ func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, orig
 		}
 		return store.ManagedActor{}, app.Swarm{}, err
 	}
-	if a.Incarnation != original.Incarnation || a.SwarmID != original.SwarmID || a.AtespaceUID != original.AtespaceUID || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
+	if a.Incarnation != original.Incarnation || a.SwarmID != original.SwarmID || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
 		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
 	}
 	sw, err := m.server.store.GetSwarm(ctx, a.SwarmID)
@@ -85,7 +80,7 @@ func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, orig
 		}
 		return store.ManagedActor{}, app.Swarm{}, err
 	}
-	if sw.State != "active" || sw.AtespaceUID == nil || *sw.AtespaceUID != a.AtespaceUID {
+	if sw.State != "active" {
 		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
 	}
 	return a, toAppSwarm(sw), nil
@@ -110,7 +105,7 @@ func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original s
 	if err != nil {
 		return store.ManagedActor{}, err
 	}
-	if target.AtespaceUID != from.AtespaceUID || target.Phase == "deleted" {
+	if target.Phase == "deleted" {
 		return store.ManagedActor{}, app.ErrNotAllowed
 	}
 	if mutate {
@@ -185,18 +180,12 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	if err = m.authorizeMaster(ctx, from); err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
-	if inv.Name == "stop" || inv.Name == "reset" || inv.Name == "delete" || inv.Name == "update" {
-		if err := m.server.refuseEvalEffect(ctx, from.SwarmID, "actor-executed lifecycle "+inv.Name); err != nil {
-			return command.Result{}, command.Refuse(nil, err.Error())
-		}
-	}
 	if inv.Name == "add" {
 		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
 		if err != nil || pool.Template != from.Template || pool.SourceFingerprint != from.SourceFingerprint {
 			return command.Result{}, command.Refuse(nil, "actor creation refused: approved managed pool binding is unavailable")
 		}
-		input := &ateapi.Actor{Metadata: &ateapi.ResourceMetadata{Name: args.Name}, ActorTemplate: &ateapi.ObjectRef{Name: managedTemplatePrefix + pool.Name}}
-		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, input, pool, "worker", args.Origin, &from)
+		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, args.Name, pool, "worker", args.Origin, &from)
 		if err != nil && a.UID == "" {
 			return command.Result{}, command.Refuse(nil, managedAddRefusal(err))
 		}
@@ -241,17 +230,6 @@ func (s *Server) executeActorCommand(ctx context.Context, userID, swarmID string
 func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Swarm, a store.ManagedActor, action string, parent *store.ManagedActor) (command.Result, error) {
 	if s.managed == nil {
 		return command.Result{}, command.Refuse(nil, "managed lifecycle is unavailable")
-	}
-	if a.AtespaceUID != sw.AtespaceUID {
-		return command.Result{}, command.Refusef(app.ErrConflict, "managed actor namespace binding changed")
-	}
-	if s.ateapi == nil {
-		return command.Result{}, command.Refusef(app.ErrConflict, "native inventory unavailable")
-	}
-	_, nativeErr := s.ateapi.GetActor(ctx, sw.AtespaceName, a.Name)
-	var api *substrate.APIError
-	if !errors.As(nativeErr, &api) || api.Status != 404 {
-		return command.Result{}, command.Refusef(app.ErrConflict, "native actor collision or inventory unavailable")
 	}
 	pool, err := s.store.GetManagedPool(ctx, a.PoolUID)
 	if err != nil {

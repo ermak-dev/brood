@@ -1,6 +1,9 @@
 package app
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Ошибки прикладного слоя: строкой с причиной, без паник и трассировок.
 // HTTP-слой отображает их статусами, CLI — текстом.
@@ -20,10 +23,16 @@ var (
 	ErrState = errors.New("illegal state transition")
 	// ErrSwarmNotEmpty identifies a confirmed atomic refusal without native deletion.
 	ErrSwarmNotEmpty = errors.New("swarm is not empty")
-	// ErrInvalidRole refuses role names outside the local ACL dictionary.
-	ErrInvalidRole = errors.New("swarm role must be one of: owner, editor, viewer")
 	// ErrInvalidWorkload rejects unresolved resources or placement outside the shard.
 	ErrInvalidWorkload = errors.New("invalid workload admission")
 	// ErrInvalidCapacity rejects unsupported shard limits or worker labels.
 	ErrInvalidCapacity = errors.New("invalid shard capacity")
 )
+
+// APIError — отказ, готовый к HTTP-ответу: статус и причина строкой.
+type APIError struct {
+	Status int
+	Detail string
+}
+
+func (e *APIError) Error() string { return fmt.Sprintf("%d: %s", e.Status, e.Detail) }

@@ -14,8 +14,6 @@ import (
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/gitcredential"
 	"brood.dev/go/brood/gitorigin"
-	"brood.dev/go/brood/pipeline"
-	"brood.dev/go/brood/proxmox/egress"
 	"brood.dev/go/brood/store"
 )
 
@@ -49,10 +47,6 @@ func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusForbidden, "project sync authorization changed or access denied")
 		return
 	}
-	if errors.Is(err, store.ErrWorkflowLimit) {
-		writeDetail(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	if err != nil {
 		writeDetail(w, http.StatusServiceUnavailable, "project sync failed")
 		return
@@ -62,9 +56,7 @@ func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
 	mode, bound := "", false
 	if access, err := s.projectGitAccess(r.Context(), result.ID); err == nil {
 		bound = access.bound
-		if network, err := s.store.ProjectManagedNetwork(r.Context(), result.ID); err == nil {
-			mode = access.modeWithNetwork(result.Repository, network)
-		}
+		mode = access.mode(result.Repository)
 	}
 	status := http.StatusOK
 	if result.Created {
@@ -85,14 +77,6 @@ func (s *Server) syncProject(ctx context.Context, userID string, declaration sto
 			return s.store.WithTx(ctx, func(txCtx context.Context) error {
 				var err error
 				result, err = s.store.SyncProject(txCtx, userID, expectedID, declaration, authorize)
-				if err != nil {
-					return err
-				}
-				if declaration.Workflows != nil {
-					var changed bool
-					changed, err = s.store.SyncWorkflowDefinitions(txCtx, result.ID, userID, declaration.Workflows, authorize)
-					result.Changed = result.Changed || changed
-				}
 				return err
 			})
 		}
@@ -117,7 +101,7 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 	invalid := errors.New("invalid project declaration")
 	control := http.NewResponseController(w)
 	_ = control.SetReadDeadline(time.Now().Add(15 * time.Second))
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, projectSyncBodyLimit+pipeline.MaxWorkflowBodyBytes))
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, projectSyncBodyLimit))
 	_ = control.SetReadDeadline(time.Time{})
 	if err != nil || !utf8.Valid(data) {
 		return declaration, invalid
@@ -130,24 +114,11 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 	if _, err := decoder.Token(); err != io.EOF {
 		return declaration, invalid
 	}
-	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true, "git_credential": true, "workflows": true, "managed_network": true})
+	body, err := syncObject(data, map[string]bool{"name": true, "repository": true, "description": true, "capacity": true, "git_credential": true})
 	if err != nil {
 		return declaration, invalid
 	}
-	workflowBytes := 0
-	if raw, ok := body["workflows"]; ok {
-		workflowBytes = len(raw)
-		request, err := http.NewRequest(http.MethodPut, "/", bytes.NewReader(append(append([]byte(`{"workflows":`), raw...), '}')))
-		if err != nil {
-			return declaration, invalid
-		}
-		declaration.Workflows, err = readWorkflows(w, request)
-		if err != nil {
-			return declaration, invalid
-		}
-		delete(body, "workflows")
-	}
-	if len(data)-workflowBytes > projectSyncBodyLimit {
+	if len(data) > projectSyncBodyLimit {
 		return declaration, invalid
 	}
 	if !syncString(body["name"], &declaration.Name) || strings.TrimSpace(declaration.Name) == "" || !syncString(body["repository"], &declaration.Repository) {
@@ -175,40 +146,13 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 		}
 		declaration.GitCredential = &reference
 	}
-	if raw, ok := body["managed_network"]; ok {
-		value := ""
-		if !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			policy, err := egress.Decode(raw)
-			if err != nil {
-				return declaration, invalid
-			}
-			encoded, err := policy.Encode()
-			if err != nil {
-				return declaration, invalid
-			}
-			value = string(encoded)
-		}
-		declaration.ManagedNetwork = &value
-	}
 	if raw, ok := body["capacity"]; ok {
-		fields, err := syncObject(raw, map[string]bool{"worker_selector": true, "max_swarms": true, "max_actors": true, "max_cpu_millicores": true, "max_memory_bytes": true})
+		fields, err := syncObject(raw, map[string]bool{"max_swarms": true, "max_actors": true, "max_cpu_millicores": true, "max_memory_bytes": true})
 		if err != nil {
 			return declaration, invalid
 		}
-		if selector, ok := fields["worker_selector"]; ok {
-			var labels map[string]json.RawMessage
-			if len(selector) == 0 || selector[0] != '{' || json.Unmarshal(selector, &labels) != nil {
-				return declaration, invalid
-			}
-			for _, value := range labels {
-				var label string
-				if !syncString(value, &label) {
-					return declaration, invalid
-				}
-			}
-		}
-		for key, value := range fields {
-			if key == "worker_selector" || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		for _, value := range fields {
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				continue
 			}
 			var limit string
@@ -224,7 +168,7 @@ func readProjectSync(w http.ResponseWriter, r *http.Request) (store.ProjectDecla
 		if err != nil {
 			return declaration, invalid
 		}
-		stored := store.ProjectCapacity{WorkerSelector: capacity.WorkerSelector, MaxSwarms: capacity.MaxSwarms, MaxActors: capacity.MaxActors, MaxCPUMillicores: capacity.MaxCPUMillicores, MaxMemoryBytes: capacity.MaxMemoryBytes}
+		stored := store.ProjectCapacity{MaxSwarms: capacity.MaxSwarms, MaxActors: capacity.MaxActors, MaxCPUMillicores: capacity.MaxCPUMillicores, MaxMemoryBytes: capacity.MaxMemoryBytes}
 		if err := store.ValidateProjectCapacity(stored); err != nil {
 			return declaration, invalid
 		}

@@ -12,11 +12,11 @@ type WorkloadAdmission struct {
 	Reservations []ActorReservation
 	Name         string
 	Replace      bool
-	// TemplateOnly cannot allocate actors: deletion or golden-disabled publication.
-	TemplateOnly   bool
-	CPUMillicores  int64
-	MemoryBytes    int64
-	WorkerSelector map[string]string
+	// NoAllocation marks a mutation that cannot reserve more capacity:
+	// stop, delete, reset or an in-place restart.
+	NoAllocation  bool
+	CPUMillicores int64
+	MemoryBytes   int64
 }
 
 // WorkloadOperation resolves native resources and applies one admitted mutation.
@@ -24,7 +24,7 @@ type WorkloadAdmission struct {
 // Apply must retain native UID/version preconditions for updates.
 type WorkloadOperation interface {
 	Prepare(swarms []Swarm) (WorkloadAdmission, error)
-	Apply(workerSelector map[string]string) error
+	Apply() error
 }
 
 // AdmitWorkload serializes inspection and mutation within a shard in this server.
@@ -70,28 +70,21 @@ func (s *Service) AdmitWorkloadContext(ctx context.Context, userID, swarmID stri
 	if err != nil {
 		return err
 	}
-	if current.ProjectID != swarm.ProjectID || current.AtespaceName != swarm.AtespaceName || current.AtespaceUID != swarm.AtespaceUID {
+	if current.ProjectID != swarm.ProjectID {
 		return fmt.Errorf("%w: swarm identity changed", ErrConflict)
 	}
-	if strings.TrimSpace(plan.Name) == "" || (!plan.TemplateOnly && (plan.CPUMillicores <= 0 || plan.MemoryBytes <= 0)) {
+	if strings.TrimSpace(plan.Name) == "" || (!plan.NoAllocation && (plan.CPUMillicores <= 0 || plan.MemoryBytes <= 0)) {
 		return fmt.Errorf("%w: actor name and positive resolved CPU/memory limits are required", ErrInvalidWorkload)
 	}
 	capacity, err := s.store.ProjectCapacity(swarm.ProjectID)
 	if err != nil {
 		return err
 	}
-	selector, err := ShardWorkerSelector(capacity.WorkerSelector, plan.WorkerSelector)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidWorkload, err)
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if plan.TemplateOnly {
-		if plan.Replace {
-			return fmt.Errorf("%w: template publication is not an actor replacement", ErrInvalidWorkload)
-		}
-		return operation.Apply(selector)
+	if plan.NoAllocation {
+		return operation.Apply()
 	}
 	reservations := make([]ActorReservation, 0, len(plan.Reservations))
 	found := false
@@ -130,7 +123,7 @@ func (s *Service) AdmitWorkloadContext(ctx context.Context, userID, swarmID stri
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return operation.Apply(selector)
+	return operation.Apply()
 }
 
 func (s *Service) managedCapacitySwarm(userID, swarmID string) (Swarm, error) {

@@ -6,9 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
-
-	"brood.dev/go/brood/pipeline"
 )
 
 // ProjectSyncResult describes the server's committed declarative project sync.
@@ -24,38 +21,6 @@ type ProjectSyncResult struct {
 	OriginMode         string `json:"origin_mode"`
 	GitCredential      string `json:"git_credential"`
 	GitCredentialBound bool   `json:"git_credential_bound"`
-}
-
-// ValidateWorkflowPublication checks deterministic server limits before project sync.
-func ValidateWorkflowPublication(workflows map[string]string) ([]byte, error) {
-	if len(workflows) > pipeline.MaxWorkflowDefinitions {
-		return nil, errors.New("too many workflow definitions")
-	}
-	total := 0
-	for name, text := range workflows {
-		total += len(name) + len(text)
-		if len(name) > pipeline.MaxWorkflowNameBytes || len(text) > pipeline.MaxWorkflowDefinitionBytes || total > pipeline.MaxWorkflowBatchBytes {
-			return nil, errors.New("workflow definition batch exceeds size limit")
-		}
-	}
-	body, err := json.Marshal(map[string]any{"workflows": workflows})
-	if err != nil {
-		return nil, errors.New("could not encode workflow definitions")
-	}
-	if len(body) > pipeline.MaxWorkflowBodyBytes {
-		return nil, errors.New("workflow publication request exceeds size limit")
-	}
-	return body, nil
-}
-
-// PublishWorkflows publishes named standalone workflow definitions for a project.
-func (c *Client) PublishWorkflows(ctx context.Context, projectID string, workflows map[string]string) error {
-	body, err := ValidateWorkflowPublication(workflows)
-	if err != nil {
-		return err
-	}
-	var response json.RawMessage
-	return c.call(ctx, http.MethodPut, "/api/projects/"+url.PathEscape(projectID)+"/workflows", body, &response)
 }
 
 // publicProjectSyncError возвращает только фиксированные публичные сообщения.

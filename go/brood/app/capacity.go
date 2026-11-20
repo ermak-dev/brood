@@ -2,15 +2,12 @@ package app
 
 import (
 	"fmt"
-	"maps"
 	"math"
-	"sort"
 )
 
 // ShardCapacity defines optional reservation limits and required worker labels.
 // Nil limits are unlimited; a non-nil zero prohibits any reservation.
 type ShardCapacity struct {
-	WorkerSelector   map[string]string
 	MaxSwarms        *int64
 	MaxActors        *int64
 	MaxCPUMillicores *int64
@@ -126,24 +123,4 @@ func ShardUsageFromRecords(projectID string, swarms []Swarm, actors []ActorReser
 		usage.MemoryBytes += actor.MemoryBytes
 	}
 	return usage, nil
-}
-
-// ShardWorkerSelector defaults to shard labels or validates an explicit subset.
-// Additional labels may narrow the eligible workers, but never remove a shard label.
-func ShardWorkerSelector(shard, explicit map[string]string) (map[string]string, error) {
-	if len(explicit) == 0 {
-		return maps.Clone(shard), nil
-	}
-	keys := make([]string, 0, len(shard))
-	for key := range shard {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		value, ok := explicit[key]
-		if !ok || value != shard[key] {
-			return nil, fmt.Errorf("worker selector must retain shard label %q", key)
-		}
-	}
-	return maps.Clone(explicit), nil
 }

@@ -19,7 +19,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"brood.dev/go/brood/gitorigin"
-	"brood.dev/go/brood/pipeline"
 )
 
 const (
@@ -266,9 +265,6 @@ func ParseDocument(text, filename string) (map[string]any, error) {
 	if !ok {
 		return nil, failure(filename, "document", 1, "invalid document structure")
 	}
-	if err := validateWorkflows(typed, filename); err != nil {
-		return nil, err
-	}
 	return typed, nil
 }
 
@@ -491,42 +487,13 @@ func init() {
 		typ: "object", addlFalse: true, required: []string{"template"},
 		props: schemaProperties("template", name),
 	}
-	text := &schemaNode{typ: "string"}
-	option := &schemaNode{typ: "object", addlFalse: true, required: []string{"label", "outcome"}, props: schemaProperties("label", text, "outcome", text)}
-	// Роль узла workflow: DNS label, обязательна у actor-узлов (#208).
-	// Схема проверяет форму и привязку к типу узла; обязательность для
-	// actor-узлов проверяет общий валидатор конвейера ниже по потоку.
-	childJoin := &schemaNode{typ: "object", addlFalse: true, props: schemaProperties(
-		"mode", &schemaNode{typ: "string", enum: []any{"all", "any", "quorum"}},
-		"quorum", &schemaNode{typ: "integer", minP: numberPtr(0), maxP: numberPtr(64)}),
-		allOf: []*schemaNode{
-			{ifS: &schemaNode{required: []string{"mode"}, props: schemaProperties("mode", &schemaNode{constV: "quorum", constSet: true})},
-				thenS: &schemaNode{required: []string{"quorum"}, props: schemaProperties("quorum", &schemaNode{minP: numberPtr(1)})}},
-			{ifS: &schemaNode{required: []string{"quorum"}, props: schemaProperties("quorum", &schemaNode{minP: numberPtr(1)})},
-				thenS: &schemaNode{required: []string{"mode"}, props: schemaProperties("mode", &schemaNode{constV: "quorum", constSet: true})}},
-		}}
-	node := &schemaNode{typ: "object", addlFalse: true, required: []string{"type"}, props: schemaProperties(
-		"type", &schemaNode{typ: "string", enum: []any{"actor", "human", "condition", "land", "exit", "parallel", "fan_in"}}, "role", name, "prompt", text, "question", text,
-		"options", &schemaNode{typ: "array", items: option}, "target", text, "branches", &schemaNode{typ: "array", items: text}, "childJoin", childJoin,
-		"actionClasses", &schemaNode{typ: "array", minItems: 1, maxItems: 6, uniqueItems: true, items: &schemaNode{typ: "string", enum: []any{"work", "review", "landing", "schema", "deploy", "destructive_lifecycle"}}}),
-		allOf: []*schemaNode{
-			{ifS: &schemaNode{required: []string{"role"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true})}},
-			{ifS: &schemaNode{required: []string{"childJoin"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true})}},
-			{ifS: &schemaNode{required: []string{"actionClasses"}}, thenS: &schemaNode{props: schemaProperties("type", &schemaNode{constV: "actor", constSet: true})}},
-		}}
-	edge := &schemaNode{typ: "object", addlFalse: true, required: []string{"from", "to"}, props: schemaProperties("from", text, "to", text, "condition", text, "label", text, "weight", &schemaNode{typ: "integer"})}
-	workflow := &schemaNode{typ: "object", addlFalse: true, required: []string{"start", "exit", "nodes", "edges", "goalGates"}, props: schemaProperties(
-		"start", text, "exit", text, "nodes", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: node},
-		"edges", &schemaNode{typ: "array", items: edge}, "goalGates", &schemaNode{typ: "array", items: text},
-		"retry", &schemaNode{typ: "object", addlFalse: true, required: []string{"maxRetries"}, props: schemaProperties("maxRetries", &schemaNode{typ: "integer", minP: numberPtr(0)})})}
 	capacityLimit := &schemaNode{anyOf: []*schemaNode{
 		{typ: "null"},
 		{typ: "string", maxLen: 19, pattern: regexp.MustCompile(`^(0|[1-9][0-9]*)$`)},
 	}}
 	projectCapacity := &schemaNode{
-		typ: "object", addlFalse: true, required: []string{"worker_selector"},
+		typ: "object", addlFalse: true,
 		props: schemaProperties(
-			"worker_selector", &schemaNode{typ: "object", minProps: 1, addlProps: &schemaNode{typ: "string"}},
 			"max_swarms", capacityLimit, "max_actors", capacityLimit,
 			"max_cpu_millicores", capacityLimit, "max_memory_bytes", capacityLimit,
 		),
@@ -537,7 +504,6 @@ func init() {
 		"capacity", projectCapacity,
 		// Ссылка на серверный Git credential проекта (#173): имя, не значение.
 		"git_credential", &schemaNode{typ: "string", maxLen: 63, pattern: patternOptionalName},
-		"managed_network", &schemaNode{typ: "string", maxLen: 63, pattern: patternOptionalName},
 	)}
 	apiVersion := &schemaNode{typ: "string", constV: "brood.dev/v1alpha1", constSet: true}
 	schemaRoot = &schemaNode{
@@ -555,7 +521,6 @@ func init() {
 			"templates", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: template},
 			"networks", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: network},
 			"targets", &schemaNode{typ: "object", minProps: 1, propNames: name, addlProps: targetEntry},
-			"workflows", &schemaNode{typ: "object", propNames: name, addlProps: workflow},
 		),
 	}
 }
@@ -1371,59 +1336,6 @@ func checkDefinitions(document map[string]any, filename string) error {
 	return nil
 }
 
-// Workflow returns a named workflow from a validated Broodfile document.
-func Workflow(document map[string]any, name, filename string) (*pipeline.Document, error) {
-	workflows, _ := asMap(document["workflows"])
-	graph, ok := asMap(workflows[name])
-	if !ok {
-		return nil, fmt.Errorf("%s: unknown workflow %q (available: %s)", filename, name, strings.Join(sortedKeys(workflows), ", "))
-	}
-	copyGraph := make(map[string]any, len(graph)+2)
-	for key, value := range graph {
-		copyGraph[key] = value
-	}
-	copyGraph["apiVersion"] = "brood.dev/v1alpha1"
-	copyGraph["name"] = name
-	return pipeline.ParseEmbedded(copyGraph, filename+": workflows."+name)
-}
-
-// WorkflowSnapshots returns validated standalone YAML for declared workflows.
-func WorkflowSnapshots(document map[string]any, filename string) (map[string]string, error) {
-	workflows, _ := asMap(document["workflows"])
-	result := make(map[string]string, len(workflows))
-	for _, name := range sortedKeys(workflows) {
-		graph, err := Workflow(document, name, filename)
-		if err != nil {
-			return nil, err
-		}
-		data, err := yaml.Marshal(graph)
-		if err != nil {
-			return nil, fmt.Errorf("%s: workflow %q: could not encode snapshot", filename, name)
-		}
-		if _, err := pipeline.Parse(string(data), filename+": workflows."+name); err != nil {
-			return nil, err
-		}
-		result[name] = string(data)
-	}
-	return result, nil
-}
-
-// validateWorkflows использует общий validator конвейеров: узлы workflow
-// называют роли, а не шаблоны, сверка со списком templates не нужна (#208).
-func validateWorkflows(document map[string]any, filename string) error {
-	workflows, _ := asMap(document["workflows"])
-	for _, name := range sortedKeys(workflows) {
-		parsed, err := Workflow(document, name, filename)
-		if err != nil {
-			return err
-		}
-		if err := parsed.Validate(); err != nil {
-			return fmt.Errorf("%s: workflows.%s: %w", filename, name, err)
-		}
-	}
-	return nil
-}
-
 // planProjectConfig сохраняет присутствие необязательных полей серверного проекта.
 func planProjectConfig(document map[string]any, filename string) (map[string]any, error) {
 	config := map[string]any{"name": document["name"], "repository": ""}
@@ -1459,18 +1371,6 @@ func planProjectConfig(document map[string]any, filename string) (map[string]any
 		}
 		config["git_credential"] = name
 	}
-	if raw, present := declaration["managed_network"]; present {
-		name, _ := raw.(string)
-		if name == "" {
-			config["managed_network"] = nil
-		} else {
-			network, err := planManagedNetwork(document, name)
-			if err != nil {
-				return nil, failure(filename, "project.managed_network", -1, err.Error())
-			}
-			config["managed_network"] = network
-		}
-	}
 	return config, nil
 }
 
@@ -1478,9 +1378,6 @@ func planProjectConfig(document map[string]any, filename string) (map[string]any
 func MakePlan(document map[string]any, pins map[string]string, target string,
 	registry string, atespace string, filename string) (map[string]any, error) {
 	if err := validateSchema(document, filename, nil); err != nil {
-		return nil, err
-	}
-	if err := validateWorkflows(document, filename); err != nil {
 		return nil, err
 	}
 	projectConfig, err := planProjectConfig(document, filename)

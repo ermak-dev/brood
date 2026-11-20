@@ -8,7 +8,6 @@ package server
 import (
 	"crypto/x509"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -59,34 +58,7 @@ type Config struct {
 	SecureCookies bool
 	// SessionSecret — секрет аутентификации (BROOD_SESSION_SECRET);
 	// пустой заменяется случайным на старте процесса.
-	SessionSecret []byte
-	// AteapiToken, AteapiCA и AteapiEndpoint — параметры клиента ateapi
-	// (ATEAPI_TOKEN_FILE, ATEAPI_CA_FILE, ATEAPI_ENDPOINT).
-	AteapiToken    string
-	AteapiCA       string
-	AteapiEndpoint string
-	// AtenetRouter is the explicit atenet-router authority (ATENET_ROUTER).
-	// Empty disables actor ingress; there is no machine-specific default.
-	AtenetRouter string
-	// Projected router identity, trust roots, and verified TLS server name.
-	AtenetCert       string
-	AtenetKey        string
-	AtenetCA         string
-	AtenetServerName string
-	// KubeURL, KubeToken и KubeCA — Kubernetes API (KUBE_API_URL,
-	// KUBE_API_TOKEN, KUBE_API_CA).
-	KubeURL   string
-	KubeToken string
-	KubeCA    string
-	// WorkerPoolImages и WorkerPoolImage — образы воркеров по классам
-	// песочницы, как у Python-сервера.
-	WorkerPoolImages string
-	WorkerPoolImage  string
-	// CLIProxyURL and CLIProxyManagementKey configure the explicit LLM backend.
-	// The management credential is server-only and never returned to the panel.
-	// RegistryURL is the private OCI registry origin; RegistryImageHost is its worker-facing authority.
-	RegistryURL           string
-	RegistryImageHost     string
+	SessionSecret         []byte
 	CLIProxyURL           string
 	CLIProxyManagementKey string
 	// CLIProxyAPIKey is the server-only model credential (CLIPROXY_API_KEY).
@@ -156,21 +128,6 @@ func LoadConfig(get getenv) (Config, error) {
 		TLSCert:               envGet(get, "BROOD_TLS_CERT"),
 		TLSKey:                envGet(get, "BROOD_TLS_KEY"),
 		SessionSecret:         []byte(envGet(get, "BROOD_SESSION_SECRET")),
-		AteapiToken:           envGet(get, "ATEAPI_TOKEN_FILE"),
-		AteapiCA:              envGet(get, "ATEAPI_CA_FILE"),
-		AteapiEndpoint:        envGet(get, "ATEAPI_ENDPOINT"),
-		AtenetRouter:          envGet(get, "ATENET_ROUTER"),
-		AtenetCert:            envGet(get, "ATENET_CLIENT_CERT_FILE"),
-		AtenetKey:             envGet(get, "ATENET_CLIENT_KEY_FILE"),
-		AtenetCA:              envGet(get, "ATENET_CA_FILE"),
-		AtenetServerName:      envGet(get, "ATENET_SERVER_NAME"),
-		KubeURL:               envGet(get, "KUBE_API_URL"),
-		KubeToken:             envGet(get, "KUBE_API_TOKEN"),
-		KubeCA:                envGet(get, "KUBE_API_CA"),
-		WorkerPoolImages:      envGet(get, "WORKER_POOL_IMAGES"),
-		WorkerPoolImage:       envGet(get, "WORKER_POOL_IMAGE"),
-		RegistryURL:           envGet(get, "BROOD_REGISTRY_URL"),
-		RegistryImageHost:     envGet(get, "BROOD_REGISTRY_IMAGE_HOST"),
 		CLIProxyAPIKey:        envGet(get, "CLIPROXY_API_KEY"),
 		ActorLLMURL:           envGet(get, "BROOD_ACTOR_LLM_URL"),
 		ActorLLMAPIKey:        envGet(get, "BROOD_ACTOR_LLM_API_KEY"),
@@ -261,9 +218,6 @@ func (cfg Config) validateAdapters() error {
 			return &ConfigError{Setting: model.setting, Detail: "must be at most 256 printable ASCII characters without spaces"}
 		}
 	}
-	if err := cfg.validateRegistry(); err != nil {
-		return err
-	}
 	if err := cfg.validateTelegram(); err != nil {
 		return err
 	}
@@ -280,25 +234,6 @@ func (cfg Config) validateAdapters() error {
 	}
 	if strings.ContainsAny(cfg.CLIProxyManagementKey, "\r\n") {
 		return &ConfigError{Setting: "CLIPROXY_MANAGEMENT_KEY", Detail: "must not contain newlines"}
-	}
-	settings := []struct{ name, value string }{
-		{"ATENET_ROUTER", cfg.AtenetRouter},
-		{"ATENET_CLIENT_CERT_FILE", cfg.AtenetCert},
-		{"ATENET_CLIENT_KEY_FILE", cfg.AtenetKey},
-		{"ATENET_CA_FILE", cfg.AtenetCA},
-		{"ATENET_SERVER_NAME", cfg.AtenetServerName},
-	}
-	configured := false
-	for _, setting := range settings {
-		configured = configured || setting.value != ""
-	}
-	if !configured {
-		return nil
-	}
-	for _, setting := range settings {
-		if setting.value == "" {
-			return &ConfigError{Setting: setting.name, Detail: "is required when actor ingress is configured"}
-		}
 	}
 	return nil
 }
@@ -358,6 +293,3 @@ func errNotConfigured(component, settings string) error {
 	return &ConfigError{Setting: settings,
 		Detail: fmt.Sprintf("%s is not configured", component)}
 }
-
-// ErrNotConfiguredAteapi — Substrate-адаптер не настроен.
-var ErrNotConfiguredAteapi = errors.New("ateapi is not configured")
