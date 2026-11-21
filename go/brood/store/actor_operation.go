@@ -53,7 +53,7 @@ func (s *Store) CurrentActorOperation(ctx context.Context, uid string) (ActorOpe
 // workspace_attest is the swarm's workspace attestation (#212): it stops and
 // restarts the whole actor like restart, so it takes the same reservation.
 func (s *Store) AcquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string) (ActorOperation, error) {
-	return s.acquireActorOperation(ctx, uid, generation, id, caller, operation, s.guardActorCoordination)
+	return s.acquireActorOperation(ctx, uid, generation, id, caller, operation, false, s.guardActorCoordination)
 }
 
 func sessionMutationOperation(operation string) bool {
@@ -67,7 +67,7 @@ func (s *Store) AcquireActorSessionOperation(ctx context.Context, target Managed
 	if !sessionMutationOperation(operation) || authorize == nil || human == "" {
 		return ActorOperation{}, newCoordinationConflict("session mutation authority is required")
 	}
-	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, func(ctx context.Context, current ManagedActor) error {
+	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, false, func(ctx context.Context, current ManagedActor) error {
 		if current.SwarmID != target.SwarmID {
 			return newCoordinationConflict("session target scope changed")
 		}
@@ -93,7 +93,7 @@ func (s *Store) AcquireActorSessionOperation(ctx context.Context, target Managed
 	})
 }
 
-func (s *Store) acquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string, guard func(context.Context, ManagedActor) error) (ActorOperation, error) {
+func (s *Store) acquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string, owner bool, guard func(context.Context, ManagedActor) error) (ActorOperation, error) {
 	var op ActorOperation
 	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "wipe" && operation != "recycle" && operation != "workspace_attest" && !sessionMutationOperation(operation)) {
 		return op, newCoordinationConflict("invalid workspace operation identity")
@@ -113,7 +113,7 @@ func (s *Store) acquireActorOperation(ctx context.Context, uid string, generatio
 		if err := guard(ctx, a); err != nil {
 			return err
 		}
-		op = ActorOperation{ProjectID: sw.ProjectID, SwarmID: sw.ID, UID: uid, Generation: generation, OperationID: id, Caller: caller, Operation: operation, State: "inflight"}
+		op = ActorOperation{ProjectID: sw.ProjectID, SwarmID: sw.ID, UID: uid, Generation: generation, OperationID: id, Caller: caller, Operation: operation, State: "inflight", Owner: owner}
 		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO coordination_claims(project_id,kind,request_id,payload,slot) VALUES (?,'workspace',?,?,?)`, sw.ProjectID, id, encodeManaged(op), uid)
 		return err
 	})
@@ -134,7 +134,10 @@ func (s *Store) FinishActorOperation(ctx context.Context, op ActorOperation, con
 		if confirmed && current.InterruptedBy != "" {
 			return newCoordinationConflict("owner interrupted this workspace operation; late acknowledgement cannot release its uncertain effects")
 		}
-		if confirmed {
+		// Операция владельца роя бронь не удерживает и при неизвестном
+		// исходе: владелец видит агента в терминале и решает сам, а
+		// вечная бронь закрыла бы ему и терминал, и повтор.
+		if confirmed || current.Owner {
 			_, err = s.conn(ctx).ExecContext(ctx, `UPDATE coordination_claims SET slot=NULL WHERE project_id=? AND kind='workspace' AND request_id=? AND slot=?`, op.ProjectID, op.OperationID, op.UID)
 			return err
 		}
@@ -162,7 +165,7 @@ func (s *Store) AcquireOwnerActorOperation(ctx context.Context, target ManagedAc
 	if authorize == nil {
 		return ActorOperation{}, newCoordinationConflict("owner authority is required")
 	}
-	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, func(ctx context.Context, current ManagedActor) error {
+	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, true, func(ctx context.Context, current ManagedActor) error {
 		if current.SwarmID != target.SwarmID {
 			return newCoordinationConflict("session target scope changed")
 		}

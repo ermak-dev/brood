@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -71,65 +70,21 @@ func (s *Server) beginManagedTerminal(r *http.Request) (proxy.UpgradeReservation
 		}
 		return nil
 	}
-	var op *store.ActorOperation
-	reserve := func(ctx context.Context) error {
-		held, err := s.store.AcquireActorSessionOperation(ctx, target, store.NewID(), "browser:"+user.ID, "terminal_stream", store.CoordinationActor{}, user.ID, authorize)
-		if err == nil {
-			op = &held
-		}
-		return err
-	}
-	owner := s.authorizeSwarmOwnerIntent(ctx, user.ID, target.SwarmID) == nil
-	// Явный owner control обходит старые holds. Его точный intervention берём
-	// перед отправкой: CurrentActorOperation может вернуть прерванный workspace.
-	if !owner {
-		release, err := s.managed.effects.acquire(ctx, target.UID)
-		if err != nil {
-			return proxy.UpgradeReservation{}, err
-		}
-		err = reserve(ctx)
-		release()
-		if err != nil {
-			return proxy.UpgradeReservation{}, err
-		}
-	}
+	// Терминал — прямое управление владельца роя: он не занимает агента
+	// бронью операции. Соединение живёт долго, и бронь на всё его время
+	// закрыла бы агента для шины, а после обрыва осталась бы навсегда.
+	// Право проверяется прямо перед отправкой запроса агенту.
 	return proxy.UpgradeReservation{
 		BeforeSubmit: func() (func(), error) {
 			release, err := s.managed.effects.acquire(ctx, target.UID)
 			if err != nil {
 				return nil, err
 			}
-			err = s.store.WithTx(ctx, func(ctx context.Context) error {
-				if err := authorize(ctx); err != nil {
-					return err
-				}
-				if op == nil {
-					if err := s.authorizeSwarmOwnerIntent(ctx, user.ID, target.SwarmID); err != nil {
-						return err
-					}
-					return reserve(ctx)
-				}
-				current, err := s.store.CurrentActorOperation(ctx, target.UID)
-				if err == nil && current != *op {
-					err = store.ErrCoordinationConflict
-				}
-				return err
-			})
-			if err != nil {
+			if err := s.store.WithTx(ctx, authorize); err != nil {
 				release()
 				return nil, err
 			}
 			return release, nil
-		},
-		Finish: func(outcome proxy.UpgradeOutcome) {
-			if op == nil {
-				return
-			}
-			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := s.store.FinishActorOperation(cleanup, *op, outcome == proxy.UpgradeNotSubmitted); err != nil {
-				slog.Error("terminal reservation settlement failed", "operation", op.OperationID)
-			}
 		},
 	}, nil
 }
