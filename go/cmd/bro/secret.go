@@ -31,9 +31,11 @@ accepted as arguments or printed. File sources must be regular non-symlink files
 inside the current git working copy (512 KiB per file, 2 MiB per batch).
 Lists show only file names and sizes or variable names. Mutations print nothing.
 
-file and var secrets are delivered to the project's agents. git credentials are
-server-only: the Git gateway sends them to exactly the bound repository and
-never to an agent. The token comes from stdin or a private file; add with an
+File and variable secrets are delivered to the project's running agents. Git
+credentials are scoped to the bound repository. An image builder receives its
+Git credential for checkout, before the playbook runs. Running agents use the
+Git gateway and do not receive that credential. Read a token from stdin or a
+private file; add with an
 existing name rotates it. A credential is active when brood.yaml references it
 as brood.git_credential and the project repository equals its repository.
 git list prints NAME, REPOSITORY and active or inactive.

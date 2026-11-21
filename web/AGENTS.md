@@ -4,7 +4,7 @@
 
 This is the original React 19 + TypeScript + Vite panel, extended for Brood's Go server. Preserve existing pages and frontend behavior during backend changes. LLM features use the v8 Management API under `/v8/management`; do not add v0 data fallbacks. Plugin resources and custom HTTP extensions preserve their backend-declared paths.
 
-Brood signs in with `/api/auth/*` and the `csrf` cookie, never a browser management key. Login/logout return 204. Current administrator status comes from the Go session, not browser storage. Project membership alone does not expose another user's swarms: a swarm is open to its owner and to an administrator, and there are no roles inside it. An agent (the API calls it an actor, and its ordinary role `worker`) is addressed through its swarm, `/api/swarms/<id>/actors`; the UI says "agent" everywhere. `src/features/brood/` holds the brood pages and `src/features/profile/` the profile; `src/services/brood/` owns their typed Go API calls. Every brood entity (projects, swarms, agents, pools, users) is a menu entry with one flat table built on `src/features/brood/table/` (`TablePage`: filter bar and sort kept in the query string, row actions with an overflow menu, confirmation and form dialogs, loading/failed/empty states). There are no detail pages and no tables nested in another entity's page; a parent cell links to the child table filtered by it (`/swarms?project=<id>`, `/agents?swarm=<id>`), and there is no global active project. The flat lists come from `GET /api/swarms` and `GET /api/agents`. The server remains the authorization authority. Do not require LLM-management access to log in or restore an ordinary user session.
+Brood signs in with `/api/auth/*` and the `csrf` cookie, never a browser management key. Login/logout return 204. Current administrator status comes from the Go session, not browser storage. Project membership alone does not expose another user's swarms: a swarm is open to its owner and to an administrator. An agent (the API calls it an actor, and its ordinary role `worker`) is addressed through its swarm, `/api/swarms/<id>/actors`; the UI says "agent" everywhere. `src/features/brood/` holds the brood pages and `src/features/profile/` the profile (the Telegram link); `src/services/brood/` owns their typed Go API calls. Every brood entity (projects, swarms, agents, pools, users) is a menu entry in `src/components/layout/navigation.ts` with one flat table built on `src/features/brood/table/`: `TablePage` (header with the primary action, summary strip, filter bar and sort kept in the query string, loading/failed/empty states, page keys), `EntityPanel` (the side panel of an object, where its actions live), `FormSheet` and `ConfirmDialog` in `dialogs.tsx`, and `useTableQuery`. A row only opens the side panel of its object; the open panel (`open`) and the create sheet (`create`) are part of the query string. There are no detail pages and no tables nested in another entity's page; a parent cell links to the child table filtered by it (`/swarms?project=<id>`, `/agents?swarm=<id>`), and there is no global active project. The flat lists come from `GET /api/swarms` and `GET /api/agents`; the agents table polls. Pools and users are administrator-only (`memberPaths` in `src/features/brood/routes.ts`), as are all inherited LLM-gateway pages. The server remains the authorization authority. `../docs/WEB.md` describes the panel for its users. Do not require LLM-management access to log in or restore an ordinary user session.
 
 - `src/features/`: feature-owned pages, components, hooks, types, and logic. Current features are `brood`, `profile`, `dashboard`, `providers`, `authFiles`, `oauth`, `quota`, `config`, `logs`, and `plugins`. Prefer this layout for new feature work.
 - `src/pages/`: remaining route pages outside the feature layout (login, system, and the auth-file OAuth excluded-model/model-alias editors); `LogsPage.tsx` there is only a re-export of the logs feature. Follow nearby conventions when modifying these; do not migrate unrelated code.
@@ -17,7 +17,7 @@ Brood signs in with `/api/auth/*` and the `csrf` cookie, never a browser managem
 
 ## Build, Test, and Development Commands
 
-Use Bun; `package.json` pins `bun@1.3.14`, and CI uses Node.js 24. Keep dependency changes consistent with `bun.lock`; do not introduce another package manager's lockfile.
+Use Bun; `package.json` pins `bun@1.3.14`, and `../deploy/Dockerfile.go` builds the panel with the same Bun image. Keep dependency changes consistent with `bun.lock`; do not introduce another package manager's lockfile.
 
 - `bun install --frozen-lockfile`: install locked dependencies.
 - `bun run dev`: start Vite at `http://localhost:5173` by default.
@@ -32,9 +32,9 @@ Use Bun; `package.json` pins `bun@1.3.14`, and CI uses Node.js 24. Keep dependen
 
 ## Deployment Constraints
 
-The production artifact is a single `dist/index.html` with JS/CSS and bundled assets inlined by `vite-plugin-singlefile`. The release workflow renames it to `management.html` for backend hosting; `vX.Y.Z` tags trigger releases.
+The production artifact is a single `dist/index.html` with JS/CSS and bundled assets inlined by `vite-plugin-singlefile`. The Go server embeds a copy of it, `../go/brood/server/static/index.html`, which is tracked in git: `bin/brood dev web build` (or `bun run build` and a copy) refreshes it, and `../deploy/Dockerfile.go` rebuilds it for the server image. The workflows under `.github/` are the upstream panel's and do not run in this repository.
 
-Preserve hash routing and single-file deployment. Changes to assets, imports, code splitting, or build configuration must not introduce required external build artifacts. Do not edit generated `dist/` files. App version is injected as `__APP_VERSION__` from `VERSION`, then git tags, then the package version, falling back to `dev`.
+Preserve hash routing and single-file deployment. Changes to assets, imports, code splitting, or build configuration must not introduce required external build artifacts. Do not edit generated `dist/` files or the embedded `index.html` by hand. App version is injected as `__APP_VERSION__` from `VERSION`, then git tags, then the package version, falling back to `dev`.
 
 ## API Contracts & State
 
@@ -66,6 +66,6 @@ Never commit real management keys, provider credentials, auth files, or other se
 
 ## Commits & Guidance Maintenance
 
-Use Conventional Commits, such as `feat(providers): add a provider` or `fix(auth-files): preserve disabled actions`. Keep changes focused. Pull requests should include a summary, linked issue when applicable, backend version/reproduction details for integration work, UI screenshots or notes when relevant, and verification results.
+Follow the commit conventions of the repository root (`../CLAUDE.md`): short, direct commit messages in American English, one change per commit. Keep changes focused. A change description should include a summary, UI screenshots or notes when relevant, and verification results.
 
 Maintain shared repository guidance in `AGENTS.md`. When updating it, synchronize the local `CLAUDE.md` to identical content if present; `CLAUDE.md` is currently ignored and untracked, so shared guidance must not depend on it. Keep guidance aligned with source and configuration rather than duplicating long implementation details.

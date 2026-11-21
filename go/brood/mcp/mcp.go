@@ -19,7 +19,7 @@ var ErrInvalidArguments = errors.New("Invalid tool arguments")
 
 const maxFrameBytes = 1 << 20
 const version = "2025-03-26"
-const instructions = "brood runs coding agents in containers of their own and joins them into a swarm with one human owner. Call agents to learn your name, your role and the other agents of the swarm. Use send to talk to another agent, or to the human owner with to=operator; the answer arrives later as a message, not as the result of send. Use tail to read what another agent printed last. A master may create agents with add and delete the agents it created with rm. An accepted operation is not a completed one: check the result with agents or tail, and when an outcome is reported as unconfirmed, look before you repeat the command."
+const instructions = "brood runs coding agents in containers of their own and joins them into a swarm with one human owner. Call agents to learn your name, your role and the other agents of the swarm. Use send to talk to another agent, or to the human owner with to=operator; the answer arrives later as a message, not as the result of send. Use tail to read your recent terminal output; a master can also read other agents in its swarm. A master may create agents with add and delete the agents it created with rm. An accepted operation is not a completed one: check the result with agents or tail, and when an outcome is reported as unconfirmed, look before you repeat the command."
 
 // GuestSpecs returns catalog commands available through a guest adapter.
 // The executor remains responsible for authorization.

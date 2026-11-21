@@ -19,7 +19,6 @@ import (
 	"time"
 )
 
-// Отправляемые и принимаемые cookie имена контракта CONTRACT.md.
 const (
 	cookieSession = "session"
 	cookieCSRF    = "csrf"

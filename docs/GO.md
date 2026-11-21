@@ -1,544 +1,322 @@
-# Go
+# Go-модуль
 
-Сервер `brood` и пользовательский клиент `bro` — модуль `brood.dev/go`
-в `go/`. Python остаётся в инструментах разработки и guest bootstrap.
-Go toolchain нужен для сборки, но не для запуска готовых бинарников.
-`bin/brood` остаётся входом Python-инструментов; это не Go-сервер.
+Сервер, клиент и агент brood написаны на Go и лежат в каталоге `go/`,
+модуль `brood.dev/go`. Этот документ для того, кто меняет код: что где
+лежит, кто кого импортирует, как собрать и как команда доходит до сервера.
 
-## Сборка и зависимости
+Что такое проект, рой, агент и пул, описано в [MODEL.md](MODEL.md).
 
-```sh
-cd go
-make build
-make test vet fmt-check
-make cross
-```
+## Программы
 
-Результаты — `go/bin/`, кросс-сборки — `go/bin/linux_amd64/` и
-`go/bin/linux_arm64/`. Бинарники собираются с `CGO_ENABLED=0`; каталог
-`go/brood/` содержит исходники, его нельзя игнорировать как бинарник.
+| Программа | Исходник | Что это |
+| --- | --- | --- |
+| `brood` | `go/cmd/brood` | сервер: HTTP API, встроенная панель, управление контейнерами ([DEPLOY.md](DEPLOY.md)) |
+| `bro` | `go/cmd/bro` | клиент человека и агента: команды и MCP-сервер ([CLI.md](CLI.md), [MCP.md](MCP.md)) |
+| `brood-guest` | `go/cmd/brood-guest` | агент внутри контейнера, только Linux ([PROXMOX.md](PROXMOX.md)) |
 
-CI запускает `bash .ci/go-test.sh` на существующем Docker runner. Скрипт
-использует Python-образ по digest и проверенный SHA-256 Go toolchain из
-`brood/dev/pins.json`, выполняет проверки и кросс-сборку. Секреты установки
-в контейнер проверок не передаются. Временные файлы `make test`, включая SQLite
-fixtures и рабочие файлы Go toolchain, находятся на отдельном tmpfs контейнера
-с лимитом 2 GiB (`TMPDIR` и `GOTMPDIR`). Постоянные кеши и выходные артефакты
-остаются на прежних путях; набор тестов, SQLite и таймаут не меняются. Push и удалённый pipeline — отдельные операции;
-локальный успешный прогон не является доказательством удалённого CI.
+## Каталоги
 
-Минимальный список прямых зависимостей:
+`go/cmd` — входы программ; только они печатают. `go/brood` — библиотека.
 
 | Пакет | Назначение |
-|---|---|
-| `golang.org/x/crypto` | Argon2id и SSH multiplexing гостевого Proxmox relay с закреплённым host key |
-| `golang.org/x/net` | WebSocket-транспорт исходящего WSS relay; существующий pin, без новой зависимости |
-| `golang.org/x/term` | Ввод пароля без эха с безопасным отказом; raw TTY attach к сохраняемому гостевому PTY |
-| `github.com/charmbracelet/x/vt` | Headless VT для снимков MCP и восстановления экрана при reconnect (#162). Не преобразует live-поток браузера и не отвечает приложению; заменяет экранную зависимость от tmux без собственного VT emulator |
-| `github.com/charmbracelet/x/ansi` | Типы режимов и границы управляющих последовательностей того же VT-стека: согласованный reconnect без обрыва UTF-8/escape-последовательностей |
-| `golang.org/x/sys` | Уже использовался косвенно; прямая зависимость для Linux PTY ioctl, pidfd, UID/capability и Unix socket проверок |
-| `modernc.org/sqlite` | SQLite без cgo |
-| `gopkg.in/yaml.v3` | Broodfile |
-| `go.ate.dev/substrate` | Публичные protobuf/gRPC-типы |
-| `google.golang.org/grpc`, `google.golang.org/protobuf` | Клиент API Substrate и protojson |
+| --- | --- |
+| `brood/server` | собирает сервер: настройки из окружения, маршруты HTTP, управление агентами и пулами Proxmox, сборка образов, шлюзы моделей и Git, Telegram. В `static/` лежит встроенная панель |
+| `brood/store` | хранилище на SQLite: встроенная схема и явные запросы без ORM |
+| `brood/auth` | пароли (Argon2id), серверные сессии, CSRF, ограничение частоты входа, управление пользователями |
+| `brood/app` | правила доступа и операции над проектами, участниками и роями; учёт лимитов |
+| `brood/proxy` | обратный прокси HTTP и WebSocket к терминалу агента с проверкой прав до соединения и во время него |
+| `brood/command` | каталог команд: имена, аргументы, разбор; общий для CLI, MCP и сервера |
+| `brood/clientapi` | клиент HTTP API сервера для `bro`: вход, сессии, объекты, команды, терминал |
+| `brood/swarmclient` | клиент агента: передаёт команду каталога локальному сокету `brood-guest` |
+| `brood/mcp` | MCP-сервер поверх каталога команд: JSON-RPC через стандартный ввод и вывод |
+| `brood/build` | чтение объявления проекта из плейбука `brood.yaml` ([BUILD.md](BUILD.md)) |
+| `brood/projectsecret` | правила секретов проекта: имена, пути, размеры ([SECRETS.md](SECRETS.md)) |
+| `brood/gitcredential` | правила серверных учётных данных Git проекта |
+| `brood/gitorigin` | приведение HTTPS-адреса репозитория к каноническому виду |
+| `brood/gitidentity` | имя и адрес автора коммитов агента |
+| `brood/actormodel` | проверка имён моделей Claude Code |
+| `brood/telegram` | клиент Telegram Bot API ([TELEGRAM.md](TELEGRAM.md)) |
+| `brood/proxmox` | клиент API Proxmox VE для контейнеров, которыми владеет brood, и проверка владения |
+| `brood/proxmox/sshboot` | SSH-вход в контейнер ключом установки: команды и запись файлов |
+| `brood/proxmox/relay` | соединение агента с сервером: сервер (`Hub`) и клиент |
+| `brood/proxmox/guest` | агент: подготовка системы, скачивание программ, сессия Claude Code, терминал, доставка сообщений, секреты, локальные шлюзы модели и Git |
+| `brood/proxmox/guest/ptysession` | постоянный псевдотерминал сессии и протокол подключения к нему |
+| `brood/proxmox/guest/ptyattach` | подключение ttyd к этому псевдотерминалу |
+| `brood/proxmox/guest/sessionctl` | операции над сессией от имени пользователя `actor` |
+| `brood/proxmox/guest/ccmsg` | доставка сообщения в работающую сессию Claude Code |
+| `brood/proxmox/guest/deliverylog` | журнал доставленных сообщений, чтобы после перезапуска не доставить дважды |
+| `brood/proxmox/attest` | подпись и проверка состояния рабочего каталога агента |
+| `go/acceptance` | проверки собранных программ целиком |
 
-HTTP — `net/http`, SQL — явные запросы. ORM, OAuth, JWT issuer и внешнего
-сервиса идентичности нет. Неиспользуемая SCS удалена: сессии обслуживаются
-`brood/auth` поверх одной таблицы в SQLite.
+Агент ещё несёт неиспользуемый код прежнего механизма задач: пакет
+`brood/proxmox/guest/managedinbox`, файлы `step_*` и `inbox_*` в
+`brood/proxmox/guest`, канал `brood-supervisor-inbox` в relay. Пакет
+`brood/proxmox/egress` никем не импортируется. Опираться на них не нужно.
 
-Substrate закреплён в `go.mod` на публичной версии
-`v0.6.1-0.20261023032142-4ebd668d62e3`, то есть commit
-`4ebd668d62e3f55753765a46579fc6deb81b2f7f`. Локального `replace`, worktree
-автора и vendoring для сборки больше не требуется. `go.sum` проверяет
-загруженные модули. Первая сборка требует доступа к Go module proxy.
+## Границы
 
-Этот публичный SDK pin отдельно записан как `SUBSTRATE_SDK_COMMIT` в dev pins.
-`SUBSTRATE_COMMIT` закрепляет runtime-форк для installer и Broodfile, а не
-меняет Go dependency: LXC реализован внутри воркера/контроллера и использует
-существующий публичный API. Приватный GitLab-форк не становится Go module
-зависимостью сервера или пользовательского клиента; машинного replace нет.
+Зависимости идут в одну сторону; так устроен код сейчас, и новые пакеты
+должны это сохранять.
 
-## Пакеты
+ - `cmd/brood` импортирует `server`, `store`, `auth`; `cmd/bro` —
+   `clientapi`, `swarmclient`, `mcp`, `command`, `build` и пакеты правил;
+   `cmd/brood-guest` — `proxmox/guest` и `proxmox/relay`.
+ - `server` — единственный пакет, который соединяет `store`, `auth`, `app`,
+   `proxy`, `telegram`, `proxmox`, `proxmox/relay` и `proxmox/sshboot`.
+ - `store` ничего не знает о сервере и HTTP; из своих пакетов берёт только
+   правила (`projectsecret`, `gitcredential`, `gitorigin`).
+ - `app` не импортирует ни одного пакета модуля: хранилище он получает
+   интерфейсом.
+ - `proxmox`, `proxmox/sshboot` и `telegram` — чистые клиенты без
+   зависимостей внутри модуля.
+ - Клиентская сторона (`clientapi`, `swarmclient`, `mcp`) и агент
+   (`proxmox/guest`) не импортируют `server`, `store`, `auth` и `app`.
+   С сервером их связывают только `command` и формат сообщений relay.
+ - Пакеты правил (`command`, `projectsecret`, `gitorigin`, `gitcredential`,
+   `gitidentity`, `actormodel`) не делают ввода-вывода и не включают
+   присланные значения в тексты ошибок.
 
-- `store`: SQLite, текущая схема, транзакции, readonly inspection и согласованные snapshots.
-- `projectsecret`: ограниченные данные проектных секретов и общие проверки; доставка — `docs/SECRETS.md`.
-- `proxmox/egress`: неизменяемая точная policy managed-гостя по HTTP/TLS, ASCII hostname и порту; только stdlib. Пустая policy означает offline. Guest proxy проверяет выбранные правила до DNS/dial; TLS CONNECT сначала проверяет SNI, затем пересылает исходный ClientHello без терминации TLS. Проверка публичности DNS-адресов сохраняется. Bootstrap поддерживает версионированный `BROOD_GUEST_EGRESS_POLICY` вместо legacy `BROOD_GUEST_ALLOWED_HOSTS`; неизвестные поля/версии, дубликаты и смешение двух настроек отвергаются. Supervisor получает полную policy, включая явный offline, до запуска приложения. Сервер передаёт закреплённый при admission snapshot; отсутствие project policy сохраняет прежний host-only режим.
-- `gitorigin`: каноническая форма и режим HTTPS Git origin актора, без сети и credentials; шлюз — `docs/PROXMOX.md`.
-- `gitidentity`: Git-идентичность актора для коммитов из имени актора и домена установки, без Git и сети; доставка гостю — `docs/PROXMOX.md`.
-- `actormodel`: модели Claude Code акторов из настроек установки и проверка формы имени, без настроек, Claude Code и сети; доставка гостю — `docs/PROXMOX.md`.
-- `gitcredential`: серверные Git credentials проекта — имя, привязка к точному repository, Basic username/token и их проверки; хранение и API — `docs/SECRETS.md`.
-- `gitlab`: API v4 одного явно заданного HTTPS endpoint и числового проекта, typed reads, чистые свидетельства CI и одноразовый transport создания same-project MR; только stdlib, без Git credentials, grants, merge authority и server/guest wiring (`docs/GITLAB.md`, библиотечные слои #302).
-- `auth`: пароли, сессии, CSRF, ограничение входа, управление пользователями.
-- `app`: права на проекты и рои, восстановление операций после сбоя.
-- `substrate`, `kube`: управляющие API.
-- `proxy`: HTTP/WebSocket к акторам с проверкой и отзывом доступа.
-- `server`: сборка сервера, маршруты, встроенная панель.
-- `clientapi`: веб-сессия CLI, TLS, chunked push и защищённое сохранение credentials.
-- `command`: единые декларации, CLI/MCP-аргументы, канонические invocation и сознательные отказы команд (`Refusal`: публичная причина и класс ошибки, `reason` ответа — `go/CONTRACT.md`).
-- `mcp`: stdio-адаптер над каталогом команд, без реализации операций.
-- `swarmclient`: credential-free клиент фиксированного гостевого broker для `bro --guest`.
-- `build`: текущий Broodfile, рабочие файлы, внешние Git/Docker buildx, локальный OCI-комплект.
-- `pipeline`: схема декларативных конвейеров (эпик #165), строгая валидация графа, выбор рёбер, симуляция прогона и DOT-рендер.
-- `oci`: проверка digest/графа и потоковое чтение OCI-архива без распаковки.
-- `piprender`: детерминированный DOT и standalone SVG пайплайнов со state-overlay, без graphviz; только stdlib.
-- `telegram`: клиент Telegram Bot API без store и server; только stdlib (`net/http`, `encoding/json`), новой зависимости нет.
-- `cmd/brood`, `cmd/bro`: сервер и клиент.
+## Зависимости
 
-API входа описан в `go/CONTRACT.md`. Наличие пакета и зелёные тесты не
-означают, что все пункты эпика #27 уже прошли живую приёмку.
+Список закрыт. Новая зависимость сначала записывается сюда с причиной,
+потом попадает в `go.mod`.
 
-## GitLab authority в хранилище (#302)
+| Модуль | Зачем |
+| --- | --- |
+| `modernc.org/sqlite` | драйвер SQLite на чистом Go: программы собираются без компилятора C и не требуют библиотек на машине |
+| `golang.org/x/crypto` | Argon2id для паролей; SSH для входа в контейнеры и для relay |
+| `golang.org/x/net` | WebSocket: relay и терминал в `bro attach` |
+| `golang.org/x/sys` | системные вызовы Linux в агенте |
+| `golang.org/x/term` | ввод пароля без эха и сырой режим терминала в `bro` |
+| `gopkg.in/yaml.v3` | чтение `brood.yaml` |
+| `github.com/router-for-me/CLIProxyAPI/v8`, `github.com/gin-gonic/gin` | встроенный шлюз моделей и локальная проба готовности SDK |
+| `github.com/charmbracelet/x/vt`, `github.com/charmbracelet/x/ansi` | эмулятор терминала в агенте: по нему строятся снимки экрана сессии |
 
-Исторический слой, сохранённый ради совместимости данных (#304). Описанные
-ниже grants и approvals не являются действующей моделью полномочий платформы
-и не требуют будущего server wiring. Интеграции принадлежат проектным
-инструментам с `bro secret`; merge — обычный шаг workflow. Каталог CLI/MCP
-не объявляет прежние `gitlab_*` команды. Замороженные схемы 33–34 и их данные
-не изменяются этим этапом вывода из использования.
+Остальные строки `go.mod` — косвенные зависимости этих модулей.
 
-`store/gitlab.go` — только локальные данные и транзакции, без сети, нового
-API/команд, клиентских адаптеров и исполнения merge. Шаг 32→33 создаёт пустые
-`gitlab_bindings`, `gitlab_grants`, `gitlab_operations`, `gitlab_approvals`;
-прежние Git transport credentials не создают ни привязок, ни разрешений API.
+## Сборка
 
-- `PutGitLabBinding`: активный администратор задаёт точный канонический
-  repository из декларации проекта, HTTPS API origin того же DNS host без
-  пути/порта/credentials, положительный numeric GitLab project ID, target branch,
-  имя server-side credential entry и enabled. Байты API token хранилище не
-  принимает. Ревизия меняется через CAS, включая ротацию с теми же полями.
-  Store проверяет локальную привязку и синтаксис; проверка repository через
-  upstream `GET /projects/:id` перед записью — обязанность будущего сервера.
-- `CreateGitLabGrant`: только текущий owner роя или администратор явно выдаёт
-  read/create/propose точному actor UID/incarnation/swarm/atespace и ревизии
-  привязки до заданного срока. Идентичность берётся из доверенного адаптера.
-  На использовании проверяются текущий settled running актор, активный рой,
-  совпадение atespace UID, repository и binding revision, срок/отзыв grant и
-  права живого granting human: admin либо project member + owner/editor роя.
-  Master role, parent actor и текст ответа оператору grants не создают.
-  Непустой `GitLabGrant.ID` — стабильный глобально уникальный ключ запроса
-  (1–128 ASCII букв, цифр, `_`, `-`). Точный повтор активного grant возвращает
-  исходную запись после текущих проверок полномочий; отличия human/principal,
-  binding revision, permissions или expiry и повтор после отзыва конфликтуют.
-  Повтор не продлевает срок и не восстанавливает доступ. Пустой ID сохраняет
-  одноразовый внутренний вызов; HTTP-адаптер обязан требовать стабильный ID.
-  Первичный ключ и `BEGIN IMMEDIATE` сериализуют конкурентные повторы, а
-  неизменяемая история сохраняет ключ после отзыва; схема 33 не меняется.
-- `ReserveGitLabMutation` принимает только MR create и хеширует ограниченные
-  canonical bytes всех аргументов; содержимое не сохраняет. Ключ повтора —
-  project/actor UID/incarnation/kind/request ID; весь principal дополнительно
-  сверяется. Другое содержимое конфликтует. Исходный grant неизменен: новый
-  grant не оживляет старое намерение. Журнал сохраняет неизменный snapshot
-  привязки без token bytes: ротация не теряет прежний upstream project/target.
-  `ReserveGitLabMutationWithGrant` использует только переданный непустой ID:
-  дополнительный grant не меняет выбранную authority, отозванный не заменяется.
-  Точный повтор требует тот же grant; другой grant конфликтует. Обе формы
-  используют общие транзакционные проверки текущей личности, binding и grantor.
-  Только успешный revision CAS
-  `reserved→sending` даёт одну попытку, с повторной авторизацией внутри той же
-  транзакции. Транзакция должна завершиться до внешнего эффекта: нельзя
-  отправлять запрос из внешнего `WithTx`, который ещё может откатиться.
-  `sending→completed/refused/unknown` фиксирует исход даже после отзыва.
-  `reserved→refused` отменяет неотправленное намерение. Ни одно состояние
-  после sending не возвращается в reserved/sending. При exclusive startup
-  `RecoverGitLabOperations` переводит sending в unknown, но не повторяет сеть.
-- `ReserveGitLabProposal` сохраняет типизированный неизменный snapshot:
-  requester, binding revision, тот же numeric project для source/target, MR IID,
-  source branch/SHA, pipeline ID/SHA, target branch и squash. Forks и pipelines
-  с SHA, отличным от source SHA, не поддерживаются. `ApproveGitLabMerge`
-  требует текущую web session, swarm-management rights и отдельный явный
-  `GitLabApproverPolicy`; nil всегда отказывает. Policy вызывается внутри
-  транзакции, не делает сеть и читает store с переданным ctx; после callback
-  store ещё раз проверяет текущую личность, права и сессию. `ClaimGitLabApproval`
-  повторяет эти проверки и policy, сверяет snapshot целиком и через CAS
-  одноразово меняет approved на claimed. `CheckGitLabApproval` повторяет текущие
-  права, сессию и policy без потребления решения; исторический approved сам по
-  себе текущую authority не доказывает. Owner/admin может отозвать решение;
-  исходный approver с действующей approval session и текущими management rights
-  может отозвать только собственное ещё действующее approved решение. Чужой editor,
-  consumed claim и неверная revision отказывают. Generic swarm answer merge не разрешает.
-- Миграция 33→34 добавляет terminal `gitlab_proposal_states`: rejected/stale
-  нельзя вернуть в pending; наблюдаемый definitive mismatch отзывает approval
-  в той же транзакции. Snapshot содержит полный bounded CI evidence, target SHA
-  и expiry не позднее grant. `GitLabProposals` применяет текущую SQL-видимость
-  пользователя и swarm filter до LIMIT 100; HTTP adapter всё равно проверяет
-  session и права перед выдачей. Список хранит историю, не execution authority.
+Версия Go закреплена в `go/go.mod`. Цели `go/Makefile`:
 
-Get-методы — внутреннее чтение истории, не авторизация гостя. Grant, journal и
-approval не удаляются и не переписываются под другой личностью; их триггеры
-сохраняют историю после удаления пользователя/актора/роя и неопределённый эффект
-после отзыва. Claim — только локальное потребление решения, не доказательство
-проверки GitLab или завершённого merge. Proposal journal не является merge
-executor; для него нет ни merge kind, ни механизма выполнения.
+| Команда | Что делает |
+| --- | --- |
+| `make -C go build` | собирает `brood` и `bro` в `go/bin/` |
+| `make -C go cross` | собирает их под `linux/amd64` и `linux/arm64` в `go/bin/<os>_<arch>/` |
+| `make -C go web` | пересобирает панель и заменяет встроенный файл; нужен Bun ([WEB.md](WEB.md)) |
+| `make -C go release` | `web`, затем `build` и `cross` |
+| `make -C go test`, `vet`, `fmt-check` | `go test ./...`, `go vet ./...`, проверка `gofmt` |
+| `make -C go clean` | удаляет `go/bin/` |
 
-Серверный слой этой архитектуры не подключается. Существующий journal остаётся
-историей, а не основанием для выдачи новых интеграционных полномочий. Необходимые
-проверки MR, CI и branch protection выполняются проектными инструментами и внешним
-сервисом; платформа не вводит отдельную merge authority.
-
-## Приватная подготовка Go endpoint
-
-`deploy/Dockerfile.go` собирает два статических бинарника: `brood` и `bro`.
-Финальный образ `scratch`: без Python, venv, gunicorn, Go toolchain и shell. Только бинарники,
-CA bundle и приватный каталог данных. Legacy Python server/client и вторая
-Python-реализация build удалены. Исходная React/Bun-панель сохранена в
-`web`, расширена новыми сущностями и встроена в бинарник. Перед release
-`bin/brood dev web test` пересобирает bundle; Dockerfile делает это сам.
-Это не удаляет работающую старую установку и не переключает её public traffic.
+`brood-guest` в цели `build` не входит и собирается отдельно, под Linux:
 
 ```sh
-bin/brood deploy go
+(cd go && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/brood-guest ./cmd/brood-guest)
 ```
 
-Нужны существующая принадлежащая установке namespace `brood`, её доверенная
-ServiceAccount `django`, локальный registry, `BROOD_SESSION_SECRET` в `.env`
-(не менее 32 символов) и `secrets/tls.crt`/`secrets/tls.key`. Команда создаёт
-отдельные `brood-go` Deployment/Service, PVC `brood-go-data`, Secrets и сетевую
-политику. SQLite находится на PVC; стратегия Recreate исключает параллельные
-реплики с одной БД. Чужие одноимённые объекты отвергаются.
+CGO выключен везде. Версию программы задаёт `-ldflags -X main.version=...`;
+`make` берёт её из `git describe`.
 
-Разрешённые образы воркеров задаются `WORKER_POOL_IMAGES` (JSON, обязательный
-`gvisor`, необязательный `microvm`, только digest-pinned ссылки);
-`WORKER_POOL_IMAGE` задаёт один `gvisor`. Без явной настройки команда читает
-карту из принадлежащего установке Go Deployment, не старых Django Secrets.
-При отсутствии валидной конфигурации выкладка отказывает до сборки; пулы
-и их образы не пересоздаются.
+Тесты на время текущей перестройки не поддерживаются: часть из них
+описывает уже удалённое поведение.
 
-Go API пулов также допускает экспериментальный `lxc`, только если класс явно
-присутствует в `WORKER_POOL_IMAGES` с digest-pinned образом. Это не установка
-рантайма: требуется проверенный форк и его SandboxConfig, интеграция deploy
-ведётся отдельно (#74). Класс разделяет ядро ноды и предназначен только для
-доверенных нагрузок, без memory checkpoint. Default остаётся `gvisor`;
-класс существующего пула и привязка образа к классу не меняются через API.
+## HTTP API
 
-При создании LXC-пула без `configRef` Go API явно указывает `lxc-image`.
-Пользовательский `configRef` сохраняется, обновление существующего пула
-не добавляет отсутствующую ссылку. Глобальный class-default для этого не нужен:
-подготовка нового LXC config не должна перепривязывать чужие пулы.
+Все маршруты регистрируются в `brood/server` и `brood/auth` вызовами
+`HandleFunc("МЕТОД /путь", ...)`. Запросы панели и `bro` проходят проверку
+сессии (cookie) и CSRF; изменяющий запрос несёт заголовок `X-CSRFToken`.
+Ответ с ошибкой — JSON с полем `detail`.
 
-Опционального режима `BROOD_GO_DEPLOY` больше нет. `deploy go` готовит
-приватный endpoint; `deploy server` добавляет TLS edge, initial admin и
-обязательную проверку входа до очистки старых Django/Postgres ресурсов.
-По решению оператора данные создаются заново, перенос не выполняется.
-Зелёный main выкладывается штатным job без второго ключа или target runner
-(`docs/DEPLOY.md`).
+Кто может вызывать:
 
-Перед доступом пользователей нужно создать администратора в новой базе.
-Переноса пользователей и других данных старого сервера нет. У Go-сервера
-отдельный TLS endpoint Service:8443; доступ оператора через локальный
-port-forward не должен публиковать его на внешнем интерфейсе.
+ - **все** — без входа;
+ - **вошедший** — любой пользователь с сессией;
+ - **участник** — участник проекта или администратор;
+ - **владелец** — владелец роя или администратор;
+ - **админ** — администратор.
 
-## Изоляция терминалов и вход сервера
+### Вход и пользователи
 
-Без настроек сервер слушает только `127.0.0.1:8080`; внешний адрес и TLS
-задаются явно. Новая SQLite-база создаётся с правами 0600. Существующие
-копии БД и журналы SQLite должны храниться в приватном каталоге.
+| Маршрут | Кто | Что делает |
+| --- | --- | --- |
+| `GET /healthz` | все | готовность: сервер достаёт до базы |
+| `GET /` | все | панель |
+| `GET /api/auth/session` | все | текущая сессия и CSRF-токен |
+| `POST /api/auth/login` | все | вход по имени и паролю |
+| `POST /api/auth/logout` | вошедший | выход |
+| `POST /api/auth/password` | вошедший | сменить свой пароль |
+| `GET /api/admin/users` | админ | список пользователей |
+| `POST /api/admin/users` | админ | создать пользователя |
+| `GET`, `PUT`, `DELETE /api/admin/users/{username}` | админ | прочитать, изменить, удалить пользователя |
+| `POST /api/admin/users/{username}/disable`, `.../enable` | админ | заблокировать, разблокировать |
+| `POST /api/admin/users/{username}/password-reset` | админ | задать новый пароль |
+| `POST /api/admin/users/{username}/role` | админ | выдать или снять права администратора |
+| `GET`, `PUT`, `DELETE /api/me/telegram` | вошедший | своя привязка Telegram и свой бот |
+| `POST /api/me/telegram/link` | вошедший | код привязки чата |
+| `PUT /api/me/telegram/events` | вошедший | какие события присылать |
 
-Router требует все настройки: `ATENET_ROUTER`, `ATENET_CLIENT_CERT_FILE`,
-`ATENET_CLIENT_KEY_FILE`, `ATENET_CA_FILE`, `ATENET_SERVER_NAME`. Сертификат
-и ключ могут находиться в одном projected bundle; CA и credentials
-перечитываются при новых соединениях. Установщик разрешает точные identity
-старого `ate-client` и доверенного серверного `brood/django`, без wildcard.
+### Проекты
 
-HTML актора не получает полномочия панели. Ссылка
-`/api/swarms/<id>/proxy/actors/<name>/` после проверки прав переводит на
-короткоживущий `/actor-view/<ticket>/...`. Это случайный scoped ticket,
-не пользовательская сессия и не JWT. Он привязан к исходной сессии, рою и
-актору, живёт 10 минут; после истечения нужно открыть терминал из панели снова.
-HTML получает обязательный CSP sandbox без `allow-same-origin`, не может
-читать cookies панели или выполнять её административные запросы. Cookies
-и управляющие заголовки актора не принимаются как настройки браузера панели.
-Относительные assets/WebSocket идут только в рамках ticket. Для такого
-проверенного соединения proxy согласует upstream Origin/Host с ttyd.
+| Маршрут | Кто | Что делает |
+| --- | --- | --- |
+| `GET /api/projects` | вошедший | свои проекты; администратору — все |
+| `POST /api/projects` | админ | создать проект |
+| `PUT /api/projects/sync` | админ; участник, если ничего не меняется | создать или обновить проект по объявлению из `brood.yaml` |
+| `GET /api/projects/{id}` | участник | проект, его лимиты и рои |
+| `DELETE /api/projects/{id}` | админ | удалить проект |
+| `PUT /api/projects/{id}/capacity` | админ | лимиты проекта |
+| `GET /api/projects/{id}/members` | участник | участники |
+| `POST /api/projects/{id}/members`, `DELETE .../members/{user}` | админ | добавить, убрать участника |
+| `GET /api/projects/{id}/owner` | участник | ответственный за проект |
+| `PUT /api/projects/{id}/owner` | админ | назначить ответственного |
+| `GET /api/projects/{id}/repository` | участник | репозиторий проекта |
+| `PUT /api/projects/{id}/repository` | админ | задать репозиторий |
+| `GET /api/git-remotes` | админ | репозитории из `BROOD_GIT_REMOTES`, без учётных данных |
+| `GET /api/projects/{id}/secrets` | админ | имена секретов, без значений |
+| `PUT`, `DELETE /api/projects/{id}/secrets/vars`, `.../secrets/files` | админ | записать, удалить переменные и файлы; значения не читаются |
+| `GET`, `PUT`, `DELETE /api/projects/{id}/secrets/git` | админ | серверные учётные данные Git; токен не возвращается |
+| `GET /api/projects/{id}/images` | участник | образы проекта |
+| `POST /api/projects/{id}/images` | участник | собрать образ на коммите |
+| `GET`, `DELETE /api/projects/{id}/images/{image}` | участник | образ с журналом сборки; удалить образ |
 
-Managed terminal без `mode` показывает выбор режима без побочного эффекта.
-Явный `mode=rw` разрешает writable stream текущему owner/admin даже при child hold;
-перед отправкой upstream фиксируется журнал вмешательства и `unconfirmed`
-затронутой попытки. По границе #311 точная операция и текущие полномочия
-проверяются под effect gate непосредственно перед первой записью запроса;
-gate освобождается после write/flush, не держится при ожидании ответа или весь
-WebSocket. Доказанный отказ до submission может завершить reservation;
-после начала submission сбой handshake, выдачи клиенту 101, HTTP refusal или
-disconnect оставляет `unconfirmed` и hold. Reservation исключает автоматический
-child enqueue/dispatch, но не новый явный owner input, reconnect, stop или reset.
-Автоматического timeout, resend или снятия hold нет; dispatch release журнал
-не очищает. Для прерванных попыток нужна отдельная явная сверка.
-Релиз #289 вводит итоговую схему 35 миграцией 34→35 без пересоздания базы.
-Замороженные версии 26–34 и их миграции неизменны; последующие изменения схемы
-требуют новой версии и миграции.
-Readonly `?mode=ro` на исходном URL выдаёт неизменяемый ticket для plain-text
-screen snapshots через session_terminal open ro/read/close, без ttyd writer;
-параметры и Upgrade не повышают его до writable. Это отдельный режим инспекции,
-не live stream и не расширение ролей доступа. Подробности — `docs/MODEL.md`.
+### Рои и агенты
 
-### Снимок managed egress
+| Маршрут | Кто | Что делает |
+| --- | --- | --- |
+| `GET /api/swarms` | вошедший | свои рои; администратору — все |
+| `GET /api/agents` | вошедший | агенты этих роёв одним списком |
+| `GET /api/projects/{id}/swarms` | участник | рои проекта, видимые вызывающему |
+| `POST /api/projects/{id}/swarms` | участник | создать рой; создатель становится владельцем |
+| `GET`, `DELETE /api/swarms/{id}` | владелец | рой; удалить рой без агентов |
+| `POST /api/swarms/{id}/transfer` | владелец | передать рой другому пользователю |
+| `GET /api/swarms/{id}/actors` | владелец | агенты роя |
+| `POST /api/swarms/{id}/actors` | владелец | создать агента |
+| `GET /api/swarms/{id}/actors/{name}` | владелец | агент |
+| `PUT`, `POST /api/swarms/{id}/actors/{name}` | владелец | запустить, остановить, сбросить, перезапустить сессию |
+| `DELETE /api/swarms/{id}/actors/{name}` | владелец | удалить агента |
+| `GET /api/swarms/{id}/templates`, `.../templates/{name}` | владелец | пулы, в которых можно создать агента, и доля ресурсов на агента |
+| `/api/swarms/{id}/proxy/actors/{name}/` | владелец | терминал агента: выдаёт одноразовый адрес `/actor-view/...` и перенаправляет на него; `?mode=rw` — терминал с вводом, `?mode=ro` — снимки экрана |
+| `POST /api/commands/{tool}` | по команде | выполнить команду каталога, см. ниже |
 
-Миграция 35→36 (#302) добавляет только `project_managed_networks` и
-`managed_actor_networks` с ограждениями immutable snapshot. Прежние строки и
-frozen версии 26–35 не меняются; старому актору без snapshot всегда соответствует
-legacy policy, независимо от последующих настроек проекта. Резервирование нового
-UID атомарно сохраняет текущую policy своего проекта; переданное вызывающим
-кодом значение не подменяет настройку. List/get и дальнейшие операции читают
-snapshot, а не текущий project default. Изменение и очистка default относятся
-только к новым акторам. Encoder и decoder ограничивают versioned JSON
-8192 байтами — лимитом одного значения bootstrap environment Proxmox. Слишком
-большая policy не сохраняется, прежняя настройка проекта остаётся неизменной.
+### Пулы
 
-Настройка входит в существующую авторизованную транзакцию project sync:
-отсутствующее поле сохраняет значение, пустое явно выбирает legacy для будущих
-акторов, а versioned JSON с пустыми rules выбирает offline. Изменение требует
-тех же текущих административных прав, что и остальные изменяемые свойства
-project sync; idempotent sync участника не расширяет его права. Snapshot остаётся
-после удаления identity и не допускает повторного использования UID. На этом
-слое настройка публикуется через `PUT /api/projects/sync` полем
-`managed_network` (versioned object либо явный `null` для legacy). Broodfile
-`project.managed_network` ссылается на именованную сеть; пустая ссылка очищает
-будущий default, а отсутствие поля сохраняет его. Create и каждый start передают
-ровно actor snapshot через
-`BROOD_GUEST_EGRESS_POLICY`, без одновременного legacy allowlist. Origin admission
-и runtime/list/get используют тот же snapshot для direct HTTPS, а текущий
-серверный Git-доступ по-прежнему определяет gateway. Последняя проверка origin
-и запись actor/snapshot идут в одной SQLite-транзакции до PVE-записи. Это не
-разрешение менять сеть существующих акторов неявно.
+| Маршрут | Кто | Что делает |
+| --- | --- | --- |
+| `GET /api/proxmox-pools` | админ | подключения и пулы с занятой ёмкостью |
+| `POST /api/proxmox-pools/{name}/activate`, `.../drain`, `.../enable` | админ | активировать, вывести, включить пул |
+| `DELETE /api/proxmox-pools/{name}` | админ | деактивировать пул |
+| `GET`, `POST /api/proxmox-connections` | админ | подключения из панели; создать подключение |
+| `POST /api/proxmox-connections/{uid}/clone` | админ | новое подключение с теми же адресом и токеном, другим шаблоном и ёмкостью |
+| `DELETE /api/proxmox-connections/{uid}` | админ | удалить подключение |
 
-Logout, блокировка, исключение из проекта и передача владельца отзывают
-доступ. Уже открытое соединение закрывается проверкой не позднее 60 секунд.
-Чтения native-объектов сверяют сохранённый UID namespace до RPC и перед
-выдачей данных. Proxy проверяет живой UID при авторизации и повторной
-проверке соединения; actor-view ticket сохраняет исходный UID. Удаление
-актора и шаблона передаёт UID прочитанного объекта в native DeleteOptions,
-поэтому поздняя замена объекта не удаляется по одному имени.
+### Шлюз моделей
 
-Это не атомарная namespace-транзакция: native ObjectRef содержит только
-имя области и объекта, а Suspend/Resume и ingress не поддерживают namespace
-UID precondition. Проверки Brood отказывают при обнаруженной подмене, но не
-исключают последнюю гонку с привилегированной заменой области между проверкой
-и name-based RPC/forwarding. Оператор не должен заменять native namespace
-под активной привязкой Brood; восстановление выполняется явным recover.
+При заданном `BROOD_CLIPROXY_CONFIG` команда `brood serve` запускает
+CLIProxyAPI через Go SDK в том же процессе, ждёт его готовности и
+пересылает ему запросы на локальный порт. Внешний шлюз можно указать
+через `CLIPROXY_URL` вместо запуска SDK.
 
-Actor-view URL нельзя писать в access logs: ticket временно даёт доступ к
-конкретному представлению актора. Приложение не журналирует ticket;
-внешний ingress должен также исключать/редактировать этот путь.
+| Маршрут | Кто | Что делает |
+| --- | --- | --- |
+| `/v8/management/`, `/v0/management/`, `/v0/resource/` | админ | страницы управления шлюзом в панели |
+| `/v1/`, `/v1beta/`, `/openai/v1/`, `/backend-api/codex/` | ключ шлюза | запросы к моделям от внешних клиентов; сессия brood не читается |
+| `/anthropic/callback`, `/codex/callback`, `/antigravity/callback`, `/devin/callback`, `/callback` | все | возврат OAuth поставщиков моделей |
 
-## Приёмочные проверки
+### Маршруты агента
 
-```sh
-cd go
-go test ./acceptance -count=1 -timeout=120s
-go test -race ./... -count=1 -timeout=180s
-```
+Их вызывает `brood-guest` из контейнера. Сессии и CSRF здесь нет: запрос
+несёт токен воплощения агента в заголовке `Authorization: Bearer`, а путь
+оканчивается на `{agent}/{generation}`.
 
-Acceptance собирает настоящие `brood` и `bro`, запускает только собственные
-процессы на loopback с приватной БД и проверяет login/logout, restart,
-проектное членство, два независимых роя и отзыв доступа. Активный сценарий
-использует явно названный TLS gRPC infrastructure fake: это не доказательство
-готовности живого кластера Substrate или microVM bootstrap.
+| Маршрут | Что делает |
+| --- | --- |
+| `GET /api/proxmox/guest/{agent}/{generation}` | relay: WebSocket-соединение агента |
+| `GET /api/proxmox/artifacts/{agent}/{generation}` и `.../{name}` | манифест программ агента и сами файлы |
+| `/api/proxmox/secrets/{agent}/{generation}` | секреты проекта для этого агента |
+| `/api/proxmox/workspace/{agent}/{generation}` | адрес репозитория и имя автора коммитов |
+| `/api/proxmox/llm/{agent}/{generation}/...` | запросы Claude Code к модели; сервер подставляет ключ шлюза |
+| `/api/proxmox/git/{agent}/{generation}/...` | Git по HTTPS с серверными учётными данными проекта |
 
-Публичный TLS-вход уже обслуживает Go-сервер с локальными пользователями,
-сессиями и ACL. Браузерные и кластерные доказательства фиксируются в #38
-отдельно от пакетных тестов. Полный workbench-прогон с вложенным Docker/kind
-остаётся отдельной приёмкой #26 и требует свободных 4000m/8Gi; работающий
-пользовательский актор не используется как disposable-проверка и не урезается
-ради освобождения ёмкости. Native LXC runtime proof остаётся в #10.
+## Каталог команд
 
-### Локальный протокол 2026-10-27
+Команда — запись в `brood/command`: имя (`send`, `pool_drain`), аргументы с
+типами и ограничениями, признаки «только чтение», «разрушающая» и
+«доступна агенту». Из одной записи получаются подкоманда `bro`
+(подчёркивание в имени разделяет слова: `bro pool drain`), инструмент MCP
+со схемой аргументов и проверка на сервере.
 
-- Изолированный `.ci/go-test.sh` прошёл полностью, включая vet, тесты,
-  сборку и обе архитектуры. Сборка из чистого checkout без локального
-  `replace` также прошла. После landing `f6179a6` удалённый GitLab pipeline
-  [6315](https://git.ermak.dev/ermak/brood/-/pipelines/6315) прошёл Python,
-  Go и deploy; этот deploy ещё использовал прежний production runtime,
-  а не переключал пользователей на Go.
-- Scratch-образ с read-only root, снятыми capabilities и без сети прошёл
-  bootstrap-admin, login, whoami и logout. Отдельный запуск с полным env
-  из manifests, тестовыми сертификатами и токеном подтвердил успешный старт
-  и TLS login. Это проверка конфигурации, не Kubernetes rollout.
-- На копии экспорта пользователей production Django выполнены импорт с
-  отключёнными учётными записями и восстановление SQLite backup с проверкой
-  целостности. Исходная БД, пароли и сессии не изменялись и не переносились.
-- Настоящие `bro build development` и `bro build coding` на commit
-  `814a160e8fc0d6967407793a03574f0ad0f4db71` дали один digest:
-  `sha256:cb71c77a76998042860dde53e64369cbe40b13a1474d35227f3e7734209ee5f1`.
-  Артефакты прочитаны protobuf-типами сервера; повторная coding-сборка
-  использовала cache, включая слой исходников Substrate.
-- В Chromium проверены управление пользователями/членством и обычный
-  пользователь. Отдельный тестовый unsafe endpoint воспроизвёл создание
-  администратора из HTML актора (201); sandbox actor-view заблокировал
-  тот же запрос и чтение cookies. Настоящий ttyd с `--check-origin`
-  выполнил команду через WebSocket. Provisioner этого браузерного стенда
-  был fake, а ttyd работал в отдельном Docker-контейнере, не в microVM.
-- Через Go API и настоящий локальный Substrate созданы два atespace,
-  template и suspended actor из собранного образа. Чужой пользователь
-  получил 404; ссылка на template чужого роя получила native
-  FailedPrecondition (409), и актор в чужом рое не появился. Актор не
-  возобновлялся; тестовые actor/template/atespaces удалены, пулы не менялись.
-- Повторный native e2e на `f6179a6` также подтвердил HTTP- и CLI-сессии
-  после рестарта, сохранение swarm state и совпадение записанных/живых UID
-  atespace, template и actor. Logout отозвал CLI-доступ. Тестовые ресурсы
-  удалены с проверкой UID, процессы остановлены, временные credentials удалены.
-  Локальный кластер не имел ни WorkerPool, ни зарегистрированных воркеров;
-  на хосте отсутствовал `/dev/kvm`, поэтому actor resume/mTLS route не проверялись.
+| Команда | Доступна агенту | Что делает |
+| --- | --- | --- |
+| `agents` | да | агенты роя и их состояние |
+| `send` | да | сообщение агенту или владельцу роя (`to=operator`) |
+| `tail` | да | недавний вывод агента |
+| `slash` | да | слэш-команда в сессию агента |
+| `add`, `rm` | да | создать, удалить агента |
+| `start`, `stop`, `restart`, `reset` | да | управление агентом |
+| `diagnose` | да | как команда доходит до сервера и под кем |
+| `pools`, `pool_drain`, `pool_enable` | нет | пулы; только администратор |
+| `server_diagnose` | нет | база и relay сервера; только администратор |
 
-Эти проверки не составляют полного прогона Go Deployment через живой
-atenet-router до новой microVM с вложенным Docker/kind. Публичный Django
-и действующий пользовательский coding-актор не переключались и не заменялись.
+Каталог описывает команды, но прав не даёт: права проверяет сервер при
+исполнении.
 
-### Кластерный протокол 2026-10-29
+Команда доходит до сервера тремя путями.
 
-- Go-only публичный вход, пользователи, проектный шард и owner/editor/viewer
-  проверены настоящим браузером на Go API. После !60 доставленный HTML совпал
-  побайтно с embedded bundle; проверены desktop/mobile, nullable int64 quotas,
-  отказ сети без потери draft, picker и запрет действий viewer.
-- Для терминальной приёмки созданы два новых пользователя одного проекта,
-  два роя и два собственных актора по 500m/512MiB. Отдельный Broodfile собрал
-  небольшой Alpine/ttyd/tmux образ и опубликовал его через `bro push`; внутри
-  нет credentials оператора или coding-модели. На существующем microVM worker
-  проверены настоящий atenet mTLS route, команды в терминале и reconnect с
-  сохранением состояния tmux. Чужие actor/template API и terminal links
-  вернули 404.
-- Пока тестовые акторы работали, штатный CI deploy main
-  `cf02704bb799dc99438a0ebe292bb6f5098e8ece` сменил серверный image digest.
-  [Pipeline 6468](https://git.ermak.dev/ermak/brood/-/pipelines/6468), deploy
-  30963 и rollout завершились успешно; стратегия `Recreate` исключает
-  трактовку этого как повтора с неизменным серверным образом. Обе CLI-сессии,
-  рои, actor UIDs и терминальное состояние сохранились; после `bro logout`
-  обе сессии перестали давать доступ. Expiry проверяется отдельным
-  acceptance-сценарием настоящих `brood`/`bro`: срок двух сессий меняется
-  только в приватной disposable SQLite-базе, после чего HTTP возвращает 401,
-  CLI — exit 2, а сессии остальных пользователей продолжают работать.
-  Производственные часы и сессии ради этого не меняются.
-- Собственные actor/template/swarm/project/users удалены в порядке от детей
-  к родителям с проверкой идентификаторов. Исходный пользовательский актор
-  сохранил UID и RUNNING; worker вернулся к исходным 4000m/8Gi и одному актору.
-  Пулы, хостовая runtime policy и PVE не изменялись.
-- Независимое security review выявило stale namespace binding (#79) и
-  задержку последовательного отзыва proxy-соединений (#81). Исправления
-  доставлены отдельными library/BFF PR, с RED regression tests и race.
-  Подмена проверена до/во время native чтений, inventory и удаления; живой
-  WebSocket закрывается при смене namespace UID. Остаточная граница native
-  name-based протокола описана выше, не выдаётся за namespace CAS.
-- После !60 pinned Bun audit вернул ноль advisory, 1742 frontend теста
-  прошли. `govulncheck` 1.9.0 с Go 1.27.3 на финальном main не нашёл
-  достижимых уязвимых symbols. Три module-only finding остаются в графе:
-  GO-2026-5932 (`x/crypto/openpgp`, не импортирован) и GO-2026-6860/6866
-  (`x/net/html`, не импортирован). Это не заявление об отсутствии CVE во
-  всех транзитивных модулях.
+**Человек, `bro`.** `cmd/bro` разбирает аргументы по каталогу, определяет
+текущий рой и через `clientapi` отправляет
+`POST /api/commands/{tool}` с телом `{"swarm_id": "...", "arguments": {...}}`
+и cookie сессии, сохранённой `bro login`. Сервер проверяет право на рой
+(`agents` — видеть, остальные — управлять), для команд, недоступных агенту,
+требует администратора и исполняет команду. Заголовок ответа
+`X-Brood-Command-Outcome: unconfirmed` означает, что команда могла
+подействовать, хотя ответ — ошибка.
 
-Этот малый терминальный образ не заменяет корневые development/coding
-workbench. Обе корневые сборки с проверенным fork pin прошли и дали одинаковый
-`sha256:1e2a4fc3c4ca8d8dc61be4341fb1f27758182af08b6ac575ada23a48376a282a`;
-OCI descriptors, размеры и полные слои проверены на согласованность и
-отсутствие credentials установки. Полный запуск с nested Docker/kind остаётся
-в #26: отдельные 4000m/8Gi недоступны, локально нет KVM. Для LXC отдельный
-блокер #10 — локальный хост загружен с `ipv6.disable=1`; ограничения хоста не
-обходились. Протоколы, revisions и доказательства сохранены в #38 и #26.
+**MCP у человека, `bro mcp`.** `brood/mcp` читает JSON-RPC со стандартного
+ввода, объявляет команды каталога инструментами и исполняет вызов тем же
+путём, что и `bro`.
 
-## Новая база
+**Агент.** В контейнере `bro` запускается с `BROOD_EXECUTION_MODE=guest`:
+рой он не выбирает и сессии не имеет. `swarmclient` передаёт команду в
+сокет `/run/brood/swarm.sock`, который держит `brood-guest`; тот отправляет
+её серверу запросом `brood-swarm-rpc-v1` по своему соединению relay.
+Сервер знает отправителя по соединению, а не из запроса: команда
+исполняется в рое этого агента и с его ролью (создавать и удалять агентов
+может только `master`, и только созданных им). Claude Code в контейнере
+получает те же команды инструментами MCP: их отдаёт `bro mcp` в этом же
+режиме.
 
-Сервер разворачивается с чистой SQLite-базой, без импорта старых пользователей,
-проектов, роёв и сессий. Команды импорта больше нет; поставляются только `brood`
-и `bro`.
+## Relay
 
-`store.Open` создаёт пустую базу одной транзакцией: единый реестр модулей схемы
-(`brood/store/registry.go`) объявляет DDL каждого модуля один раз, версия схемы —
-одна константа. Реестр остаётся единственным описанием текущей схемы: свежая база
-создаётся по нему сразу в текущей версии, без прохода по миграциям.
-Базовые таблицы — `users`, `projects`, `project_members`, `swarms` (включая
-`retry`) и `sessions`; ACL `swarm_members` с уникальностью имён неудалённых
-роёв и `project_capacity` создаются тем же реестром, owner grant — часть
-инициализации ACL.
+Relay — одно исходящее соединение агента с сервером, по которому сервер
+достигает контейнера. Агент открывает WebSocket на
+`/api/proxmox/guest/{agent}/{generation}` с токеном воплощения; внутри
+WebSocket идёт соединение SSH, в котором сервер — сторона с ключом хоста
+(агент сверяет его с `BROOD_GUEST_RELAY_HOST_KEY`). Дальше обе стороны
+открывают каналы:
 
-Повторное открытие сохраняет пользователей, grants, сессии и лимиты.
-Определения таблиц, ограничения, индексы и триггеры каждого модуля сверяются
-с реестром; пробелы вне строковых литералов несущественны. Частичная или
-повреждённая схема вызывает отказ, а не догадку о восстановлении.
+| Канал | Кто открывает | Что несёт |
+| --- | --- | --- |
+| `brood-terminal` | сервер | поток к ttyd агента (`127.0.0.1:8080` в контейнере); не больше 32 одновременно |
+| `brood-session-rpc-v1` | сервер | одна операция над сессией: вывод, слэш-команда, перезапуск, снимок экрана |
+| `brood-swarm-msg` | сервер и агент | одно сообщение шины роя и ответ о доставке |
+| запрос `brood-swarm-rpc-v1` | агент | команда каталога от агента |
 
-### Фиксация перед внешним эффектом (#291)
+Адреса и команды в каналах не передаются: агент сам решает, куда вести
+`brood-terminal`, и умеет только перечисленное. Сервер раз в секунду
+перепроверяет, что агент ещё вправе быть подключён, и рвёт соединение
+остановленного, удалённого или пересозданного агента.
 
-`WithDurableTx` фиксирует reservation с `synchronous=FULL` на отдельном
-закреплённом соединении; обычный `WithTx` остаётся в `NORMAL`. Callback выполняет
-только локальные Store-операции с переданным context. Эффект допускается лишь
-после успешного возврата, не из callback. Вложенный durable вызов запрещён:
-разрешение не может вернуться раньше внешнего commit. FULL не заменяет проверку
-полномочий, не доказывает доставку и не защищает от отката всего носителя.
+## Соглашения
 
-### Миграции схемы (#274)
-
-Изменение схемы выкатывается миграцией на существующей базе; production
-ради изменения схемы не пересоздаётся (решение оператора 2026-11-12, отменяет
-«пересоздаём базу» #204, #205). База версии N < `schemaVersion` открывается
-так:
-
-1. До первой записи проверяется весь план: шаги N→N+1→…→текущая есть в
-   цепочке `schemaMigrations` (`brood/store/migration.go`). База новее
-   релиза (старый образ на новой базе), версия вне цепочки (сейчас всё
-   до 26) и разрыв в цепочке дают отказ с причиной, файл не меняется:
-   `incompatible database schema: found 28, want 27; the database is newer than
-   this release`, `... found 25, want 27; no migration from version 25`.
-2. Каждый шаг идёт в своей транзакции `BEGIN IMMEDIATE`: SQL шага, при нужде
-   Go-перенос данных, `PRAGMA foreign_key_check`, новая `user_version`.
-   Последний шаг до фиксации сверяет схему с реестром так же, как открытие
-   текущей версии. Упавший шаг откатывается целиком: база остаётся на версии
-   до него (`... migration from version 26 to 27 failed: <причина SQLite>`),
-   следующий запуск начнёт с неё.
-3. Шаг идёт с выключенными внешними ключами соединения, как велит SQLite для
-   перестройки таблиц: иначе `DROP TABLE` в перестройке каскадом удалил бы
-   дочерние строки. Поэтому `ON DELETE CASCADE` внутри шага не действует, а
-   нарушение внешнего ключа ловит `foreign_key_check` до фиксации. После шага,
-   в том числе упавшего, прежнее значение `foreign_keys` возвращается и
-   перечитывается; если не вернулось, соединение выбрасывается, а `Open` отказывает.
-   Триггеры при записи в шаге действуют: шаг, переписывающий строки под
-   триггером, снимает и восстанавливает его сам, а итоговая сверка с реестром
-   ловит триггер, оставшийся другим. WAL задан в файле базы, шаг его не меняет.
-4. Конкурентные `Open` одной базы шаг дважды не применяют: шаг перечитывает
-   версию под блокировкой записи. В production rollout идёт стратегией
-   `Recreate`: прежний pod остановлен до старта нового.
-
-Правило изменения схемы. Изменение набора таблиц или их определений
-(колонка, CHECK, индекс, триггер) поднимает `schemaVersion` на единицу, меняет
-DDL реестра и добавляет в `schemaMigrations` шаг от предыдущей версии. Итог
-шага обязан совпасть со свежей базой объект в объект. Это проверяют тесты на
-замороженных базах `go/brood/store/testdata/schema-<N>.sql`: DDL и строки,
-записанные `store.Open` и API хранилища версии N. Файл текущей версии пишет
-`go test ./brood/store -run TestSchemaFixtureMatchesCurrentSchema
--update-schema-fixture`; тест падает, если DDL изменился без новой версии, а
-после подъёма версии прежний файл не меняется и становится исходной базой
-шага. Каждый шаг N→N+1 на замороженной базе N обязан дать ровно объекты
-замороженной базы N+1: шаг, который берёт DDL у живого реестра, при правке
-этого DDL сначала замораживает свой текст. Шаг уходит из цепочки только
-тогда, когда ни одна установка уже не стоит на его исходной версии.
-
-Schema gate выкладки (`brood database verify`, [DEPLOY](DEPLOY.md)) идёт тем же
-кодом: старый snapshot мигрирует в памяти, и упавший шаг отказывает до apply.
-
-Версия схемы растёт на единицу при любом изменении набора таблиц или их
-определений (сейчас 33: 17 добавила `swarm_role_bindings`, #208; 18 —
-`swarm_requests` и шаг без колонки `answer`, #209; 19 убрала модель «актор
-под узел» — таблицу `pipeline_preparations` с её триггерами и колонки
-`native_*` шага, #223; 20 — состояние доставки ответа
-`swarm_requests.delivery`, #210; 21 — серверные Git credentials проекта
-`project_git_credentials` и `project_git_credential_refs`, #173; 22 — шаг
-актора с подтверждением workspace: закрытый словарь состояний, колонки
-`attested_commit` и `detail` и триггеры `swarm_steps_attested`, #212; 23 —
-отчёт шага `swarm_steps.report`, #233; 24 — задача прохода
-`swarm_steps.goal`, #242; 25 — commit источника на проход
-`swarm_steps.source_commit`, #229; 26 — неизвестный исход доставки ответа
-`swarm_requests.delivery = 'unconfirmed'`, #260; 27 добавила индекс
-`swarm_requests_swarm` для сводки списка роёв, #266, и стала первой версией
-с миграцией от предыдущей, #274; 28 добавила момент последнего исполнения
-роя `swarms.execution_at` с переносом из шагов и запросов, #268; 29 — вид
-сессии `sessions.kind`, привязки Telegram `user_telegram_links` и исходящие
-уведомления `telegram_outbox` с ограждениями, #279; 30 — рой по умолчанию
-привязки Telegram `user_telegram_links.default_swarm_id`, #284; 31 — имя
-собеседника привязки `user_telegram_links.telegram_username` и триггер
-отзыва сессии, который его снимает, #294; 32 — поле ответа отправленного
-уведомления `telegram_outbox.force_reply`, #298; 33 — явные привязки GitLab API,
-поинкарнационные grants, журнал намерений и отдельные merge approvals, #302).
-Без подъёма база прежнего
-выпуска с тем же номером и другой схемой отвергалась бы только сверкой
-определений с текстом «missing table», а прежний бинарник открыл бы
-новую базу, не заметив лишней таблицы. Подъём делает расхождение явным:
-новый релиз мигрирует базу предыдущей версии, прежний образ на новой базе
-отказывает с обеими версиями.
-Версии до 26 пересоздавались (#205) и цепочки не имеют.
-Актуальное устройство описано в [Model](MODEL.md). WAL, внешние ключи,
-приватные права 0600 и транзакционные гарантии сохраняются.
+ - Библиотека возвращает данные и ошибки и молчит. Печатают только пакеты
+   `cmd/`: иначе второй потребитель начнёт разбирать текст, разложенный для
+   терминала.
+ - Вывод программ и тексты ошибок — английские: их читает и модель.
+   Документация экспортируемых имён (godoc) — английская.
+ - Внутренние комментарии, объясняющие решение, — русские.
+ - Отказ несёт причину строкой для того, кто его читает, без трассировки.
+   Секреты и присланные значения в ошибки и журналы не попадают; типы,
+   которые держат секрет, переопределяют форматирование.
+ - Настройка, описывающая машину (путь, адрес), не имеет значения по
+   умолчанию в коде; отказ называет настройку.
+ - Запись во внешнюю систему, исход которой неизвестен, не повторяется
+   вслепую ([PROXMOX.md](PROXMOX.md), раздел «Жизненный цикл»).

@@ -1,5 +1,5 @@
-// Сборка сервера: хранилище, аутентификация, прикладной слой, адаптеры
-// Substrate/Kubernetes, встроенная панель и маршруты. Server владеет
+// Сборка сервера: хранилище, аутентификация, прикладной слой, адаптер
+// Proxmox, встроенная панель и маршруты. Server владеет
 // закрываемыми зависимостями; Handler отдаёт готовый http.Handler.
 package server
 
@@ -65,9 +65,7 @@ type Server struct {
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
-// Substrate и Kubernetes подключаются при настроенных переменных;
-// не настроенный адаптер отказывает 503 на своих операциях. Close
-// освобождает базу и каналы.
+// Close освобождает базу и каналы.
 func New(ctx context.Context, cfg Config, opts Options) (*Server, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -278,7 +276,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 // mountStatic раздаёт встроенную панель: единый самодостаточный index.html
-// с fetch-логином по CONTRACT.md.
+// с входом через веб-API.
 func (s *Server) mountStatic() {
 	index, err := fs.ReadFile(staticFS, "static/index.html")
 	if err != nil {

@@ -47,7 +47,7 @@ its plays declares the project in the reserved variable vars.brood:
       secrets:                     optional; values never appear in brood.yaml
         env: .env                  local dotenv file
         files:
-          - path: .config/gh/token   destination in the agent's home
+          - path: .config/gh/token   destination in the project checkout
             source: secrets/gh-token local file
 
 Everything under brood must be literal: bro reads plain YAML and does not

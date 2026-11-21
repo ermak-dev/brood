@@ -17,7 +17,6 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// Cookie и заголовок контракта CONTRACT.md.
 const (
 	// CookieSession — cookie сессии, HttpOnly.
 	CookieSession = "session"
