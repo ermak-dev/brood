@@ -1,4 +1,4 @@
-// bro build declares the project and asks the server to build its worker image.
+// bro build declares the project and asks the server to build its agent image.
 package main
 
 import (
@@ -56,8 +56,8 @@ of the playbook is not validated by bro.
 
 bro build synchronizes the project with the logged-in server, makes the
 project secrets on the server equal to brood.secrets, then asks the server to
-build the worker image. The server clones the project repository at the commit
-and runs brood.yaml with Ansible inside a fresh container; workers are clones
+build the agent image. The server clones the project repository at the commit
+and runs brood.yaml with Ansible inside a fresh container; agents are clones
 of the result. Nothing is built locally and uncommitted or unpushed changes
 are not part of the image. When no play has tasks, roles, pre_tasks,
 post_tasks, handlers or import_playbook, only the project and its secrets are
@@ -73,7 +73,7 @@ project secrets are left untouched; an empty block (secrets: {}) removes them
 all. Synchronizing secrets requires an administrator.
 
 options:
-  --pool NAME    build in this worker pool (default: chosen by the server)
+  --pool NAME    build in this pool (default: chosen by the server)
   --ref COMMIT   full 40-character commit to build (default: HEAD of this checkout)
   --no-wait      print the image ID and return without waiting for the build
   --no-secrets   do not read or synchronize the declared secrets
@@ -82,13 +82,15 @@ options:
 
 While waiting, the build log is printed as it arrives. Ctrl-C stops waiting
 but does not cancel the build. The exit status is 0 only for a ready image.
+
+example: bro build --pool brood
 `)
 }
 
 func (c command) build(ctx context.Context, args []string, guest bool) error {
 	flags := flag.NewFlagSet("build", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	pool := flags.String("pool", "", "worker pool")
+	pool := flags.String("pool", "", "pool")
 	ref := flags.String("ref", "", "commit")
 	noWait := flags.Bool("no-wait", false, "do not wait")
 	noSecrets := flags.Bool("no-secrets", false, "skip secrets")
@@ -145,11 +147,11 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 		return err
 	}
 	if client.Stored().Session == "" {
-		return errors.New("not logged in; run: bro login <server>")
+		return errNotLoggedIn
 	}
 	synchronized, err := client.ProjectSync(ctx, project.Config)
 	if err != nil {
-		return fmt.Errorf("project synchronization: %w", sessionError(err))
+		return fmt.Errorf("project synchronization: %w", err)
 	}
 	reference := synchronized.GitCredential
 	switch {
@@ -191,7 +193,7 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 	}
 	image, err := client.ImageBuild(ctx, synchronized.ID, clientapi.ImageBuildRequest{Ref: commit, Playbook: build.Filename, Pool: *pool})
 	if err != nil {
-		return fmt.Errorf("image build request: %w", sessionError(err))
+		return fmt.Errorf("image build request: %w", err)
 	}
 	if *noWait {
 		fmt.Fprintln(c.out, image.ID)
@@ -209,7 +211,7 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 func (c command) syncSecrets(ctx context.Context, client *clientapi.Client, project string, files []projectsecret.File, vars map[string]string) error {
 	refusal := func(step string, err error) error {
 		if errors.Is(err, clientapi.ErrSessionExpired) {
-			return fmt.Errorf("project secrets: %s: %w", step, sessionError(err))
+			return fmt.Errorf("project secrets: %s: %w", step, err)
 		}
 		return fmt.Errorf("project secrets: %s: %w; project secrets require an administrator (skip with --no-secrets)", step, err)
 	}
@@ -316,7 +318,7 @@ func (c command) waitImage(ctx context.Context, client *clientapi.Client, projec
 		case ctx.Err() != nil:
 			// Прерывание посреди запроса: отчёт даст следующий оборот цикла.
 		case errors.Is(err, clientapi.ErrSessionExpired):
-			return sessionError(err)
+			return err
 		default:
 			if failures++; failures >= imagePollFailures {
 				return fmt.Errorf("lost track of image %s, its build may continue on the server: %w", image.ID, err)

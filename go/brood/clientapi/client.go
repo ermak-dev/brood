@@ -51,9 +51,20 @@ type SessionInfo struct {
 
 // Project — строка списка проектов.
 type Project struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Repository string `json:"repository"`
+	SwarmCount int64  `json:"swarmCount"`
 }
+
+// APIError — отказ сервера с его detail: одна строка, которую CLI
+// показывает как есть.
+type APIError struct {
+	Status int
+	Detail string
+}
+
+func (e *APIError) Error() string { return e.Detail }
 
 // StoredSession — сохраняемые между запусками cookie по server origin.
 // Пароль здесь не хранится никогда.
@@ -271,7 +282,7 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 	resp, err := c.request(ctx, method, path, rdr, int64(len(body)), media, timeout)
 	if err != nil {
 		if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
-			return fmt.Errorf("command outcome is unconfirmed; check before retrying: %w", err)
+			return &CommandError{Unconfirmed: true, text: err.Error(), cause: err}
 		}
 		return err
 	}
@@ -296,7 +307,7 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 	if (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted) && out != nil {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
 			if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
-				return fmt.Errorf("command outcome is unconfirmed; check before retrying: malformed response from %s: %w", c.origin, err)
+				return &CommandError{Unconfirmed: true, text: fmt.Sprintf("malformed response from %s: %v", c.origin, err), cause: err}
 			}
 			return fmt.Errorf("malformed response from %s: %w", c.origin, err)
 		}
@@ -320,15 +331,14 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 				statusErr = fmt.Errorf("%s %s: %s (status %d)", method, path, detail, resp.StatusCode)
 			}
 		} else if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
-			if reason := publicCommandRefusal(resp.Body); reason != "" {
-				statusErr = fmt.Errorf("%w: %s", statusErr, reason)
+			refusal := &CommandError{Status: resp.StatusCode, Reason: publicCommandRefusal(resp.Body), text: statusErr.Error()}
+			outcome := resp.Header.Get("X-Brood-Command-Outcome")
+			refusal.Unconfirmed = outcome == "unconfirmed" || outcome == "unknown"
+			return refusal
+		} else if showsDetail(path) {
+			if detail := publicDetail(resp.Body); detail != "" {
+				statusErr = &APIError{Status: resp.StatusCode, Detail: detail}
 			}
-		}
-	}
-	if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
-		outcome := resp.Header.Get("X-Brood-Command-Outcome")
-		if outcome == "unconfirmed" || outcome == "unknown" {
-			return fmt.Errorf("command outcome is unconfirmed; check before retrying: %w", statusErr)
 		}
 	}
 	return statusErr

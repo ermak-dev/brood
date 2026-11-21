@@ -42,17 +42,10 @@ type workspaceEngine struct {
 	quiet  func(context.Context) (bool, error)
 }
 
-type workspaceFacts struct {
-	Path           string `json:"path"`
-	Git            string `json:"git"`
-	Reason         string `json:"reason,omitempty"`
-	SessionRunning bool   `json:"session_running"`
-}
-
-// RunWorkspace performs fixed-clone operations inside the unprivileged helper.
-// The caller must hold the server's actor operation lease and authorization;
-// restart means a session restart in the same CT, never a PVE reset or reboot,
-// and unlike wipe and recycle it needs no Git checkout.
+// RunWorkspace restarts the session inside the unprivileged helper. The caller
+// must hold the server's workspace reservation and authorization; restart
+// means a session restart in the same CT, never a PVE reset or reboot, and it
+// needs no Git checkout.
 func RunWorkspace(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
 	if err := requireActorIdentity("workspace helper"); err != nil {
 		return failure(err.Error())
@@ -90,102 +83,68 @@ func workspaceUnknown(text string) relay.SessionResponse {
 }
 
 func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) relay.SessionResponse {
-	if req.Operation != "workspace" && req.Operation != "wipe" && req.Operation != "recycle" && req.Operation != "restart" {
+	if req.Operation != "restart" {
 		return relay.SessionResponse{Text: "unsupported workspace operation", Outcome: "unsupported"}
 	}
 	if ctx.Err() != nil {
-		return failure("workspace operation canceled")
+		return failure("restart canceled; nothing changed")
 	}
 	var a struct {
-		Name    string `json:"name"`
-		Confirm bool   `json:"confirm"`
+		Name string `json:"name"`
 	}
 	if decodeArgs(req.Arguments, &a) != nil || len(a.Name) > 128 || control(a.Name) {
-		return failure("invalid workspace arguments; only name and confirm are accepted")
+		return failure("invalid restart arguments; only name is accepted")
 	}
-	if req.Operation == "workspace" {
-		facts := workspaceFacts{Path: fixedWorkspace, Git: "unknown"}
-		if err := e.repository(ctx); err != nil {
-			facts.Reason = err.Error()
-		} else if dirty, err := e.dirty(ctx); err != nil {
-			facts.Reason = "Git status unavailable: " + err.Error()
-		} else if dirty {
-			facts.Git = "dirty"
-		} else {
-			facts.Git = "clean"
-		}
-		_, err := e.prove(ctx)
-		facts.SessionRunning = err == nil
-		return success(facts)
-	}
-	if !a.Confirm {
-		return failure("workspace operation requires confirm=true")
-	}
-	checkout, err := e.require(ctx, req.Operation)
+	checkout, err := e.require(ctx)
 	if err != nil {
 		return failure(err.Error())
 	}
-	if req.Operation != "wipe" {
-		before, err := e.prove(ctx)
-		if err != nil {
-			return failure("no proven live Claude session; nothing changed")
-		}
-		if before.HolderProof == "" {
-			return failure("current PTY holder proof unavailable; nothing changed")
-		}
-		after, err := e.prove(ctx)
-		if err != nil || before != after {
-			return failure("live session changed before stop; nothing changed")
-		}
-		if ctx.Err() != nil {
-			return failure("workspace operation canceled before stop")
-		}
-		reply, err := e.call(ctx, ptysession.Request{Action: "stop", Proof: before.HolderProof})
-		if err != nil || !reply.OK {
-			if reply.Outcome == "refused" {
-				return ptyFailure(reply, err, true)
-			}
-			return workspaceUnknown("session stop result is unknown")
-		}
-		// Ответ holder не заменяет независимый scan всех процессов workspace.
-		if err = workspaceWait(ctx, workspaceStopTimeout, e.quiet); err != nil {
-			return workspaceUnknown("session stop is not yet confirmed; workspace is live or process inventory is unknown")
-		}
-		if req.Operation == "recycle" {
-			if err := e.clean(ctx); err != nil {
-				return workspaceUnknown("session stopped; " + err.Error())
-			}
-		}
-		if ctx.Err() != nil {
-			return workspaceUnknown("session stopped; operation canceled before launch")
-		}
-		// Повторный scan не заменяет lease: он отказывает при появлении чужой работы.
-		quiet, err := e.quiet(ctx)
-		if err != nil || !quiet {
-			return workspaceUnknown("session stopped; workspace is live or process inventory is unknown")
-		}
-		if err = e.reprove(ctx, checkout); err != nil {
-			return workspaceUnknown("session stopped; " + err.Error())
-		}
-		if reply, err = e.call(ctx, ptysession.Request{Action: "ensure"}); err != nil || !reply.OK {
-			return workspaceUnknown("session launch result is unknown")
-		}
-		if err = workspaceWait(ctx, workspaceStartTimeout, func(ctx context.Context) (bool, error) {
-			current, err := e.prove(ctx)
-			return err == nil && current != before, nil
-		}); err != nil {
-			return workspaceUnknown("new Claude session is not yet proven")
-		}
-		return success(map[string]any{"operation": req.Operation, "session": "restarted", "workspace_preserved": req.Operation == "restart", "ct": "unchanged"})
+	before, err := e.prove(ctx)
+	if err != nil {
+		return failure("no proven live Claude session; nothing changed")
 	}
-	if err := e.clean(ctx); err != nil {
-		var effect *workspaceEffectError
-		if errors.As(err, &effect) {
-			return workspaceUnknown(err.Error())
-		}
-		return failure(err.Error())
+	if before.HolderProof == "" {
+		return failure("current PTY holder proof unavailable; nothing changed")
 	}
-	return success(map[string]any{"operation": "wipe", "git": "clean", "clone_preserved": true, "ct": "unchanged"})
+	after, err := e.prove(ctx)
+	if err != nil || before != after {
+		return failure("live session changed before stop; nothing changed")
+	}
+	if ctx.Err() != nil {
+		return failure("restart canceled before stop; nothing changed")
+	}
+	reply, err := e.call(ctx, ptysession.Request{Action: "stop", Proof: before.HolderProof})
+	if err != nil || !reply.OK {
+		if reply.Outcome == "refused" {
+			return ptyFailure(reply, err, true)
+		}
+		return workspaceUnknown("session stop result is unknown")
+	}
+	// Ответ holder не заменяет независимый scan всех процессов workspace.
+	if err = workspaceWait(ctx, workspaceStopTimeout, e.quiet); err != nil {
+		return workspaceUnknown("session stop is not yet confirmed; workspace is live or process inventory is unknown")
+	}
+	if ctx.Err() != nil {
+		return workspaceUnknown("session stopped; operation canceled before launch")
+	}
+	// Повторный scan отказывает при появлении чужой работы.
+	quiet, err := e.quiet(ctx)
+	if err != nil || !quiet {
+		return workspaceUnknown("session stopped; workspace is live or process inventory is unknown")
+	}
+	if err = e.reprove(ctx, checkout); err != nil {
+		return workspaceUnknown("session stopped; " + err.Error())
+	}
+	if reply, err = e.call(ctx, ptysession.Request{Action: "ensure"}); err != nil || !reply.OK {
+		return workspaceUnknown("session launch result is unknown")
+	}
+	if err = workspaceWait(ctx, workspaceStartTimeout, func(ctx context.Context) (bool, error) {
+		current, err := e.prove(ctx)
+		return err == nil && current != before, nil
+	}); err != nil {
+		return workspaceUnknown("new Claude session is not yet proven")
+	}
+	return success(map[string]any{"session": "restarted", "workspace": "kept", "container": "unchanged"})
 }
 
 // workspaceWait polls evidence only, never effects. Inventory errors fail closed;
@@ -217,52 +176,13 @@ func workspaceWait(parent context.Context, budget time.Duration, ready func(cont
 	}
 }
 
-type workspaceEffectError struct{ text string }
-
-func (e *workspaceEffectError) Error() string { return e.text }
-
-func (e *workspaceEngine) clean(ctx context.Context) error {
-	quiet, err := e.quiet(ctx)
-	if err != nil || !quiet {
-		return errors.New("workspace has live processes or process inventory is unknown; cleanup refused")
-	}
-	if err = e.repository(ctx); err != nil {
-		return err
-	}
-	if ctx.Err() != nil {
-		return errors.New("workspace operation canceled before cleanup")
-	}
-	// Отчёты reset и clean растут с клоном и не нужны: --quiet.
-	if _, err = e.git(ctx, "reset", "--hard", "--quiet", "HEAD", "--"); err != nil {
-		return &workspaceEffectError{"Git reset result is unknown"}
-	}
-	// После первого эффекта любой отказ означает частично выполненную операцию.
-	quiet, err = e.quiet(ctx)
-	if err != nil || !quiet || ctx.Err() != nil {
-		return &workspaceEffectError{"workspace changed or operation canceled after reset"}
-	}
-	if err = e.repository(ctx); err != nil {
-		return &workspaceEffectError{"repository proof lost after reset"}
-	}
-	if _, err = e.git(ctx, "clean", "-ffdx", "--quiet", "--"); err != nil {
-		return &workspaceEffectError{"Git cleanup result is unknown"}
-	}
-	dirty, err := e.dirty(ctx)
-	if err != nil || dirty || ctx.Err() != nil {
-		return &workspaceEffectError{"workspace cleanliness is not confirmed after cleanup"}
-	}
-	return nil
-}
-
-// require proves, before any effect, what the operation needs of the workspace.
-// Wipe and recycle clean the clone and need its Git checkout. Restart keeps the
-// workspace and runs no Git effect (#158): the fixed directory suffices, as for
-// an actor without origin; a checkout it does find is reported, and the launch
-// requires it again.
-func (e *workspaceEngine) require(ctx context.Context, operation string) (checkout bool, err error) {
-	err = e.repository(ctx)
-	if err == nil || operation != "restart" {
-		return err == nil, err
+// require proves, before any effect, what restart needs of the workspace. It
+// keeps the workspace and runs no Git effect (#158): the fixed directory
+// suffices, as for an agent without origin; a checkout it does find is
+// reported, and the launch requires it again.
+func (e *workspaceEngine) require(ctx context.Context) (checkout bool, err error) {
+	if e.repository(ctx) == nil {
+		return true, nil
 	}
 	return false, fixedDirectory(e.root)
 }
@@ -389,7 +309,7 @@ func repositoryLayout(ctx context.Context, workspace string, git func(context.Co
 			return errors.New("unsafe or unsupported repository Git configuration")
 		}
 		if expected, named := identityValue(identity, key); named && value != expected {
-			return errors.New("repository Git identity differs from the installation identity of the actor; remove user.name and user.email from .git/config or reset the workspace")
+			return errors.New("repository Git identity differs from the installation identity of the agent; remove user.name and user.email from .git/config or reset the workspace")
 		}
 	}
 	top, err := git(ctx, "rev-parse", "--show-toplevel")
@@ -496,7 +416,7 @@ func gitEnv(home, root string) []string {
 // collapses "$Id: ... $" and text turns CRLF into LF on checkin, and status
 // calls such an edit unchanged. core.attributesFile cannot override them: it
 // has the lowest precedence (gitattributes(5)). Attestation claims the bytes
-// of the commit and needs it; workspace facts and wipe keep the project's own
+// of the commit and needs it; the restart checks keep the project's own
 // form. Unlike GIT_ATTR_SOURCE, the option fails on Git before 2.42 instead
 // of being ignored. $GIT_DIR/info/attributes still applies; checkout refuses it.
 func gitFlags(byteExact bool) []string {

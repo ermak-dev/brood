@@ -20,7 +20,6 @@ import (
 )
 
 const fixedConfig = "/workspace/home/.claude"
-const pageBudget = 24 * 1024
 
 type identity struct {
 	SessionID   string
@@ -101,10 +100,7 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 	if req.Operation == "session_terminal" {
 		return e.terminal(ctx, req.Arguments)
 	}
-	if req.Operation == "wipe" || req.Operation == "recycle" || req.Operation == "workspace" {
-		return relay.SessionResponse{Text: "operation is not implemented safely; no session or workspace was changed", Outcome: "unsupported"}
-	}
-	if req.Operation != "tail" && req.Operation != "slash" && req.Operation != "session_history" && req.Operation != "stat" {
+	if req.Operation != "tail" && req.Operation != "slash" {
 		return relay.SessionResponse{Text: "unsupported session operation", Outcome: "unsupported"}
 	}
 	if err := ctx.Err(); err != nil {
@@ -190,25 +186,6 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 			return relay.SessionResponse{Text: "session changed after input; delivery is unknown", Outcome: "unknown"}
 		}
 		return relay.SessionResponse{OK: true, Text: "input submitted; command completion is not confirmed", Outcome: "submitted"}
-	case "session_history":
-		a := struct {
-			Name   string `json:"name"`
-			Cursor string `json:"cursor"`
-			Limit  int    `json:"limit"`
-		}{Limit: 100}
-		if decodeArgs(req.Arguments, &a) != nil || a.Limit < 1 || a.Limit > 1000 || len(a.Cursor) > 4096 {
-			return failure("invalid history arguments")
-		}
-		return e.history(ctx, a.Cursor, a.Limit)
-	case "stat":
-		a := struct {
-			Name string `json:"name"`
-			Days int    `json:"days"`
-		}{Days: 14}
-		if decodeArgs(req.Arguments, &a) != nil || a.Days < 1 || a.Days > 366 {
-			return failure("days must be between 1 and 366")
-		}
-		return e.usage(ctx, a.Days)
 	}
 	return failure("unsupported operation")
 }

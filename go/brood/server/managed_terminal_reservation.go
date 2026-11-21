@@ -27,9 +27,9 @@ func (s *Server) actorViewAuthority(ctx context.Context, v actorView) context.Co
 	})
 }
 
-// beginManagedTerminal reserves automatic scheduling for an explicitly selected
-// writable stream, while owner intervention remains allowed during child work.
-// Ttyd has no acknowledged detach/effect outcome; disconnect retains uncertainty.
+// beginManagedTerminal authorizes an explicitly selected writable terminal
+// stream right before the upgrade request is sent to the agent. Ttyd has no
+// acknowledged detach or effect outcome.
 func (s *Server) beginManagedTerminal(r *http.Request) (proxy.UpgradeReservation, error) {
 	target, err := s.store.LookupManagedActor(r.Context(), r.PathValue("swarm"), r.PathValue("actor"))
 	if errors.Is(err, store.ErrNotFound) {
@@ -111,7 +111,7 @@ func (s *Server) serveReadonlyActorView(w http.ResponseWriter, r *http.Request, 
 	invoke := func(ctx context.Context, args map[string]any) (command.Result, error) {
 		args["name"] = v.actor
 		raw, _ := json.Marshal(args)
-		return s.executeOperatorSessionCommand(ctx, v.userID, v.swarm, caller, command.Invocation{Name: "session_terminal", Arguments: raw})
+		return s.executeOperatorSessionCommand(ctx, v.userID, v.swarm, caller, command.Invocation{Name: readonlyTerminalOperation, Arguments: raw})
 	}
 	opened, err := invoke(ctx, map[string]any{"action": "open", "mode": "ro"})
 	var snapshot struct {

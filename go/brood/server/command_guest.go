@@ -21,42 +21,28 @@ func commandSwarmResponse(result command.Result) relay.SwarmResponse {
 	return relay.SwarmResponse{OK: ok, Text: result.Text, Data: result.Data, Outcome: result.Outcome}
 }
 
+// handleActorCommand executes a catalog command called by an agent. from is
+// the calling agent as the relay authenticated it.
 func (m *managedProvider) handleActorCommand(ctx context.Context, from store.ManagedActor, inv command.Invocation) relay.SwarmResponse {
 	switch inv.Name {
-	case "profile":
-		data, _ := json.Marshal(map[string]any{"self": from.Name, "role": from.Role, "swarm_id": from.SwarmID, "provider": "proxmox", "integration_branch": nil})
-		return relay.SwarmResponse{OK: true, Text: string(data)}
-	case "dispatch", "landing":
-		result, err := m.executeCoordinationCommand(ctx, from, inv)
-		if err != nil {
-			return relay.SwarmResponse{Text: err.Error(), Outcome: "refused"}
-		}
-		return commandSwarmResponse(result)
-	case "models":
-		result, err := m.server.adminModels.models(ctx)
-		if _, _, authErr := m.authorizeCommandActor(ctx, from); authErr != nil {
-			return relay.SwarmResponse{Text: "actor authorization changed"}
-		}
-		if err != nil {
-			return relay.SwarmResponse{Text: err.Error()}
-		}
-		return commandSwarmResponse(result)
 	case "diagnose":
-		data, _ := json.Marshal(map[string]any{"mode": "guest", "self": from.Name, "generation": from.Incarnation, "swarm_id": from.SwarmID, "relay": "connected"})
+		data, _ := json.Marshal(map[string]any{"mode": "agent", "self": from.Name, "role": from.Role, "generation": from.Incarnation, "swarm_id": from.SwarmID, "relay": "connected"})
 		return relay.SwarmResponse{OK: true, Text: string(data), Data: data, Outcome: "completed"}
-	case "tail", "slash", "session_history", "session_terminal", "stat", "restart", "wipe", "recycle":
+	case "tail", "slash", "restart":
 		result, err := m.executeGuestSessionCommand(ctx, from, inv)
 		if err != nil {
 			return relay.SwarmResponse{Text: err.Error(), Outcome: result.Outcome}
 		}
 		return commandSwarmResponse(result)
 	case "agents":
-		return m.handleSwarmRequest(ctx, from.UID, from.Incarnation, relay.SwarmRequest{Tool: "agents"})
-	case "add", "delete", "stop", "start", "reset", "update":
+		result, err := m.server.agentRoster(ctx, from.SwarmID, from.Name)
+		if err != nil {
+			return relay.SwarmResponse{Text: err.Error()}
+		}
+		return commandSwarmResponse(result)
+	case "add", "rm", "stop", "start", "reset":
 		result, err := m.executeLifecycleCommand(ctx, from, inv)
 		if err != nil {
-			// Неизвестный исход update (#133) доходит до гостя как unknown,
-			// а не как отказ без исхода.
 			return relay.SwarmResponse{Text: err.Error(), Outcome: result.Outcome}
 		}
 		return commandSwarmResponse(result)
@@ -67,7 +53,7 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 			WaitSeconds int    `json:"wait_seconds"`
 		}
 		_ = json.Unmarshal(inv.Arguments, &args)
-		return m.handleSwarmRequest(ctx, from.UID, from.Incarnation, relay.SwarmRequest{Tool: "send", To: args.To, Message: args.Message, WaitSeconds: args.WaitSeconds})
+		return m.sendFromAgent(ctx, from, args.To, args.Message, args.WaitSeconds)
 	}
-	return relay.SwarmResponse{Text: "command service is not available"}
+	return relay.SwarmResponse{Text: "unknown command"}
 }

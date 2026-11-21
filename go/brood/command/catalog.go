@@ -91,14 +91,10 @@ func (s Spec) Schema() map[string]any {
 	return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 }
 
-func number(n float64) *float64 { return &n }
-
 var catalog = []Spec{
-	agentsSpec, sendSpec, dispatchSpec, tailSpec, slashSpec,
-	sessionHistorySpec, sessionTerminalSpec, addSpec, deleteSpec,
-	stopSpec, startSpec, restartSpec, updateSpec, recycleSpec, wipeSpec, resetSpec,
-	projectAddSpec, projectLimitSpec, landingSpec, nodeSpec,
-	nodeDrainSpec, nodeUpSpec, modelsSpec, profileSpec, statSpec,
+	agentsSpec, sendSpec, tailSpec, slashSpec,
+	addSpec, rmSpec, startSpec, stopSpec, restartSpec, resetSpec,
+	poolsSpec, poolDrainSpec, poolEnableSpec,
 	diagnoseSpec, serverDiagnoseSpec,
 }
 
@@ -152,5 +148,4 @@ func optionalText(name, def string) Arg {
 func integer(name string, def any, min, max float64) Arg {
 	return Arg{Name: name, Type: "integer", Default: def, Min: &min, Max: &max}
 }
-func confirmArg() Arg                    { return Arg{Name: "confirm", Type: "boolean", Default: false} }
-func choice(a Arg, values ...string) Arg { a.Enum = values; return a }
+func confirmArg() Arg { return Arg{Name: "confirm", Type: "boolean", Default: false} }

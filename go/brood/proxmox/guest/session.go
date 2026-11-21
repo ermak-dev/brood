@@ -36,7 +36,7 @@ func ReceiveSession(ctx context.Context, req relay.SessionRequest) relay.Session
 		return relay.SessionResponse{Text: "session helper privilege lock failed", Outcome: "failed"}
 	}
 	switch req.Operation {
-	case "workspace", "wipe", "recycle", "restart":
+	case "restart":
 		return sessionctl.RunWorkspace(ctx, req)
 	case sessionctl.CheckoutOperation:
 		return sessionctl.RunCheckout(ctx, req)
@@ -74,7 +74,7 @@ func NewSessionHandler(connection context.Context) func(context.Context, relay.S
 }
 
 // NewSessionHandlerWithSecrets refreshes the root projection under the same
-// connection-owned mutation gate as restart/recycle, before stopping the session.
+// connection-owned mutation gate as restart, before stopping the session.
 // A refresh failure is a known no-session-effect failure, not an unknown delivery.
 func NewSessionHandlerWithSecrets(connection context.Context, refresh func(context.Context) error) func(context.Context, relay.SessionRequest) relay.SessionResponse {
 	return newSessionHandler(connection, refresh, nil, HandleSession)
@@ -126,9 +126,9 @@ func newSessionHandler(connection context.Context, refresh func(context.Context)
 			}
 			// Тот же gate, что у restart: активный rw-терминал — отказ до остановки.
 			return controller.Control(ctx, func() relay.SessionResponse { return attestor.attest(ctx, connection, req) })
-		case "slash", "wipe", "recycle", "restart":
+		case "slash", "restart":
 			return controller.Control(ctx, func() relay.SessionResponse {
-				replace := req.Operation == "restart" || req.Operation == "recycle"
+				replace := req.Operation == "restart"
 				if replace && attestor != nil && attestor.stepRuntime != nil {
 					attestor.stepRuntime.stepOperation.Lock()
 					defer attestor.stepRuntime.stepOperation.Unlock()
@@ -227,7 +227,7 @@ func runHelper(parent context.Context, req relay.SessionRequest, timeout time.Du
 	if err := cmd.Start(); err != nil {
 		return fail("session helper unavailable")
 	}
-	uncertain := req.Operation == "slash" || req.Operation == "wipe" || req.Operation == "recycle" || req.Operation == "restart"
+	uncertain := req.Operation == "slash" || req.Operation == "restart"
 	if req.Operation == "session_terminal" {
 		var step sessionctl.TerminalStep
 		_ = json.Unmarshal(req.Arguments, &step)

@@ -31,14 +31,10 @@ func (Client) Execute(ctx context.Context, invocation command.Invocation) (comma
 	return exchange(ctx, conn, invocation)
 }
 
-// Request is the broker wire envelope. Legacy fields keep agents/add/send
-// compatible during the canonical-arguments transition.
+// Request is the broker wire envelope: a tool name and its canonical arguments.
 type Request struct {
-	Tool        string          `json:"tool"`
-	Arguments   json.RawMessage `json:"arguments,omitempty"`
-	To          string          `json:"to,omitempty"`
-	Message     string          `json:"message,omitempty"`
-	WaitSeconds int             `json:"wait_seconds,omitempty"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
 }
 
 // NewRequest validates a catalog invocation and builds the scoped broker wire.
@@ -51,44 +47,18 @@ func NewRequest(invocation command.Invocation) (Request, error) {
 	if !spec.Guest {
 		return Request{}, errors.New("command unavailable in guest mode")
 	}
-	request := Request{Tool: invocation.Name, Arguments: invocation.Arguments}
-	var legacy struct {
-		Name        string `json:"name"`
-		Origin      string `json:"origin"`
-		To          string `json:"to"`
-		Message     string `json:"message"`
-		WaitSeconds int    `json:"wait_seconds"`
-	}
-	_ = json.Unmarshal(invocation.Arguments, &legacy)
-	switch invocation.Name {
-	case "agents":
-		request.Arguments = nil
-	case "add":
-		// The legacy wire has no origin field: keep canonical arguments for it.
-		if legacy.Origin == "" {
-			request.Arguments = nil
-			request.To = legacy.Name
-		}
-	case "send":
-		request.Arguments = nil
-		request.To = legacy.To
-		request.Message = legacy.Message
-		request.WaitSeconds = legacy.WaitSeconds
-	}
-	return request, nil
+	return Request{Tool: invocation.Name, Arguments: invocation.Arguments}, nil
 }
 
 func requestTimeout(request Request) time.Duration {
 	var args struct {
 		WaitSeconds int `json:"wait_seconds"`
-		Wait        int `json:"wait"`
 	}
 	_ = json.Unmarshal(request.Arguments, &args)
-	wait := max(request.WaitSeconds, args.WaitSeconds, args.Wait)
-	if wait < 0 || wait > 300 {
-		wait = 0
+	if args.WaitSeconds < 0 || args.WaitSeconds > 300 {
+		args.WaitSeconds = 0
 	}
-	return command.CallTimeout(wait)
+	return command.CallTimeout(args.WaitSeconds)
 }
 
 type responseEnvelope struct {

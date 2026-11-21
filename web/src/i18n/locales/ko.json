@@ -2549,8 +2549,8 @@
       "delete_hint": "스웜을 제거합니다. 되돌릴 수 없습니다.",
       "has_agents_other": "먼저 에이전트 {{count}}개를 삭제하세요.",
       "confirm_delete": "스웜 {{name}}을(를) 삭제할까요? 되돌릴 수 없습니다.",
-      "command_scope": "현재 셸에서 이 스웜을 bro의 기본값으로 설정",
-      "command_add": "이 스웜에 에이전트 생성"
+      "command_scope": "Make this swarm the current one for bro; later commands need no swarm option",
+      "command_add": "Create an agent in the current swarm with the next free name"
     },
     "agents": {
       "title": "에이전트",
@@ -2624,7 +2624,7 @@
       "confirm_delete": "에이전트 {{name}}을(를) 삭제할까요? 컨테이너와 작업 공간이 삭제됩니다. 되돌릴 수 없습니다.",
       "command_send": "에이전트에게 메시지 보내기",
       "command_message": "보낼 메시지",
-      "command_tail": "에이전트의 최근 출력 읽기",
+      "command_tail": "Follow the agent's output",
       "command_list": "스웜의 에이전트 목록 보기",
       "view": "보기",
       "open_view": "입력 없이 보기",
@@ -2639,7 +2639,9 @@
         "provider_unavailable": "Proxmox is unreachable right now. The check is retried automatically.",
         "agent_not_connected": "The agent did not connect within two minutes after its container started. Stop and start the agent; if it repeats, an administrator should check the brood-agent service in the container.",
         "agent_install": "The agent could not be installed into the container. Stop and start the agent; if it repeats, tell an administrator."
-      }
+      },
+      "command_join": "Make the agent's swarm current for bro (once)",
+      "command_attach": "Attach your terminal to the agent's console; Ctrl-] detaches"
     },
     "pools": {
       "title": "풀",

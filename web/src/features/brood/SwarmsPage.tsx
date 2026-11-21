@@ -259,12 +259,12 @@ export function SwarmsPage() {
         <PanelSection title={t('brood.panel.commands')}>
           <Commands
             items={[
-              { label: t('brood.swarms.command_scope'), command: `export BROOD_SWARM=${row.id}` },
-              { label: t('brood.agents.command_list'), command: `bro agents --swarm ${row.id}` },
               {
-                label: t('brood.swarms.command_add'),
-                command: `bro add agent-1 --swarm ${row.id}`,
+                label: t('brood.swarms.command_scope'),
+                command: `bro join ${row.project_name}/${row.name}`,
               },
+              { label: t('brood.agents.command_list'), command: 'bro agents' },
+              { label: t('brood.swarms.command_add'), command: 'bro add' },
             ]}
           />
         </PanelSection>

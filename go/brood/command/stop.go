@@ -1,3 +1,3 @@
 package command
 
-var stopSpec = spec("stop", "Stop an actor while retaining its workspace.", false, false, true, requiredText("name"))
+var stopSpec = spec("stop", "Stop an agent. Its container and workspace are kept.", false, false, true, requiredText("name"))

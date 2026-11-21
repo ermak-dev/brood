@@ -13,13 +13,13 @@ import (
 	"brood.dev/go/brood/command"
 )
 
-// ErrInvalidArguments lets compatibility adapters retain protocol-level argument
-// refusals for legacy transport constraints not expressed in the catalog.
+// ErrInvalidArguments lets an executor answer with a protocol-level argument
+// refusal when its transport rejects the request.
 var ErrInvalidArguments = errors.New("Invalid tool arguments")
 
 const maxFrameBytes = 1 << 20
 const version = "2025-03-26"
-const instructions = "This is Brood orchestration, not upstream Mop or NATS control. Call agents() to identify your name, role and peers before dispatching work; only an authorized master may create peers with add(name). Delegate bounded tasks with mcp__brood__send and identify peers with mcp__brood__agents. To write to the human owner of the swarm use mcp__brood__send with to=operator; it is delivered to their Telegram chat. Built-in session messaging does not reach remote actors. Running does not mean idle or a clean workspace. An accepted operation is not completed; unconfirmed means the outcome is unknown. Check before retrying uncertain operations. Do not bypass permissions or request operator credentials."
+const instructions = "brood runs coding agents in containers of their own and joins them into a swarm with one human owner. Call agents to learn your name, your role and the other agents of the swarm. Use send to talk to another agent, or to the human owner with to=operator; the answer arrives later as a message, not as the result of send. Use tail to read what another agent printed last. A master may create agents with add and delete the agents it created with rm. An accepted operation is not a completed one: check the result with agents or tail, and when an outcome is reported as unconfirmed, look before you repeat the command."
 
 // GuestSpecs returns catalog commands available through a guest adapter.
 // The executor remains responsible for authorization.
@@ -150,12 +150,8 @@ func strictJSON(data []byte, target any) bool {
 func callTimeout(args json.RawMessage) time.Duration {
 	var timing struct {
 		WaitSeconds int `json:"wait_seconds"`
-		Wait        int `json:"wait"`
 	}
 	_ = json.Unmarshal(args, &timing)
-	if timing.Wait > timing.WaitSeconds {
-		timing.WaitSeconds = timing.Wait
-	}
 	if timing.WaitSeconds < 0 || timing.WaitSeconds > 300 {
 		timing.WaitSeconds = 0
 	}

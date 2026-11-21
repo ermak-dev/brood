@@ -2558,8 +2558,8 @@
       "has_agents_one": "Delete its {{count}} agent first.",
       "has_agents_other": "Delete its {{count}} agents first.",
       "confirm_delete": "Delete swarm {{name}}? This cannot be undone.",
-      "command_scope": "Make this swarm the default for bro in the current shell",
-      "command_add": "Create an agent in this swarm"
+      "command_scope": "Make this swarm the current one for bro; later commands need no swarm option",
+      "command_add": "Create an agent in the current swarm with the next free name"
     },
     "agents": {
       "title": "Agents",
@@ -2633,7 +2633,7 @@
       "confirm_delete": "Delete agent {{name}}? Its container and workspace are destroyed. This cannot be undone.",
       "command_send": "Send the agent a message",
       "command_message": "your message",
-      "command_tail": "Read the agent's recent output",
+      "command_tail": "Follow the agent's output",
       "command_list": "List the agents of the swarm",
       "view": "View",
       "open_view": "Watch without typing",
@@ -2648,7 +2648,9 @@
         "provider_unavailable": "Proxmox is unreachable right now. The check is retried automatically.",
         "agent_not_connected": "The agent did not connect within two minutes after its container started. Stop and start the agent; if it repeats, an administrator should check the brood-agent service in the container.",
         "agent_install": "The agent could not be installed into the container. Stop and start the agent; if it repeats, tell an administrator."
-      }
+      },
+      "command_join": "Make the agent's swarm current for bro (once)",
+      "command_attach": "Attach your terminal to the agent's console; Ctrl-] detaches"
     },
     "pools": {
       "title": "Pools",

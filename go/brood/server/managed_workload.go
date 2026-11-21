@@ -25,20 +25,9 @@ type managedWorkloadOperation struct {
 	role         string
 	parent       *store.ManagedActor
 	origin       string
-	// operationID — ID нового намерения; "" — свежий ID при записи. Update
-	// (#133) задаёт его заранее, чтобы после сбоя отличить записанное
-	// намерение от отказа до него.
-	operationID string
 	// intent сохраняется до commit и запуска PVE отдельно от saved: запись
 	// задачи может вернуть пустой actor, но не отменяет принятое намерение.
 	intent store.ManagedActor
-}
-
-func (o *managedWorkloadOperation) intentID() string {
-	if o.operationID == "" {
-		return store.NewID()
-	}
-	return o.operationID
 }
 
 func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
@@ -149,9 +138,9 @@ func (o *managedWorkloadOperation) beginLifecycle(ctx context.Context, a store.M
 	}
 	if o.parent != nil {
 		// Мастер управляет своим дочерним воркером в общем порядке шины.
-		return o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, o.intentID(), o.action)
+		return o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, store.NewID(), o.action)
 	}
-	return o.server.store.BeginOwnerManagedActorOperation(ctx, a, o.intentID(), o.action, func(ctx context.Context) error {
+	return o.server.store.BeginOwnerManagedActorOperation(ctx, a, store.NewID(), o.action, func(ctx context.Context) error {
 		return o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID)
 	})
 }
@@ -161,9 +150,7 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	if err := o.authorize(); err != nil {
 		return plan, err
 	}
-	// Update перезапускает уже зарезервированного актора: ёмкость не
-	// меняется, доступность пула проверяют клиент и намерение.
-	if o.action == "stop" || o.action == "delete" || o.action == "reset" || o.action == "update" {
+	if o.action == "stop" || o.action == "delete" || o.action == "reset" {
 		plan.NoAllocation = true
 		return plan, nil
 	}
@@ -248,8 +235,8 @@ func (o *managedWorkloadOperation) Apply() error {
 			return nil
 		}
 		// Start, ещё не запрошенный (#133, #275), задачи не держит: CT
-		// остановлена, и stop, delete и reset его отменяют. Start и update
-		// ничего бы не добавили к уже записанному start: отказ называет
+		// остановлена, и stop, delete и reset его отменяют. Start
+		// ничего бы не добавил к уже записанному start: отказ называет
 		// ожидание, а не неизвестный исход. Незапрошенные stop и delete
 		// (#277) тоже задачи не держат, но их изменение уже идёт, и любое
 		// другое ждёт саму остановку или удаление.
@@ -286,10 +273,6 @@ func (o *managedWorkloadOperation) Apply() error {
 		if o.action != "delete" && observed == "absent" {
 			return fmt.Errorf("%w: the container of this agent no longer exists in Proxmox; delete the agent and create it again", app.ErrConflict)
 		}
-		// Update перезапускает работающую CT; остановленную поднимает start.
-		if o.action == "update" && observed != "running" {
-			return fmt.Errorf("%w: owned container is %s; update restarts a running container", app.ErrConflict, observed)
-		}
 		// Пока провайдер отвечает, доступ человека или делегацию могут отозвать.
 		// Повторная проверка нужна перед записью намерения, не только до чтения.
 		if err := o.authorize(); err != nil {
@@ -310,7 +293,7 @@ func (o *managedWorkloadOperation) Apply() error {
 			}
 			var err error
 			// Известная задача уже дождана выше; у незапрошенного start
-			// update задачи нет вовсе. Слот закрывает наблюдение CT.
+			// задачи нет вовсе. Слот закрывает наблюдение CT.
 			if a.Stage != "done" {
 				a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 				if err != nil {
@@ -355,7 +338,6 @@ func (o *managedWorkloadOperation) Apply() error {
 			}
 			if err == nil {
 				o.intent = a
-				noteLifecycleIntent(o.context, lifecycleIntentPossible)
 			}
 			return err
 		})
@@ -364,16 +346,15 @@ func (o *managedWorkloadOperation) Apply() error {
 			if errors.Is(err, store.ErrPoolUnavailable) || errors.Is(err, store.ErrRevisionConflict) || errors.Is(err, app.ErrNotAllowed) {
 				return err
 			}
-			// Отказ координации называет держателя и request ID (#272): общий
-			// текст отправил бы сверять задачу провайдера вместо аренды.
+			// Отказ брони называет идущую операцию над workspace: общий
+			// текст отправил бы сверять задачу провайдера.
 			var held *store.CoordinationConflictError
 			if errors.As(err, &held) {
 				return fmt.Errorf("%w: %w", app.ErrConflict, held)
 			}
 			return &app.APIError{Status: http.StatusConflict, Detail: "The agent changed while the request was processed. Reload the list and retry."}
 		}
-		noteLifecycleIntent(o.context, lifecycleIntentAccepted)
-		if o.action == "stop" || o.action == "delete" || o.action == "reset" || o.action == "update" {
+		if o.action == "stop" || o.action == "delete" || o.action == "reset" {
 			if m.hub != nil {
 				m.hub.Disconnect(a.UID, a.Incarnation)
 			}
@@ -417,7 +398,7 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 	}
 	if name == telegramOperator {
 		// Имя operator на шине занято владельцем роя.
-		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "actor name operator is reserved for the human owner of the swarm"}
+		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "The name operator is reserved for the human owner of the swarm. Choose another name."}
 	}
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: name, action: "create", role: role, parent: parent}
 	s.managed.admission.Lock()

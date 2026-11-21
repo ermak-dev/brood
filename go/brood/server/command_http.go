@@ -64,41 +64,52 @@ func commandRequestBody(w http.ResponseWriter, r *http.Request) (string, json.Ra
 }
 
 func (s *Server) executeOperatorCommand(ctx context.Context, userID, swarmID, caller string, inv command.Invocation) (command.Result, error) {
+	if command.NeedsSwarm(inv.Name) && swarmID == "" {
+		return command.Result{}, command.Refuse(nil, "select a swarm: this command works on the agents of one swarm")
+	}
 	switch inv.Name {
-	case "models", "profile", "project_add", "project_limit", "node", "node_drain", "node_up", "server_diagnose":
+	case "pools", "pool_drain", "pool_enable", "server_diagnose", "diagnose":
 		return s.executeAdminCommand(ctx, userID, swarmID, inv)
-	case "add", "delete", "stop", "start", "reset", "update":
-		if swarmID == "" {
-			return command.Result{}, command.Refuse(nil, "a swarm scope is required")
-		}
+	case "add", "rm", "stop", "start", "reset":
 		return s.executeActorCommand(ctx, userID, swarmID, inv)
-	case "tail", "slash", "session_history", "session_terminal", "stat", "restart", "wipe", "recycle":
-		if swarmID == "" {
-			return command.Result{}, command.Refuse(nil, "a swarm scope is required")
-		}
+	case "tail", "slash", "restart":
 		return s.executeOperatorSessionCommand(ctx, userID, swarmID, caller, inv)
 	case "agents":
-		if swarmID == "" {
-			return command.Result{}, command.Refuse(nil, "a swarm scope is required")
-		}
-		actors, err := s.store.ListManagedActors(ctx, swarmID)
-		if err != nil {
-			return command.Result{}, errors.New("actor inventory unavailable")
-		}
-		rows := []map[string]any{}
-		for _, actor := range actors {
-			if actor.Phase != "deleted" {
-				rows = append(rows, map[string]any{"name": actor.Name, "role": actor.Role, "state": actor.Phase, "provider": "proxmox", "generation": actor.Incarnation})
-			}
-		}
-		data, _ := json.Marshal(map[string]any{"scope": "managed actors in this swarm", "actors": rows})
-		return command.Result{Text: "Managed actor roster; running does not mean idle or a clean workspace.", Data: data, Outcome: "completed"}, nil
-	case "dispatch", "landing":
-		return s.executeOperatorCoordinationCommand(ctx, userID, swarmID, inv)
+		return s.agentRoster(ctx, swarmID, "")
 	case "send":
 		return s.sendOperatorCommand(ctx, userID, swarmID, inv)
 	}
-	return command.Result{}, command.Refuse(nil, "command is not supported in this execution mode")
+	return command.Result{}, command.Refuse(nil, "unknown command")
+}
+
+// agentRoster lists the agents of a swarm. self names the calling agent in
+// guest mode and is empty for an operator. The text is the same JSON as the
+// data: an agent reads the text, a client the data.
+func (s *Server) agentRoster(ctx context.Context, swarmID, self string) (command.Result, error) {
+	agents, err := s.store.ListManagedActors(ctx, swarmID)
+	if err != nil {
+		return command.Result{}, errors.New("the list of agents is unavailable; nothing changed, retry")
+	}
+	type agent struct {
+		Name       string `json:"name"`
+		Role       string `json:"role"`
+		State      string `json:"state"`
+		Generation int64  `json:"generation"`
+	}
+	roster := struct {
+		Self   string  `json:"self,omitempty"`
+		Agents []agent `json:"agents"`
+	}{Self: self, Agents: []agent{}}
+	for _, a := range agents {
+		if a.Phase != "deleted" {
+			roster.Agents = append(roster.Agents, agent{Name: a.Name, Role: a.Role, State: a.Phase, Generation: a.Incarnation})
+		}
+	}
+	data, err := json.Marshal(roster)
+	if err != nil || len(data) > relay.MaxMessageBytes {
+		return command.Result{}, errors.New("the list of agents exceeds the size limit")
+	}
+	return command.Result{Text: string(data), Data: data, Outcome: "completed"}, nil
 }
 
 // writeCommandError отвечает на ошибку команды. Detail — как прежде, текст
@@ -132,14 +143,14 @@ func writeCommandError(w http.ResponseWriter, r *http.Request, err error) {
 
 // commandPreflight — проверки маршрута команды каталога до исполнения,
 // общие для POST /api/commands/{tool} и команд Telegram (#284): у команды в
-// рое — право на рой (читать для agents и profile, иначе управлять), живой
-// рой и его namespace; у команды не для гостей — администратор. refusal —
+// рое — право на рой (читать для agents, иначе управлять) и живой
+// рой; у команды не для гостей — администратор. refusal —
 // сознательный отказ (writeCommandError), failure — сбой проверки (apiError).
 func (s *Server) commandPreflight(ctx context.Context, user store.User, scope string, inv command.Invocation) (refusal, failure error) {
 	spec, _ := command.Lookup(inv.Name)
 	if scope != "" {
 		action := app.ActionManageSwarm
-		if spec.ReadOnly && (inv.Name == "agents" || inv.Name == "profile") {
+		if inv.Name == "agents" {
 			action = app.ActionViewSwarm
 		}
 		allowed, err := s.app.Can(user.ID, action, app.SwarmRes(scope))
@@ -154,7 +165,7 @@ func (s *Server) commandPreflight(ctx context.Context, user store.User, scope st
 			return nil, err
 		}
 		if !found || sw.State != app.StateActive {
-			return command.Refuse(app.ErrConflict, "swarm is not active"), nil
+			return command.Refuse(app.ErrConflict, "the swarm is not active; nothing changed"), nil
 		}
 	}
 	if !spec.Guest && !user.IsAdmin {

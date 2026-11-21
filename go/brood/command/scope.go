@@ -4,9 +4,9 @@ package command
 // This is a client preflight check, not a server authorization boundary.
 func NeedsSwarm(name string) bool {
 	switch name {
-	case "models", "profile", "diagnose", "server_diagnose", "project_add", "project_limit", "node", "node_drain", "node_up":
-		return false
-	default:
+	case "agents", "send", "tail", "slash", "add", "rm", "start", "stop", "restart", "reset":
 		return true
+	default:
+		return false
 	}
 }

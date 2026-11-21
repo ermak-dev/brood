@@ -26,14 +26,14 @@ func secretUsage(w io.Writer) {
        bro secret --project ID_OR_NAME git add NAME --repository URL --username USER --value-file FILE
        bro secret --project ID_OR_NAME git list|remove [NAME...]
 
-Operator-only command. Project selection is always explicit. Values are never
+Manage the secrets of a project. Project selection is always explicit. Values are never
 accepted as arguments or printed. File sources must be regular non-symlink files
 inside the current git working copy (512 KiB per file, 2 MiB per batch).
 Lists show only file names and sizes or variable names. Mutations print nothing.
 
-file and var secrets are delivered to the project's actors. git credentials are
+file and var secrets are delivered to the project's agents. git credentials are
 server-only: the Git gateway sends them to exactly the bound repository and
-never to an actor. The token comes from stdin or a private file; add with an
+never to an agent. The token comes from stdin or a private file; add with an
 existing name rotates it. A credential is active when brood.yaml references it
 as brood.git_credential and the project repository equals its repository.
 git list prints NAME, REPOSITORY and active or inactive.
@@ -42,6 +42,8 @@ git list prints NAME, REPOSITORY and active or inactive.
 A brood.secrets block in brood.yaml declares the complete set of file and var
 secrets: bro build removes file and var secrets that the block does not list,
 including ones added here by hand. Without that block bro build leaves them alone.
+
+example: bro secret --project brood var add GH_TOKEN --stdin < token.txt
 `)
 }
 

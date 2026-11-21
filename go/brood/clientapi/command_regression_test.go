@@ -72,7 +72,7 @@ func TestCommandExecutorActorRequiresScope(t *testing.T) {
 		return nil, errors.New("unexpected request")
 	})
 	_, err := (CommandExecutor{Client: c}).Execute(context.Background(), command.Invocation{Name: "agents", Arguments: json.RawMessage(`{}`)})
-	if err == nil || !strings.Contains(err.Error(), "select a swarm") {
+	if err == nil || !strings.Contains(err.Error(), "no swarm selected") {
 		t.Fatalf("error=%v", err)
 	}
 }

@@ -142,7 +142,7 @@ func replaceSecretFile(dir int, name string, data []byte, mode uint32, uid, gid 
 func secretHash(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
 
 // secretManifest contains only relative names and hashes, never values or vars.
-// It lives outside git-clean's scope. A missing file after recycle is expected.
+// It lives outside git-clean's scope.
 type secretManifest map[string]string
 
 func secretManifestDirectory(home string) (int, error) {

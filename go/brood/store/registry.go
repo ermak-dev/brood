@@ -111,7 +111,7 @@ func verifyManagedSchema(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-// verifyCoordinationSchema сверяет таблицу координационных claims.
+// verifyCoordinationSchema сверяет таблицу броней операций над workspace.
 func verifyCoordinationSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkSchema(ctx, tx, coordinationSchema)
 }

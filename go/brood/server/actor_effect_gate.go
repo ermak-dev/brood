@@ -19,8 +19,8 @@ type actorEffectGates struct {
 	entries map[string]*actorEffectGateEntry
 }
 
-// acquire упорядочивает commit вмешательства и открытие канала эффекта,
-// не удерживая транзакцию SQLite во время сетевой операции.
+// acquire упорядочивает запись намерения над агентом и открытие канала
+// эффекта, не удерживая транзакцию SQLite во время сетевой операции.
 func (g *actorEffectGates) acquire(ctx context.Context, actors ...string) (func(), error) {
 	keys := append([]string(nil), actors...)
 	slices.Sort(keys)
@@ -69,8 +69,8 @@ func (g *actorEffectGates) acquire(ctx context.Context, actors ...string) (func(
 }
 
 // fenceSessionOpen проверяет точный резерв в транспорте, а не перед
-// потенциально задержанным адаптером. Вмешательство и открытие упорядочены;
-// ожидание результата гостя не удерживает owner gate. Дополнительная проверка
+// потенциально задержанным адаптером. Запись намерения и открытие
+// упорядочены; ожидание результата гостя не удерживает gate. Дополнительная проверка
 // authorize читает только локальное состояние, без сетевой авторизации под gate.
 func (m *managedProvider) fenceSessionOpen(ctx context.Context, op store.ActorOperation, authorize func(context.Context) error) context.Context {
 	return relay.WithSessionOpenGuard(ctx, func(ctx context.Context) (func(), error) {

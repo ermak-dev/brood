@@ -6,11 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
-	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/mcp"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -75,7 +74,7 @@ func TestMCPToolsUseOnlySwarmBroker(t *testing.T) {
 	if len(properties) != 2 || properties["name"] == nil || properties["origin"] == nil || len(schema["required"].([]any)) != 1 || schema["required"].([]any)[0] != "name" || add["annotations"].(map[string]any)["readOnlyHint"] != false {
 		t.Fatalf("add schema: %v", add)
 	}
-	if calls[0].Tool != "send" || calls[0].To != "peer" || calls[0].WaitSeconds != 2 || calls[1].Tool != "agents" {
+	if calls[0].Tool != "send" || !strings.Contains(string(calls[0].Arguments), `"to":"peer"`) || !strings.Contains(string(calls[0].Arguments), `"wait_seconds":2`) || calls[1].Tool != "agents" {
 		t.Fatalf("calls: %v", calls)
 	}
 }
@@ -115,7 +114,7 @@ func TestMCPAddContract(t *testing.T) {
 					Name string `json:"name"`
 				}
 				_ = json.Unmarshal([]byte(tc.args), &args)
-				if !reflect.DeepEqual(req, relay.SwarmRequest{Tool: "add", To: args.Name}) {
+				if req.Tool != "add" || !strings.Contains(string(req.Arguments), strconv.Quote(args.Name)) {
 					t.Fatalf("request: %+v", req)
 				}
 				if _, ok := ctx.Deadline(); !ok {
@@ -157,28 +156,6 @@ func TestMCPBroodInstructions(t *testing.T) {
 		if !strings.Contains(response.Result.Instructions, text) {
 			t.Errorf("instructions missing %q: %s", text, response.Result.Instructions)
 		}
-	}
-}
-
-// FEATURE: Guest MCP exposes the shared catalog rather than a local tool list.
-// SPEC: Every guest command is advertised in catalog order.
-func TestGuestCatalogHasExtendedTools(t *testing.T) {
-	invocation, err := command.ParseTool("session_history", json.RawMessage(`{"name":"peer"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := `{"jsonrpc":"2.0","id":1,"method":"initialize"}` + "\n" + `{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"session_history","arguments":{"name":"peer"}}}` + "\n"
-	var out bytes.Buffer
-	calls := 0
-	err = ServeMCP(context.Background(), strings.NewReader(input), &out, func(_ context.Context, request relay.SwarmRequest) relay.SwarmResponse {
-		calls++
-		if request.Tool != "session_history" || string(request.Arguments) != string(invocation.Arguments) || request.To != "" || request.Message != "" || request.WaitSeconds != 0 {
-			t.Fatalf("canonical request: %+v", request)
-		}
-		return relay.SwarmResponse{OK: true, Text: "fixture history"}
-	})
-	if err != nil || calls != 1 || !strings.Contains(out.String(), "fixture history") {
-		t.Fatalf("calls=%d output=%s err=%v", calls, &out, err)
 	}
 }
 

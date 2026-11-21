@@ -135,7 +135,7 @@ func (b *SwarmBroker) serveConn(c *net.UnixConn) {
 	stop := context.AfterFunc(b.ctx, func() { c.Close() })
 	defer stop()
 	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
-	reader := bufio.NewReader(io.LimitReader(c, relay.MaxMessageBytes+relay.MaxCompletionReceiptFrame+2))
+	reader := bufio.NewReader(io.LimitReader(c, relay.MaxMessageBytes+1))
 	data, err := reader.ReadBytes('\n')
 	req, valid := relay.DecodeSwarmRequest(data)
 	response := relay.SwarmResponse{Text: "swarm request refused or relay is disconnected"}
@@ -153,10 +153,7 @@ func (b *SwarmBroker) serveConn(c *net.UnixConn) {
 	_ = c.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	encoded, err := json.Marshal(response)
 	if err == nil && len(encoded) <= relay.MaxMessageBytes {
-		wire := append(encoded, '\n')
-		if n, err := c.Write(wire); err == nil && n == len(wire) {
-			b.forwardCompletionReceipt(c, reader, session, req, response)
-		}
+		_, _ = c.Write(append(encoded, '\n'))
 	}
 }
 
@@ -193,16 +190,6 @@ func callSwarmBroker(ctx context.Context, path string, req relay.SwarmRequest) r
 	response, valid := relay.DecodeSwarmResponse(data)
 	if err != nil || !valid {
 		return failed
-	}
-	if receipt, present := relay.CompletionReceiptForResponse(req, response); present {
-		frame, err := relay.CompletionReceiptFrame(receipt)
-		if err == nil {
-			frame = append(frame, '\n')
-			n, writeErr := c.Write(frame)
-			if writeErr != nil || n != len(frame) {
-				response.Text += "\nCompletion acceptance was received, but its receipt acknowledgement is unconfirmed; inspect status before repeating work."
-			}
-		}
 	}
 	return response
 }

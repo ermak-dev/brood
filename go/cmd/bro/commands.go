@@ -1,4 +1,4 @@
-// Authentication and project commands share the same argument and TLS handling.
+// Вход и выход: единственные команды, которым называют сервер и его CA.
 package main
 
 import (
@@ -34,32 +34,6 @@ func (c command) auth(ctx context.Context, name string, args []string) error {
 			return err
 		}
 		fmt.Fprintln(c.out, "logged out")
-	case "whoami":
-		user, err := client.Whoami(ctx)
-		if err != nil {
-			return sessionError(err)
-		}
-		fmt.Fprint(c.out, user.Username)
-		if user.DisplayName != "" {
-			fmt.Fprintf(c.out, " (%s)", user.DisplayName)
-		}
-		if user.IsAdmin {
-			fmt.Fprint(c.out, " [admin]")
-		}
-		fmt.Fprintln(c.out)
-		return store.Save(client.Origin(), client.Stored())
-	case "projects":
-		projects, err := client.ProjectsList(ctx)
-		if err != nil {
-			return sessionError(err)
-		}
-		if len(projects) == 0 {
-			fmt.Fprintln(c.out, "no projects")
-		}
-		for _, p := range projects {
-			fmt.Fprintln(c.out, p.ID, p.Name)
-		}
-		return store.Save(client.Origin(), client.Stored())
 	}
 	return nil
 }
@@ -90,11 +64,4 @@ func (c command) login(ctx context.Context, client *clientapi.Client, store *cli
 	}
 	fmt.Fprintf(c.out, "logged in as %s (%s)\n", info.User.Username, client.Origin())
 	return nil
-}
-
-func sessionError(err error) error {
-	if errors.Is(err, clientapi.ErrSessionExpired) {
-		return fmt.Errorf("%w; run bro login <server>", err)
-	}
-	return err
 }

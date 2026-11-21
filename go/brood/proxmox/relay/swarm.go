@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"regexp"
-	"strings"
 	"time"
 
 	"brood.dev/go/brood/command"
@@ -15,15 +13,11 @@ import (
 
 const swarmRPC = "brood-swarm-rpc-v1"
 
-var swarmActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
-
-// SwarmRequest contains no sender identity, credentials, address or command.
+// SwarmRequest is a catalog command of an agent: a tool name and its canonical
+// arguments. It contains no sender identity, credentials or address.
 type SwarmRequest struct {
-	Tool        string          `json:"tool"`
-	To          string          `json:"to,omitempty"`
-	Message     string          `json:"message,omitempty"`
-	WaitSeconds int             `json:"wait_seconds,omitempty"`
-	Arguments   json.RawMessage `json:"arguments,omitempty"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
 }
 
 type SwarmResponse struct {
@@ -34,7 +28,7 @@ type SwarmResponse struct {
 }
 
 // DecodeSwarmResponse validates the envelope independently of display text.
-// Legacy replies without an outcome still require nonempty text.
+// Replies without an outcome require nonempty text.
 func DecodeSwarmResponse(data []byte) (SwarmResponse, bool) {
 	if len(data) > MaxMessageBytes || !uniqueSwarmFields(data) {
 		return SwarmResponse{}, false
@@ -77,27 +71,12 @@ type SwarmCaller func(context.Context, SwarmRequest) SwarmResponse
 type SwarmHandler func(context.Context, string, int64, SwarmRequest) SwarmResponse
 
 func validSwarmRequest(r SwarmRequest) bool {
-	if len(r.Arguments) != 0 {
-		if r.To != "" || r.Message != "" || r.WaitSeconds != 0 {
-			return false
-		}
-		spec, ok := command.Lookup(r.Tool)
-		if !ok || !spec.Guest {
-			return false
-		}
-		_, err := command.ParseTool(r.Tool, r.Arguments)
-		return err == nil
-	}
-	if r.WaitSeconds < 0 || r.WaitSeconds > 300 {
+	spec, ok := command.Lookup(r.Tool)
+	if !ok || !spec.Guest {
 		return false
 	}
-	if r.Tool == "agents" {
-		return r.To == "" && r.Message == "" && r.WaitSeconds == 0
-	}
-	if r.Tool == "add" {
-		return len(r.To) <= 63 && swarmActorName.MatchString(r.To) && r.Message == "" && r.WaitSeconds == 0
-	}
-	return r.Tool == "send" && len(r.To) > 0 && len(r.To) <= 63 && !strings.ContainsAny(r.To, "\x00\r\n") && strings.TrimSpace(r.Message) != "" && len(r.Message) < MaxMessageBytes
+	_, err := command.ParseTool(r.Tool, r.Arguments)
+	return err == nil
 }
 
 func DecodeSwarmRequest(data []byte) (SwarmRequest, bool) {
@@ -145,18 +124,11 @@ func SwarmCallTimeout(input SwarmRequest) time.Duration {
 
 // SwarmWaitSeconds extracts the bounded wait from an already validated request.
 func SwarmWaitSeconds(input SwarmRequest) int {
-	if len(input.Arguments) == 0 {
-		return input.WaitSeconds
-	}
 	var args struct {
 		WaitSeconds int `json:"wait_seconds"`
-		Wait        int `json:"wait"`
 	}
 	if json.Unmarshal(input.Arguments, &args) != nil {
 		return 0
-	}
-	if args.Wait > args.WaitSeconds {
-		return args.Wait
 	}
 	return args.WaitSeconds
 }
@@ -179,7 +151,7 @@ func (h *Hub) serveSwarmRequests(p *peer, requests <-chan *ssh.Request) {
 			_ = req.Reply(false, nil)
 			continue
 		}
-		input, ok := decodeSupervisorSwarmRequest(req.Payload)
+		input, ok := DecodeSwarmRequest(req.Payload)
 		h.mu.Lock()
 		handler := h.swarm
 		h.mu.Unlock()
@@ -207,7 +179,7 @@ func swarmCaller(conn ssh.Conn, session context.Context) SwarmCaller {
 	slots := make(chan struct{}, MaxMessagesInFlight)
 	return func(ctx context.Context, req SwarmRequest) SwarmResponse {
 		failed := SwarmResponse{Text: "swarm service unavailable or request refused"}
-		if !validSupervisorSwarmRequest(req) || ctx.Err() != nil || session.Err() != nil {
+		if !validSwarmRequest(req) || ctx.Err() != nil || session.Err() != nil {
 			return failed
 		}
 		data, err := json.Marshal(req)

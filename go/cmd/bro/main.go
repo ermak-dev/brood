@@ -11,6 +11,9 @@ import (
 	"strings"
 
 	"brood.dev/go/brood/clientapi"
+	catalog "brood.dev/go/brood/command"
+	"brood.dev/go/brood/mcp"
+	"brood.dev/go/brood/swarmclient"
 )
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -19,92 +22,152 @@ func run(args []string) int {
 	return runWithIO(context.Background(), args, os.Stdin, os.Stdout, os.Stderr)
 }
 
+// errNotLoggedIn — нет сохранённого сервера или сессии: статус выхода 2.
+var errNotLoggedIn = errors.New("not logged in; run: bro login SERVER")
+
 type command struct {
 	in              io.Reader
 	out, diagnostic io.Writer
+	scope           scope
+	// session — оператор этого запуска; заводится первым обращением.
+	session *operator
 }
 
 func runWithIO(ctx context.Context, args []string, in io.Reader, out, diagnostic io.Writer) int {
-	c := command{in: in, out: out, diagnostic: diagnostic}
-	options, parseErr := parseExecution(args, os.Getenv("BROOD_EXECUTION_MODE"), os.Getenv("BROOD_SWARM"))
-	if parseErr != nil {
-		fmt.Fprintf(diagnostic, "bro: %v\n", parseErr)
+	options, err := parseExecution(args, os.Getenv("BROOD_EXECUTION_MODE"), os.Getenv("BROOD_SWARM"))
+	if err != nil {
+		fmt.Fprintf(diagnostic, "bro: %v\n", err)
 		return 1
 	}
-	args = options.args
-	if len(args) == 0 {
-		usage(diagnostic)
+	c := &command{in: in, out: out, diagnostic: diagnostic, scope: options.scope}
+	if len(options.args) == 0 {
+		overview(diagnostic)
 		return 1
 	}
-	var err error
 	if options.guest {
-		switch args[0] {
-		case "login", "logout", "whoami", "projects", "image", "secret":
-			fmt.Fprintln(diagnostic, "operator command is unavailable in guest mode")
-			return 1
-		}
+		err = c.guestCommand(ctx, options.args)
+	} else {
+		err = c.operatorCommand(ctx, options.args)
 	}
-	switch args[0] {
-	case "login", "logout", "whoami":
-		err = c.auth(ctx, args[0], args[1:])
-	case "projects":
-		rest := args[1:]
-		if len(rest) > 0 && rest[0] == "list" {
-			rest = rest[1:]
+	if c.session != nil {
+		if saveErr := c.session.save(); err == nil {
+			err = saveErr
 		}
-		err = c.auth(ctx, "projects", rest)
-	case "build":
-		err = c.build(ctx, args[1:], options.guest)
-	case "image":
-		err = c.image(ctx, args[1:])
-	case "secret":
-		err = c.secret(ctx, args[1:])
-	case "help", "-h", "--help":
-		if len(args) != 1 {
-			err = errors.New("help accepts no arguments")
-		} else {
-			usage(out)
-		}
-	default:
-		err = c.catalogCommand(ctx, options)
 	}
 	if err == nil {
 		return 0
 	}
-	fmt.Fprintf(diagnostic, "bro %s: %v\n", args[0], err)
-	if errors.Is(err, clientapi.ErrInvalidCredentials) || errors.Is(err, clientapi.ErrSessionExpired) {
+	if errors.Is(err, errSilent) {
+		return 1
+	}
+	fmt.Fprintf(diagnostic, "bro: %s\n", describe(err))
+	if errors.Is(err, errNotLoggedIn) || errors.Is(err, clientapi.ErrInvalidCredentials) || errors.Is(err, clientapi.ErrSessionExpired) {
 		return 2
 	}
 	return 1
 }
 
-func usage(w io.Writer) {
-	fmt.Fprint(w, `usage: bro <command> [options]
+// errSilent — отказ, который команда уже объяснила своим выводом.
+var errSilent = errors.New("failed")
 
-commands:
-  login [server] [--ca FILE]      authenticate and store the session
-  logout [server] [--ca FILE]     revoke the server session, then clear local storage
-  whoami [server] [--ca FILE]     print the current user
-  projects list [server] [--ca FILE]  list accessible projects
-  build [options]                 synchronize the project and secrets from ./brood.yaml and build its worker image
-  image list|delete [options]     list or delete the project's worker images
-  secret [options]                manage project secrets on the current server
-  mcp                           serve catalog tools over stdio
-  <catalog command>             execute a scoped orchestration command
+// describe — отказ одной строкой: причина сервера как есть, без пути запроса.
+func describe(err error) string {
+	var refusal *clientapi.CommandError
+	switch {
+	case errors.Is(err, clientapi.ErrSessionExpired):
+		return "session expired; run: bro login SERVER"
+	case errors.As(err, &refusal) && refusal.Unconfirmed:
+		return "the outcome is not confirmed; check before retrying"
+	case errors.As(err, &refusal) && refusal.Reason != "":
+		return refusal.Reason
+	case errors.As(err, &refusal):
+		// Без публичной причины сервер называет только род отказа.
+		kind := map[int]string{400: "not accepted by the server; its version may differ from bro", 403: "not allowed", 404: "not found"}[refusal.Status]
+		if kind == "" {
+			kind = "refused by the server"
+		}
+		return fmt.Sprintf("%s (status %d)", kind, refusal.Status)
+	}
+	return err.Error()
+}
 
-Orchestration scope: --swarm ID or BROOD_SWARM. Guest execution must be explicit:
---guest or BROOD_EXECUTION_MODE=guest; broker failure never falls back to operator.
+// guestCommand исполняет команду агента: каталог через брокер гостя, без
+// сессии оператора и без выбора роя.
+func (c *command) guestCommand(ctx context.Context, args []string) error {
+	switch args[0] {
+	case "build":
+		return c.build(ctx, args[1:], true)
+	case "help", "-h", "--help":
+		catalogUsage(c.out, mcp.GuestSpecs())
+		return nil
+	}
+	if args[0] != "mcp" && !catalogPath(args) {
+		return fmt.Errorf("%s is unavailable in guest mode", args[0])
+	}
+	return c.catalogCommand(ctx, args, swarmclient.Client{}, mcp.GuestSpecs())
+}
 
-Run bro <command> --help for command-specific options.
-
-Servers use HTTPS (HTTP is allowed only for localhost/loopback development).
-Without a server, use the last logged-in origin. Sessions and additional CA trust
-are stored per origin under $XDG_STATE_HOME/brood/sessions or ~/.local/state/brood/sessions.
---ca adds a trusted PEM CA and persists it on successful login; TLS verification
-cannot be disabled. Passwords are read without echo from a terminal, or as the
-second input line when stdin is a pipe. Passwords are never saved.
-`)
-	catalogUsage(w)
+// operatorCommand исполняет команду человека.
+func (c *command) operatorCommand(ctx context.Context, args []string) error {
+	name, rest := args[0], args[1:]
+	if name == "help" || name == "-h" || name == "--help" {
+		return c.help(rest)
+	}
+	if wantsHelp(name, rest) {
+		return c.help(args)
+	}
+	switch name {
+	case "login", "logout":
+		return c.auth(ctx, name, rest)
+	case "status":
+		return c.status(ctx, rest)
+	case "projects":
+		return c.projects(ctx, rest)
+	case "swarms":
+		return c.swarms(ctx, rest)
+	case "join":
+		return c.join(ctx, rest)
+	case "swarm":
+		return c.swarm(ctx, rest)
+	case "agents":
+		return c.agents(ctx, rest)
+	case "add":
+		return c.add(ctx, rest)
+	case "rm", "reset":
+		return c.destroy(ctx, name, rest)
+	case "start", "stop", "restart":
+		return c.lifecycle(ctx, name, rest)
+	case "send":
+		return c.send(ctx, rest)
+	case "tail":
+		return c.tail(ctx, rest)
+	case "attach":
+		return c.attach(ctx, rest)
+	case "pools":
+		return c.pools(ctx, rest)
+	case "pool":
+		return c.pool(ctx, rest)
+	case "build":
+		return c.build(ctx, rest, false)
+	case "image":
+		return c.image(ctx, rest)
+	case "secret":
+		return c.secret(ctx, rest)
+	case "completion":
+		return c.completion(rest)
+	case "__complete":
+		c.complete(ctx, rest)
+		return nil
+	case "mcp":
+		if len(rest) != 0 {
+			return errors.New("mcp accepts no arguments")
+		}
+		return mcp.Serve(ctx, c.in, c.out, operatorExecutor{c}, catalog.Specs())
+	}
+	if !catalogPath(args) {
+		return fmt.Errorf("unknown command %s; see: bro help", name)
+	}
+	return c.plain(ctx, args)
 }
 
 func parseServer(args []string) (server, caPath string, rest []string, err error) {
@@ -162,7 +225,7 @@ func newClient(server, caPath string) (*clientapi.Client, *clientapi.SessionStor
 			return nil, nil, err
 		}
 		if server == "" {
-			return nil, nil, errors.New("no saved server; run: bro login <server>")
+			return nil, nil, errNotLoggedIn
 		}
 	}
 	origin, err := clientapi.NormalizeOrigin(server)

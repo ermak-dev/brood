@@ -422,7 +422,7 @@ export function AgentsPage() {
     const settled = !row.requested;
     const deleting = row.phase === 'deleting' ? t('brood.agents.is_deleting') : undefined;
     const notice = (action: string) => t('brood.agents.requested', { action, name: row.name });
-    const scope = `--swarm ${row.swarmId}`;
+    const scope = `${row.projectName}/${row.swarmName}`;
     const resources = [
       row.cpuMillicores && t('brood.agents.cpu', { count: scaled(row.cpuMillicores, 1000) }),
       row.memoryBytes && t('brood.agents.memory', { count: scaled(row.memoryBytes, GIB) }),
@@ -570,15 +570,13 @@ export function AgentsPage() {
           <PanelSection title={t('brood.panel.commands')}>
             <Commands
               items={[
+                { label: t('brood.agents.command_join'), command: `bro join ${scope}` },
+                { label: t('brood.agents.command_attach'), command: `bro attach ${row.name}` },
                 {
                   label: t('brood.agents.command_send'),
-                  command: `bro send ${row.name} "${t('brood.agents.command_message')}" ${scope}`,
+                  command: `bro send ${row.name} "${t('brood.agents.command_message')}"`,
                 },
-                {
-                  label: t('brood.agents.command_tail'),
-                  command: `bro tail ${row.name} ${scope}`,
-                },
-                { label: t('brood.agents.command_list'), command: `bro agents ${scope}` },
+                { label: t('brood.agents.command_tail'), command: `bro tail ${row.name} -f` },
               ]}
             />
           </PanelSection>

@@ -113,24 +113,6 @@ func TestWorkspaceRestartWithoutCheckout(t *testing.T) {
 	}
 }
 
-func TestWorkspaceCleanupStillRequiresCheckout(t *testing.T) {
-	for _, c := range notCheckouts {
-		for _, op := range []string{"wipe", "recycle"} {
-			t.Run(c.name+"/"+op, func(t *testing.T) {
-				e := workspaceFixture(t)
-				c.plant(t, e.root)
-				launchingSession(e)
-				refuseGitEffects(t, e)
-				actions := holderActions(e)
-				r := e.handle(context.Background(), workspaceRequest(op, `{"confirm":true}`))
-				if r.OK || r.Outcome != "failed" || !strings.Contains(r.Text, c.reason) || len(*actions) != 0 {
-					t.Fatalf("%s without checkout: %+v holder=%v", op, r, *actions)
-				}
-			})
-		}
-	}
-}
-
 // replaceWithSymlink swaps the fixed directory for a symlink to its content.
 func replaceWithSymlink(t *testing.T, root string) {
 	t.Helper()

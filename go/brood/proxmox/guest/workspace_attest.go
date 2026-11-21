@@ -43,7 +43,7 @@ type WorkspaceAttestor struct {
 	Ensure   func(context.Context) error                                                         `json:"-"`
 	// Step puts the next Claude session into the step mode (#224) while no
 	// actor process exists; Free returns it to the free mode. Both are root
-	// effects of stepPolicy; restart and recycle call Free too.
+	// effects of stepPolicy; restart calls Free too.
 	Step func(gitidentity.Identity) error `json:"-"`
 	Free func() error                     `json:"-"`
 

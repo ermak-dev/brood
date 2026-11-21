@@ -1,3 +1,3 @@
 package command
 
-var agentsSpec = spec("agents", "List actors and their current status in the selected scope.", true, false, true)
+var agentsSpec = spec("agents", "List the agents of the swarm with their state.", true, false, true)

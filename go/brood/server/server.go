@@ -61,8 +61,7 @@ type Server struct {
 	// отдаются, модель выбирает Claude Code.
 	actorModels actormodel.Models
 
-	managedLLM  http.Handler
-	adminModels *adminModelClient
+	managedLLM http.Handler
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -152,7 +151,6 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountLists()
 	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
-	srv.adminModels = newAdminModelClient(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel

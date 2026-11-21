@@ -2574,8 +2574,8 @@
       "delete_hint": "移除蜂群。此操作無法復原。",
       "has_agents_other": "請先刪除其 {{count}} 個代理人。",
       "confirm_delete": "刪除蜂群 {{name}}?此操作無法復原。",
-      "command_scope": "在目前的 shell 中將此蜂群設為 bro 的預設蜂群",
-      "command_add": "在此蜂群中建立代理人"
+      "command_scope": "Make this swarm the current one for bro; later commands need no swarm option",
+      "command_add": "Create an agent in the current swarm with the next free name"
     },
     "agents": {
       "title": "代理人",
@@ -2649,7 +2649,7 @@
       "confirm_delete": "刪除代理人 {{name}}?其容器和工作區將被銷毀。此操作無法復原。",
       "command_send": "傳送訊息給代理人",
       "command_message": "您的訊息",
-      "command_tail": "檢視代理人最近的輸出",
+      "command_tail": "Follow the agent's output",
       "command_list": "列出蜂群的代理人",
       "view": "檢視",
       "open_view": "唯讀檢視",
@@ -2664,7 +2664,9 @@
         "provider_unavailable": "Proxmox is unreachable right now. The check is retried automatically.",
         "agent_not_connected": "The agent did not connect within two minutes after its container started. Stop and start the agent; if it repeats, an administrator should check the brood-agent service in the container.",
         "agent_install": "The agent could not be installed into the container. Stop and start the agent; if it repeats, tell an administrator."
-      }
+      },
+      "command_join": "Make the agent's swarm current for bro (once)",
+      "command_attach": "Attach your terminal to the agent's console; Ctrl-] detaches"
     },
     "pools": {
       "title": "資源池",

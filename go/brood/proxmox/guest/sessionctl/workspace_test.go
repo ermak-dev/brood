@@ -68,36 +68,6 @@ func workspaceFixtureWith(t *testing.T, home string, files map[string]string) *w
 		return identity{PID: 123, SessionID: "old", Process: "start", HolderProof: "holder"}, nil
 	}, quiet: func(context.Context) (bool, error) { return true, nil }}
 }
-func TestWorkspaceFactsAndWipe(t *testing.T) {
-	e := workspaceFixture(t)
-	facts := e.handle(context.Background(), workspaceRequest("workspace", `{"name":"actor"}`))
-	if !facts.OK || !strings.Contains(facts.Text, `"git":"clean"`) {
-		t.Fatalf("facts: %+v", facts)
-	}
-	os.WriteFile(filepath.Join(e.root, "tracked"), []byte("dirty"), 0600)
-	os.WriteFile(filepath.Join(e.root, "build.out"), []byte("untracked"), 0600)
-	facts = e.handle(context.Background(), workspaceRequest("workspace", `{}`))
-	if !facts.OK || !strings.Contains(facts.Text, `"git":"dirty"`) {
-		t.Fatalf("dirty running session: %+v", facts)
-	}
-	if r := e.handle(context.Background(), workspaceRequest("wipe", `{}`)); r.OK {
-		t.Fatal("wipe without confirmation")
-	}
-	r := e.handle(context.Background(), workspaceRequest("wipe", `{"confirm":true}`))
-	if !r.OK {
-		t.Fatalf("wipe: %+v", r)
-	}
-	data, err := os.ReadFile(filepath.Join(e.root, "tracked"))
-	if err != nil || string(data) != "original\n" {
-		t.Fatalf("tracked: %q %v", data, err)
-	}
-	if _, err = os.Stat(filepath.Join(e.root, "build.out")); !os.IsNotExist(err) {
-		t.Fatal("untracked output retained")
-	}
-	if _, err = os.Stat(filepath.Join(e.root, ".git")); err != nil {
-		t.Fatal("clone removed")
-	}
-}
 func TestWorkspaceRejectsUnsafeRepositories(t *testing.T) {
 	for _, config := range []string{"[core]\nfsmonitor = /tmp/evil\n", "[filter \"evil\"]\nclean = /tmp/evil\n", "[include]\npath = /tmp/evil\n", "[core]\nworktree = /tmp\n", "[extensions]\nworktreeConfig = true\n"} {
 		t.Run(config, func(t *testing.T) {
@@ -186,55 +156,6 @@ func TestWorkspaceGuardsAndUnconfirmedEffects(t *testing.T) {
 	r = e.handle(context.Background(), workspaceRequest("wipe", `{"confirm":true}`))
 	if r.OK || r.Outcome != "unknown" || effects != 1 {
 		t.Fatalf("partial effect: %+v calls=%d", r, effects)
-	}
-}
-func TestWorkspaceRestartAndRecycle(t *testing.T) {
-	for _, op := range []string{"restart", "recycle"} {
-		t.Run(op, func(t *testing.T) {
-			e := workspaceFixture(t)
-			os.WriteFile(filepath.Join(e.root, "CLAUDE.md"), []byte("rules"), 0600)
-			var calls []ptysession.Request
-			stopped := false
-			e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
-				calls = append(calls, req)
-				if req.Action == "stop" {
-					stopped = true
-				}
-				return liveReply(), nil
-			}
-			e.prove = func(context.Context) (identity, error) {
-				if stopped {
-					return identity{PID: 124, SessionID: "new", Process: "new-start"}, nil
-				}
-				return identity{PID: 123, SessionID: "old", Process: "old-start", HolderProof: "holder"}, nil
-			}
-			r := e.handle(context.Background(), workspaceRequest(op, `{"confirm":true}`))
-			if !r.OK {
-				t.Fatalf("%s: %+v", op, r)
-			}
-			if len(calls) != 2 || calls[0].Action != "stop" || calls[0].Proof != "holder" || calls[1].Action != "ensure" || len(calls[1].Data) != 0 {
-				t.Fatalf("fixed PTY calls: %#v", calls)
-			}
-			_, err := os.Stat(filepath.Join(e.root, "CLAUDE.md"))
-			if op == "restart" && err != nil {
-				t.Fatal("restart removed instructions")
-			}
-			if op == "recycle" && !os.IsNotExist(err) {
-				t.Fatal("recycle retained untracked instructions")
-			}
-		})
-	}
-	e := workspaceFixture(t)
-	n := 0
-	e.prove = func(context.Context) (identity, error) { n++; return identity{PID: n, HolderProof: "holder"}, nil }
-	calls := 0
-	e.call = func(_ context.Context, req ptysession.Request) (ptysession.Reply, error) {
-		calls++
-		return liveReply(), nil
-	}
-	r := e.handle(context.Background(), workspaceRequest("restart", `{"confirm":true}`))
-	if r.OK || calls != 0 {
-		t.Fatal("changed identity stopped")
 	}
 }
 

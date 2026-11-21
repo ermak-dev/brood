@@ -1,3 +1,3 @@
 package command
 
-var diagnoseSpec = spec("diagnose", "Read safe diagnostics for the current scope without installation secrets.", true, false, true)
+var diagnoseSpec = spec("diagnose", "Show how this command reaches the server and under which identity. No secrets are printed.", true, false, true)

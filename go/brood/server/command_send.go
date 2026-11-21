@@ -11,17 +11,17 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// Публичные исходы канала оператора к актору: их текст читает клиент.
+// Публичные исходы канала оператора к агенту: их текст читает клиент.
 // Отключённый адресат — отказ команды: сообщение не отправлено.
 var (
-	errRecipientOffline    = command.Refuse(nil, "recipient is not connected")
-	errDeliveryUnconfirmed = errors.New("message delivery is unconfirmed; check before retrying")
+	errRecipientOffline    = command.Refuse(nil, "not sent: the agent is not connected; check its state with agents")
+	errDeliveryUnconfirmed = command.Refuse(nil, "the agent did not confirm the delivery; the message may have arrived, check with tail before sending again")
 )
 
 // errMessageNotSent — гость ответил notSent (#244): сообщение до сессии
 // Claude заведомо не дошло, повтор безопасен. Клиенту send не уходит:
 // send показывает вердикт гостя, как прежде, ответ на запрос роя — failed.
-var errMessageNotSent = errors.New("the actor refused before sending")
+var errMessageNotSent = errors.New("the agent refused the message before it was sent")
 
 func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string, inv command.Invocation) (command.Result, error) {
 	allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
@@ -37,7 +37,7 @@ func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string
 		WaitSeconds int    `json:"wait_seconds"`
 	}
 	if json.Unmarshal(inv.Arguments, &args) != nil {
-		return command.Result{}, command.Refuse(nil, "invalid send arguments")
+		return command.Result{}, command.Refuse(nil, "send needs to and message; nothing was sent")
 	}
 	byName := func(ctx context.Context) (store.ManagedActor, error) {
 		return s.store.LookupManagedActor(ctx, swarmID, args.To)

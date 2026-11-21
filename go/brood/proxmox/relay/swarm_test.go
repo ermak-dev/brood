@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -66,24 +67,24 @@ func TestSwarmRPCUsesAuthenticatedCurrentSession(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	got := call(ctx, SwarmRequest{Tool: "agents"})
+	got := call(ctx, SwarmRequest{Tool: "agents", Arguments: json.RawMessage(`{}`)})
 	if !got.OK || got.Text != "agents from authenticated actor" {
 		t.Fatalf("RPC: %+v", got)
 	}
-	if got := call(ctx, SwarmRequest{Tool: "add", To: "peer-1"}); !got.OK || got.Text != "add from authenticated actor" {
+	if got := call(ctx, SwarmRequest{Tool: "add", Arguments: json.RawMessage(`{"name":"peer-1"}`)}); !got.OK || got.Text != "add from authenticated actor" {
 		t.Fatalf("add RPC: %+v", got)
 	}
-	if got := call(ctx, SwarmRequest{Tool: "exec"}); got.OK {
+	if got := call(ctx, SwarmRequest{Tool: "exec", Arguments: json.RawMessage(`{}`)}); got.OK {
 		t.Fatal("unknown operation accepted")
 	}
-	if got := call(ctx, SwarmRequest{Tool: "send", To: "peer", Message: "hello", WaitSeconds: 301}); got.OK {
+	if got := call(ctx, SwarmRequest{Tool: "send", Arguments: json.RawMessage(`{"to":"peer","message":"hello","wait_seconds":301}`)}); got.OK {
 		t.Fatal("unbounded wait accepted")
 	}
 	f.current.Store(false)
-	if got := call(ctx, SwarmRequest{Tool: "add", To: "peer-2"}); got.OK {
+	if got := call(ctx, SwarmRequest{Tool: "add", Arguments: json.RawMessage(`{"name":"peer-2"}`)}); got.OK {
 		t.Fatal("revoked peer created an actor")
 	}
-	if got := call(ctx, SwarmRequest{Tool: "agents"}); got.OK {
+	if got := call(ctx, SwarmRequest{Tool: "agents", Arguments: json.RawMessage(`{}`)}); got.OK {
 		t.Fatal("revoked peer still served")
 	}
 }

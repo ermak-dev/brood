@@ -1,3 +1,0 @@
-package command
-
-var updateSpec = spec("update", "Restart a running actor in its retained container to install the server's current guest release, keeping its workspace, home and generation; the profile's template and resources do not change. Refused while the actor's swarm runs a pipeline pass, while the actor has a dispatch lease or a landing token, and when its guest does not report its current release; a no-op when the actor already runs that release; a stopped actor is left to start, which installs the current release. A master updates only workers it added with add.", false, false, true, requiredText("name"))

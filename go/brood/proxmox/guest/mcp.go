@@ -14,8 +14,7 @@ import (
 	"brood.dev/go/brood/swarmclient"
 )
 
-// ServeMCP retains the supervisor entry point while sharing the standalone
-// catalog-backed MCP lifecycle. The supplied caller remains the only authority.
+// ServeMCP is the supervisor entry point of the catalog-backed MCP lifecycle. The supplied caller remains the only authority.
 func ServeMCP(ctx context.Context, input io.Reader, output io.Writer, call relay.SwarmCaller) error {
 	return mcp.Serve(ctx, input, output, relayExecutor{call: call}, mcp.GuestSpecs())
 }
@@ -30,14 +29,14 @@ func (e relayExecutor) Execute(ctx context.Context, invocation command.Invocatio
 	if e.call == nil {
 		return command.Result{}, errors.New("swarm broker unavailable")
 	}
-	wireRequest, _ := json.Marshal(relay.SwarmRequest{Tool: request.Tool, Arguments: request.Arguments, To: request.To, Message: request.Message, WaitSeconds: request.WaitSeconds})
+	wireRequest, _ := json.Marshal(relay.SwarmRequest{Tool: request.Tool, Arguments: request.Arguments})
 	validated, valid := relay.DecodeSwarmRequest(wireRequest)
 	if !valid {
 		return command.Result{}, mcp.ErrInvalidArguments
 	}
 	result := e.call(ctx, validated)
-	// Preserve optional result fields added by the transport without coupling the
-	// compatibility wrapper to the supervisor implementation.
+	// Preserve optional result fields added by the transport without coupling
+	// this executor to the supervisor implementation.
 	wire, _ := json.Marshal(result)
 	var converted command.Result
 	_ = json.Unmarshal(wire, &converted)

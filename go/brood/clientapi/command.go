@@ -45,6 +45,43 @@ func publicCommandRefusal(body io.Reader) string {
 	return reason
 }
 
+// CommandError is a command the server answered with an error status. Reason
+// is the public refusal reason, empty when the server gave none. Unconfirmed
+// reports that the command may have taken effect anyway.
+type CommandError struct {
+	Status      int
+	Reason      string
+	Unconfirmed bool
+	text        string
+	cause       error
+}
+
+// Unwrap returns the transport error behind an unconfirmed outcome, if any.
+func (e *CommandError) Unwrap() error { return e.cause }
+
+func (e *CommandError) Error() string {
+	text := e.text
+	if e.Reason != "" {
+		text += ": " + e.Reason
+	}
+	if e.Unconfirmed {
+		text = "command outcome is unconfirmed; check before retrying: " + text
+	}
+	return text
+}
+
+// showsDetail узнаёт пути роёв, агентов и пулов: их detail пишет сервер для
+// человека, и CLI показывает его как есть.
+func showsDetail(path string) bool {
+	for _, prefix := range []string{"/api/swarms", "/api/agents", "/api/proxmox-pools"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	rest, found := strings.CutPrefix(path, "/api/projects/")
+	return found && strings.HasSuffix(rest, "/swarms")
+}
+
 // CommandExecutor binds catalog commands to an authenticated operator's scope.
 // It preserves Client TLS, CSRF, redirect refusal, and credential handling.
 type CommandExecutor struct {
@@ -58,7 +95,7 @@ func (e CommandExecutor) Execute(ctx context.Context, invocation command.Invocat
 		return command.Result{}, errors.New("operator client unavailable")
 	}
 	if e.SwarmID == "" && command.NeedsSwarm(invocation.Name) {
-		return command.Result{}, errors.New("select a swarm with --swarm or BROOD_SWARM")
+		return command.Result{}, errors.New("no swarm selected; choose one with: bro join NAME")
 	}
 	invocation, err := command.ParseTool(invocation.Name, invocation.Arguments)
 	if err != nil {

@@ -105,12 +105,36 @@ func (s *SessionStore) writeAtomic(path string, data []byte) error {
 	return nil
 }
 
-// Delete удаляет сохранённую сессию origin. Отсутствие файла — успех.
+// Delete удаляет сохранённую сессию origin и выбранный в ней рой.
+// Отсутствие файлов — успех.
 func (s *SessionStore) Delete(origin string) error {
 	if err := os.Remove(s.path(origin)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove session file: %w", err)
 	}
-	return nil
+	return s.SetSwarm(origin, "")
+}
+
+// Swarm возвращает ID роя, выбранного для origin, или пустую строку.
+func (s *SessionStore) Swarm(origin string) (string, error) {
+	raw, err := os.ReadFile(s.swarmPath(origin))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read selected swarm file: %w", err)
+	}
+	return strings.TrimSpace(string(raw)), nil
+}
+
+// SetSwarm запоминает рой origin рядом с его сессией; пустой ID снимает выбор.
+func (s *SessionStore) SetSwarm(origin, id string) error {
+	if id == "" {
+		if err := os.Remove(s.swarmPath(origin)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove selected swarm file: %w", err)
+		}
+		return nil
+	}
+	return s.writeAtomic(s.swarmPath(origin), []byte(id+"\n"))
 }
 
 // Current возвращает выбранный сервер или пустую строку, если выбора нет.
@@ -145,5 +169,8 @@ func (s *SessionStore) SetCurrent(origin string) error {
 
 func (s *SessionStore) path(origin string) string {
 	return filepath.Join(s.dir, sessionFileName(origin))
+}
+func (s *SessionStore) swarmPath(origin string) string {
+	return strings.TrimSuffix(s.path(origin), ".json") + ".swarm"
 }
 func (s *SessionStore) currentPath() string { return filepath.Join(s.dir, "current") }

@@ -413,7 +413,7 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		}
 	}
 	c.relay.SessionFactory = func(connection context.Context) func(context.Context, relay.SessionRequest) relay.SessionResponse {
-		return releaseSessions(artifactRoot, guest.NewSupervisorSessionHandler(connection, refresh, attestor))
+		return guest.NewSupervisorSessionHandler(connection, refresh, attestor)
 	}
 	runtimeDone := make(chan error, 1)
 	go func() { runtimeDone <- runtime.Wait(); cancel() }()

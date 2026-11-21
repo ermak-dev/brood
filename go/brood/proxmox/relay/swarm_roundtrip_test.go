@@ -25,10 +25,14 @@ func TestSwarmRoundTripAcrossTwoGuestConnections(t *testing.T) {
 	server := httptest.NewTLSServer(h.Handler())
 	defer server.Close()
 	h.SetSwarmHandler(func(ctx context.Context, uid string, generation int64, request SwarmRequest) SwarmResponse {
-		if uid != "sender" || generation != 1 || request.To != "receiver" {
+		var args struct {
+			To      string `json:"to"`
+			Message string `json:"message"`
+		}
+		if uid != "sender" || generation != 1 || json.Unmarshal(request.Arguments, &args) != nil || args.To != "receiver" {
 			return SwarmResponse{Text: "refused"}
 		}
-		payload, _ := json.Marshal(MessageRequest{From: uid, To: "receiver", Body: request.Message})
+		payload, _ := json.Marshal(MessageRequest{From: uid, To: "receiver", Body: args.Message})
 		conn, err := h.DialMessage(ctx, "receiver", 1, payload)
 		if err != nil {
 			return SwarmResponse{Text: "recipient unavailable"}
@@ -74,7 +78,7 @@ func TestSwarmRoundTripAcrossTwoGuestConnections(t *testing.T) {
 	}
 	requestCtx, stop := context.WithTimeout(ctx, 3*time.Second)
 	defer stop()
-	result := call(requestCtx, SwarmRequest{Tool: "send", To: "receiver", Message: "synthetic swarm round trip"})
+	result := call(requestCtx, SwarmRequest{Tool: "send", Arguments: json.RawMessage(`{"to":"receiver","message":"synthetic swarm round trip"}`)})
 	if !result.OK || result.Text != "delivered" {
 		t.Fatalf("result: %+v", result)
 	}

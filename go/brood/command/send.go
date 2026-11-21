@@ -2,7 +2,7 @@ package command
 
 import "time"
 
-var sendSpec = spec("send", "Send a message to an actor and return delivery status, not an assistant response; optionally wait for an idle notice.", false, false, true,
+var sendSpec = spec("send", "Send a message to an agent, or to the human owner of the swarm with to=operator (delivered to their Telegram chat). Returns whether the message was delivered, not an answer; wait_seconds waits for the agent to become idle.", false, false, true,
 	requiredText("to"), requiredText("message"), integer("wait_seconds", 0, 0, 300))
 
 // ReceiptWait is how long the recipient guest waits for the Claude Code

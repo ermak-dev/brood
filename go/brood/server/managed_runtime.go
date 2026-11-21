@@ -457,8 +457,8 @@ func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedA
 }
 
 // startNotRequested — стадия start, чей Start ещё не запрошен: CT
-// остановлена (phase stopped), задачи нет. Так её записывают beginStart и
-// подтверждённая остановка update (#133), так её возвращает отказ до Start.
+// остановлена (phase stopped), задачи нет. Так её записывает beginStart,
+// так её возвращает отказ до Start.
 // Запрос отмечается до отправки: launchStart ставит provisioning и только
 // потом зовёт Start. Наблюдение CT эти случаи не различает: Start, чей ответ
 // потерян, может ещё не поднять CT, и повтор по виду остановленной CT
@@ -689,8 +689,8 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		if err != nil || a.Stage == "done" {
 			return a, err
 		}
-		// Start update идёт следующим проходом со своим сроком: этот срок
-		// мог уйти на ожидание stop-задачи.
+		// Незапрошенный start идёт следующим проходом со своим сроком: этот
+		// срок мог уйти на ожидание stop-задачи.
 		if startNotRequested(a) {
 			return a, nil
 		}
@@ -763,8 +763,7 @@ func (m *managedProvider) confirmStartRunning(ctx context.Context, a store.Manag
 // (startNotRequested, #275): BeginManagedActorOperation ставит provisioning,
 // а фаза stopped в той же транзакции говорит, что Start не отправлялся. Сбой
 // до Start, в том числе остановка сервера, оставляет start следующему
-// проходу, как start update (#133); provisioning ставит launchStart перед
-// самим Start.
+// проходу; provisioning ставит launchStart перед самим Start.
 func (m *managedProvider) beginStart(ctx context.Context, a store.ManagedActor, operationID string) (store.ManagedActor, error) {
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
