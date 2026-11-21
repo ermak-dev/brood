@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"brood.dev/go/brood/auth"
@@ -57,9 +59,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 func usage(stderr io.Writer) {
 	fmt.Fprint(stderr, `usage:
-  brood serve               run the server (environment-configured)
+  brood serve [--env-file FILE]  run the server
   brood bootstrap-admin     create the first administrator interactively
-  brood fixture export      print the installation fixture (admins, their Telegram links) as JSON
+  brood fixture export      print the installation fixture (admins, Telegram links, Proxmox pools) as JSON
   brood fixture apply       insert the installation fixture JSON from stdin
   brood version             print the binary version
 
@@ -72,11 +74,12 @@ settings: BROOD_DB_PATH, BROOD_ADDR, BROOD_TLS_CERT, BROOD_TLS_KEY,
 // cmdServe поднимает HTTP-сервер и завершается по SIGTERM/SIGINT:
 // слушатель закрывается с ожиданием активных запросов, затем база.
 func cmdServe(args []string, stderr io.Writer) int {
-	if len(args) > 0 {
-		fmt.Fprintln(stderr, "brood serve: unexpected arguments")
+	get, err := serveSettings(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "brood serve: %s\n", err)
 		return 1
 	}
-	cfg, err := server.LoadConfigEnv()
+	cfg, err := server.LoadConfig(get)
 	if err != nil {
 		fmt.Fprintf(stderr, "brood serve: %s\n", err)
 		return 1
@@ -84,8 +87,8 @@ func cmdServe(args []string, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	// Временный режим выкладки (BROOD_DEPLOY_MODE=fixture): новая база на релиз.
-	if generation := os.Getenv("BROOD_DB_RESET"); generation != "" {
-		reset, err := resetDatabase(ctx, cfg.DBPath, generation, os.Getenv("BROOD_FIXTURE"))
+	if generation := get("BROOD_DB_RESET"); generation != "" {
+		reset, err := resetDatabase(ctx, cfg.DBPath, generation, get("BROOD_FIXTURE_FILE"))
 		if err != nil {
 			fmt.Fprintf(stderr, "brood serve: database reset: %s\n", err)
 			return 1
@@ -99,6 +102,34 @@ func cmdServe(args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func serveSettings(args []string) (func(string) string, error) {
+	if len(args) == 0 {
+		return os.Getenv, nil
+	}
+	if len(args) != 2 || args[0] != "--env-file" || !filepath.IsAbs(args[1]) {
+		return nil, errors.New("expected --env-file with an absolute path")
+	}
+	f, err := os.Open(args[1])
+	if err != nil {
+		return nil, errors.New("could not open --env-file")
+	}
+	defer f.Close()
+	const limit = 2 << 20
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil || len(data) > limit {
+		return nil, errors.New("could not read --env-file within its 2 MiB limit")
+	}
+	settings := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		name, value, ok := strings.Cut(line, "=")
+		name = strings.TrimSpace(name)
+		if ok && (strings.HasPrefix(name, "BROOD_") || strings.HasPrefix(name, "CLIPROXY_")) {
+			settings[name] = strings.TrimSpace(value)
+		}
+	}
+	return func(name string) string { return settings[name] }, nil
 }
 
 // cmdBootstrapAdmin интерактивно заводит первого администратора: пароль

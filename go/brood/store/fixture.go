@@ -11,10 +11,9 @@ import (
 	"time"
 )
 
-// Фикстура установки — профиль администратора, сессия его чата Telegram и
-// привязка бота. Временный режим выкладки (BROOD_DEPLOY_MODE=fixture)
-// пересоздаёт базу на каждом деплое и заполняет новую базу только ею;
-// остальное состояние начинается с нуля.
+// Фикстура установки содержит активных администраторов, их привязки
+// Telegram, подключения Proxmox и пулы, не удалённые на момент экспорта.
+// Контейнеры, образы и рои не восстанавливаются из фикстуры.
 
 // FixtureVersion — версия формата фикстуры.
 const FixtureVersion = 1
@@ -41,6 +40,8 @@ var fixtureTables = []struct{ name, query string }{
 		WHERE user_id IN (SELECT id FROM users WHERE is_admin = 1 AND disabled = 0)) ORDER BY token_hash`},
 	{"user_telegram_links", `SELECT * FROM user_telegram_links
 		WHERE user_id IN (SELECT id FROM users WHERE is_admin = 1 AND disabled = 0) ORDER BY user_id`},
+	{"managed_connections", `SELECT * FROM managed_connections ORDER BY name`},
+	{"managed_pools", `SELECT * FROM managed_pools WHERE state <> 'deleted' ORDER BY uid`},
 }
 
 // fixtureCleared — колонки, которые ссылаются на состояние вне фикстуры.
@@ -48,8 +49,7 @@ var fixtureCleared = map[string][]string{"user_telegram_links": {"default_swarm_
 
 var fixtureColumn = regexp.MustCompile(`^[a-z_]+$`)
 
-// ExportFixture читает фикстуру из базы: включённых администраторов, их
-// привязки Telegram и сессии этих привязок.
+// ExportFixture возвращает фикстуру установки, включая секреты подключений.
 func (s *Store) ExportFixture(ctx context.Context) (Fixture, error) {
 	f := Fixture{Version: FixtureVersion}
 	for _, t := range fixtureTables {

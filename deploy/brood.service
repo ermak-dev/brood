@@ -2,7 +2,7 @@
 Description=Brood server
 Wants=network-online.target
 After=network-online.target
-ConditionPathExists=/var/lib/brood/releases/current/bin/brood
+ConditionPathExists=/var/lib/brood/brood
 
 [Service]
 Type=exec
@@ -11,7 +11,8 @@ Group=brood
 StateDirectory=brood
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/brood
-ExecStart=/usr/local/bin/brood-deploy serve
+Environment=HOME=/var/lib/brood
+ExecStart=/var/lib/brood/brood serve --env-file /var/lib/brood/.env
 Restart=on-failure
 RestartSec=5s
 UMask=0077

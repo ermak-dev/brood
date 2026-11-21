@@ -48,7 +48,7 @@ func cmdFixture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	data, err := io.ReadAll(io.LimitReader(stdin, 1<<20))
+	data, err := readFixture(stdin)
 	if err == nil {
 		err = applyFixture(ctx, st, data)
 	}
@@ -68,13 +68,22 @@ func applyFixture(ctx context.Context, st *store.Store, data []byte) error {
 	return st.ApplyFixture(ctx, f)
 }
 
+func readFixture(r io.Reader) ([]byte, error) {
+	const limit = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err == nil && len(data) > limit {
+		return nil, errors.New("fixture exceeds 1 MiB")
+	}
+	return data, err
+}
+
 var resetGeneration = regexp.MustCompile(`^[0-9A-Za-z]{8,64}$`)
 
 // resetDatabase пересоздаёт базу один раз на поколение (sha релиза): прежняя
 // база уходит в единственную копию <db>.before-<поколение>, новая получает
-// фикстуру, метка <db>.reset запоминает поколение. Перезапуск пода того же
+// фикстуру, метка <db>.reset запоминает поколение. Перезапуск службы того же
 // релиза базу не трогает.
-func resetDatabase(ctx context.Context, path, generation, fixture string) (bool, error) {
+func resetDatabase(ctx context.Context, path, generation, fixturePath string) (bool, error) {
 	if !resetGeneration.MatchString(generation) {
 		return false, errors.New("BROOD_DB_RESET must be 8-64 ASCII letters or digits")
 	}
@@ -84,6 +93,22 @@ func resetDatabase(ctx context.Context, path, generation, fixture string) (bool,
 		return false, nil
 	}
 	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if !filepath.IsAbs(fixturePath) {
+		return false, errors.New("BROOD_FIXTURE_FILE must be an absolute path")
+	}
+	file, err := os.Open(fixturePath)
+	if err != nil {
+		return false, errors.New("could not open BROOD_FIXTURE_FILE")
+	}
+	data, err := readFixture(file)
+	file.Close()
+	if err != nil {
+		return false, fmt.Errorf("read BROOD_FIXTURE_FILE: %w", err)
+	}
+	fixture, err := store.DecodeFixture(data)
+	if err != nil {
 		return false, err
 	}
 	backup := path + ".before-" + generation
@@ -115,9 +140,7 @@ func resetDatabase(ctx context.Context, path, generation, fixture string) (bool,
 	if err != nil {
 		return false, err
 	}
-	if fixture != "" {
-		err = applyFixture(ctx, st, []byte(fixture))
-	}
+	err = st.ApplyFixture(ctx, fixture)
 	if closeErr := st.Close(); err == nil {
 		err = closeErr
 	}
