@@ -30,6 +30,15 @@ func ServeLog(ctx context.Context, cfg Config, _ io.Writer) error {
 }
 
 func serve(ctx context.Context, cfg Config, ready chan<- net.Addr) error {
+	var gatewayDone <-chan struct{}
+	if cfg.CLIProxyConfig != "" {
+		gateway, err := startEmbeddedGateway(ctx, &cfg)
+		if err != nil {
+			return err
+		}
+		defer gateway.close()
+		gatewayDone = gateway.done
+	}
 	srv, err := New(ctx, cfg, Options{})
 	if err != nil {
 		return err
@@ -71,10 +80,11 @@ func serve(ctx context.Context, cfg Config, ready chan<- net.Addr) error {
 
 	// Остановка: отмена контекста или отказ слушателя — раньше того,
 	// кто случится первым.
-	listenCtx, listenCancel := context.WithCancel(ctx)
-	defer listenCancel()
+	var gatewayErr error
 	select {
-	case <-listenCtx.Done():
+	case <-ctx.Done():
+	case <-gatewayDone:
+		gatewayErr = gatewayConfigError("embedded CLIProxyAPI stopped unexpectedly")
 	case err := <-errCh:
 		if err != nil {
 			return fmt.Errorf("listen %s: %w", cfg.Addr, err)
@@ -86,9 +96,10 @@ func serve(ctx context.Context, cfg Config, ready chan<- net.Addr) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
+		_ = httpSrv.Close()
+		return errors.Join(gatewayErr, fmt.Errorf("shutdown: %w", err))
 	}
 	// Забираем результат горутины слушателя, чтобы не оставить её жить.
 	<-errCh
-	return nil
+	return gatewayErr
 }

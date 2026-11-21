@@ -1,8 +1,6 @@
 // Package server — сборка Go-сервера brood: конфигурация из окружения,
-// соединение хранилища, аутентификации, прикладного слоя и адаптеров
-// Substrate/Kubernetes в один HTTP-сервер, встроенная панель и проба
-// готовности. Пакет молчит: данные и ошибки возвращает, печатают только
-// командлеты (эпик #27, задача #36).
+// соединение хранилища, аутентификации, прикладного слоя и Proxmox
+// в один HTTP-сервер, встроенная панель и проба готовности.
 package server
 
 import (
@@ -11,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"brood.dev/go/brood/actormodel"
@@ -59,6 +58,7 @@ type Config struct {
 	// SessionSecret — секрет аутентификации (BROOD_SESSION_SECRET);
 	// пустой заменяется случайным на старте процесса.
 	SessionSecret         []byte
+	CLIProxyConfig        string
 	CLIProxyURL           string
 	CLIProxyManagementKey string
 	// CLIProxyAPIKey is the server-only model credential (CLIPROXY_API_KEY).
@@ -129,6 +129,7 @@ func LoadConfig(get getenv) (Config, error) {
 		TLSKey:                envGet(get, "BROOD_TLS_KEY"),
 		SessionSecret:         []byte(envGet(get, "BROOD_SESSION_SECRET")),
 		CLIProxyAPIKey:        envGet(get, "CLIPROXY_API_KEY"),
+		CLIProxyConfig:        envGet(get, gatewayConfigSetting),
 		ActorLLMURL:           envGet(get, "BROOD_ACTOR_LLM_URL"),
 		ActorLLMAPIKey:        envGet(get, "BROOD_ACTOR_LLM_API_KEY"),
 		ActorGitDomain:        envGet(get, "BROOD_ACTOR_GIT_DOMAIN"),
@@ -187,6 +188,17 @@ func LoadConfig(get getenv) (Config, error) {
 			if err != nil || !x509.NewCertPool().AppendCertsFromPEM(*trust.value) {
 				return cfg, &ConfigError{Setting: trust.setting, Detail: "must encode valid PEM trust certificates"}
 			}
+		}
+	}
+	if cfg.CLIProxyConfig != "" {
+		if !filepath.IsAbs(cfg.CLIProxyConfig) {
+			return cfg, gatewayConfigError("must be an absolute path")
+		}
+		if cfg.CLIProxyURL != "" || len(cfg.CLIProxyCAPEM) != 0 {
+			return cfg, gatewayConfigError("unset CLIPROXY_URL and CLIPROXY_CA_PEM_B64 to use the embedded gateway")
+		}
+		if cfg.CLIProxyAPIKey == "" {
+			return cfg, &ConfigError{Setting: "CLIPROXY_API_KEY", Detail: "required for embedded CLIProxyAPI"}
 		}
 	}
 	return cfg, cfg.validateAdapters()

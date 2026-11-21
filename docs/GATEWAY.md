@@ -1,0 +1,47 @@
+# Шлюз моделей
+
+`brood serve` запускает CLIProxyAPI через Go SDK в том же процессе. Отдельная
+программа или служба `cliproxy` не нужна. Агенты передают запросы серверу
+Brood; он проверяет токен агента и подставляет ключ шлюза. Панель управления
+шлюзом доступна только администраторам Brood.
+
+Укажите в `.env` установки:
+
+```dotenv
+BROOD_CLIPROXY_CONFIG=/var/lib/brood/gateway/config.yaml
+CLIPROXY_API_KEY=<ключ для запросов агентов>
+CLIPROXY_MANAGEMENT_KEY=<отдельный ключ управления>
+```
+
+Создайте закрытый каталог шлюза, доступный пользователю службы `brood`.
+Файл конфигурации и каталог учётных данных должны сохраняться между
+выкладками. Минимальная конфигурация CLIProxyAPI v8:
+
+```yaml
+config-version: 8
+server:
+  host: 127.0.0.1
+  port: 8317
+  tls:
+    enable: false
+access:
+  api-keys:
+    - '<значение CLIPROXY_API_KEY>'
+management:
+  allow-remote: false
+  secret-key: '<значение CLIPROXY_MANAGEMENT_KEY или его bcrypt-хеш>'
+  disable-control-panel: true
+oauth:
+  auth-dir: /var/lib/brood/gateway/auth
+```
+
+Порт SDK должен быть свободен и не требует публикации: панель и агенты
+подключаются по основному HTTPS-адресу Brood. Ключи выше выдают доступ к
+шлюзу, но сами по себе не дают доступа к моделям. Добавьте учётные данные
+поставщика в панели или по [примеру конфигурации CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI/blob/v8.0.80/config.example.yaml).
+
+Если переносите уже настроенный шлюз, скопируйте его YAML и каталог
+авторизации, затем проверьте адрес слушателя, `oauth.auth-dir` и ключи.
+Не путайте каталог авторизации шлюза с базой Brood; для восстановления
+понадобятся оба. Если управление из панели не нужно, оставьте
+`CLIPROXY_MANAGEMENT_KEY` и `management.secret-key` пустыми.
