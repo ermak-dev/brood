@@ -1,0 +1,44 @@
+# Страница браузерного терминала, встроенная в сервер
+# (go/brood/server/static/driftty.html): driftty закреплённого коммита с
+# правками совместимости из deploy/driftty-*.cjs. Версии -- brood/dev/pins.json.
+#
+#   docker buildx build -f deploy/Dockerfile.driftty \
+#     --build-arg DRIFTTY_NODE_IMAGE=... --build-arg DRIFTTY_COMMIT=... \
+#     --build-arg DRIFTTY_SHA256=... --build-arg DRIFTTY_INDEX_SHA256=... \
+#     --build-arg DRIFTTY_DIRECT_INDEX_SHA256=... \
+#     --output type=local,dest=out deploy
+#   cp out/driftty.html go/brood/server/static/driftty.html
+ARG DRIFTTY_NODE_IMAGE
+FROM ${DRIFTTY_NODE_IMAGE} AS driftty
+ARG DRIFTTY_COMMIT
+ARG DRIFTTY_SHA256
+ARG DRIFTTY_INDEX_SHA256
+ARG DRIFTTY_DIRECT_INDEX_SHA256
+# Проверенный архив извлекается в отдельный пустой каталог; gateway не собираем.
+ADD --checksum=sha256:${DRIFTTY_SHA256} https://codeload.github.com/mdp/driftty/tar.gz/${DRIFTTY_COMMIT} /download/source.tar.gz
+RUN mkdir /source /home/node/build \
+    && tar -xzf /download/source.tar.gz -C /source --strip-components=1 \
+    && cp /source/package.json /source/package-lock.json /home/node/build/ \
+    && chown -R node:node /home/node/build
+USER node
+WORKDIR /home/node/build
+RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN cp -r /source/src . \
+    && cp /source/index.html /source/tsconfig.json /source/vite.config.ts .
+COPY driftty-storage.js driftty-storage.test.cjs /compat/
+COPY driftty-direct-pty.cjs driftty-direct-pty.test.cjs /compat/
+# Проверяем исходный bundle отдельно от производного, до локальной адаптации.
+RUN --network=none npm run build \
+    && printf '%s  %s\n' "$DRIFTTY_INDEX_SHA256" dist/index.html | sha256sum -c -
+# Только проверенная сборка UI, без сети и install/postinstall зависимостей.
+RUN --network=none node /compat/driftty-direct-pty.cjs . \
+    && node /compat/driftty-direct-pty.test.cjs . \
+    && npm test -- --maxWorkers=2 \
+    && npm run build \
+    && printf '%s  %s\n' "$DRIFTTY_DIRECT_INDEX_SHA256" dist/index.html | sha256sum -c - \
+    && node /compat/driftty-storage.test.cjs /compat/driftty-storage.js \
+    && node -e 'const fs=require("node:fs"); const path="dist/index.html"; const html=fs.readFileSync(path,"utf8"); if(!html.includes("<head>")) throw Error("Missing HTML head"); fs.writeFileSync(path,html.replace("<head>","<head><!--\n"+fs.readFileSync("/source/LICENSE","utf8")+"\n--><script>"+fs.readFileSync("/compat/driftty-storage.js","utf8")+"</script>"));'
+
+FROM scratch
+COPY --from=driftty /home/node/build/dist/index.html /driftty.html
+COPY --from=driftty /source/LICENSE /driftty.LICENSE

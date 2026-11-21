@@ -1,88 +1,70 @@
 #!/bin/bash
-# Машина деплоя brood (docs/DEPLOY.md): то, что нужно `brood substrate
-# install`, и вход для выкладки из CI, на чистом Debian 13. Запускается на
-# ней от root из каталога deploy/ рабочей копии, повторный запуск ничего не
-# ломает:
-#
-#   provision.sh KEY FROM
-#
-# KEY -- файл с открытым ключом деплоя (его закрытая половина -- переменная
-# CI), FROM -- адрес builder: ключ принимается только оттуда и умеет только
-# принудительную команду brood-deploy.
-#
-# Go закреплён по контрольной сумме, как образы по digest: это toolchain,
-# которого требует go.mod закреплённого Substrate (Debian собирает свой go с
-# GOTOOLCHAIN=local, и другой он не скачает).
+# Запускается оператором от root на Debian: provision.sh KEY FROM.
+# KEY — один открытый ключ CI; FROM — адрес или CIDR сборщика.
 set -o errexit -o nounset -o pipefail
 
-DEPLOY_USER="brood"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+user=brood
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ $# -ne 2 ]]; then
-    echo "usage: provision.sh KEY FROM" >&2
+    echo 'usage: provision.sh KEY FROM' >&2
     exit 2
 fi
-# Ровно одна строка: вторая легла бы в authorized_keys без restrict, то есть
-# ключом с полным шеллом.
-read -r KEY <"$1"
-if [[ ! "$KEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ [^[:space:]]+)?$ ]] ||
-        [[ $(grep -c . "$1") -ne 1 ]]; then
-    echo "provision.sh: $1 must hold exactly one ssh-ed25519 public key" >&2
+# Только одна строка ключа, без опций клиента и произвольного комментария.
+mapfile -t keys <"$1"
+if [[ ${#keys[@]} -ne 1 || ! ${keys[0]} =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ [^[:cntrl:]]+)?$ ]]; then
+    echo 'provision.sh: KEY must contain exactly one ssh-ed25519 public key' >&2
     exit 2
 fi
-FROM="$2"
-if [[ $(id -u) -ne 0 ]]; then
-    echo "provision.sh: run as root" >&2
+from=$2
+if [[ ! $from =~ ^[a-zA-Z0-9.:/_-]+$ ]]; then
+    echo 'provision.sh: FROM must be the builder address or CIDR' >&2
+    exit 2
+fi
+if [[ $(id -u) -ne 0 || $(dpkg --print-architecture) != amd64 ]]; then
+    echo 'provision.sh: run as root on Debian amd64' >&2
     exit 1
 fi
 
-export DEBIAN_FRONTEND=noninteractive
-# LC_* оператора, приехавшие по ssh, на машине не сгенерированы.
-export LC_ALL=C.UTF-8
+export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 apt-get update -qq
-# В Debian 13 клиент docker и buildx -- отдельные пакеты; buildx нужен
-# `docker build --platform`, которым Substrate собирает образ envoy.
-apt-get install -y -qq --no-install-recommends ca-certificates curl git python3 \
-    docker.io docker-cli docker-buildx >/dev/null
-read -r GO_VERSION GO_SHA256 < <(python3 -I -c \
-    'import json, sys; p=json.load(open(sys.argv[1])); print(p["GO_VERSION"], p["GO_SHA256"])' \
-    "$HERE/../brood/dev/pins.json")
+apt-get install -y -qq --no-install-recommends ca-certificates curl openssl openssh-server python3 sudo >/dev/null
 
-if [[ "$(/usr/local/go/bin/go version 2>/dev/null)" != "go version go${GO_VERSION} "* ]]; then
-    tmp="$(mktemp)"
-    curl -fsSL -o "$tmp" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
-    if ! echo "${GO_SHA256}  ${tmp}" | sha256sum -c --status; then
-        rm -f "$tmp"
-        echo "provision.sh: checksum mismatch for go${GO_VERSION}" >&2
-        exit 1
-    fi
-    rm -rf /usr/local/go
-    tar -C /usr/local -xzf "$tmp"
-    rm -f "$tmp"
+if ! id "$user" >/dev/null 2>&1; then
+    useradd --create-home --user-group --shell /bin/bash "$user"
 fi
-# В /usr/local/bin, а не в профиле: команда ssh и login-шелл видят его одинаково.
-ln -sf /usr/local/go/bin/go /usr/local/bin/go
-ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
-
-# Деплой -- от непривилегированного пользователя. docker -- им kind
-# поднимает кластер; kvm -- micro-VM runtime Substrate.
-if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
-    useradd --create-home --shell /bin/bash "$DEPLOY_USER"
+# В том числе убираем старые группы docker и kvm: у ключа нет других прав.
+usermod -G '' "$user"
+home=$(getent passwd "$user" | cut -d: -f6)
+# Пользователь сервиса не может заменить принудительную команду или ключи SSH.
+# Данные сервиса и его HOME находятся отдельно, в /var/lib/brood.
+chown root:root "$home"
+chmod 0755 "$home"
+# Bash под ssh может прочитать ~/.bashrc до запуска forced command.
+rm -f -- "$home/.bashrc"
+install -m 0644 -o root -g root /dev/null "$home/.bashrc"
+if [[ -L $home/.ssh || -L $home/.ssh/authorized_keys ]]; then
+    echo 'provision.sh: remove SSH configuration symlinks before proceeding' >&2
+    exit 1
 fi
-usermod -a -G docker,kvm "$DEPLOY_USER"
-install -m 0755 "$HERE/brood-deploy.sh" /usr/local/bin/brood-deploy
-home="$(getent passwd "$DEPLOY_USER" | cut -d: -f6)"
-install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$home/.ssh"
-printf 'restrict,from="%s",command="/usr/local/bin/brood-deploy" %s\n' "$FROM" "$KEY" |
-    install -m 0600 -o "$DEPLOY_USER" -g "$DEPLOY_USER" /dev/stdin "$home/.ssh/authorized_keys"
+install -d -m 0700 -o root -g root "$home/.ssh"
+printf 'restrict,from="%s",command="/usr/local/bin/brood-deploy" %s\n' "$from" "${keys[0]}" |
+    install -m 0600 -o root -g root /dev/stdin "$home/.ssh/authorized_keys"
+# sshd открывает authorized_keys от имени пользователя: читать можно,
+# заменять файлы и каталоги нельзя.
+chmod 0755 "$home/.ssh"
+chmod 0644 "$home/.ssh/authorized_keys"
 
-# kind: узел кластера -- контейнер, и стандартных лимитов inotify ему не
-# хватает (kind, known issues: too many open files).
-cat >/etc/sysctl.d/90-brood-kind.conf <<'EOF'
-fs.inotify.max_user_watches = 524288
-fs.inotify.max_user_instances = 512
-EOF
-sysctl -q --system
+install -d -m 0700 -o "$user" -g "$user" /var/lib/brood
+install -m 0755 "$here/brood-deploy.sh" /usr/local/bin/brood-deploy
+install -m 0644 "$here/brood.service" /etc/systemd/system/brood.service
 
-systemctl enable --now docker >/dev/null
-echo "provisioned: $(go version), $(docker --version), $(docker buildx version | cut -d' ' -f1,2)"
+rule=$(mktemp)
+trap 'rm -f -- "$rule"' EXIT
+printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl restart brood.service\n' "$user" >"$rule"
+visudo -cf "$rule" >/dev/null
+install -m 0440 "$rule" /etc/sudoers.d/brood-deploy
+
+systemctl daemon-reload
+systemctl enable brood.service
+printf '%s\n' 'Provisioned brood.service and the restricted deploy key; no release started'

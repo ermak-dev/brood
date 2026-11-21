@@ -25,18 +25,9 @@ RUN go mod download
 COPY go/ ./
 COPY --from=panel /app/dist/index.html ./brood/server/static/index.html
 ARG VERSION=dev
-RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/brood ./cmd/brood \
-    && go build -trimpath -ldflags="-s -w" -o /out/bro ./cmd/bro \
-    && mkdir /out/data && chmod 0700 /out/data && chown 65532:65532 /out/data
+RUN mkdir /out && go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /out/ ./cmd/brood ./cmd/bro ./cmd/brood-guest
 
-FROM scratch
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build /out/brood /brood
-COPY --from=build /out/bro /bro
-COPY --from=build --chown=65532:65532 /out/data /data
-USER 65532:65532
-WORKDIR /data
-ENV BROOD_DB_PATH=/data/brood.db BROOD_ADDR=:8443
-EXPOSE 8443
-ENTRYPOINT ["/brood"]
-CMD ["serve"]
+# Результат сборки экспортируется в файлы; образ на машину не выкладывается.
+FROM scratch AS binaries
+COPY --from=build /out/ /

@@ -41,7 +41,7 @@ deploy:
       files: [brood/dev/pins.json]
     paths: [.brood-ci-cache/claude]
     when: on_success
-  # Первая установка собирает Substrate и тянет образы с нуля.
+  # Холодная сборка панели и Go-модуля загружает все зависимости.
   timeout: 90 minutes
   needs: []
   rules:

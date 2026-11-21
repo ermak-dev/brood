@@ -1,15 +1,9 @@
 #!/bin/bash
-# Выкладка зелёного main на машину деплоя brood (docs/DEPLOY.md), как
-# выкладка mop: builder идёт туда по ssh отдельным ключом, и на машине у
-# ключа принудительная команда deploy/brood-deploy.sh. Клиент шлёт только sha
-# коммита и tar его дерева; что с ними делать, решает машина.
-#
-# К дереву дописаны закреплённый bootstrap Claude и секреты установки стенда:
-# .env и TLS в secrets/, туда, где их ищет рабочая копия.
-# Ключ, known_hosts, адрес и секреты -- защищённые
-# переменные CI (brood dev ci set): их видят только конвейеры защищённых
-# веток. В репозитории нет ни хоста, ни ключа.
+# Builder собирает программы и передаёт их машине деплоя через ключ с
+# принудительной командой. Секреты добавляются после сборки, вне её контекста.
+set +x
 set -o errexit -o nounset -o pipefail
+umask 077
 
 : "${BROOD_DEPLOY_HOST:?protected CI variable: user@address of the deploy machine}"
 : "${BROOD_DEPLOY_SSH_KEY:?protected CI file variable: the deploy key}"
@@ -21,22 +15,22 @@ set -o errexit -o nounset -o pipefail
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-chmod 0700 "$work"
+
+[[ $CI_COMMIT_SHA =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected a full commit SHA' >&2; exit 1; }
 
 stage="$work/stage"
-bootstrap=.brood-deploy-artifacts
-if git cat-file -e "$CI_COMMIT_SHA:$bootstrap" 2>/dev/null; then
-    printf '%s\n' 'The release tree already contains the reserved bootstrap path' >&2
-    exit 1
-fi
+install -d "$stage/bin" "$work/src"
+git archive "$CI_COMMIT_SHA" | tar -x -C "$work/src"
+docker buildx build --platform linux/amd64 --file "$work/src/deploy/Dockerfile.go" \
+    --target binaries --build-arg "VERSION=$CI_COMMIT_SHA" --output "type=local,dest=$stage/bin" "$work/src"
+
 read -r version digest < <(git show "$CI_COMMIT_SHA:brood/dev/pins.json" | python3 -I -c \
     'import json,sys; pins=json.load(sys.stdin); print(pins["CLAUDE_VERSION"],pins["CLAUDE_SHA256"])')
 if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || ! $digest =~ ^[a-f0-9]{64}$ ]]; then
     printf '%s\n' 'Invalid pinned release Claude version or SHA-256' >&2
     exit 1
 fi
-install -d -m 0700 "$stage/$bootstrap"
-claude="$stage/$bootstrap/claude"
+claude="$stage/bin/claude"
 cache_dir="$PWD/.brood-ci-cache"
 cached="$cache_dir/claude"
 max_bytes=536870912
@@ -83,8 +77,7 @@ key="$work/key"
 { cat "$BROOD_DEPLOY_SSH_KEY"; echo; } >"$key"
 chmod 0600 "$key"
 
-# Секреты -- под своими именами в рабочей копии, 0600: tar на машине права
-# сохранит, а umask их только сужает.
+# Секреты не входят ни в контекст сборки, ни в артефакты GitLab.
 install -d -m 0700 "$stage/secrets"
 install -m 0600 "$BROOD_DEPLOY_ENV" "$stage/.env"
 install -m 0600 "$BROOD_DEPLOY_TLS_CERT" "$stage/secrets/tls.crt"
@@ -94,11 +87,7 @@ if [[ -n ${BROOD_DEPLOY_FIXTURE:-} ]]; then
     install -m 0600 "$BROOD_DEPLOY_FIXTURE" "$stage/secrets/fixture.json"
 fi
 
-tree="$work/tree.tar"
-git archive --format=tar -o "$tree" "$CI_COMMIT_SHA"
-tar --append -f "$tree" -C "$stage" .env secrets "$bootstrap"
-
 # -F /dev/null: настройки ssh пользователя раннера сюда не доезжают.
-ssh -F /dev/null -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
+tar -c -C "$stage" .env bin secrets | ssh -F /dev/null -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
     -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$BROOD_DEPLOY_KNOWN_HOSTS" \
-    -o ServerAliveInterval=30 "$BROOD_DEPLOY_HOST" "$CI_COMMIT_SHA" <"$tree"
+    -o ServerAliveInterval=30 -- "$BROOD_DEPLOY_HOST" "$CI_COMMIT_SHA"

@@ -4,8 +4,6 @@
 глагол -- модуль в нём:
   brood/dev/cli/__init__.py            ->  brood dev
   brood/dev/cli/bug/list.py            ->  brood dev bug list
-  brood/dev/substrate/cli/__init__.py  ->  brood substrate
-  brood/dev/substrate/cli/start.py     ->  brood substrate start
 Пакет без названного глагола отвечает сам и получает остаток argv.
 
 Подпакет со своим cli -- пространство команд, которое не названо модулем:
@@ -119,7 +117,7 @@ def describe(path):
 
 def help_text(modules, package=PACKAGE):
     """Список групп -- ответ на `brood` без аргументов."""
-    lines = ["brood: an agent pool on Agent Substrate", "",
+    lines = ["brood: developer tools of the brood repository", "",
              "  brood <group> <verb> [arguments]; a group alone lists its verbs", ""]
     lines += [f"  {g:<10} {describe(os.path.join(location(m, package), '__init__.py'))}"
               for g, m in sorted(modules.items())]

@@ -8,8 +8,7 @@
 # один docker run. Контейнер -- от пользователя раннера: venv/ и .env,
 # которые он пишет в checkout, следующая джоба вычистит сама. Окружения
 # раннера и секретов установки в контейнере нет.
-# Образ полный, не slim: проверкам brood substrate нужен
-# настоящий git, а ставить пакеты непривилегированный контейнер не может.
+# Проверки используют git; непривилегированный контейнер не ставит пакеты.
 set -o errexit -o nounset -o pipefail
 
 IMAGE="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["PYTHON_IMAGE"])' brood/dev/pins.json)"
