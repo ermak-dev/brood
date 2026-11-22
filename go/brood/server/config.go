@@ -77,7 +77,8 @@ type Config struct {
 	ActorModels actormodel.Models
 	// artifactsDir — каталог артефактов бутстрапа гостя (BROOD_ARTIFACTS_DIR):
 	// свойство машины, без дефолта. Пусто — доставка артефактов не настроена.
-	artifactsDir string
+	artifactsDir   string
+	artifactOrigin string
 	// TelegramAPI — origin Bot API (BROOD_TELEGRAM_API, #281): по умолчанию
 	// публичный telegram.DefaultBaseURL; HTTPS или HTTP на loopback для
 	// локального Bot API. Им пользуются бот установки и свои боты.
@@ -130,6 +131,18 @@ func LoadConfig(get getenv) (Config, error) {
 		CLIProxyManagementKey: envGet(get, "CLIPROXY_MANAGEMENT_KEY"),
 		TelegramAPI:           envGet(get, telegramAPISetting),
 		telegramBotToken:      envGet(get, telegramBotTokenSetting),
+	}
+	if host := envGet(get, "BROOD_PUBLIC_HOST"); host != "" {
+		if !gitidentity.ValidDomain(host) {
+			return cfg, &ConfigError{Setting: "BROOD_PUBLIC_HOST", Detail: "must be a public DNS name"}
+		}
+		cfg.artifactOrigin = "https://" + host
+		if port := envGet(get, "BROOD_HTTPS_PORT"); port != "" && port != "443" {
+			cfg.artifactOrigin += ":" + port
+			if !proxmoxOrigin(cfg.artifactOrigin) {
+				return cfg, &ConfigError{Setting: "BROOD_HTTPS_PORT", Detail: "must be a port from 1 to 65535"}
+			}
+		}
 	}
 	if cfg.TelegramAPI == "" {
 		cfg.TelegramAPI = telegram.DefaultBaseURL

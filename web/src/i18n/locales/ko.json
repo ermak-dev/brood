@@ -2483,6 +2483,8 @@
         "diagnose": "에이전트 진단",
         "send:agents": "에이전트에 메시지 보내기",
         "send:operator": "운영자에게 메시지 보내기",
+        "artifact_get": "아티팩트 버전 읽기",
+        "artifact_publish": "아티팩트 버전 게시",
         "tail:self": "자신의 세션 출력 읽기",
         "tail:swarm": "스웜 세션 출력 읽기",
         "add": "에이전트 만들기",

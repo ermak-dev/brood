@@ -5,6 +5,8 @@ export const ROLE_PERMISSIONS = [
   'diagnose',
   'send:agents',
   'send:operator',
+  'artifact_get',
+  'artifact_publish',
   'tail:self',
   'tail:swarm',
   'add',

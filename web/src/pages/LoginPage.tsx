@@ -13,7 +13,7 @@ import { INLINE_LOGO } from '@/assets/logoInline';
 import type { ApiError } from '@/types';
 import { LegacyBackendError } from '@/services/api/legacyBackendProbe';
 import { BroodAuthError } from '@/services/brood/session';
-import { returnAddress } from '@/router/returnAddress';
+import { artifactReturnAddress, returnAddress } from '@/router/returnAddress';
 import styles from './LoginPage.module.scss';
 
 /**
@@ -170,12 +170,18 @@ export function LoginPage() {
     [loading, handleSubmit]
   );
 
-  if (isAuthenticated && !autoLoading) {
+  const artifact = artifactReturnAddress(location.search);
+  const openArtifact = isAuthenticated && !autoLoading && artifact;
+  useEffect(() => {
+    if (openArtifact) window.location.replace(openArtifact);
+  }, [openArtifact]);
+
+  if (isAuthenticated && !autoLoading && !openArtifact) {
     // #262: весь адрес, с которого увёл ProtectedRoute, с query и hash.
     return <Navigate to={returnAddress(location.state)} replace />;
   }
 
-  if (autoLoading) {
+  if (autoLoading || openArtifact) {
     return (
       <div className={styles.restoring}>
         <LoadingSpinner size={28} />

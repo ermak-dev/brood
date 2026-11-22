@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Name}} (version {{.Version}}) | Brood</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --chrome: #f0eee8;
+      --surface: #faf9f5;
+      --ink: #292520;
+      --quiet: #655f55;
+      --rule: #d6cfc2;
+      font: 1rem/1.5 system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--surface);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --chrome: #1d1b18;
+        --surface: #151412;
+        --ink: #f0ebe2;
+        --quiet: #b8ad9d;
+        --rule: #454038;
+      }
+    }
+    body { margin: 0; }
+    .view { display: flex; flex-direction: column; height: 100dvh; }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: .5rem 1rem;
+      padding: .75rem 1rem;
+      flex-wrap: wrap;
+      background: var(--chrome);
+      border-bottom: 1px solid var(--rule);
+    }
+    h1 { margin: 0; font-size: 1.125rem; font-weight: 600; overflow-wrap: anywhere; }
+    .version { color: var(--quiet); font-size: .875rem; white-space: nowrap; }
+    main { flex: 1; min-height: 0; overflow: auto; }
+    iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+    img { display: block; max-width: calc(100% - 2rem); height: auto; margin: 1rem auto; }
+    pre {
+      margin: 0 auto;
+      max-width: 78ch;
+      padding: 1rem;
+      font: .9375rem/1.65 ui-monospace, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+<body class="view">
+  <header>
+    <h1>{{.Name}}</h1>
+    <span class="version">{{.Swarm}} · Example · Version {{.Version}}</span>
+  </header>
+  <main aria-label="Artifact preview">
+    {{if .Document}}
+    <iframe title="Preview of {{.Name}}" sandbox credentialless referrerpolicy="no-referrer" srcdoc="{{.Document}}"></iframe>
+    {{else if .Image}}
+    <img src="{{.Image}}" alt="{{.Name}}">
+    {{else}}
+    <pre><span>{{.Text}}</span></pre>
+    {{end}}
+  </main>
+</body>
+</html>

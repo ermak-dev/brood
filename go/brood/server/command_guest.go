@@ -24,7 +24,7 @@ func commandSwarmResponse(result command.Result) relay.SwarmResponse {
 // handleActorCommand executes a catalog command called by an agent. from is
 // the calling agent as the relay authenticated it.
 func (m *managedProvider) handleActorCommand(ctx context.Context, from store.ManagedActor, inv command.Invocation) relay.SwarmResponse {
-	if inv.Name == "agents" || inv.Name == "diagnose" {
+	if inv.Name == "agents" || inv.Name == "diagnose" || inv.Name == "artifact_publish" || inv.Name == "artifact_get" {
 		if err := m.authorizeGuestPermission(ctx, from, inv.Name); err != nil {
 			return relay.SwarmResponse{Text: err.Error()}
 		}
@@ -51,11 +51,18 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 			return relay.SwarmResponse{Text: err.Error(), Outcome: result.Outcome}
 		}
 		return commandSwarmResponse(result)
+	case "artifact_publish", "artifact_get":
+		result, err := m.server.executeArtifactCommand(ctx, from.SwarmID, inv)
+		if err != nil {
+			return relay.SwarmResponse{Text: err.Error(), Outcome: result.Outcome}
+		}
+		return commandSwarmResponse(result)
 	case "send":
 		var args struct {
-			To          string `json:"to"`
-			Message     string `json:"message"`
-			WaitSeconds int    `json:"wait_seconds"`
+			To                string `json:"to"`
+			Message           string `json:"message"`
+			WaitSeconds       int    `json:"wait_seconds"`
+			ArtifactVersionID string `json:"artifact_version_id"`
 		}
 		_ = json.Unmarshal(inv.Arguments, &args)
 		permission := "send:agents"
@@ -64,6 +71,15 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 		}
 		if err := m.authorizeGuestPermission(ctx, from, permission); err != nil {
 			return relay.SwarmResponse{Text: err.Error()}
+		}
+		if args.ArtifactVersionID != "" {
+			if args.To != telegramOperator {
+				return relay.SwarmResponse{Text: "artifact_version_id is only for operator notifications; pass the version ID in the assignment to an agent"}
+			}
+			if err := m.server.telegramChannel.sendArtifact(ctx, from, args.Message, args.ArtifactVersionID); err != nil {
+				return relay.SwarmResponse{Text: err.Error()}
+			}
+			return relay.SwarmResponse{OK: true, Text: "artifact notice delivered to the operator; waiting for a reply is separate"}
 		}
 		return m.sendFromAgent(ctx, from, args.To, args.Message, args.WaitSeconds)
 	}

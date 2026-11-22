@@ -2489,6 +2489,8 @@
         "diagnose": "Chẩn đoán agent",
         "send:agents": "Gửi tin nhắn cho agent",
         "send:operator": "Gửi tin nhắn cho người vận hành",
+        "artifact_get": "Đọc phiên bản hiện vật",
+        "artifact_publish": "Công bố phiên bản hiện vật",
         "tail:self": "Đọc đầu ra phiên của chính mình",
         "tail:swarm": "Đọc đầu ra phiên trong swarm",
         "add": "Tạo agent",

@@ -2,8 +2,8 @@ package command
 
 import "time"
 
-var sendSpec = spec("send", "Send a message to an agent, or to the human owner of the swarm with to=operator (delivered to their Telegram chat). Returns whether the message was delivered, not an answer; wait_seconds waits for the agent to become idle.", false, false, true,
-	requiredText("to"), requiredText("message"), integer("wait_seconds", 0, 0, 300))
+var sendSpec = spec("send", "Send a message to an agent, or to the human owner of the swarm with to=operator (delivered to their Telegram chat). Returns whether the message was delivered, not an answer; wait_seconds waits for the agent to become idle. With to=operator, pass artifact_version_id to tie replies to that exact artifact version.", false, false, true,
+	requiredText("to"), requiredText("message"), integer("wait_seconds", 0, 0, 300), Arg{Name: "artifact_version_id", Type: "string", MaxLength: 64})
 
 // ReceiptWait is how long the recipient guest waits for the Claude Code
 // delivery receipt when a message does not wait for idle (wait 0, #260).

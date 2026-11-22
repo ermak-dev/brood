@@ -32,12 +32,16 @@ func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string
 		return command.Result{}, app.ErrNotAllowed
 	}
 	var args struct {
-		To          string `json:"to"`
-		Message     string `json:"message"`
-		WaitSeconds int    `json:"wait_seconds"`
+		To                string `json:"to"`
+		Message           string `json:"message"`
+		WaitSeconds       int    `json:"wait_seconds"`
+		ArtifactVersionID string `json:"artifact_version_id"`
 	}
 	if json.Unmarshal(inv.Arguments, &args) != nil {
 		return command.Result{}, command.Refuse(nil, "send needs to and message; nothing was sent")
+	}
+	if args.ArtifactVersionID != "" {
+		return command.Result{}, command.Refuse(nil, "only agents can attach a version to a notice for the operator; nothing was sent")
 	}
 	byName := func(ctx context.Context) (store.ManagedActor, error) {
 		return s.store.LookupManagedActor(ctx, swarmID, args.To)

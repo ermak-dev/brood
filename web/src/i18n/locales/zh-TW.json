@@ -2508,6 +2508,8 @@
         "diagnose": "診斷代理人",
         "send:agents": "向代理人傳送訊息",
         "send:operator": "向操作員傳送訊息",
+        "artifact_get": "讀取成品版本",
+        "artifact_publish": "發布成品版本",
         "tail:self": "讀取自身工作階段輸出",
         "tail:swarm": "讀取蜂群工作階段輸出",
         "add": "建立代理人",

@@ -2480,6 +2480,8 @@
         "diagnose": "诊断智能体",
         "send:agents": "向智能体发送消息",
         "send:operator": "向操作员发送消息",
+        "artifact_get": "读取制品版本",
+        "artifact_publish": "发布制品版本",
         "tail:self": "读取自身会话输出",
         "tail:swarm": "读取蜂群会话输出",
         "add": "创建智能体",

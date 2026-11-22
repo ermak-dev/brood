@@ -2484,6 +2484,8 @@
         "diagnose": "Diagnose agents",
         "send:agents": "Send messages to agents",
         "send:operator": "Send messages to the operator",
+        "artifact_get": "Read artifact versions",
+        "artifact_publish": "Publish artifact versions",
         "tail:self": "Read own session output",
         "tail:swarm": "Read swarm session output",
         "add": "Create agents",

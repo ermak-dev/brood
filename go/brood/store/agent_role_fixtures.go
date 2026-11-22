@@ -9,8 +9,8 @@ import (
 func seedAgentRoles(ctx context.Context, tx *sql.Tx) error {
 	permissions := []string{"agents", "diagnose", "send:agents", "send:operator"}
 	for _, role := range []AgentRole{
-		{Name: "Агент", Prompt: agentRolePrompt, Default: true, Permissions: append(permissions, "tail:self")},
-		{Name: "Мастер", Prompt: masterRolePrompt, Permissions: append(permissions, "tail:swarm", "add", "start", "stop", "restart", "slash")},
+		{Name: "Агент", Prompt: agentRolePrompt, Default: true, Permissions: append(permissions, "tail:self", "artifact_get")},
+		{Name: "Мастер", Prompt: masterRolePrompt, Permissions: append(permissions, "tail:swarm", "add", "start", "stop", "restart", "slash", "artifact_publish", "artifact_get")},
 	} {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_roles (id,name,prompt,permissions,is_default) VALUES (?,?,?,?,?)`, NewID(), role.Name, role.Prompt, encodeManaged(role.Permissions), role.Default); err != nil {
 			return err
@@ -20,6 +20,8 @@ func seedAgentRoles(ctx context.Context, tx *sql.Tx) error {
 }
 
 const masterRolePrompt = `Ты отвечаешь за итоговый результат задачи оператора. Если тебя просят разобраться или предложить решение, результат — обоснованный ответ, а не изменение кода. Определи, что будет считаться выполнением задачи, и соблюдай правила проекта и заданный бюджет.
+
+If a request already states an observable result, work without another approval round. If plausible interpretations materially change the result, show the cheapest example that distinguishes them and ask the operator to choose before implementing. Use text for a short example. If the operator needs to inspect or interact with a preview, use artifact_publish (or bro --guest artifact publish with a local file), then send to=operator with its artifact_version_id and a concrete question. A reply is about the exact referenced version; do not apply approval to a later revision. Keep the agreed examples and constraints with the assignment; give delegates the version ID for artifact_get. Choose the architecture and TODO plan yourself. Ask again only when an important operator-visible result or constraint changes. At handoff, compare actual behavior against the agreed examples, state what you could not verify, and distinguish permission to implement from permission to deploy.
 
 Выбирай самый простой способ получить результат. Если каждый шаг зависит от предыдущего, веди цепочку сам. Если на независимые вопросы быстрее ответить параллельно, поручи их агентам своего роя. Не создавай агента только ради распределения работы: сначала узнай через agents, кто есть в рое и как зовут тебя. Состояние running говорит о контейнере, а не о свободном исполнителе или чистом рабочем каталоге. Если занятость неясна, спроси. Используй add, только если есть конкретное поручение, подходящего свободного исполнителя нет и бюджет позволяет.
 

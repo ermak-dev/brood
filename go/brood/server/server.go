@@ -52,7 +52,8 @@ type Server struct {
 	cancel          context.CancelFunc
 
 	// artifactsDir — каталог доставки артефактов бутстрапа гостя.
-	artifactsDir string
+	artifactsDir   string
+	artifactOrigin string
 	// actorGitDomain — домен Git-идентичности акторов (#249); пусто —
 	// идентичность гостю не отдаётся.
 	actorGitDomain string
@@ -104,7 +105,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	srv := &Server{store: st, imageSnapshots: make(chan struct{}, 4), catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
+	srv := &Server{store: st, imageSnapshots: make(chan struct{}, 4), catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, artifactsDir: cfg.artifactsDir, artifactOrigin: cfg.artifactOrigin, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
 	srv.telegram.channel = srv.telegramChannel
@@ -237,6 +238,7 @@ func (s *Server) mount() {
 	// Проба готовности и панель — до аутентификации (mount в mux до
 	// middleware, но healthz обрабатывается здесь же, анонимно).
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /artifacts/{swarm}/{version}", s.handleArtifactView)
 	s.auth.Mount(s.mux)
 	s.mux.HandleFunc("GET /api/admin/users", s.handleAdminUsers)
 	s.mux.HandleFunc("GET /api/projects", s.handleProjects)

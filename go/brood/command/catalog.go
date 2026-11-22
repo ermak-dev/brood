@@ -95,7 +95,7 @@ func (s Spec) Schema() map[string]any {
 }
 
 var catalog = []Spec{
-	agentsSpec, sendSpec, tailSpec, slashSpec,
+	agentsSpec, sendSpec, tailSpec, slashSpec, artifactPublishSpec, artifactGetSpec,
 	addSpec, rmSpec, startSpec, stopSpec, restartSpec, resetSpec,
 	poolsSpec, poolDrainSpec, poolEnableSpec,
 	diagnoseSpec, serverDiagnoseSpec,

@@ -85,7 +85,7 @@ func (c *command) invoke(ctx context.Context, tool string, arguments map[string]
 // plain исполняет команду каталога, у которой нет своего вывода для
 // человека: текст результата и его данные.
 func (c *command) plain(ctx context.Context, args []string) error {
-	invocation, err := catalog.ParseCLI(args)
+	invocation, err := parseCatalogCLI(args)
 	if err != nil {
 		return fmt.Errorf("%w; see: bro %s --help", err, args[0])
 	}
@@ -149,7 +149,7 @@ func (c *command) catalogCommand(ctx context.Context, args []string, executor ca
 		}
 		return mcp.Serve(ctx, c.in, c.out, executor, specs)
 	}
-	invocation, err := catalog.ParseCLI(args)
+	invocation, err := parseCatalogCLI(args)
 	if err != nil {
 		return err
 	}

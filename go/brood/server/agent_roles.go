@@ -176,7 +176,7 @@ func (m *managedProvider) guestToolList(ctx context.Context, from store.ManagedA
 			enabled = slices.Contains(role.Permissions, "send:agents") || slices.Contains(role.Permissions, "send:operator")
 		case "tail":
 			enabled = slices.Contains(role.Permissions, "tail:self") || slices.Contains(role.Permissions, "tail:swarm")
-		case "agents", "diagnose":
+		case "agents", "diagnose", "artifact_publish", "artifact_get":
 			enabled = slices.Contains(role.Permissions, spec.ToolName)
 		case "add", "start", "stop", "restart", "slash", "reset", "rm":
 			enabled = delegated && slices.Contains(role.Permissions, spec.ToolName)

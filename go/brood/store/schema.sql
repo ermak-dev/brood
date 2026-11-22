@@ -37,6 +37,27 @@ CREATE TABLE swarm_ssh_keys (
     private_key TEXT NOT NULL
 );
 
+CREATE TABLE swarm_artifact_versions (
+    id         TEXT NOT NULL PRIMARY KEY,
+    swarm_id   TEXT NOT NULL REFERENCES swarms(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    version    INTEGER NOT NULL CHECK (version > 0),
+    media_type TEXT NOT NULL CHECK (media_type IN (
+        'text/plain', 'text/html', 'image/png', 'image/jpeg', 'image/gif', 'image/webp'
+    )),
+    content    BLOB NOT NULL CHECK (typeof(content) = 'blob' AND length(content) > 0),
+    UNIQUE (swarm_id, name, version)
+);
+
+CREATE TABLE telegram_artifact_replies (
+    session_id TEXT NOT NULL REFERENCES sessions(token_hash) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL,
+    swarm_id   TEXT NOT NULL REFERENCES swarms(id) ON DELETE CASCADE,
+    actor      TEXT NOT NULL,
+    version_id TEXT NOT NULL REFERENCES swarm_artifact_versions(id) ON DELETE CASCADE,
+    PRIMARY KEY (session_id, message_id)
+);
+
 CREATE TABLE sessions (
     token_hash TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

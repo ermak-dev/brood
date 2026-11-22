@@ -76,6 +76,8 @@ func (s *Server) executeOperatorCommand(ctx context.Context, userID, swarmID, ca
 		return s.executeOperatorSessionCommand(ctx, userID, swarmID, caller, inv)
 	case "agents":
 		return s.agentRoster(ctx, swarmID, "")
+	case "artifact_publish", "artifact_get":
+		return s.executeArtifactCommand(ctx, swarmID, inv)
 	case "send":
 		return s.sendOperatorCommand(ctx, userID, swarmID, inv)
 	}
@@ -150,7 +152,7 @@ func (s *Server) commandPreflight(ctx context.Context, user store.User, scope st
 	spec, _ := command.Lookup(inv.Name)
 	if scope != "" {
 		action := app.ActionManageSwarm
-		if inv.Name == "agents" {
+		if inv.Name == "agents" || inv.Name == "artifact_get" {
 			action = app.ActionViewSwarm
 		}
 		allowed, err := s.app.Can(user.ID, action, app.SwarmRes(scope))

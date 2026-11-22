@@ -69,7 +69,7 @@ func (r AgentRole) validate() error {
 	seen := make(map[string]bool, len(r.Permissions))
 	for _, permission := range r.Permissions {
 		switch permission {
-		case "agents", "diagnose", "send:agents", "send:operator", "tail:self":
+		case "agents", "diagnose", "send:agents", "send:operator", "tail:self", "artifact_publish", "artifact_get":
 		default:
 			if !delegatedAgentPermission(permission) {
 				return fmt.Errorf("%w: remove unknown permission %q", ErrInvalidAgentRole, permission)

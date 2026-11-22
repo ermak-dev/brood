@@ -24,3 +24,15 @@ export function returnAddress(state: unknown): string {
   if (!PATH.test(pathname) || !SEARCH.test(search) || !HASH.test(hash)) return '/';
   return `${pathname}${search}${hash}`;
 }
+
+// Серверный просмотр не входит в hash-роутер. Принимаем только его путь
+// из двух сегментов без кодировки, разделителей URL и родительских ссылок.
+export function artifactReturnAddress(search: string): string | null {
+  const path = new URLSearchParams(search).get('artifact');
+  if (!path) return null;
+  const match = /^\/artifacts\/([\w.-]+)\/([\w.-]+)$/u.exec(path);
+  if (!match || match[0] !== path || match.slice(1).some((id) => id === '.' || id === '..')) {
+    return null;
+  }
+  return path;
+}

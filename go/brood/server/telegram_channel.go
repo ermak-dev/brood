@@ -172,8 +172,21 @@ func (c *telegramChannel) receive(ctx context.Context, chat telegramChat, m *tel
 	}
 	var sw store.Swarm
 	target := ""
+	var artifactReply store.TelegramArtifactReply
 	if m.ReplyToMessage != nil {
-		if route, ok := c.route(chat.chatID, m.ReplyToMessage.MessageID); ok {
+		var err error
+		artifactReply, err = c.server.store.GetTelegramArtifactReply(ctx, chat.session, m.ReplyToMessage.MessageID)
+		if err == nil {
+			found, swarmErr := c.server.store.GetSwarm(ctx, artifactReply.SwarmID)
+			actor, actorErr := c.server.store.GetManagedActor(ctx, artifactReply.ActorUID)
+			if swarmErr != nil || found.State != "active" || actorErr != nil || actor.SwarmID != found.ID || actor.Phase == "deleted" {
+				return "The original recipient of this artifact reply is unavailable; nothing was sent."
+			}
+			sw, target = found, actor.Name
+			text += "\n\n[brood] This operator reply is about artifact version " + c.server.artifactURL(sw.ID, artifactReply.VersionID)
+		} else if !errors.Is(err, store.ErrNotFound) || strings.Contains(m.ReplyToMessage.Text, artifactNoticeMarker) {
+			return "The version for this reply could not be confirmed; nothing was sent. Ask the agent to resend the artifact notice."
+		} else if route, ok := c.route(chat.chatID, m.ReplyToMessage.MessageID); ok {
 			found, err := c.server.store.GetSwarm(ctx, route.swarmID)
 			if err == nil && found.State == "active" {
 				sw, target = found, route.actor
@@ -215,10 +228,13 @@ func (c *telegramChannel) receive(ctx context.Context, chat telegramChat, m *tel
 	if !session(ctx) {
 		return ""
 	}
-	byName := func(ctx context.Context) (store.ManagedActor, error) {
+	resolve := func(ctx context.Context) (store.ManagedActor, error) {
+		if artifactReply.ActorUID != "" {
+			return c.server.store.GetManagedActor(ctx, artifactReply.ActorUID)
+		}
 		return c.server.store.LookupManagedActor(ctx, sw.ID, target)
 	}
-	_, _, err := c.server.deliverOperatorMessage(ctx, chat.userID, sw.ID, byName, text, 0)
+	_, _, err := c.server.deliverOperatorMessage(ctx, chat.userID, sw.ID, resolve, text, 0)
 	switch {
 	case err == nil:
 		return ""
@@ -291,6 +307,10 @@ func (c *telegramChannel) command(ctx context.Context, chat telegramChat, name, 
 // toOwner отправляет сообщение агента владельцу его роя в привязанный чат.
 // Ошибка несёт причину для отправителя, без подробностей Telegram.
 func (c *telegramChannel) toOwner(ctx context.Context, from store.ManagedActor, body string) error {
+	return c.sendArtifact(ctx, from, body, "")
+}
+
+func (c *telegramChannel) sendArtifact(ctx context.Context, from store.ManagedActor, body, versionID string) error {
 	if strings.TrimSpace(body) == "" {
 		return errors.New("message is empty")
 	}
@@ -313,6 +333,9 @@ func (c *telegramChannel) toOwner(ctx context.Context, from store.ManagedActor, 
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+	if versionID != "" {
+		return c.sendArtifactNotice(ctx, client, link, from, body, versionID)
+	}
 	text := strings.ToValidUTF8(from.Name+": "+body, "?")
 	for _, part := range telegram.SplitText(text) {
 		sent, err := client.SendMessage(ctx, link.ChatID, part, nil)
