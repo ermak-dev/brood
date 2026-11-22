@@ -27,7 +27,7 @@ func TestSessionCancelledOpeningReleasesGuard(t *testing.T) {
 	ctx = WithSessionOpenGuard(ctx, func(context.Context) (func(), error) { return func() { close(released) }, nil })
 	done := make(chan error, 1)
 	go func() {
-		_, err := f.h.CallSession(ctx, "actor-uid", 3, SessionRequest{Operation: WorkspaceAttestOperation, Caller: "actor", Arguments: json.RawMessage(`{}`)})
+		_, err := f.h.CallSession(ctx, "actor-uid", 3, SessionRequest{Operation: "restart", Caller: "actor", Arguments: json.RawMessage(`{}`)})
 		done <- err
 	}()
 	var pending ssh.NewChannel

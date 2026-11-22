@@ -2526,7 +2526,7 @@
       "open_swarms_hint": "在「蜂群」表格中顯示此專案的蜂群。",
       "create_swarm_hint": "開啟新增蜂群的表單,並預先選好此專案。",
       "images": "映像",
-      "images_hint": "映像是在某個資源池中複製專案代理人所用的範本。bro build 會根據儲存庫的某次提交建置新映像。",
+      "images_hint": "映像是在某個資源池中複製專案代理人所用的範本。bro build 會根據目前的工作副本建置新映像。",
       "no_images": "尚無映像。在儲存庫中執行 bro build 以建置第一個映像。",
       "image_states": {
         "building": "建置中",

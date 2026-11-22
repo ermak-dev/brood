@@ -157,21 +157,7 @@ func (s *Store) RemoveProjectGitCredentials(ctx context.Context, projectID strin
 	return gitCredentialStorageError(err)
 }
 
-// ProjectGitCredentialRef returns the declared credential name, or "".
-func (s *Store) ProjectGitCredentialRef(ctx context.Context, projectID string) (string, error) {
-	var name sql.NullString
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT a.name FROM projects p LEFT JOIN project_git_credential_refs a ON a.project_id = p.id WHERE p.id = ?`, projectID).Scan(&name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("%w: project", ErrNotFound)
-	}
-	if err != nil {
-		return "", gitCredentialStorageError(err)
-	}
-	return name.String, nil
-}
-
-// SetProjectGitCredentialRef replaces the declared credential name; "" clears
-// it. The name need not exist: the declaration is independent of the secret.
+// SetProjectGitCredentialRef selects the credential used by the project Git gateway.
 func (s *Store) SetProjectGitCredentialRef(ctx context.Context, projectID, name string) error {
 	if name != "" {
 		if err := gitcredential.ValidateName(name); err != nil {

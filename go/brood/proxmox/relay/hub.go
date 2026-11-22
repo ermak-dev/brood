@@ -56,7 +56,6 @@ type peer struct {
 	ctx              context.Context
 	streams          int
 	messageJournalID string
-	inboxReceiverID  string
 }
 
 // NewHub derives a stable Ed25519 SSH host key from a private installation key
@@ -147,11 +146,6 @@ func (h *Hub) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid message delivery protocol advertisement", http.StatusBadRequest)
 		return
 	}
-	inboxReceiverID, err := inboxAdvertisement(r.Header)
-	if err != nil {
-		http.Error(w, "invalid supervisor inbox advertisement", http.StatusBadRequest)
-		return
-	}
 	h.mu.Lock()
 	closed := h.closed
 	h.mu.Unlock()
@@ -167,10 +161,10 @@ func (h *Hub) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	websocket.Server{Handshake: func(*websocket.Config, *http.Request) error { return nil }, Handler: func(ws *websocket.Conn) {
-		h.accept(newSocket(ws), id, token, messageJournalID, inboxReceiverID)
+		h.accept(newSocket(ws), id, token, messageJournalID)
 	}}.ServeHTTP(w, r)
 }
-func (h *Hub) accept(ws *socket, id identity, token, messageJournalID, inboxReceiverID string) {
+func (h *Hub) accept(ws *socket, id identity, token, messageJournalID string) {
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -196,7 +190,7 @@ func (h *Hub) accept(ws *socket, id identity, token, messageJournalID, inboxRece
 	ws.SetDeadline(time.Time{})
 	peerCtx, cancelPeer := context.WithCancel(context.Background())
 	defer cancelPeer()
-	p := &peer{id: id, token: token, conn: conn, ctx: peerCtx, messageJournalID: messageJournalID, inboxReceiverID: inboxReceiverID}
+	p := &peer{id: id, token: token, conn: conn, ctx: peerCtx, messageJournalID: messageJournalID}
 	h.mu.Lock()
 	if h.closed || !h.authorize(id.uid, id.generation, token) {
 		h.mu.Unlock()

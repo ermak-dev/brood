@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Image states reported by the server.
@@ -24,21 +25,13 @@ type Image struct {
 	ID        string `json:"id"`
 	Pool      string `json:"pool"`
 	State     string `json:"state"`
-	Ref       string `json:"ref"`
+	Snapshot  string `json:"snapshot"`
 	Playbook  string `json:"playbook"`
 	CTID      int64  `json:"ctid"`
 	Error     string `json:"error"`
 	Log       string `json:"log"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
-}
-
-// ImageBuildRequest asks the server to build an image from a repository
-// commit with an Ansible playbook. An empty Pool leaves the choice to the server.
-type ImageBuildRequest struct {
-	Ref      string `json:"ref"`
-	Playbook string `json:"playbook"`
-	Pool     string `json:"pool,omitempty"`
 }
 
 func imagesPath(project string, image ...string) (string, error) {
@@ -62,7 +55,7 @@ func isImagesPath(path string) bool {
 		return false
 	}
 	_, rest, found = strings.Cut(rest, "/")
-	return found && (rest == "images" || strings.HasPrefix(rest, "images/"))
+	return found && (rest == "images" || strings.HasPrefix(rest, "images/") || strings.HasPrefix(rest, "images?"))
 }
 
 // publicDetail достаёт detail отказа одной строкой без управляющих символов.
@@ -87,17 +80,16 @@ func publicDetail(body io.Reader) string {
 }
 
 // ImageBuild starts a build and returns the image in its initial state.
-func (c *Client) ImageBuild(ctx context.Context, project string, request ImageBuildRequest) (Image, error) {
+func (c *Client) ImageBuild(ctx context.Context, project, pool string, snapshot io.Reader, size int64) (Image, error) {
 	var image Image
 	path, err := imagesPath(project)
 	if err != nil {
 		return image, err
 	}
-	body, err := json.Marshal(request)
-	if err != nil {
-		return image, errors.New("could not encode image build request")
+	if pool != "" {
+		path += "?" + url.Values{"pool": {pool}}.Encode()
 	}
-	if err := c.call(ctx, http.MethodPost, path, body, &image); err != nil {
+	if err := c.callReader(ctx, http.MethodPost, path, snapshot, size, "application/x-tar", &image, 5*time.Minute); err != nil {
 		return Image{}, err
 	}
 	return image, nil

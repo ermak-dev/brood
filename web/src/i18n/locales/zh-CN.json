@@ -2498,7 +2498,7 @@
       "open_swarms_hint": "在“蜂群”表中显示此项目的蜂群。",
       "create_swarm_hint": "打开新建蜂群表单,并预先选中此项目。",
       "images": "镜像",
-      "images_hint": "镜像是在某个资源池中克隆项目智能体所用的模板。bro build 会根据仓库的某次提交构建新镜像。",
+      "images_hint": "镜像是在某个资源池中克隆项目智能体所用的模板。bro build 会根据当前工作副本构建新镜像。",
       "no_images": "暂无镜像。在仓库中运行 bro build 以构建第一个镜像。",
       "image_states": {
         "building": "构建中",

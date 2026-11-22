@@ -41,7 +41,6 @@ make -C go build
 | `BROOD_TLS_CERT`, `BROOD_TLS_KEY` | файлы сертификата и ключа; задаются вместе, без них сервер отвечает по HTTP | `/etc/brood/tls.crt` |
 | `BROOD_SESSION_SECRET` | секрет сессий; при HTTP не короче 32 байт. Пустой заменяется случайным на время жизни процесса | случайная строка |
 | `BROOD_SECURE_COOKIES` | `true` ставит cookie сессии атрибут `Secure` и без TLS на самом сервере: нужно, когда TLS завершает прокси перед ним | `true` |
-| `BROOD_PANEL_ORIGIN` | адрес панели, каким его открывает человек; по нему уведомления Telegram ссылаются на объекты. Без него уведомления идут без ссылок | `https://brood.example.com` |
 
 Агенты и Proxmox (подробности в [PROXMOX.md](PROXMOX.md)):
 
@@ -204,7 +203,7 @@ brood serve
 отказывается:
 
 ```
-incompatible database schema: found version 101, want 102; there are no migrations, recreate the database
+incompatible database schema: found version 103, want 104; there are no migrations, recreate the database
 ```
 
 Обновление сервера, которое меняет схему, означает новую базу: остановите
@@ -324,6 +323,11 @@ umask 077
 sudo -u brood env BROOD_DB_PATH=/var/lib/brood/brood.db \
   /var/lib/brood/brood fixture export > fixture.json
 ```
+
+Перед первой выкладкой схемы 104 удалите ключ `events` из каждой строки
+таблицы `user_telegram_links` в сохранённой фикстуре GitLab. Привязки ботов,
+администраторы и пулы остаются. Фикстуру со старой колонкой сервер не примет;
+скрипт остановится на проверке до замены файлов установки.
 
 Создание первого администратора в `existing` (пароль запрашивается
 интерактивно):

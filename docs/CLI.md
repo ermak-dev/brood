@@ -204,7 +204,7 @@ claude mcp add brood -- bro mcp
 | Команда | Что делает |
 | --- | --- |
 | `bro projects [--json]` | Список доступных проектов |
-| `bro build [--pool NAME] [--ref COMMIT] [--no-wait] [--no-secrets]` | Объявить проект из `./brood.yaml` и собрать образ агента |
+| `bro build [--pool NAME] [--no-wait] [--no-secrets]` | Объявить проект из `./brood.yaml` и собрать образ из рабочей копии |
 | `bro build --plan` | Напечатать разобранное объявление в JSON, без обращения к серверу |
 | `bro image list [--project NAME] [--json]` | Список образов проекта |
 | `bro image rm IMAGE [--project NAME]` | Удалить образ |

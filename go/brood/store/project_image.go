@@ -17,7 +17,7 @@ const projectImageSchema = `CREATE TABLE project_images (
     ctid INTEGER NOT NULL CHECK (ctid > 0),
     owner_nonce TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('building', 'ready', 'failed', 'retired')),
-    ref TEXT NOT NULL,
+    snapshot TEXT NOT NULL,
     playbook TEXT NOT NULL,
     error TEXT NOT NULL DEFAULT '',
     log TEXT NOT NULL DEFAULT '',
@@ -34,7 +34,7 @@ type ProjectImage struct {
 	CTID       int
 	OwnerNonce string
 	State      string
-	Ref        string
+	Snapshot   string
 	Playbook   string
 	Error      string
 	Log        string
@@ -42,11 +42,11 @@ type ProjectImage struct {
 	UpdatedAt  string
 }
 
-const projectImageCols = `id,project_id,pool_uid,ctid,owner_nonce,state,ref,playbook,error,log,created_at,updated_at`
+const projectImageCols = `id,project_id,pool_uid,ctid,owner_nonce,state,snapshot,playbook,error,log,created_at,updated_at`
 
 func scanProjectImage(row interface{ Scan(...any) error }) (ProjectImage, error) {
 	var i ProjectImage
-	err := row.Scan(&i.ID, &i.ProjectID, &i.PoolUID, &i.CTID, &i.OwnerNonce, &i.State, &i.Ref, &i.Playbook, &i.Error, &i.Log, &i.CreatedAt, &i.UpdatedAt)
+	err := row.Scan(&i.ID, &i.ProjectID, &i.PoolUID, &i.CTID, &i.OwnerNonce, &i.State, &i.Snapshot, &i.Playbook, &i.Error, &i.Log, &i.CreatedAt, &i.UpdatedAt)
 	return i, err
 }
 
@@ -57,8 +57,8 @@ func verifyProjectImageSchema(ctx context.Context, tx *sql.Tx) error {
 // CreateProjectImage records a build that is about to start. One build per
 // project and pool runs at a time: a second one is ErrProjectImageBusy.
 func (s *Store) CreateProjectImage(ctx context.Context, i ProjectImage) (ProjectImage, error) {
-	if i.ID == "" || i.ProjectID == "" || i.PoolUID == "" || i.CTID <= 0 || i.OwnerNonce == "" || i.Ref == "" || i.Playbook == "" {
-		return ProjectImage{}, errors.New("project image identity, container, ref and playbook are required")
+	if i.ID == "" || i.ProjectID == "" || i.PoolUID == "" || i.CTID <= 0 || i.OwnerNonce == "" || i.Snapshot == "" || i.Playbook == "" {
+		return ProjectImage{}, errors.New("project image identity, container, snapshot and playbook are required")
 	}
 	i.State, i.CreatedAt = "building", nowRFC3339()
 	i.UpdatedAt = i.CreatedAt
@@ -70,7 +70,7 @@ func (s *Store) CreateProjectImage(ctx context.Context, i ProjectImage) (Project
 		if busy {
 			return ErrProjectImageBusy
 		}
-		_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO project_images (`+projectImageCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, i.ID, i.ProjectID, i.PoolUID, i.CTID, i.OwnerNonce, i.State, i.Ref, i.Playbook, "", "", i.CreatedAt, i.UpdatedAt)
+		_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO project_images (`+projectImageCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, i.ID, i.ProjectID, i.PoolUID, i.CTID, i.OwnerNonce, i.State, i.Snapshot, i.Playbook, "", "", i.CreatedAt, i.UpdatedAt)
 		return err
 	})
 	return i, err

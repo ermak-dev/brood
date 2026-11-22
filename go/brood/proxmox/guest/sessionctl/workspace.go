@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"brood.dev/go/brood/gitidentity"
 	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 )
@@ -216,7 +215,7 @@ func fixedDirectory(workspace string) error {
 // repository rejects indirection and executable Git configuration before status
 // or checkout. No origin, credential helper, network, or bootstrap is invoked.
 func (e *workspaceEngine) repository(ctx context.Context) error {
-	if err := repositoryLayout(ctx, e.root, e.git, true, nil, gitidentity.Identity{}); err != nil {
+	if err := repositoryLayout(ctx, e.root, e.git); err != nil {
 		return err
 	}
 	return e.stream(ctx, indexArgs, refuseGitlinks)
@@ -264,13 +263,8 @@ func scanIndex(r *bufio.Reader, limit int) error {
 	}
 }
 
-// repositoryLayout holds the checks shared by workspace operations and the
-// pinned checkout. wholeTree walks the clone for the file budget; otherwise
-// only .git is walked, which is what metadata safety needs. indirect extends
-// the refused metadata names. A nonzero identity is the installation's (#249):
-// recorded user keys must then repeat it; workspace operations pass zero and
-// keep the key allowlist of #125, which treats the user keys as data.
-func repositoryLayout(ctx context.Context, workspace string, git func(context.Context, ...string) (string, error), wholeTree bool, indirect []string, identity gitidentity.Identity) error {
+// repositoryLayout checks the clone before a session restart.
+func repositoryLayout(ctx context.Context, workspace string, git func(context.Context, ...string) (string, error)) error {
 	if err := fixedDirectory(workspace); err != nil {
 		return err
 	}
@@ -280,15 +274,10 @@ func repositoryLayout(ctx context.Context, workspace string, git func(context.Co
 	}
 	gitdir.Close()
 	files := 0
-	if wholeTree {
-		err = workspaceWalk(ctx, workspace, false, 0, &files)
-	} else {
-		err = workspaceWalk(ctx, filepath.Join(workspace, ".git"), true, 1, &files)
-	}
-	if err != nil {
+	if err := workspaceWalk(ctx, workspace, false, 0, &files); err != nil {
 		return errors.New("workspace traversal unsafe, canceled, or exceeds file limit")
 	}
-	for _, name := range append([]string{"commondir", "config.worktree", "info/grafts", "objects/info/alternates", "objects/info/http-alternates", "refs/replace"}, indirect...) {
+	for _, name := range []string{"commondir", "config.worktree", "info/grafts", "objects/info/alternates", "objects/info/http-alternates", "refs/replace"} {
 		if _, err := os.Lstat(filepath.Join(workspace, ".git", name)); !os.IsNotExist(err) {
 			return errors.New("indirect Git metadata is not supported")
 		}
@@ -304,12 +293,9 @@ func repositoryLayout(ctx context.Context, workspace string, git func(context.Co
 		if entry == "" {
 			continue
 		}
-		key, value, ok := strings.Cut(entry, "\n")
+		key, _, ok := strings.Cut(entry, "\n")
 		if !ok || !workspaceConfigKey(key) {
 			return errors.New("unsafe or unsupported repository Git configuration")
-		}
-		if expected, named := identityValue(identity, key); named && value != expected {
-			return errors.New("repository Git identity differs from the installation identity of the agent; remove user.name and user.email from .git/config or reset the workspace")
 		}
 	}
 	top, err := git(ctx, "rev-parse", "--show-toplevel")
@@ -366,23 +352,9 @@ func workspaceWalk(ctx context.Context, path string, metadata bool, depth int, f
 	}
 }
 
-// identityValue names the expected value of a user key when an identity is
-// known; the second result is false for other keys or without identity.
-func identityValue(identity gitidentity.Identity, key string) (string, bool) {
-	switch {
-	case identity.IsZero():
-		return "", false
-	case key == "user.name":
-		return identity.Name, true
-	case key == "user.email":
-		return identity.Email, true
-	}
-	return "", false
-}
-
 // brood.origin — канонический origin, записанный первым клоном (#147); это
 // данные, а не исполняемая настройка Git. user.name и user.email — тоже
-// данные: значение проверяет только checkout, знающий идентичность (#249).
+// данные.
 func workspaceConfigKey(key string) bool {
 	switch key {
 	case "core.repositoryformatversion", "core.filemode", "core.bare", "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode", "remote.origin.url", "remote.origin.fetch", "user.name", "user.email", "brood.origin":
@@ -393,10 +365,6 @@ func workspaceConfigKey(key string) bool {
 
 // actorHome is HOME of every helper Git; Git reads no configuration from it.
 const actorHome = "/workspace/home"
-
-// emptyTree has no .gitattributes. Git serves it built in, before any object
-// of that name planted in the clone.
-const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 // gitEnv is the one environment of helper Git in the actor-owned clone: no
 // system or global configuration or attributes, prompts, protocols, replace
@@ -410,17 +378,8 @@ func gitEnv(home, root string) []string {
 // could run code, hide changes or start background work. Excludes and
 // attributes files default to paths under HOME, which GIT_CONFIG_GLOBAL does
 // not disable. Repository configuration is allowlisted by workspaceConfigKey.
-//
-// byteExact reads attributes from the empty tree instead of the worktree and
-// index, so the tree's own .gitattributes convert nothing; otherwise ident
-// collapses "$Id: ... $" and text turns CRLF into LF on checkin, and status
-// calls such an edit unchanged. core.attributesFile cannot override them: it
-// has the lowest precedence (gitattributes(5)). Attestation claims the bytes
-// of the commit and needs it; the restart checks keep the project's own
-// form. Unlike GIT_ATTR_SOURCE, the option fails on Git before 2.42 instead
-// of being ignored. $GIT_DIR/info/attributes still applies; checkout refuses it.
-func gitFlags(byteExact bool) []string {
-	flags := []string{
+func gitFlags() []string {
+	return []string{
 		"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null",
 		"-c", "core.excludesFile=/dev/null", "-c", "credential.helper=", "-c", "core.askPass=/bin/false",
 		"-c", "submodule.recurse=false", "-c", "core.untrackedCache=false", "-c", "core.sparseCheckout=false",
@@ -429,32 +388,26 @@ func gitFlags(byteExact bool) []string {
 		"-c", "core.trustctime=true", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
 		"-c", "fetch.writeCommitGraph=false", "-c", "advice.detachedHead=false", "-c", "protocol.allow=never",
 	}
-	if byteExact {
-		flags = append(flags, "--attr-source="+emptyTree)
-	}
-	return flags
 }
 
 func runWorkspaceGit(ctx context.Context, home, root string, args ...string) (string, error) {
-	return helperGit{home: home, root: root}.run(ctx, workspaceStepTimeout, nil, args...)
+	return helperGit{home: home, root: root}.run(ctx, args...)
 }
 
 func streamWorkspaceGit(ctx context.Context, home, root string, args []string, consume func(*bufio.Reader) error) error {
-	return helperGit{home: home, root: root}.stream(ctx, workspaceStepTimeout, nil, nil, args, consume)
+	return helperGit{home: home, root: root}.stream(ctx, args, consume)
 }
 
 // helperGit runs helper Git in the clone at root with gitEnv and gitFlags,
 // each command in its own process group, killed with its context.
 type helperGit struct {
 	home, root string
-	byteExact  bool
 }
 
-func (g helperGit) command(ctx context.Context, env, args []string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "/usr/bin/git", append(gitFlags(g.byteExact), args...)...)
+func (g helperGit) command(ctx context.Context, args []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "/usr/bin/git", append(gitFlags(), args...)...)
 	cmd.Dir = g.root
-	// Повтор ключа в Env: os/exec берёт последнее значение.
-	cmd.Env = append(gitEnv(g.home, g.root), env...)
+	cmd.Env = gitEnv(g.home, g.root)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -469,10 +422,10 @@ func (g helperGit) command(ctx context.Context, env, args []string) *exec.Cmd {
 
 // run returns the output of one bounded command, refused past the cap of
 // cappedOutput. Listings that grow with the clone go through stream instead.
-func (g helperGit) run(parent context.Context, timeout time.Duration, env []string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, timeout)
+func (g helperGit) run(parent context.Context, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, workspaceStepTimeout)
 	defer cancel()
-	cmd := g.command(ctx, env, args)
+	cmd := g.command(ctx, args)
 	output := &cappedOutput{cancel: cancel}
 	cmd.Stdout = output
 	err := cmd.Run()
@@ -483,11 +436,10 @@ func (g helperGit) run(parent context.Context, timeout time.Duration, env []stri
 }
 
 // stream hands stdout to consume; an early consumer error stops Git.
-func (g helperGit) stream(parent context.Context, timeout time.Duration, env []string, stdin io.Reader, args []string, consume func(*bufio.Reader) error) error {
-	ctx, cancel := context.WithTimeout(parent, timeout)
+func (g helperGit) stream(parent context.Context, args []string, consume func(*bufio.Reader) error) error {
+	ctx, cancel := context.WithTimeout(parent, workspaceStepTimeout)
 	defer cancel()
-	cmd := g.command(ctx, env, args)
-	cmd.Stdin = stdin
+	cmd := g.command(ctx, args)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return errors.New("Git output unavailable")

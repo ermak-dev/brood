@@ -165,35 +165,3 @@ func TestSessionCanceledChannelDoesNotSerialize(t *testing.T) {
 		t.Fatal("helper outlived channel")
 	}
 }
-
-// FEATURE: Workspace attestation budget (#183).
-// SPEC: Only the attestation operation gets the long budget on the guest side;
-// fetching and verifying a snapshot cannot finish in the 20 s session budget.
-func TestWorkspaceAttestSessionBudget(t *testing.T) {
-	f := setup(t)
-	cfg := f.cfg
-	budgets := make(chan time.Duration, 2)
-	cfg.Session = func(ctx context.Context, req SessionRequest) SessionResponse {
-		deadline, ok := ctx.Deadline()
-		if !ok {
-			t.Error("guest session handler has no deadline")
-		}
-		budgets <- time.Until(deadline)
-		return SessionResponse{OK: true, Text: req.Operation, Outcome: "complete"}
-	}
-	start(t, f, cfg)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for _, op := range []string{WorkspaceAttestOperation, "restart"} {
-		got, err := f.h.CallSession(ctx, "actor-uid", 3, SessionRequest{Operation: op, Caller: "server", Arguments: json.RawMessage(`{}`)})
-		if err != nil || got.Text != op {
-			t.Fatal(op, got, err)
-		}
-	}
-	if long, short := <-budgets, <-budgets; long < 9*time.Minute || long > 10*time.Minute || short > 20*time.Second {
-		t.Fatalf("attest budget %v, restart budget %v", long, short)
-	}
-	if WorkspaceAttestOperation != "workspace_attest" {
-		t.Fatal("operation name is part of the guest wire contract")
-	}
-}

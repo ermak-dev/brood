@@ -36,7 +36,11 @@ func (s *Server) actorViewUser(ctx context.Context) (proxy.Identity, bool) {
 	if v, ok := ctx.Value(actorViewKey{}).(actorView); ok {
 		return proxy.Identity{ID: v.userID, Username: v.username}, true
 	}
-	return proxyCurrentUser(ctx)
+	user, ok := auth.UserFromContext(ctx)
+	if !ok {
+		return proxy.Identity{}, false
+	}
+	return proxy.Identity{ID: user.ID, Username: user.Username}, true
 }
 
 // validActorView проверяет исходную сессию, актуальные права и неизменность

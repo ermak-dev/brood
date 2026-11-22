@@ -19,17 +19,6 @@ import (
 
 // FetchWorkspaceOrigin reads only this actor generation's server-assigned origin.
 func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig) (WorkspaceOrigin, error) {
-	return fetchWorkspaceOrigin(parent, cfg, false)
-}
-
-// FetchWorkspaceBootstrap explicitly negotiates ephemeral bootstrap support.
-// Only a supervisor that suppresses free autostart and prepares the exact source
-// before the first model session may call it. The legacy receiver never opts in.
-func FetchWorkspaceBootstrap(parent context.Context, cfg relay.ClientConfig) (WorkspaceOrigin, error) {
-	return fetchWorkspaceOrigin(parent, cfg, true)
-}
-
-func fetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, bootstrap bool) (WorkspaceOrigin, error) {
 	fail := func() (WorkspaceOrigin, error) { return WorkspaceOrigin{}, originFailure() }
 	route, err := newServerRoute(cfg)
 	if err != nil {
@@ -47,9 +36,6 @@ func fetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, bootst
 		return fail()
 	}
 	request.Header.Set("Authorization", "Bearer "+route.token)
-	if bootstrap {
-		request.Header.Set(relay.WorkspaceBootstrapHeader, relay.WorkspaceBootstrapProtocol)
-	}
 	response, err := client.Do(request)
 	if err != nil {
 		return fail()
@@ -62,14 +48,14 @@ func fetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig, bootst
 	if err != nil || len(data) > 4<<10 {
 		return fail()
 	}
-	origin, err := decodeWorkspaceOrigin(data, bootstrap)
+	origin, err := decodeWorkspaceOrigin(data)
 	if err != nil || ValidateWorkspaceOrigin(origin.Origin, origin.Mode) != nil {
 		return fail()
 	}
 	return origin, nil
 }
 
-func decodeWorkspaceOrigin(data []byte, bootstrap bool) (WorkspaceOrigin, error) {
+func decodeWorkspaceOrigin(data []byte) (WorkspaceOrigin, error) {
 	fail := func() (WorkspaceOrigin, error) { return WorkspaceOrigin{}, originFailure() }
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	first, err := decoder.Token()
@@ -79,11 +65,10 @@ func decodeWorkspaceOrigin(data []byte, bootstrap bool) (WorkspaceOrigin, error)
 	fields := map[string]string{}
 	var identity gitidentity.Identity
 	var models actormodel.Models
-	var ephemeral *EphemeralWorkspace
 	for decoder.More() {
 		token, err := decoder.Token()
 		key, ok := token.(string)
-		if err != nil || !ok || (key != "origin" && key != "mode" && key != "gitIdentity" && key != "models" && (key != "ephemeral" || !bootstrap)) {
+		if err != nil || !ok || (key != "origin" && key != "mode" && key != "gitIdentity" && key != "models") {
 			return fail()
 		}
 		if _, exists := fields[key]; exists {
@@ -110,13 +95,6 @@ func decodeWorkspaceOrigin(data []byte, bootstrap bool) (WorkspaceOrigin, error)
 			fields[key] = ""
 			continue
 		}
-		if key == "ephemeral" {
-			if ephemeral, ok = decodeEphemeralWorkspace(raw); !ok {
-				return fail()
-			}
-			fields[key] = ""
-			continue
-		}
 		var value string
 		if json.Unmarshal(raw, &value) != nil {
 			return fail()
@@ -129,7 +107,7 @@ func decodeWorkspaceOrigin(data []byte, bootstrap bool) (WorkspaceOrigin, error)
 	if err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || !hasOrigin || !hasMode {
 		return fail()
 	}
-	origin := WorkspaceOrigin{Origin: fields["origin"], Mode: fields["mode"], GitIdentity: identity, Models: models, Ephemeral: ephemeral}
+	origin := WorkspaceOrigin{Origin: fields["origin"], Mode: fields["mode"], GitIdentity: identity, Models: models}
 	if checkWorkspaceOrigin(origin) != nil {
 		return fail()
 	}

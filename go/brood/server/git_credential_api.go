@@ -76,7 +76,18 @@ func (s *Server) handleGitCredentialPut(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.mutateGitCredentials(w, r, userID, func(ctx context.Context) error {
-		return s.store.PutProjectGitCredential(ctx, r.PathValue("id"), c)
+		project := r.PathValue("id")
+		repository, err := s.store.ProjectRepository(ctx, project)
+		if err != nil {
+			return err
+		}
+		if err := s.store.PutProjectGitCredential(ctx, project, c); err != nil {
+			return err
+		}
+		if repository == c.Repository {
+			return s.store.SetProjectGitCredentialRef(ctx, project, c.Name)
+		}
+		return nil
 	})
 }
 

@@ -24,10 +24,7 @@ type ActorSpec struct {
 	Args, Env  []string
 	Dir        string
 	UID, GID   uint32
-	holdPTY    bool
 }
-
-func (s ActorSpec) ptyStartHeld() bool { return s.holdPTY }
 
 func actorSpec(executable string) ActorSpec {
 	return ActorSpec{Executable: executable, Args: []string{"--brood-guest-actor"}, Env: actorEnv(), Dir: "/workspace/project", UID: 1000, GID: 1000}
@@ -36,7 +33,7 @@ func actorSpec(executable string) ActorSpec {
 // actorEnv возвращает фиксированное окружение актора: проектный секрет его
 // имён не переопределит. DISABLE_FEEDBACK_COMMAND и
 // CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY (#164) выключают /feedback и опрос
-// качества сессии в обоих режимах: отвечать некому. Окна контекста здесь нет:
+// качества сессии: отвечать некому. Окна контекста здесь нет:
 // оно свойство модели установки. Прокси-переменных нет: сеть актора не
 // ограничена, он ходит обычной сетью и резолвером контейнера.
 func actorEnv() []string {
@@ -77,13 +74,7 @@ func actorArgs(executable string, driftty bool) []string {
 // RunActor is the dedicated --brood-guest-actor dispatch target. The parent must
 // dispatch it before reading supervisor configuration or opening root services.
 // It accepts no actor-controlled arguments and owns the raw PTY host and ttyd.
-func RunActor() error { return runActor(false) }
-
-// RunHeldActor accepts only an inherited startup decision from the supervisor.
-// Before it arrives this process neither serves the PTY nor launches Claude.
-func RunHeldActor() error { return runActor(true) }
-
-func runActor(held bool) error {
+func RunActor() error {
 	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
 		return errors.New("actor requires UID and GID 1000")
 	}
@@ -98,11 +89,6 @@ func runActor(held bool) error {
 	}
 	if err := lockPrivileges(); err != nil {
 		return err
-	}
-	if held {
-		if err := awaitPTYStart(4); err != nil {
-			return err
-		}
 	}
 	if err := os.Chdir("/workspace/home"); err != nil {
 		return errors.New("actor home directory unavailable")
@@ -121,7 +107,7 @@ func runActor(held bool) error {
 	if locateErr != nil {
 		return errors.New("cannot locate trusted PTY executable")
 	}
-	return runActorPTY(self, err == nil, held)
+	return runActorPTY(self, err == nil)
 }
 func lockPrivileges() error {
 	runtime.LockOSThread()
@@ -198,19 +184,14 @@ type Process interface {
 	Close() error
 }
 type actorProcess struct {
-	cmd      *exec.Cmd
-	socket   *actorSocket
-	ptyStart *os.File // Owned only by the root runtime lifecycle.
+	cmd    *exec.Cmd
+	socket *actorSocket
 }
 
 func (p *actorProcess) Wait() error { return p.cmd.Wait() }
 func (p *actorProcess) Close() error {
 	if os.Geteuid() != 0 {
 		return errors.New("actor cleanup requires trusted guest root")
-	}
-	if p.ptyStart != nil {
-		_ = p.ptyStart.Close()
-		p.ptyStart = nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -255,9 +236,6 @@ func launchActor(ctx context.Context, spec ActorSpec) (Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if spec.ptyStartHeld() {
-		spec.Args = []string{"--brood-guest-actor-held"}
-	}
 	cmd, err := guestHelperCommand(spec)
 	if err != nil {
 		return nil, err
@@ -273,25 +251,11 @@ func launchActor(ctx context.Context, spec ActorSpec) (Process, error) {
 	}
 	defer file.Close()
 	cmd.ExtraFiles = []*os.File{file}
-	process := &actorProcess{cmd: cmd, socket: socket}
-	if spec.ptyStartHeld() {
-		reader, writer, err := os.Pipe()
-		if err != nil {
-			socket.Close()
-			return nil, errors.New("cannot create the actor PTY startup gate")
-		}
-		defer reader.Close()
-		cmd.ExtraFiles = append(cmd.ExtraFiles, reader)
-		process.ptyStart = writer
-	}
 	if err := cmd.Start(); err != nil {
-		if process.ptyStart != nil {
-			_ = process.ptyStart.Close()
-		}
 		socket.Close()
 		return nil, fmt.Errorf("actor helper start failed: %s", safeExecError(err))
 	}
-	return process, nil
+	return &actorProcess{cmd: cmd, socket: socket}, nil
 }
 func safeExecError(err error) string {
 	if errors.Is(err, os.ErrPermission) {

@@ -61,58 +61,6 @@ func TestSupervisorDeliveryJournalUsesSeparateRetainedIncarnations(t *testing.T)
 	}
 }
 
-func TestSupervisorInboxIsSeparateFromNativeJournalAndIncarnation(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	if err := os.Chmod(root, 0700); err != nil {
-		t.Fatal(err)
-	}
-	base, err := os.Open(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer base.Close()
-	scope := deliverylog.Scope{ActorUID: "actor", Incarnation: 1}
-	legacy, err := openScopedDeliveryJournal(ctx, base, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer legacy.Close()
-	first, err := openScopedSupervisorInbox(ctx, base, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer first.Close()
-	body := []byte("canonical instruction")
-	receipt, err := first.Enqueue(ctx, first.Identifier(), "step-1", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if legacy.Identifier() == receipt.InboxID {
-		t.Fatal("inbox reused legacy journal identity")
-	}
-	if got, err := legacy.Lookup(ctx, "step-1", body); err != nil || got != deliverylog.Absent {
-		t.Fatalf("inbox custody leaked into native receipt: %s, %v", got, err)
-	}
-	reopened, err := openScopedSupervisorInbox(ctx, base, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	if status, err := reopened.Lookup(ctx, receipt.InboxID, receipt.DeliveryID, receipt.Digest); err != nil || status.Receipt != receipt {
-		t.Fatalf("reopened supervisor lost custody: %+v, %v", status, err)
-	}
-	scope.Incarnation++
-	next, err := openScopedSupervisorInbox(ctx, base, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer next.Close()
-	if next.Identifier() == receipt.InboxID {
-		t.Fatal("new incarnation inherited old inbox identity")
-	}
-}
-
 func TestSupervisorDeliveryJournalRejectsSymlinkAndSharedScope(t *testing.T) {
 	for _, kind := range []string{"symlink", "shared"} {
 		t.Run(kind, func(t *testing.T) {

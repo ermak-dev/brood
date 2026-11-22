@@ -40,14 +40,6 @@ type telegramChat struct {
 
 func (c telegramChat) linked() bool { return c.session != "" }
 
-// telegramReply — ответ бота в чат.
-type telegramReply struct {
-	text   string
-	markup telegram.ReplyMarkup
-}
-
-func telegramText(text string) telegramReply { return telegramReply{text: text} }
-
 // telegramClipText обрезает текст до предела сообщения Bot API.
 func telegramClipText(text string, limit int) string {
 	if telegram.TextLength(text) <= limit {

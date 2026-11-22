@@ -2507,7 +2507,7 @@
       "open_swarms_hint": "Hiện các swarm của dự án này trong bảng Swarm.",
       "create_swarm_hint": "Mở biểu mẫu tạo swarm mới với dự án này đã được chọn.",
       "images": "Image",
-      "images_hint": "Image là template mà agent của dự án được clone từ đó trong một pool. bro build tạo image mới từ một commit của kho mã.",
+      "images_hint": "Image là template mà agent của dự án được clone từ đó trong một pool. bro build tạo image mới từ bản sao làm việc hiện tại.",
       "no_images": "Chưa có image. Chạy bro build trong kho mã để build image đầu tiên.",
       "image_states": {
         "building": "Đang build",

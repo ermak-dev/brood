@@ -3,16 +3,14 @@
 package guest
 
 // FEATURE: Autonomous Claude Code profile of managed actors (#164).
-// SPEC: Both session modes hold one profile. Messages of other sessions are
+// SPEC: Messages of other sessions are
 // accepted without the Deliver/Deny dialog (crossSessionInbound "accept"); the
 // built-in tools SendMessage, ListAgents, AskUserQuestion, EnterWorktree,
 // ExitWorktree and SendFeedback are denied, which removes them from the tool
 // list of the model; feedback drafts are off; the fixed environment disables
-// the /feedback command and the quality survey. The free session gets the
+// the /feedback command and the quality survey. The session gets the
 // profile merged into ~/.claude/settings.json: every other key of the actor and
-// every permission entry it has survive. The step session does not read that
-// file and gets the profile from the root drop-in of #224, next to
-// allowManagedHooksOnly. No context window is pinned without an installation
+// every permission entry it has survive. No context window is pinned without an installation
 // setting, and nothing of the operator's own wrapper (TLS bypass) is carried.
 
 import (
@@ -20,7 +18,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -137,37 +134,29 @@ func TestClaudeSettingsRepairMalformedPermissions(t *testing.T) {
 	}
 }
 
-// SPEC: The environment of both modes disables /feedback and the quality
+// SPEC: The session environment disables /feedback and the quality
 // survey and pins no context window without an installation setting, even
 // with installation models; a project secret cannot switch feedback back on.
 func TestClaudeLaunchDisablesFeedbackWithoutContextPin(t *testing.T) {
-	p := stepTestPolicy(t)
-	layout := stepTestLayout(t, p)
-	if err := publishWorkspaceOrigin(p.Run, WorkspaceOrigin{Models: actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}}, p.Root, p.ActorGID); err != nil {
+	layout := appLayout{Project: privateTemp(t), Home: privateTemp(t), Run: privateTemp(t), RunUID: os.Geteuid(), RunGID: os.Getegid()}
+	if err := publishProjectSecrets(layout.Run, projectsecret.Bundle{Vars: map[string]string{"SERVICE_KEY": "synthetic-env"}}, layout.RunUID, layout.RunGID); err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"free", "step"} {
-		if mode == "step" {
-			if err := p.enter(attestIdentity); err != nil {
-				t.Fatal(err)
-			}
+	if err := publishWorkspaceOrigin(layout.Run, WorkspaceOrigin{Models: actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}}, layout.RunUID, layout.RunGID); err != nil {
+		t.Fatal(err)
+	}
+	env, err := prepareProjectApp(layout, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"DISABLE_FEEDBACK_COMMAND=1", "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1", "ANTHROPIC_MODEL=glm-5.3"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("session env lacks %s: %q", want, env)
 		}
-		args, env, err := prepareClaudeLaunch(layout, io.Discard)
-		if err != nil {
-			t.Fatalf("%s launch: %v", mode, err)
-		}
-		if want := map[string][]string{"free": projectAppArgs(), "step": stepAppArgs()}[mode]; !reflect.DeepEqual(args, want) {
-			t.Fatalf("%s argv %q", mode, args)
-		}
-		for _, want := range []string{"DISABLE_FEEDBACK_COMMAND=1", "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1", "ANTHROPIC_MODEL=glm-5.3"} {
-			if !slices.Contains(env, want) {
-				t.Errorf("%s session env lacks %s: %q", mode, want, env)
-			}
-		}
-		for _, item := range env {
-			if strings.HasPrefix(item, "CLAUDE_CODE_MAX_CONTEXT_TOKENS=") || strings.HasPrefix(item, "NODE_TLS_REJECT_UNAUTHORIZED=") {
-				t.Errorf("%s session env carries %s", mode, item)
-			}
+	}
+	for _, item := range env {
+		if strings.HasPrefix(item, "CLAUDE_CODE_MAX_CONTEXT_TOKENS=") || strings.HasPrefix(item, "NODE_TLS_REJECT_UNAUTHORIZED=") {
+			t.Errorf("session env carries %s", item)
 		}
 	}
 	if _, err := projectAppEnvironment(projectsecret.Bundle{Vars: map[string]string{"DISABLE_FEEDBACK_COMMAND": "0"}}); err == nil {

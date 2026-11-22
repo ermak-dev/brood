@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,16 +19,6 @@ const shutdownTimeout = 10 * time.Second
 // Serve собирает сервер по cfg и слушает до отмены ctx или отказа
 // слушателя.
 func Serve(ctx context.Context, cfg Config) error {
-	return serve(ctx, cfg, nil)
-}
-
-// ServeLog preserves the earlier entry point. Server libraries remain silent;
-// readiness uses a context-aware channel rather than an arbitrary writer.
-func ServeLog(ctx context.Context, cfg Config, _ io.Writer) error {
-	return Serve(ctx, cfg)
-}
-
-func serve(ctx context.Context, cfg Config, ready chan<- net.Addr) error {
 	var gatewayDone <-chan struct{}
 	if cfg.CLIProxyConfig != "" {
 		gateway, err := startEmbeddedGateway(ctx, &cfg)
@@ -71,13 +60,6 @@ func serve(ctx context.Context, cfg Config, ready chan<- net.Addr) error {
 		}
 		errCh <- nil
 	}()
-	if ready != nil {
-		select {
-		case ready <- listener.Addr():
-		case <-ctx.Done():
-		}
-	}
-
 	// Остановка: отмена контекста или отказ слушателя — раньше того,
 	// кто случится первым.
 	var gatewayErr error

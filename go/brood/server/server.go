@@ -61,7 +61,8 @@ type Server struct {
 	// отдаются, модель выбирает Claude Code.
 	actorModels actormodel.Models
 
-	managedLLM http.Handler
+	managedLLM     http.Handler
+	imageSnapshots chan struct{}
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -104,7 +105,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	srv := &Server{store: st, catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
+	srv := &Server{store: st, imageSnapshots: make(chan struct{}, 4), catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
 	srv.telegram.channel = srv.telegramChannel

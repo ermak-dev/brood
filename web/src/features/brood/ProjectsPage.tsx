@@ -331,7 +331,7 @@ export function ProjectsPage() {
     },
   ];
 
-  const imageName = (image: ProjectImage) => image.ref.slice(0, 8) || image.id;
+  const imageName = (image: ProjectImage) => image.snapshot.slice(0, 8) || image.id;
   const imageList = (project: Project) => {
     const items = openId === project.id ? images.data : null;
     if (images.error && !items) return <p className={styles.failure}>{images.error}</p>;
@@ -348,8 +348,8 @@ export function ProjectsPage() {
                 <StatusBadge tone={look.tone} icon={look.icon} busy={look.busy}>
                   {t(`brood.projects.image_states.${image.state}`, image.state)}
                 </StatusBadge>
-                <span title={image.ref}>
-                  <Copyable value={image.ref} shown={imageName(image)} />
+                <span title={image.snapshot}>
+                  <Copyable value={image.snapshot} shown={imageName(image)} />
                 </span>
                 <span>
                   {t('brood.agents.pool')}

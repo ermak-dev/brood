@@ -278,7 +278,11 @@ func (c *Client) callWithTimeout(ctx context.Context, method, path string, body 
 		rdr = bytes.NewReader(body)
 		media = "application/json"
 	}
-	resp, err := c.request(ctx, method, path, rdr, int64(len(body)), media, timeout)
+	return c.callReader(ctx, method, path, rdr, int64(len(body)), media, out, timeout)
+}
+
+func (c *Client) callReader(ctx context.Context, method, path string, body io.Reader, size int64, media string, out any, timeout time.Duration) error {
+	resp, err := c.request(ctx, method, path, body, size, media, timeout)
 	if err != nil {
 		if method == http.MethodPost && strings.HasPrefix(path, "/api/commands/") {
 			return &CommandError{Unconfirmed: true, text: err.Error(), cause: err}

@@ -45,13 +45,7 @@
 | `brood/proxmox/guest/sessionctl` | операции над сессией от имени пользователя `actor` |
 | `brood/proxmox/guest/ccmsg` | доставка сообщения в работающую сессию Claude Code |
 | `brood/proxmox/guest/deliverylog` | журнал доставленных сообщений, чтобы после перезапуска не доставить дважды |
-| `brood/proxmox/attest` | подпись и проверка состояния рабочего каталога агента |
 | `go/acceptance` | проверки собранных программ целиком |
-
-Агент ещё несёт неиспользуемый код прежнего механизма задач: пакет
-`brood/proxmox/guest/managedinbox`, файлы `step_*` и `inbox_*` в
-`brood/proxmox/guest`, канал `brood-supervisor-inbox` в relay. Пакет
-`brood/proxmox/egress` никем не импортируется. Опираться на них не нужно.
 
 ## Границы
 
@@ -152,7 +146,6 @@ CGO выключен везде. Версию программы задаёт `-
 | `POST /api/admin/users/{username}/role` | админ | выдать или снять права администратора |
 | `GET`, `PUT`, `DELETE /api/me/telegram` | вошедший | своя привязка Telegram и свой бот |
 | `POST /api/me/telegram/link` | вошедший | код привязки чата |
-| `PUT /api/me/telegram/events` | вошедший | какие события присылать |
 
 ### Проекты
 
@@ -175,7 +168,7 @@ CGO выключен везде. Версию программы задаёт `-
 | `PUT`, `DELETE /api/projects/{id}/secrets/vars`, `.../secrets/files` | админ | записать, удалить переменные и файлы; значения не читаются |
 | `GET`, `PUT`, `DELETE /api/projects/{id}/secrets/git` | админ | серверные учётные данные Git; токен не возвращается |
 | `GET /api/projects/{id}/images` | участник | образы проекта |
-| `POST /api/projects/{id}/images` | участник | собрать образ на коммите |
+| `POST /api/projects/{id}/images` | участник | собрать образ из снимка USTAR |
 | `GET`, `DELETE /api/projects/{id}/images/{image}` | участник | образ с журналом сборки; удалить образ |
 
 ### Рои и агенты

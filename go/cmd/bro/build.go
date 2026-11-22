@@ -16,7 +16,6 @@ import (
 
 	"brood.dev/go/brood/build"
 	"brood.dev/go/brood/clientapi"
-	"brood.dev/go/brood/gitcredential"
 	"brood.dev/go/brood/projectsecret"
 )
 
@@ -27,7 +26,7 @@ const imagePollInterval = 3 * time.Second
 const imagePollFailures = 5
 
 func buildUsage(w io.Writer) {
-	fmt.Fprint(w, `usage: bro build [--pool NAME] [--ref COMMIT] [--no-wait] [--no-secrets]
+	fmt.Fprint(w, `usage: bro build [--pool NAME] [--no-wait] [--no-secrets]
        bro build --plan
 
 Read ./brood.yaml, the Ansible playbook in the repository root. Exactly one of
@@ -38,7 +37,6 @@ its plays declares the project in the reserved variable vars.brood:
       project: my-project          required
       description: TEXT            optional
       repository: URL              optional; default: Git origin as HTTPS; "" disables cloning
-      git_credential: NAME         optional server-side Git credential
       limits:                      optional; integer or null (unlimited), 0 forbids;
         swarms: 4                  a present block sets all four limits
         agents: 12
@@ -55,13 +53,17 @@ evaluate templates, so {{ }}, {% %} and YAML tags are refused there. The rest
 of the playbook is not validated by bro.
 
 bro build synchronizes the project with the logged-in server, makes the
-project secrets on the server equal to brood.secrets, then asks the server to
-build the agent image. The server clones the project repository at the commit
-and runs brood.yaml with Ansible inside a fresh container; agents are clones
-of the result. Nothing is built locally and uncommitted or unpushed changes
-are not part of the image. When no play has tasks, roles, pre_tasks,
-post_tasks, handlers or import_playbook, only the project and its secrets are
-synchronized.
+project secrets on the server equal to brood.secrets, then uploads a snapshot
+of the current working copy for an image build. The server runs brood.yaml
+with Ansible in a fresh Proxmox container and deletes the snapshot from it
+before making a template. No commit, push or Git credential is needed.
+
+The snapshot contains current tracked files and non-ignored new files. It
+excludes Git metadata, .env and .env.* files, the root secrets/ directory,
+and declared secret sources. Links and special files are not uploaded.
+The archive is limited to 64 MiB and 20,000 files. When no play has tasks,
+roles, pre_tasks, post_tasks, handlers or import_playbook, only the project
+and its secrets are synchronized.
 
 Secrets are delivered to agents at start, never to the image build. Sources
 are relative to the repository root, must stay inside it, and are read from
@@ -74,14 +76,13 @@ all. Synchronizing secrets requires an administrator.
 
 options:
   --pool NAME    build in this pool (default: chosen by the server)
-  --ref COMMIT   full 40-character commit to build (default: HEAD of this checkout)
   --no-wait      print the image ID and return without waiting for the build
   --no-secrets   do not read or synchronize the declared secrets
   --plan         print the resolved declaration as JSON with secret names only;
                  offline, no synchronization
 
 While waiting, the build log is printed as it arrives. Ctrl-C stops waiting
-but does not cancel the build. The exit status is 0 only for a ready image.
+but does not cancel the build. When waiting for an image, the exit status is 0 only for a ready image.
 
 example: bro build --pool brood
 `)
@@ -91,7 +92,6 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 	flags := flag.NewFlagSet("build", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	pool := flags.String("pool", "", "pool")
-	ref := flags.String("ref", "", "commit")
 	noWait := flags.Bool("no-wait", false, "do not wait")
 	noSecrets := flags.Bool("no-secrets", false, "skip secrets")
 	planOnly := flags.Bool("plan", false, "print plan")
@@ -104,9 +104,6 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 	}
 	if flags.NArg() > 0 {
 		return errors.New("unexpected build arguments")
-	}
-	if *ref != "" && !build.ValidCommit(*ref) {
-		return errors.New("--ref requires a full 40-character lowercase hexadecimal commit")
 	}
 	project, err := build.Load(".")
 	if err != nil {
@@ -124,14 +121,23 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 	if guest {
 		return errors.New("project synchronization requires operator mode; use --plan in guest mode")
 	}
-	if !project.RepositoryResolved {
-		return errors.New("project repository is unresolved; configure Git origin or set brood.repository in " + build.Filename + " (an explicit empty string disables cloning)")
-	}
-	// Commit и секреты читаются до первого запроса: отказ не оставляет полдела.
-	commit := *ref
-	if project.HasTasks && commit == "" {
-		if commit, err = build.Head(project.Root); err != nil {
-			return fmt.Errorf("%w; commit the project or pass --ref COMMIT", err)
+	var snapshot *os.File
+	var size int64
+	if project.HasTasks {
+		snapshot, err = os.CreateTemp("", "bro-build-*")
+		if err != nil {
+			return errors.New("could not stage the working-copy snapshot")
+		}
+		defer os.Remove(snapshot.Name())
+		defer snapshot.Close()
+		if err := project.WriteSnapshot(ctx, snapshot); err != nil {
+			return err
+		}
+		if size, err = snapshot.Seek(0, io.SeekCurrent); err != nil {
+			return errors.New("could not size the working-copy snapshot")
+		}
+		if _, err = snapshot.Seek(0, io.SeekStart); err != nil {
+			return errors.New("could not rewind the working-copy snapshot")
 		}
 	}
 	syncSecrets := project.Secrets != nil && !*noSecrets
@@ -153,13 +159,6 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 	if err != nil {
 		return fmt.Errorf("project synchronization: %w", err)
 	}
-	reference := synchronized.GitCredential
-	switch {
-	case reference != "" && !synchronized.GitCredentialBound && gitcredential.ValidateName(reference) == nil:
-		fmt.Fprintf(c.diagnostic, "project synchronized; Git credential %s is not bound to its repository; run: bro secret --project %s git add %s --repository URL --username USER --stdin\n", reference, project.Name, reference)
-	case synchronized.Repository != "" && synchronized.OriginMode == "":
-		fmt.Fprintln(c.diagnostic, "project synchronized; no Git access mode is configured for its repository")
-	}
 	if err := sessions.Save(client.Origin(), client.Stored()); err != nil {
 		return err
 	}
@@ -180,18 +179,7 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 		fmt.Fprintf(c.out, "project %s synchronized; no image tasks are declared in %s\n", project.Name, build.Filename)
 		return nil
 	}
-	if synchronized.Repository == "" {
-		return errors.New("project has no repository; the server cannot clone it to build an image")
-	}
-	if *ref == "" {
-		if dirty, known := build.Dirty(project.Root); known && dirty {
-			fmt.Fprintln(c.diagnostic, "warning: uncommitted changes are not part of the image; the server builds the commit")
-		}
-	}
-	if published, known := build.Published(project.Root, commit); known && !published {
-		fmt.Fprintf(c.diagnostic, "warning: commit %s is not in any remote-tracking branch; the server clones %s and cannot see unpushed commits\n", commit, synchronized.Repository)
-	}
-	image, err := client.ImageBuild(ctx, synchronized.ID, clientapi.ImageBuildRequest{Ref: commit, Playbook: build.Filename, Pool: *pool})
+	image, err := client.ImageBuild(ctx, synchronized.ID, *pool, snapshot, size)
 	if err != nil {
 		return fmt.Errorf("image build request: %w", err)
 	}
@@ -199,7 +187,7 @@ func (c command) build(ctx context.Context, args []string, guest bool) error {
 		fmt.Fprintln(c.out, image.ID)
 		return nil
 	}
-	fmt.Fprintf(c.diagnostic, "image %s: building commit %s with %s\n", image.ID, commit, build.Filename)
+	fmt.Fprintf(c.diagnostic, "image %s: building working-copy snapshot %s\n", image.ID, image.Snapshot)
 	return c.waitImage(ctx, client, synchronized.ID, image)
 }
 

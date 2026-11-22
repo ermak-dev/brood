@@ -114,7 +114,8 @@ func (h *Hub) DialMessage(ctx context.Context, uid string, generation int64, fra
 	if err != nil {
 		return nil, err
 	}
-	return h.dialScopedMessage(ctx, uid, generation, frame, messageChannel, func(p *peer) error {
+	// Проверка читает неизменяемые данные рукопожатия выбранного гостя.
+	capability := func(p *peer) error {
 		if request.DeliveryID == "" {
 			return nil
 		}
@@ -125,11 +126,7 @@ func (h *Hub) DialMessage(ctx context.Context, uid string, generation int64, fra
 			return ErrDeliveryJournalChanged
 		}
 		return nil
-	})
-}
-
-// The capability check only reads the selected peer's immutable handshake.
-func (h *Hub) dialScopedMessage(ctx context.Context, uid string, generation int64, frame []byte, channel string, capability func(*peer) error) (net.Conn, error) {
+	}
 	p := h.session(uid, generation)
 	if p == nil {
 		return nil, errUnavailable
@@ -165,7 +162,7 @@ func (h *Hub) dialScopedMessage(ctx context.Context, uid string, generation int6
 			if !h.currentPeer(p) {
 				err = errUnavailable
 			} else if err = ctx.Err(); err == nil {
-				ch, req, err = p.conn.OpenChannel(channel, frame)
+				ch, req, err = p.conn.OpenChannel(messageChannel, frame)
 			}
 		}
 		select {
@@ -191,9 +188,6 @@ func (h *Hub) dialScopedMessage(ctx context.Context, uid string, generation int6
 			}
 			if errors.Is(r.err, ErrDeliveryJournalChanged) {
 				return nil, ErrDeliveryJournalChanged
-			}
-			if errors.Is(r.err, ErrInboxUnsupported) || errors.Is(r.err, ErrInboxReceiverChanged) {
-				return nil, r.err
 			}
 			if errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
 				return nil, r.err

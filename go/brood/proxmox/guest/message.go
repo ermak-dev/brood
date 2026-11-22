@@ -72,7 +72,7 @@ func (m messageReceiver) receive(ctx context.Context, req relay.MessageRequest) 
 	if err := m.identity(); err != nil {
 		return messageNotSent(err.Error())
 	}
-	// Сессии нет и сразу после перезапуска актора (workspace_attest, restart):
+	// Сессии нет и сразу после перезапуска сессии (restart):
 	// новый Claude ещё не записал файл сессии и не слушает inbox.
 	session, err := m.session(ctx)
 	if err != nil {

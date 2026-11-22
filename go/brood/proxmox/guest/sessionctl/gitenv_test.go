@@ -5,10 +5,9 @@ package sessionctl
 // FEATURE: Helper Git runs no code the actor planted (#183).
 // SPEC: With the production flags and environment, only HOME relocated into
 // the fixture, neither hooks of the clone nor a global configuration in HOME
-// run anything, and the filter they define converts nothing, in the pinned
-// checkout with both cleanliness checks and in workspace facts and wipe.
+// run anything, and the filter they define converts nothing, in workspace facts and wipe.
 // IMPLEMENTATION: Every hook, filter and fsmonitor only creates a marker file;
-// the tests drive checkoutEngine.run and workspaceEngine.handle as is.
+// the test drives workspaceEngine.handle as is.
 // RESULT: IMPLEMENTED with real Git effects confined to temporary fixtures.
 
 import (
@@ -61,22 +60,9 @@ func requireNoMarkers(t *testing.T, markers string) {
 	}
 }
 
-// The tree names the filter too: the checkout must not apply it, the facts
-// and wipe keep the tree's attributes but have no driver for it.
+// The tree names the filter too: facts and wipe keep the tree's attributes
+// but have no driver for it.
 const filterEverything = "* filter=marker\n"
-
-func TestCheckoutRunsNoActorCode(t *testing.T) {
-	f := newCheckoutFixtureWith(t, map[string]string{".gitattributes": filterEverything})
-	markers := plantHostileGit(t, f.root, f.home)
-	facts, err := f.engine.run(context.Background(), f.second)
-	if err != nil || !facts.Fetched {
-		t.Fatalf("checkout: %+v %v", facts, err)
-	}
-	if f.head(t) != f.second+"\n" || readFile(t, filepath.Join(f.root, "tracked")) != "second\n" {
-		t.Fatal("workspace is not at the commit")
-	}
-	requireNoMarkers(t, markers)
-}
 
 func TestWorkspaceRunsNoActorCode(t *testing.T) {
 	home := t.TempDir()

@@ -8,21 +8,20 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/build"
 	"brood.dev/go/brood/proxmox"
 	"brood.dev/go/brood/proxmox/sshboot"
 	"brood.dev/go/brood/store"
 )
 
 // Образ проекта. Сервер создаёт сборочный контейнер из базового шаблона
-// пула, клонирует в нём репозиторий проекта на заданном коммите, играет
+// пула, распаковывает в нём снимок рабочей копии, играет
 // плейбук Ansible локально, останавливает контейнер и превращает его в
 // шаблон PVE. Воркеры проекта в этом пуле — клоны последнего готового
 // образа. Сборка — одна последовательная задача со своим сроком; сборку,
@@ -33,16 +32,11 @@ const (
 	imageLogLimit     = 64 << 10
 )
 
-var (
-	imageRef      = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	imagePlaybook = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*\.ya?ml$`)
-)
-
 type imageJSON struct {
 	ID        string `json:"id"`
 	Pool      string `json:"pool"`
 	State     string `json:"state"`
-	Ref       string `json:"ref"`
+	Snapshot  string `json:"snapshot"`
 	Playbook  string `json:"playbook"`
 	CTID      int    `json:"ctid"`
 	Error     string `json:"error"`
@@ -63,7 +57,7 @@ func (s *Server) imageJSON(ctx context.Context, i store.ProjectImage) imageJSON 
 	if p, err := s.store.GetManagedPool(ctx, i.PoolUID); err == nil {
 		pool = p.Name
 	}
-	return imageJSON{ID: i.ID, Pool: pool, State: i.State, Ref: i.Ref, Playbook: i.Playbook, CTID: i.CTID, Error: i.Error, Log: i.Log, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt}
+	return imageJSON{ID: i.ID, Pool: pool, State: i.State, Snapshot: i.Snapshot, Playbook: i.Playbook, CTID: i.CTID, Error: i.Error, Log: i.Log, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt}
 }
 
 // imageProject пропускает участника проекта и администратора; чужой проект
@@ -104,23 +98,41 @@ func (s *Server) handleProjectImages(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 		return
 	}
-	var body struct {
-		Ref      string `json:"ref"`
-		Playbook string `json:"playbook"`
-		Pool     string `json:"pool"`
-	}
-	if !decodeAccessBody(w, r, &body) {
+	if r.Header.Get("Content-Type") != "application/x-tar" {
+		writeDetail(w, http.StatusUnsupportedMediaType, "send the working-copy snapshot as application/x-tar")
 		return
 	}
-	if !imageRef.MatchString(body.Ref) {
-		writeDetail(w, http.StatusBadRequest, "ref must be a full 40-character commit")
+	select {
+	case s.imageSnapshots <- struct{}{}:
+	default:
+		writeDetail(w, http.StatusServiceUnavailable, "all build snapshot slots are busy; retry after a build finishes")
 		return
 	}
-	if !imagePlaybook.MatchString(body.Playbook) || path.Clean(body.Playbook) != body.Playbook || strings.Contains(body.Playbook, "..") || len(body.Playbook) > 255 {
-		writeDetail(w, http.StatusBadRequest, "playbook must be a relative .yml or .yaml path inside the repository")
+	owned := false
+	defer func() {
+		if !owned {
+			<-s.imageSnapshots
+		}
+	}()
+	snapshot, digest, err := readImageSnapshot(w, r)
+	if err != nil {
+		var limit *http.MaxBytesError
+		if errors.As(err, &limit) {
+			writeDetail(w, http.StatusRequestEntityTooLarge, "the build snapshot exceeds 64 MiB")
+		} else {
+			writeDetail(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
-	image, err := s.managed.startImageBuild(r.Context(), projectID, body.Pool, body.Ref, body.Playbook)
+	defer func() {
+		if !owned {
+			snapshot.Close()
+		}
+	}()
+	if _, _, ok := s.imageProject(w, r); !ok {
+		return
+	}
+	image, err := s.managed.startImageBuild(r.Context(), projectID, r.URL.Query().Get("pool"), digest, snapshot)
 	if err != nil {
 		var refusal *imageRefusal
 		switch {
@@ -133,6 +145,7 @@ func (s *Server) handleProjectImages(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	owned = true
 	writeJSON(w, http.StatusAccepted, s.imageJSON(r.Context(), image))
 }
 
@@ -198,20 +211,13 @@ func (m *managedProvider) imagePool(ctx context.Context, name string) (store.Man
 
 // startImageBuild проверяет вход, резервирует контейнер и запускает сборку
 // в фоне. Запись сборки фиксируется до первой записи в PVE.
-func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolName, ref, playbook string) (store.ProjectImage, error) {
+func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolName, digest string, snapshot *os.File) (store.ProjectImage, error) {
 	if m.identity == nil || m.buildContext == nil {
 		return store.ProjectImage{}, &imageRefusal{detail: "image builds are unavailable: the installation SSH identity is missing"}
 	}
 	binary, err := os.ReadFile(filepath.Join(m.server.artifactsDir, "brood-guest"))
 	if err != nil || m.server.artifactsDir == "" {
 		return store.ProjectImage{}, &imageRefusal{detail: "image builds are unavailable: the agent binary is not published"}
-	}
-	access, err := m.server.projectGitAccess(ctx, projectID)
-	if err != nil {
-		return store.ProjectImage{}, err
-	}
-	if access.repository == "" {
-		return store.ProjectImage{}, &imageRefusal{detail: "the project has no repository; declare brood.repository in brood.yaml and run bro build"}
 	}
 	pool, err := m.imagePool(ctx, poolName)
 	if err != nil {
@@ -235,7 +241,7 @@ func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolNa
 		m.lifecycle.Unlock()
 		return store.ProjectImage{}, err
 	}
-	image, err := m.server.store.CreateProjectImage(ctx, store.ProjectImage{ID: store.NewID(), ProjectID: projectID, PoolUID: pool.UID, CTID: id, OwnerNonce: store.NewID(), Ref: ref, Playbook: playbook})
+	image, err := m.server.store.CreateProjectImage(ctx, store.ProjectImage{ID: store.NewID(), ProjectID: projectID, PoolUID: pool.UID, CTID: id, OwnerNonce: store.NewID(), Snapshot: digest, Playbook: build.Filename})
 	if err != nil {
 		m.lifecycle.Unlock()
 		return store.ProjectImage{}, err
@@ -247,10 +253,12 @@ func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolNa
 		_ = m.server.store.FinishProjectImage(context.WithoutCancel(ctx), image.ID, "failed", "the build container was not created: "+managedProviderError(err))
 		return store.ProjectImage{}, &imageRefusal{detail: "the build container was not created: " + managedProviderError(err)}
 	}
-	build := &imageBuild{provider: m, client: client, image: image, access: access, binary: binary}
+	build := &imageBuild{provider: m, client: client, image: image, snapshot: snapshot, binary: binary}
 	m.workers.Add(1)
 	go func() {
 		defer m.workers.Done()
+		defer func() { <-m.server.imageSnapshots }()
+		defer snapshot.Close()
 		build.run(m.buildContext, upid)
 	}()
 	return image, nil
@@ -313,7 +321,7 @@ type imageBuild struct {
 	provider *managedProvider
 	client   proxmoxAPI
 	image    store.ProjectImage
-	access   gitAccess
+	snapshot *os.File
 	binary   []byte
 	log      imageLog
 }
@@ -385,15 +393,12 @@ func (b *imageBuild) build(ctx context.Context, createTask string) error {
 	if err := session.WriteFile(ctx, agentBinaryPath, 0o755, b.binary); err != nil {
 		return errors.New("agent binary transfer failed")
 	}
-	var script bytes.Buffer
-	fmt.Fprintf(&script, "export REPO=%s REF=%s PLAYBOOK=%s\n", sshboot.Quote(b.access.repository), sshboot.Quote(b.image.Ref), sshboot.Quote(b.image.Playbook))
-	if b.access.gateway {
-		// Учётные данные идут в stdin сценария, не в командную строку, и
-		// живут только в окружении этого процесса.
-		fmt.Fprintf(&script, "export GIT_USER=%s GIT_PASS=%s\n", sshboot.Quote(b.access.credential.username), sshboot.Quote(b.access.credential.token))
+	b.log.printf("== transferring the working-copy snapshot\n")
+	if err := session.Run(ctx, "umask 077; mkdir -p /opt/brood-build/src && tar --extract --file=- --directory=/opt/brood-build/src --no-same-owner --no-same-permissions", b.snapshot, &b.log); err != nil {
+		return errors.New("working-copy snapshot transfer or extraction failed")
 	}
-	script.WriteString(imageBuildScript)
-	if err := session.Run(ctx, "bash -s", &script, &b.log); err != nil {
+	b.snapshot.Close()
+	if err := session.Run(ctx, "bash -s", strings.NewReader(imageBuildScript), &b.log); err != nil {
 		var exit *sshboot.ExitError
 		if errors.As(err, &exit) {
 			return fmt.Errorf("the build script exited with status %d; see the log", exit.Status)
@@ -456,33 +461,16 @@ func (b *imageBuild) connect(ctx context.Context) (*sshboot.Session, error) {
 // класть файлы актору. machine-id очищается: у каждого клона он свой.
 const imageBuildScript = `set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-echo "== installing ansible and git"
+echo "== installing ansible"
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends ansible git ca-certificates >/dev/null
+apt-get install -y -qq --no-install-recommends ansible ca-certificates >/dev/null
 getent group actor >/dev/null || groupadd --gid 1000 actor
 getent passwd actor >/dev/null || useradd --uid 1000 --gid 1000 --home-dir /workspace/home --no-create-home --shell /bin/bash actor
 install -d -m 0755 /workspace
 install -d -o 1000 -g 1000 -m 0700 /workspace/home /workspace/project
-rm -rf /opt/brood-build
-install -d -m 0700 /opt/brood-build
-cd /opt/brood-build
-echo "== fetching $REPO at $REF"
-git init -q src
-cd src
-git remote add origin "$REPO"
-if [ -n "${GIT_USER:-}" ]; then
-  git -c credential.helper= -c 'credential.helper=!f() { echo "username=$GIT_USER"; echo "password=$GIT_PASS"; }; f' fetch -q --depth 1 origin "$REF"
-else
-  git fetch -q --depth 1 origin "$REF"
-fi
-git checkout -q FETCH_HEAD
-unset GIT_USER GIT_PASS
-if [ ! -f "$PLAYBOOK" ]; then
-  echo "playbook $PLAYBOOK is not in the repository at $REF"
-  exit 3
-fi
-echo "== running $PLAYBOOK"
-ANSIBLE_NOCOLOR=1 ANSIBLE_FORCE_COLOR=0 PYTHONUNBUFFERED=1 ansible-playbook -i localhost, -c local "$PLAYBOOK"
+cd /opt/brood-build/src
+echo "== running brood.yaml"
+ANSIBLE_NOCOLOR=1 ANSIBLE_FORCE_COLOR=0 PYTHONUNBUFFERED=1 ansible-playbook -i localhost, -c local brood.yaml
 echo "== sealing the image"
 cd /
 rm -rf /opt/brood-build

@@ -102,14 +102,14 @@ func (c *command) image(ctx context.Context, args []string) error {
 		fmt.Fprintln(c.out, "no images; build one with: bro build")
 		return nil
 	}
-	list := table{header: []string{"ID", "STATE", "REF", "POOL", "PLAYBOOK", "AGE"}}
+	list := table{header: []string{"ID", "STATE", "SNAPSHOT", "POOL", "PLAYBOOK", "AGE"}}
 	now := time.Now()
 	for _, image := range images {
 		tone := toneNone
 		if image.State == clientapi.ImageFailed {
 			tone = toneRed
 		}
-		list.add(tone, image.ID, image.State, image.Ref, image.Pool, image.Playbook, age(image.CreatedAt, now))
+		list.add(tone, image.ID, image.State, image.Snapshot, image.Pool, image.Playbook, age(image.CreatedAt, now))
 	}
 	return list.write(c.out)
 }

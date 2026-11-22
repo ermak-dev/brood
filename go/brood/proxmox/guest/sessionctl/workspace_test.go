@@ -25,6 +25,41 @@ import (
 	"brood.dev/go/brood/proxmox/relay"
 )
 
+func fixtureEnv(home string) []string {
+	return []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LANG=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+}
+
+func fixtureGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	c := exec.Command("/usr/bin/git", append([]string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "protocol.file.allow=always"}, args...)...)
+	c.Dir = dir
+	c.Env = fixtureEnv(dir)
+	out, err := c.Output()
+	if err != nil {
+		t.Fatalf("fixture git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func writeFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func workspaceRequest(op, args string) relay.SessionRequest {
 	return relay.SessionRequest{Operation: op, Arguments: json.RawMessage(args)}
 }

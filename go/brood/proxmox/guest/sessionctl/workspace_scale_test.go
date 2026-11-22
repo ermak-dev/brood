@@ -101,11 +101,7 @@ func TestHelperGitOutputIsCapped(t *testing.T) {
 	if out, err := e.git(context.Background(), "ls-files", "--stage", "-z"); err == nil || out != "" {
 		t.Fatalf("workspace Git passed %d bytes over the cap: %v", len(out), err)
 	}
-	f := newCheckoutFixture(t)
-	plantUntracked(t, f.root, 3000)
-	if out, err := f.engine.git(context.Background(), checkoutStepTimeout, nil, "ls-files", "--others", "-z"); err == nil || out != "" {
-		t.Fatalf("checkout Git passed %d bytes over the cap: %v", len(out), err)
-	}
+
 }
 
 func TestWorkspaceOperationsOnLargeIndex(t *testing.T) {

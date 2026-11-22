@@ -6,11 +6,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 )
@@ -19,14 +17,6 @@ import (
 // чат и сессия вида telegram. Каждый метод — одна транзакция; схема
 // (telegram_schema.go) держит те же правила второй линией.
 
-// telegramEventKinds — словарь видов уведомлений в порядке показа; CHECK
-// telegram_outbox.kind повторяет его.
-var telegramEventKinds = []string{"request_opened", "request_answered", "answer_delivery", "pass_started", "pass_finished", "step_failed", "actor_question"}
-
-// TelegramEventKinds returns the kinds of Telegram notifications a user can
-// subscribe to, in display order.
-func TelegramEventKinds() []string { return slices.Clone(telegramEventKinds) }
-
 // TelegramReasonLimit is the most bytes a link error reason may take
 // (RecordTelegramLinkError); a writer clips a longer reason to it.
 const TelegramReasonLimit = 512
@@ -34,7 +24,7 @@ const TelegramReasonLimit = 512
 var (
 	// ErrTelegramInvalid refuses malformed link input: an empty or malformed
 	// token, bot name, code or reason, a reason carrying a bot token, a code
-	// without its moments, a chat that is not private, an unknown event kind.
+	// without its moments, or a chat that is not private.
 	ErrTelegramInvalid = errors.New("invalid telegram link")
 	// ErrTelegramBotTaken refuses as an own bot a bot that another user has
 	// set or the installation bot: two pollers of one bot would share its
@@ -61,7 +51,7 @@ var (
 // bot. A user without an own bot uses the installation bot, if there is one.
 // State is unlinked, linked or error; Reason explains an error. ChatID and
 // TelegramUserID are set only while linked, LinkCodeExpiresAt only while a
-// link code waits. Events are the subscribed notification kinds.
+// link code waits.
 // DefaultSwarmID is the swarm the chat's commands use when they name none
 // (/use, #284), empty without one; whether the user still reads it is checked
 // where it is used. TelegramUsername is the Telegram username of the linked
@@ -77,7 +67,6 @@ type TelegramLink struct {
 	State             string
 	Reason            string
 	LinkCodeExpiresAt string
-	Events            []string
 	DefaultSwarmID    string
 	TelegramUsername  string
 	UpdatedAt         string
@@ -103,7 +92,7 @@ type TelegramLinkConfirmation struct {
 // привязки получает её значения по умолчанию.
 const telegramLinkView = `SELECT u.id, l.bot_token IS NOT NULL, coalesce(l.bot_username, ''),
 	coalesce(l.chat_id, 0), coalesce(l.telegram_user_id, 0), coalesce(l.state, 'unlinked'),
-	coalesce(l.reason, ''), coalesce(l.link_code_expires_at, ''), l.events, coalesce(l.default_swarm_id, ''),
+	coalesce(l.reason, ''), coalesce(l.link_code_expires_at, ''), coalesce(l.default_swarm_id, ''),
 	coalesce(l.telegram_username, ''), coalesce(l.updated_at, '')
 	FROM users u LEFT JOIN user_telegram_links l ON l.user_id = u.id WHERE u.id = ?`
 
@@ -111,22 +100,14 @@ const telegramLinkView = `SELECT u.id, l.bot_token IS NOT NULL, coalesce(l.bot_u
 // gets the unlinked default with every event kind. Unknown user: ErrNotFound.
 func (s *Store) GetTelegramLink(ctx context.Context, userID string) (TelegramLink, error) {
 	var link TelegramLink
-	var events sql.NullString
 	err := s.conn(ctx).QueryRowContext(ctx, telegramLinkView, userID).Scan(&link.UserID, &link.HasBotToken,
 		&link.BotUsername, &link.ChatID, &link.TelegramUserID, &link.State, &link.Reason,
-		&link.LinkCodeExpiresAt, &events, &link.DefaultSwarmID, &link.TelegramUsername, &link.UpdatedAt)
+		&link.LinkCodeExpiresAt, &link.DefaultSwarmID, &link.TelegramUsername, &link.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TelegramLink{}, fmt.Errorf("%w: user %q", ErrNotFound, userID)
 	}
 	if err != nil {
 		return TelegramLink{}, err
-	}
-	link.Events = TelegramEventKinds()
-	if events.Valid {
-		link.Events = nil
-		if err := json.Unmarshal([]byte(events.String), &link.Events); err != nil {
-			return TelegramLink{}, fmt.Errorf("decode telegram events of user %q: %w", userID, err)
-		}
 	}
 	return link, nil
 }
@@ -530,37 +511,12 @@ func telegramTokenByte(b byte) bool {
 // не повторяет.
 var errTelegramReasonToken = fmt.Errorf("%w: a link error reason must not carry a bot token", ErrTelegramInvalid)
 
-// SetTelegramEvents replaces the user's subscriptions with the given event
-// kinds, deduplicated in vocabulary order. An unknown kind is refused with the
-// list of known ones.
-func (s *Store) SetTelegramEvents(ctx context.Context, userID string, events []string) (TelegramLink, error) {
-	for _, event := range events {
-		if !slices.Contains(telegramEventKinds, event) {
-			return TelegramLink{}, fmt.Errorf("%w: unknown telegram event %q; known events: %s",
-				ErrTelegramInvalid, event, strings.Join(telegramEventKinds, ", "))
-		}
-	}
-	subscribed := []string{}
-	for _, kind := range telegramEventKinds {
-		if slices.Contains(events, kind) {
-			subscribed = append(subscribed, kind)
-		}
-	}
-	encoded, err := json.Marshal(subscribed)
-	if err != nil {
-		return TelegramLink{}, err
-	}
-	return s.changeTelegramLink(ctx, userID, nil, func(ctx context.Context, _ TelegramLink) error {
-		_, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET events = ?, updated_at = ? WHERE user_id = ?`,
-			string(encoded), nowRFC3339(), userID)
-		return err
-	})
-}
+const telegramSwarmReader = `w.state <> 'deleted' AND (u.is_admin = 1 OR w.owner_id = u.id)`
 
 // SetTelegramSwarm makes swarmID the default swarm of the user's linked chat
 // (/use, #284) and returns the link. One transaction checks the telegram
 // session of the update with authorize and that the user reads the swarm by
-// the swarm view rule (telegramSwarmReader): a swarm the user does not read
+// the swarm view rule: a swarm the user does not read
 // is ErrNotFound, as if it did not exist. A user without a live link, or a
 // session authorize refuses: ErrTelegramUnlinked. A refusal writes nothing.
 func (s *Store) SetTelegramSwarm(ctx context.Context, userID, swarmID string, authorize func(context.Context) bool) (TelegramLink, error) {
@@ -711,16 +667,9 @@ func (s *Store) changeTelegramLink(ctx context.Context, userID string, check, ch
 	return link, nil
 }
 
-// ensureTelegramLink заводит строку привязки пользователя, которого уже нашёл
-// changeTelegramLink: без бота, без чата, подписанную на все виды
-// уведомлений.
 func (s *Store) ensureTelegramLink(ctx context.Context, userID string) error {
-	events, err := json.Marshal(telegramEventKinds)
-	if err != nil {
-		return err
-	}
-	_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO user_telegram_links (user_id, state, events, updated_at) VALUES (?, 'unlinked', ?, ?) ON CONFLICT (user_id) DO NOTHING`,
-		userID, string(events), nowRFC3339())
+	_, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO user_telegram_links (user_id, state, updated_at) VALUES (?, 'unlinked', ?) ON CONFLICT (user_id) DO NOTHING`,
+		userID, nowRFC3339())
 	return err
 }
 

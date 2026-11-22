@@ -33,7 +33,6 @@ type WorkspaceOrigin struct {
 	Mode        string               `json:"mode"`
 	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
 	Models      actormodel.Models    `json:"models,omitzero"`
-	Ephemeral   *EphemeralWorkspace  `json:"ephemeral,omitempty"`
 }
 
 // ValidateWorkspaceOrigin checks the bootstrap pair. It mirrors the server's
@@ -48,9 +47,6 @@ func ValidateWorkspaceOrigin(origin, mode string) error {
 func checkWorkspaceOrigin(o WorkspaceOrigin) error {
 	if err := o.Models.Validate(); err != nil {
 		return err
-	}
-	if o.Ephemeral != nil && (o.Origin == "" || !validPinnedCommit(o.Ephemeral.Commit)) {
-		return errors.New("ephemeral workspace requires an origin and a full lowercase SHA-1")
 	}
 	switch {
 	case o.Origin == "" && !o.GitIdentity.IsZero():
@@ -162,5 +158,5 @@ func readWorkspaceOrigin(path string, uid, gid int) (WorkspaceOrigin, error) {
 	if err != nil || st.Gid != uint32(gid) {
 		return WorkspaceOrigin{}, originFailure()
 	}
-	return decodeWorkspaceOrigin(data, true)
+	return decodeWorkspaceOrigin(data)
 }

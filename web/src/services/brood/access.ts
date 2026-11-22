@@ -50,7 +50,7 @@ export interface ProjectImage {
   /** building, ready, failed or retired. */
   state: string;
   /** The full commit the image was built from. */
-  ref: string;
+  snapshot: string;
   playbook: string;
   ctid: number;
   error: string;

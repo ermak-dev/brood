@@ -99,30 +99,17 @@ func FetchProjectSecrets(ctx context.Context, cfg relay.ClientConfig) (projectse
 // RefreshProjectSecrets fetches and atomically stages the next app's bundle.
 // Only guest root may call it; the projection never contains machine credentials.
 func RefreshProjectSecrets(ctx context.Context, cfg relay.ClientConfig) error {
-	publish, err := PrepareProjectSecrets(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	return publish()
-}
-
-// PrepareProjectSecrets fetches and validates the projection as guest root.
-// The returned publisher is the only filesystem effect. A workspace step must
-// call it in the quiet window so the outgoing actor cannot read the new bundle.
-func PrepareProjectSecrets(ctx context.Context, cfg relay.ClientConfig) (func() error, error) {
 	if os.Geteuid() != 0 {
-		return nil, secretFailure()
+		return secretFailure()
 	}
 	bundle, err := FetchProjectSecrets(ctx, cfg)
 	if err != nil || ctx.Err() != nil {
-		return nil, secretFailure()
+		return secretFailure()
 	}
-	return func() error {
-		if err := prepareRunDirectory(); err != nil {
-			return err
-		}
-		return publishProjectSecrets(projectSecretDirectory, bundle, 0, 1000)
-	}, nil
+	if err := prepareRunDirectory(); err != nil {
+		return err
+	}
+	return publishProjectSecrets(projectSecretDirectory, bundle, 0, 1000)
 }
 
 // prepareRunDirectory creates /run/brood as root:1000 0750 for the app wrapper.
@@ -218,12 +205,7 @@ func projectAppEnvironment(bundle projectsecret.Bundle) ([]string, error) {
 // RunProjectApp is the only project-secret consumer. Dispatch before reading root
 // configuration. No caller-selected path, command, or environment is accepted.
 // Nonfatal startup problems are reported to warn, the terminal of the session.
-func RunProjectApp(warn io.Writer) error { return runProjectApp(warn, false) }
-
-// RunInboxProjectApp is the fixed child of a one-shot, held step PTY.
-func RunInboxProjectApp(warn io.Writer) error { return runProjectApp(warn, true) }
-
-func runProjectApp(warn io.Writer, inbox bool) error {
+func RunProjectApp(warn io.Writer) error {
 	if os.Getuid() != 1000 || os.Geteuid() != 1000 || os.Getgid() != 1000 || os.Getegid() != 1000 {
 		return secretFailure()
 	}
@@ -241,23 +223,14 @@ func runProjectApp(warn io.Writer, inbox bool) error {
 	}
 	unix.Umask(0077)
 	layout := appLayout{Project: "/workspace/project", Home: "/workspace/home", Run: projectSecretDirectory, RunUID: 0, RunGID: 1000, Gateway: workspaceGatewayURL, CloneTimeout: 30 * time.Minute}
-	prepare := prepareClaudeLaunch
-	if inbox {
-		parent := os.Getppid()
-		identity, err := inboxProcessStat(parent)
-		if err != nil || verifyInboxAppParent(layout.Run, layout.RunUID, layout.RunGID, parent, identity.start) != nil || os.Getppid() != parent {
-			return ErrInboxHandoffUnavailable
-		}
-		prepare = prepareInboxClaudeLaunch
-	}
-	args, env, err := prepare(layout, warn)
+	env, err := prepareProjectApp(layout, warn)
 	if err != nil {
 		return err
 	}
 	if os.Chdir(layout.Project) != nil {
 		return secretFailure()
 	}
-	return syscall.Exec("/opt/brood/bin/claude", args, env)
+	return syscall.Exec("/opt/brood/bin/claude", projectAppArgs(), env)
 }
 
 // appLayout fixes every path of the app wrapper; tests substitute temporary ones.
@@ -310,7 +283,7 @@ func missingCheckout(project string) bool {
 const broodMCPConfig = `{"mcpServers":{"brood":{"command":"/opt/brood/bin/bro","args":["--guest","mcp"]}}}`
 
 // projectAppArgs — запуск свободной сессии: brood добавляется к MCP-серверам и
-// настройкам актора, не заменяя их. Сессия шага — stepAppArgs (#224).
+// настройкам актора, не заменяя их.
 func projectAppArgs() []string {
 	return []string{"claude", "--dangerously-skip-permissions", "--mcp-config", broodMCPConfig}
 }

@@ -1,5 +1,0 @@
-{
-  "name": "brood-managed-inbox",
-  "owner": {"name": "Brood"},
-  "plugins": [{"name": "supervisor-inbox", "source": "./plugins/supervisor-inbox"}]
-}

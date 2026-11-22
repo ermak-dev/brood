@@ -32,12 +32,10 @@ inside the current git working copy (512 KiB per file, 2 MiB per batch).
 Lists show only file names and sizes or variable names. Mutations print nothing.
 
 File and variable secrets are delivered to the project's running agents. Git
-credentials are scoped to the bound repository. An image builder receives its
-Git credential for checkout, before the playbook runs. Running agents use the
-Git gateway and do not receive that credential. Read a token from stdin or a
-private file; add with an
-existing name rotates it. A credential is active when brood.yaml references it
-as brood.git_credential and the project repository equals its repository.
+credentials stay on the server: the Git gateway uses them for running agents,
+not for image builds. Read a token from stdin or a private file. Adding a
+credential selects it for the project when its repository URL matches the
+project repository. An existing name rotates its stored credential.
 git list prints NAME, REPOSITORY and active or inactive.
 --ca FILE adds a trusted server CA; otherwise use the saved login trust.
 

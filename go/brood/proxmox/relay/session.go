@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
-	"brood.dev/go/brood/proxmox/attest"
 )
 
 const sessionChannel = "brood-session-rpc-v1"
@@ -18,21 +16,7 @@ const sessionChannel = "brood-session-rpc-v1"
 // MaxSessionBytes bounds each encoded session request and response.
 const MaxSessionBytes = 128 * 1024
 
-// WorkspaceAttestOperation asks the guest root to stop every actor process,
-// bring the workspace to a commit and sign the result (#183).
-const WorkspaceAttestOperation = "workspace_attest"
-
-// WorkspaceResultOperation observes a clean committed result under guest-root quiescence.
-const WorkspaceResultOperation = "workspace_result"
-
-// sessionTimeout bounds one session call on both peers. Attestation fetches
-// and hashes a snapshot, which does not fit the interactive 20 s budget.
-func sessionTimeout(operation string) time.Duration {
-	if operation == WorkspaceAttestOperation || operation == WorkspaceResultOperation {
-		return 10 * time.Minute
-	}
-	return 20 * time.Second
-}
+const sessionTimeout = 20 * time.Second
 
 // SessionRequest carries a server-authorized operation. Caller is set by the
 // authenticated server, never copied from guest-provided arguments.
@@ -44,10 +28,9 @@ type SessionRequest struct {
 
 // SessionResponse distinguishes completed reads from unconfirmed input writes.
 type SessionResponse struct {
-	OK          bool                     `json:"ok"`
-	Text        string                   `json:"text"`
-	Outcome     string                   `json:"outcome"`
-	InboxLaunch *attest.InboxLaunchProof `json:"inbox_launch,omitempty"`
+	OK      bool   `json:"ok"`
+	Text    string `json:"text"`
+	Outcome string `json:"outcome"`
 }
 
 // ReadSessionRequest parses a single bounded frame, rejecting extra fields.
@@ -96,7 +79,7 @@ func serveGuestSession(parent context.Context, handler func(context.Context, Ses
 		ch.Reject(ssh.Prohibited, "invalid session request")
 		return
 	}
-	ctx, cancel := context.WithTimeout(parent, sessionTimeout(req.Operation))
+	ctx, cancel := context.WithTimeout(parent, sessionTimeout)
 	defer cancel()
 	stream, requests, err := ch.Accept()
 	if err != nil {
@@ -120,7 +103,7 @@ func (h *Hub) CallSession(parent context.Context, uid string, generation int64, 
 	if _, err := ReadSessionRequest(bytes.NewReader(data)); err != nil {
 		return SessionResponse{}, err
 	}
-	ctx, cancel := context.WithTimeout(parent, sessionTimeout(req.Operation))
+	ctx, cancel := context.WithTimeout(parent, sessionTimeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return SessionResponse{}, err

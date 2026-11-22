@@ -6,8 +6,6 @@ import (
 	"errors"
 	"reflect"
 	"strings"
-
-	"brood.dev/go/brood/gitcredential"
 )
 
 // ErrProjectSyncDenied indicates that current project sync authority is insufficient.
@@ -17,24 +15,20 @@ var ErrProjectSyncDenied = errors.New("project sync authorization changed or acc
 var ErrProjectSyncIdentityChanged = errors.New("project sync identity changed")
 
 // ProjectDeclaration replaces only explicitly declared optional project properties.
-// GitCredential names a server-only project Git credential; "" clears the
-// reference and nil keeps the stored one.
 type ProjectDeclaration struct {
-	Name          string
-	Repository    string
-	Description   *string
-	Capacity      *ProjectCapacity
-	GitCredential *string
+	Name        string
+	Repository  string
+	Description *string
+	Capacity    *ProjectCapacity
 }
 
-// ProjectSyncResult describes the committed inventory change. GitCredential
-// is the effective declaration reference after the sync.
+// ProjectSyncResult describes the committed inventory change.
 type ProjectSyncResult struct {
 	Project
-	Repository    string
-	GitCredential string
-	Created       bool
-	Changed       bool
+	Repository string
+
+	Created bool
+	Changed bool
 }
 
 // ProjectByName returns the unique inventory project with this name.
@@ -64,11 +58,6 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 			return result, err
 		}
 	}
-	if reference := declaration.GitCredential; reference != nil && *reference != "" {
-		if err := gitcredential.ValidateName(*reference); err != nil || declaration.Repository == "" {
-			return result, errors.New("invalid project declaration")
-		}
-	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
 		if authorize == nil || !authorize(ctx) {
 			return ErrProjectSyncDenied
@@ -93,14 +82,10 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 		}
 		repository := ""
 		description := ""
-		reference := ""
 		var capacity ProjectCapacity
 		if !created {
 			repository, err = s.ProjectRepository(ctx, project.ID)
 			if err != nil {
-				return err
-			}
-			if reference, err = s.ProjectGitCredentialRef(ctx, project.ID); err != nil {
 				return err
 			}
 			err = s.conn(ctx).QueryRowContext(ctx, `SELECT description FROM command_project_details WHERE project_id=?`, project.ID).Scan(&description)
@@ -117,8 +102,8 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 		repositoryChanged := repository != declaration.Repository
 		descriptionChanged := declaration.Description != nil && description != *declaration.Description
 		capacityChanged := declaration.Capacity != nil && !sameProjectCapacity(capacity, *declaration.Capacity)
-		referenceChanged := declaration.GitCredential != nil && reference != *declaration.GitCredential
-		changed := created || repositoryChanged || descriptionChanged || capacityChanged || referenceChanged
+
+		changed := created || repositoryChanged || descriptionChanged || capacityChanged
 		if !user.IsAdmin {
 			member, err := s.IsMember(ctx, project.ID, actorID)
 			if err != nil {
@@ -148,13 +133,7 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 				return err
 			}
 		}
-		if referenceChanged {
-			reference = *declaration.GitCredential
-			if err := s.SetProjectGitCredentialRef(ctx, project.ID, reference); err != nil {
-				return err
-			}
-		}
-		result = ProjectSyncResult{Project: project, Repository: declaration.Repository, GitCredential: reference, Created: created, Changed: changed}
+		result = ProjectSyncResult{Project: project, Repository: declaration.Repository, Created: created, Changed: changed}
 		return nil
 	})
 	return result, err

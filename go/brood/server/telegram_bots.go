@@ -10,12 +10,8 @@ package server
 // таймеру. Так блокировка и отзыв сессий, которые пишет auth, останавливают
 // поллер без связи с ним.
 //
-// Поллер принимает обновления: /start <код> из личного чата подтверждает
-// привязку. Привязанный чат отвечает на запросы кнопками, reply и /answer
-// (#283, telegram_answers.go), прочие команды и кнопки подтверждения
-// исполняет telegramCommands (#284, telegram_commands.go). Уведомления идут
-// через outbox (#282, telegram_sender.go). Пакет молчит: исход поллера виден
-// в состоянии привязки и в профиле.
+// Поллер принимает код привязки из личного чата и передаёт сообщения
+// привязанного чата в шину роя. Исход поллера виден в профиле.
 
 import (
 	"context"
@@ -60,12 +56,11 @@ var errTelegramStopped = errors.New("telegram pollers are stopped")
 // Ответы поллера в чат. Отказ кода один на все причины и не называет
 // аккаунт: чат, приславший код, ничего не узнаёт о его владельце.
 const (
-	telegramReplyLinked        = "This chat is now linked to your brood account."
-	telegramReplyAlreadyLinked = "This chat is already linked to your brood account."
-	telegramReplyCodeRefused   = "This link code is invalid or has expired. Issue a new code in your brood profile and send it here with /start."
-	telegramReplyChatTaken     = "This chat is linked to another brood account. Unlink it there first."
-	telegramReplyLinkFailed    = "brood could not link this chat right now. Try again later."
-	telegramReplyStart         = "To link this chat, issue a link code in your brood profile and send it here as /start <code>."
+	telegramReplyLinked      = "This chat is now linked to your brood account."
+	telegramReplyCodeRefused = "This link code is invalid or has expired. Issue a new code in your brood profile and send it here with /start."
+	telegramReplyChatTaken   = "This chat is linked to another brood account. Unlink it there first."
+	telegramReplyLinkFailed  = "brood could not link this chat right now. Try again later."
+	telegramReplyStart       = "To link this chat, issue a link code in your brood profile and send it here as /start <code>."
 )
 
 // Причины ошибки привязки, которые пишут поллер и сверка. К причинам 401 и
@@ -740,16 +735,8 @@ func telegramClip(s string, limit int) string {
 	return s[:n]
 }
 
-// handle разбирает одно обновление. Только личный чат человека: группа,
-// канал, бот и сообщение от имени чата игнорируются без ответа. Привязанный
-// чат действует от имени пользователя привязки: кнопка ответа, reply на
-// сообщение запроса и /answer отвечают на запрос (#283), кнопка
-// подтверждения и прочие команды идут в telegramCommands (#284), на прочий
-// текст чат получает подсказку, как ответить. Пока чат не привязан,
-// действует только /start: с кодом — подтверждение, без кода — подсказка;
-// нажатие кнопки и текст игнорируются. Свой бот, привязанный к другому
-// чату, чужим чатам не отвечает вовсе. Сбой чтения базы пропускает
-// обновление без ответа.
+// handle принимает сообщения только из личного чата. Непривязанный чат
+// может только привязаться через /start.
 func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 	if u.Malformed {
 		return
@@ -765,7 +752,7 @@ func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 	}
 	if chat.linked() {
 		p.noteSender(ctx, chat, m.From)
-		p.send(ctx, chat.chatID, telegramText(p.bots.channel.receive(ctx, chat, m)))
+		p.reply(ctx, chat.chatID, p.bots.channel.receive(ctx, chat, m))
 		return
 	}
 	if !command || name != "start" {
@@ -863,18 +850,11 @@ func (p *telegramPoller) confirm(ctx context.Context, m *telegram.Message, code 
 	p.reply(ctx, m.Chat.ID, text)
 }
 
-// reply отвечает в чат напрямую, без outbox: ответ на команду, а не
-// уведомление. Исход не записывается и не повторяется.
+// reply отвечает прямо в чат; пустой ответ не отправляется.
 func (p *telegramPoller) reply(ctx context.Context, chatID int64, text string) {
-	_, _ = p.client.SendMessage(ctx, chatID, text, nil)
-}
-
-// send отвечает на команду текстом и клавиатурой reply, как reply; пустой
-// текст — без ответа. Текст обрезается до предела сообщения Bot API.
-func (p *telegramPoller) send(ctx context.Context, chatID int64, reply telegramReply) {
-	if strings.TrimSpace(reply.text) == "" {
+	if strings.TrimSpace(text) == "" {
 		return
 	}
-	text := telegramClipText(strings.ToValidUTF8(reply.text, "?"), telegram.MessageLimit)
-	_, _ = p.client.SendMessage(ctx, chatID, text, reply.markup)
+	text = telegramClipText(strings.ToValidUTF8(text, "?"), telegram.MessageLimit)
+	_, _ = p.client.SendMessage(ctx, chatID, text, nil)
 }

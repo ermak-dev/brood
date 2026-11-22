@@ -36,10 +36,9 @@ const (
 var (
 	patternName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 	// Пустая строка явно снимает ссылку на Git credential.
-	patternOptionalName = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$`)
-	patternLimit        = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
-	patternLine         = regexp.MustCompile(`line (\d+)`)
-	patternDrive        = regexp.MustCompile(`^[A-Za-z]:`)
+	patternLimit = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+	patternLine  = regexp.MustCompile(`line (\d+)`)
+	patternDrive = regexp.MustCompile(`^[A-Za-z]:`)
 	// Имя лимита в brood.yaml и поле capacity серверной синхронизации.
 	limitKeys = [][2]string{
 		{"swarms", "max_swarms"},
@@ -308,7 +307,7 @@ func Parse(source string) (*Project, error) {
 
 // parse сохраняет присутствие необязательных полей серверного проекта.
 func (p *Project) parse(node *yaml.Node) error {
-	block, err := fields(node, variable, "project", "description", "repository", "git_credential", "limits", "secrets")
+	block, err := fields(node, variable, "project", "description", "repository", "limits", "secrets")
 	if err != nil {
 		return err
 	}
@@ -322,12 +321,12 @@ func (p *Project) parse(node *yaml.Node) error {
 		return failure("brood.project", block["project"].Line, "expected lowercase letters, digits and inner hyphens")
 	}
 	p.Config = map[string]any{"name": p.Name, "repository": ""}
-	repository, explicit := "", false
+	repository := ""
 	if node := block["repository"]; node != nil {
 		if repository, err = text(node, "brood.repository", gitorigin.MaxLength); err != nil {
 			return err
 		}
-		explicit, p.RepositoryResolved = true, true
+		p.RepositoryResolved = true
 		if repository != "" {
 			canonical, err := gitorigin.FromRemote(repository)
 			if err != nil {
@@ -352,19 +351,6 @@ func (p *Project) parse(node *yaml.Node) error {
 			return err
 		}
 		p.Config["capacity"] = capacity
-	}
-	if node := block["git_credential"]; node != nil {
-		reference, err := text(node, "brood.git_credential", 63)
-		if err != nil {
-			return err
-		}
-		if !patternOptionalName.MatchString(reference) {
-			return failure("brood.git_credential", node.Line, "expected a credential name or an empty string")
-		}
-		if explicit && repository == "" && reference != "" {
-			return failure("brood.git_credential", node.Line, "a Git credential reference requires a project repository")
-		}
-		p.Config["git_credential"] = reference
 	}
 	if node := block["secrets"]; node != nil {
 		if p.Secrets, err = parseSecrets(node); err != nil {

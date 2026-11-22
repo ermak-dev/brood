@@ -9,15 +9,13 @@ import (
 
 // gitAccess — текущий серверный Git-доступ проекта (#173): repository и
 // credential, который шлюз подставит в upstream. Источник — проектный Git
-// credential, на который ссылается декларация и который привязан ровно к этому
+// credential, выбранный для проекта и который привязан ровно к этому
 // repository; иначе remote установки из BROOD_GIT_REMOTES (legacy). Значение
 // пересчитывается на каждом чтении, старте и запросе шлюза.
 type gitAccess struct {
 	repository string
 	credential gitCredential
 	gateway    bool
-	// bound — доступ дал проектный credential из ссылки декларации.
-	bound bool
 }
 
 // fmt печатает неэкспортируемые поля без их String: скрываем всю структуру.
@@ -34,7 +32,7 @@ func (a gitAccess) mode(origin string) string {
 	return gitorigin.Mode(origin, a.repository, func(string) bool { return a.gateway }, managedPublicHost)
 }
 
-// projectGitAccess читает repository, ссылку декларации и привязанный
+// projectGitAccess читает repository, настройку проекта и привязанный
 // credential одним снимком. Проектный credential вытесняет legacy remote того
 // же repository: его ротация и удаление не требуют перезапуска сервера.
 func (s *Server) projectGitAccess(ctx context.Context, projectID string) (gitAccess, error) {
@@ -45,7 +43,7 @@ func (s *Server) projectGitAccess(ctx context.Context, projectID string) (gitAcc
 	access := gitAccess{repository: stored.Repository}
 	if stored.HasCredential() {
 		access.credential = gitCredential{username: stored.Credential.Username, token: stored.Credential.Token}
-		access.gateway, access.bound = true, true
+		access.gateway = true
 	} else if legacy, ok := s.git.remotes[stored.Repository]; ok && stored.Repository != "" {
 		access.credential, access.gateway = legacy, true
 	}

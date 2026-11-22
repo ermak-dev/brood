@@ -2506,7 +2506,7 @@
       "open_swarms_hint": "Show the swarms of this project in the Swarms table.",
       "create_swarm_hint": "Open the form of a new swarm with this project chosen.",
       "images": "Images",
-      "images_hint": "An image is the template the project's agents are cloned from in one pool. bro build makes a new one from a commit of the repository.",
+      "images_hint": "An image is the template the project's agents are cloned from in one pool. bro build makes a new one from the current working copy.",
       "no_images": "No images yet. Run bro build in the repository to build the first one.",
       "image_states": {
         "building": "Building",
