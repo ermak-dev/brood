@@ -5,7 +5,7 @@ package sessionctl
 // FEATURE: Safe local session operations, never arbitrary commands or paths.
 // SPEC: Fixed PTY holder and defaults; bounded, identity-bound transcript pages;
 // incomplete JSON stays pending, symlinks fail, usage deduplicates message IDs.
-// IMPLEMENTATION: Bounded tail/history/stat, exact slash allowlist and live fences.
+// IMPLEMENTATION: Bounded tail/history/stat, slash format checks and live fences.
 // RESULT: IMPLEMENTED — bounded session reads and slash; destructive operations refuse.
 // STATUS: DONE
 
@@ -49,16 +49,16 @@ func TestTailAndSlashAreFixedAndValidated(t *testing.T) {
 	if !got.OK || got.Text != "needle\n" || calls[0].Action != "tail" || calls[0].Lines != 40 || calls[0].Proof != fixtureIdentity().HolderProof {
 		t.Fatalf("%#v %v", got, calls)
 	}
-	for _, args := range []string{`{"command":"/status\n/clear"}`, `{"command":"/evil"}`, `{"command":"/model;id"}`, `{"command":"Escape\u001b"}`} {
+	for _, args := range []string{`{"command":"/status\n/clear"}`, `{"command":"Escape\u001b"}`, `{"command":"clear"}`, `{"command":""}`} {
 		if got := call(e, "slash", args); got.OK {
 			t.Fatal("unsafe slash accepted", args)
 		}
 	}
 	calls = nil
-	if got := call(e, "slash", `{"command":"/status"}`); !got.OK || got.Outcome != "submitted" {
+	if got := call(e, "slash", `{"command":"/model;id"}`); !got.OK || got.Outcome != "submitted" {
 		t.Fatal(got)
 	}
-	if len(calls) != 1 || calls[0].Action != "input" || calls[0].Proof != fixtureIdentity().HolderProof || string(calls[0].Data) != "/status\r" {
+	if len(calls) != 1 || calls[0].Action != "input" || calls[0].Proof != fixtureIdentity().HolderProof || string(calls[0].Data) != "/model;id\r" {
 		t.Fatal(calls)
 	}
 }

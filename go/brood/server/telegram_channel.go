@@ -2,14 +2,17 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/store"
 	"brood.dev/go/brood/telegram"
 )
@@ -29,7 +32,7 @@ const telegramOperator = "operator"
 // ответов; память процесса, после перезапуска адресат задаётся именем.
 const telegramRouteLimit = 256
 
-const telegramHelp = "Write a message to talk to an agent of your swarm. Reply to an agent's message to answer it, or start with \"name: \" to pick an agent.\n/swarms lists your swarms, /use NAME selects one, /agents lists its agents."
+const telegramHelp = "Write a message to talk to an agent of your swarm. Reply to an agent's message to answer it, or start with \"name: \" to pick an agent.\n/swarms lists your swarms, /use NAME selects one, /agents lists its agents.\nAny other /command goes to the agent's Claude Code session."
 
 // telegramChat — привязанный чат обновления: пользователь, бот, чат и
 // сессия привязки. Без сессии чат не привязан.
@@ -160,6 +163,10 @@ func (c *telegramChannel) agents(ctx context.Context, swarmID string) ([]string,
 	return names, nil
 }
 
+// botCommands — команды самого бота; прочие /слова из чата идут агенту
+// как слэш-команды его сессии Claude Code.
+var botCommands = map[string]bool{"start": true, "help": true, "swarms": true, "use": true, "agents": true}
+
 // receive разбирает текст привязанного чата и возвращает ответ бота; пустой
 // ответ — сообщение доставлено агенту, подтверждение не нужно.
 func (c *telegramChannel) receive(ctx context.Context, chat telegramChat, m *telegram.Message) string {
@@ -168,7 +175,15 @@ func (c *telegramChannel) receive(ctx context.Context, chat telegramChat, m *tel
 		return ""
 	}
 	if name, arg, ok := telegramCommand(text); ok {
-		return c.command(ctx, chat, name, arg)
+		if botCommands[name] {
+			return c.command(ctx, chat, name, arg)
+		}
+		// Прочие /слова — слэш-команда агенту; собираем текст обратно,
+		// адресат выберется общими правилами ниже.
+		text = "/" + name
+		if arg != "" {
+			text += " " + arg
+		}
 	}
 	var sw store.Swarm
 	target := ""
@@ -183,7 +198,9 @@ func (c *telegramChannel) receive(ctx context.Context, chat telegramChat, m *tel
 				return "The original recipient of this artifact reply is unavailable; nothing was sent."
 			}
 			sw, target = found, actor.Name
-			text += "\n\n[brood] This operator reply is about artifact version " + c.server.artifactURL(sw.ID, artifactReply.VersionID)
+			if !strings.HasPrefix(text, "/") {
+				text += "\n\n[brood] This operator reply is about artifact version " + c.server.artifactURL(sw.ID, artifactReply.VersionID)
+			}
 		} else if !errors.Is(err, store.ErrNotFound) || strings.Contains(m.ReplyToMessage.Text, artifactNoticeMarker) {
 			return "The version for this reply could not be confirmed; nothing was sent. Ask the agent to resend the artifact notice."
 		} else if route, ok := c.route(chat.chatID, m.ReplyToMessage.MessageID); ok {
@@ -228,6 +245,13 @@ func (c *telegramChannel) receive(ctx context.Context, chat telegramChat, m *tel
 	if !session(ctx) {
 		return ""
 	}
+	// Слэш-команда: ведущий "/" в итоговом тексте; /escape прерывает ход.
+	if strings.HasPrefix(text, "/") {
+		if strings.EqualFold(text, "/escape") {
+			text = "Escape"
+		}
+		return c.slashCommand(ctx, chat, sw, target, text)
+	}
 	resolve := func(ctx context.Context) (store.ManagedActor, error) {
 		if artifactReply.ActorUID != "" {
 			return c.server.store.GetManagedActor(ctx, artifactReply.ActorUID)
@@ -250,6 +274,38 @@ func (c *telegramChannel) receive(ctx context.Context, chat telegramChat, m *tel
 		return "You cannot message this swarm."
 	}
 	return "The message was not delivered; try again later."
+}
+
+// slashCommand вводит слэш-команду в сессию агента тем же путём, что
+// bro slash: адресат уже выбран, проверки права и привязки уже прошли.
+// Успех не подтверждается, ошибки — текстом в чат.
+func (c *telegramChannel) slashCommand(ctx context.Context, chat telegramChat, sw store.Swarm, target, cmd string) string {
+	args, err := json.Marshal(map[string]string{"name": target, "command": cmd})
+	if err != nil {
+		return "The command was not sent; try again later."
+	}
+	result, err := c.server.executeOperatorSessionCommand(ctx, chat.userID, sw.ID, "telegram:"+strconv.FormatInt(chat.chatID, 10), command.Invocation{Name: "slash", Arguments: args})
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, app.ErrNotAllowed):
+		return "You cannot control sessions of this swarm."
+	case errors.Is(err, app.ErrNotFound):
+		return fmt.Sprintf("No agent %s in swarm %s.", target, sw.Name)
+	}
+	var refusal *command.Refusal
+	if errors.As(err, &refusal) {
+		return refusal.Reason()
+	}
+	// Отказ гостя с исходом failed — приговор формату команды, его текст
+	// написан вызывающему; повтор здесь не поможет.
+	if result.Outcome == "failed" && err.Error() != "" {
+		return err.Error()
+	}
+	if result.Outcome == "unconfirmed" || result.Outcome == "unknown" {
+		return fmt.Sprintf("Delivery to %s is unconfirmed; check before sending again.", target)
+	}
+	return "The command was not delivered; try again later."
 }
 
 func (c *telegramChannel) command(ctx context.Context, chat telegramChat, name, arg string) string {

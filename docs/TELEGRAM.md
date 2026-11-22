@@ -128,6 +128,21 @@ an agent's message.` и перечисляет имена. Считаются т
 > Write a message to talk to an agent of your swarm. Reply to an agent's
 > message to answer it, or start with "name: " to pick an agent.
 > /swarms lists your swarms, /use NAME selects one, /agents lists its agents.
+> Any other /command goes to the agent's Claude Code session.
+
+### Слэш-команды агенту
+
+Любая `/команда` кроме команд самого бота (`/swarms`, `/use`, `/agents`,
+`/help`, `/start`) вводится в сессию Claude Code агента — то же, что
+`bro slash`: получатель выбирается как у обычного сообщения (ответ,
+`имя:`, единственный агент), команды с аргументами пишутся после пробела
+(`/permissions` или `/model sonnet`). Команда `/escape` прерывает
+текущий ход агента.
+
+Команда не конфликтует с командами Telegram: пять команд выше остаются
+за ботом, всё остальное уходит агенту. Бот молчит при успехе и отвечает
+текстом при неудаче; исход команды не подтверждается — при сомнении
+проверьте агента терминалом (`tail`).
 
 ## Как агент пишет владельцу
 

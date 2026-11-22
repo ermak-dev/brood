@@ -160,14 +160,13 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 		if decodeArgs(req.Arguments, &a) != nil || control(a.Command) {
 			return failure("invalid slash arguments")
 		}
-		allowed := false
-		for _, s := range []string{"/model", "/clear", "/compact", "/rc", "/status", "Escape"} {
-			if a.Command == s {
-				allowed = true
-			}
+		// Команда начинается с "/" и умещается в строку ввода; Escape —
+		// sentinel прерывания текущего хода, не команда.
+		if a.Command == "" || (a.Command != "Escape" && !strings.HasPrefix(a.Command, "/")) {
+			return failure("slash command must start with / or be Escape")
 		}
-		if !allowed {
-			return failure("slash command is not allowlisted")
+		if len(a.Command) > 255 {
+			return failure("slash command is too long")
 		}
 		before, err := e.prove(ctx)
 		if err != nil || before.HolderProof == "" {
