@@ -47,13 +47,16 @@
 
 ## Подготовка узла
 
-Команды выполняются на узле Proxmox от root. Имена `brood`, `local-lvm`,
+Команды выполняются на узле Proxmox от root. Имена `brood-actors`, `local-lvm`,
 `vmbr0` и `pve` — примеры; подставьте свои.
 
 ### Пул ресурсов, пользователь и токен
 
+Создайте ресурсный пул до добавления подключения в Brood. Сохранение
+и активация в панели не создают пул и не меняют ACL Proxmox.
+
 ```sh
-pveum pool add brood --comment "brood agents"
+pveum pool add brood-actors --comment "brood agents"
 pveum user add brood@pve --comment "brood server"
 pveum user token add brood@pve brood --privsep 0
 ```
@@ -70,14 +73,14 @@ pveum role add BroodStorage --privs "Datastore.AllocateSpace Datastore.Audit"
 pveum role add BroodTemplates --privs "Datastore.Audit"
 pveum role add BroodNetwork --privs "SDN.Use"
 
-pveum acl modify /pool/brood --users brood@pve --roles BroodGuests
+pveum acl modify /pool/brood-actors --users brood@pve --roles BroodGuests
 pveum acl modify /storage/local-lvm --users brood@pve --roles BroodStorage
 pveum acl modify /storage/local --users brood@pve --roles BroodTemplates
 pveum acl modify /sdn/zones/localnetwork/vmbr0 --users brood@pve --roles BroodNetwork
 ```
 
 `/storage/local-lvm` — хранилище дисков контейнеров, `/storage/local` —
-хранилище, где лежит файл шаблона. Права на `/pool/brood` действуют на
+хранилище, где лежит файл шаблона. Права на `/pool/brood-actors` действуют на
 контейнеры, которые в этом пуле состоят; к остальным гостям узла у токена
 доступа нет.
 
@@ -365,7 +368,7 @@ SHA-256, агент сверяет каждый файл и кладёт наб�
 
 | Код | Что случилось | Что проверить |
 | --- | --- | --- |
-| `permission` | Proxmox отказал токену (HTTP 401 или 403). Ничего не изменено, сервер повторяет попытку | Роли из раздела «Роли и права»: `pveum user permissions brood@pve`. Срок действия токена. Что хранилище, мост и пул ресурсов в подключении названы так же, как в ACL |
+| `permission` | Proxmox отказал токену (HTTP 401 или 403). Ничего не изменено, сервер повторяет попытку | Есть ли ресурсный пул в Proxmox. Роли из раздела «Роли и права»: `pveum user permissions brood@pve`. Срок действия токена. Что хранилище, мост и пул ресурсов в подключении названы так же, как в ACL |
 | `ownership` | Контейнер не прошёл проверку владения. Ничего не изменено | Сравните конфигурацию контейнера (`pct config VMID`) со списком из раздела «Отметка владения»: описание, диск, `net0`, `features`, состав пула ресурсов. Верните прежнее или удалите агента |
 | `task_failed` | Proxmox начал задачу и сообщил о сбое | Журнал задач контейнера в интерфейсе Proxmox: нет места в хранилище, шаблон не найден, мост не существует, блокировка контейнера |
 | `task_pending` | Задача идёт дольше 15 минут. Сервер продолжает ждать | Идёт ли задача в Proxmox; нагрузку на хранилище |
