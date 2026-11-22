@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// GuestToolList is an internal broker request, not a callable catalog tool.
+const GuestToolList = "_guest_tool_list"
+
 // Invocation is a validated tool name and canonical JSON argument object.
 type Invocation struct {
 	Name      string          `json:"name"`

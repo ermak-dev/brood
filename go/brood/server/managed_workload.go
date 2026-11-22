@@ -23,6 +23,7 @@ type managedWorkloadOperation struct {
 	saved        store.ManagedActor
 	userID       string
 	role         string
+	delegated    bool
 	parent       *store.ManagedActor
 	origin       string
 	// intent сохраняется до commit и запуска PVE отдельно от saved: запись
@@ -60,14 +61,14 @@ func (o *managedWorkloadOperation) authorize() error {
 		}
 		userID = user.ID
 	}
-	if o.role == "master" {
+	if o.delegated {
 		u, err := o.server.store.GetUser(o.context, userID)
 		if err != nil || !u.IsAdmin || u.Disabled {
 			return app.ErrNotAllowed
 		}
 	}
 	if o.parent != nil {
-		if err := o.server.managed.authorizeMaster(o.context, *o.parent); err != nil {
+		if err := o.authorizeParent(o.context); err != nil {
 			return err
 		}
 	}
@@ -84,8 +85,25 @@ func (o *managedWorkloadOperation) authorize() error {
 	return o.context.Err()
 }
 
-// authorizeIntent проверяет правило manage-swarm по транзакционным чтениям:
-// app.Can использует Gateway с context.Background и не видит этот snapshot.
+func (o *managedWorkloadOperation) authorizeParent(ctx context.Context) error {
+	if o.parent == nil {
+		return nil
+	}
+	current, sw, err := o.server.managed.authorizeCommandActorDurable(ctx, *o.parent)
+	if err != nil {
+		return err
+	}
+	permission := o.action
+	switch permission {
+	case "create":
+		permission = "add"
+	case "delete":
+		permission = "rm"
+	}
+	return o.server.managed.authorizeGuestPermission(ctx, current, sw.ProjectID, permission)
+}
+
+// authorizeIntent проверяет права по тому же snapshot, в котором сохраняется намерение.
 func (o *managedWorkloadOperation) authorizeIntent(ctx context.Context) error {
 	userID := o.userID
 	if userID == "" {
@@ -94,6 +112,9 @@ func (o *managedWorkloadOperation) authorizeIntent(ctx context.Context) error {
 			return app.ErrNotAllowed
 		}
 		userID = user.ID
+	}
+	if err := o.authorizeParent(ctx); err != nil {
+		return err
 	}
 	return o.server.authorizeSwarmManagerIntent(ctx, userID, o.swarm.ID)
 }
@@ -204,7 +225,7 @@ func (o *managedWorkloadOperation) Apply() error {
 			return err
 		}
 		delegator, parentUID := "", ""
-		if o.role == "master" {
+		if o.delegated {
 			delegator = o.userID
 		}
 		if o.parent != nil {
@@ -386,16 +407,13 @@ func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, user
 		managedAPIError(w, r, err)
 		return
 	}
-	writeJSON(w, 201, managedActorJSON(a, pool, sw.ID, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin)))
+	writeJSON(w, 201, s.managedActorRoleJSON(r.Context(), sw, a, pool, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin)))
 }
 
 // createManaged is shared by human creation and UID-bound delegated creation.
 // A delegated name retry returns its original reservation without provider writes;
 // a retry naming a different origin conflicts. Origin resolution precedes admission.
 func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm, name string, pool store.ManagedPool, role, origin string, parent *store.ManagedActor) (store.ManagedActor, error) {
-	if role == "" {
-		role = "worker"
-	}
 	if name == telegramOperator {
 		// Имя operator на шине занято владельцем роя.
 		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "The name operator is reserved for the human owner of the swarm. Choose another name."}
@@ -403,6 +421,17 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: name, action: "create", role: role, parent: parent}
 	s.managed.admission.Lock()
 	defer s.managed.admission.Unlock()
+	assigned, err := s.store.GetAgentRole(ctx, sw.ProjectID, role)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "Select a role from this project; no agent was created"}
+	}
+	if err != nil {
+		return store.ManagedActor{}, err
+	}
+	op.role, op.delegated = assigned.ID, assigned.RequiresDelegation()
+	if op.delegated && parent != nil {
+		return store.ManagedActor{}, app.ErrNotAllowed
+	}
 	if err := op.authorize(); err != nil {
 		return store.ManagedActor{}, err
 	}
@@ -448,7 +477,7 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 			managedAPIError(w, r, err)
 			return
 		}
-		writeJSON(w, 200, managedActorJSON(a, p, sw.ID, mode))
+		writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, a, p, mode))
 		return
 	}
 	if r.Method == http.MethodPut {
@@ -479,5 +508,5 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		w.WriteHeader(202)
 		return
 	}
-	writeJSON(w, 200, managedActorJSON(op.saved, p, sw.ID, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin)))
+	writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, op.saved, p, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin)))
 }

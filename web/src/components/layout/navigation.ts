@@ -15,6 +15,7 @@ import {
   IconSidebarSwarms,
   IconSidebarSystem,
   IconSidebarUsers,
+  IconShield,
   type IconProps,
 } from '@/components/ui/icons';
 import { visiblePath } from '@/features/brood/routes';
@@ -41,6 +42,7 @@ const sections = (plugins: boolean): NavSection[] => [
     labelKey: 'nav_groups.brood',
     entries: [
       { path: '/projects', labelKey: 'nav.projects', icon: IconSidebarProjects },
+      { path: '/roles', labelKey: 'nav.roles', icon: IconShield },
       { path: '/swarms', labelKey: 'nav.swarms', icon: IconSidebarSwarms },
       { path: '/agents', labelKey: 'nav.agents', icon: IconSidebarAgents },
       { path: '/pools', labelKey: 'nav.pools', icon: IconSidebarPools },

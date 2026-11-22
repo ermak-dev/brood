@@ -131,6 +131,11 @@ func (h *Host) startLocked() error {
 		return nil
 	}
 	c := h.config
+	if c.BeforeStart != nil {
+		if err := c.BeforeStart(); err != nil {
+			return err
+		}
+	}
 	master, slave, err := openPTY(c.Columns, c.Rows)
 	if err != nil {
 		return err

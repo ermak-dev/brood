@@ -1,11 +1,10 @@
 /**
  * brood: agents of the swarms the caller may see. The API still calls an
- * agent an "actor" and the ordinary role "worker" (go/brood/server/
+ * agent an "actor" (go/brood/server/
  * api_lists.go, api_actors.go, managed_json.go, managed_runtime.go).
  */
 import { request } from './http';
 
-export type AgentRole = 'worker' | 'master';
 export type AgentAction = 'resume' | 'stop' | 'reset';
 
 export interface Agent {
@@ -39,7 +38,7 @@ export interface Agent {
 export interface NewAgent {
   name: string;
   profile: string;
-  role: AgentRole;
+  roleId: string;
   origin: string;
 }
 
@@ -97,11 +96,11 @@ export const agentsApi = {
       )
     ).results.map((profile) => profile.metadata.name),
   /** The server rejects any field beyond these four. */
-  create: (swarm: string, { name, profile, role, origin }: NewAgent) =>
+  create: (swarm: string, { name, profile, roleId, origin }: NewAgent) =>
     request<unknown>('POST', `${swarmPath(swarm)}/actors`, {
       metadata: { name },
       actorTemplate: { name: profile },
-      role,
+      roleId,
       ...(origin ? { origin } : {}),
     }),
   act: (swarm: string, name: string, action: AgentAction) =>

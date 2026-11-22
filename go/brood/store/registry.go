@@ -21,6 +21,7 @@ type schemaModule struct {
 var schemaModules = []schemaModule{
 	{id: "core", create: func() string { return currentSchema + ";" + liveSwarmNameIndex }, verify: verifyCoreSchema},
 	{id: "project-capacity", create: func() string { return projectCapacitySchema }, verify: verifyProjectCapacitySchema},
+	{id: "agent-roles", create: func() string { return agentRoleSchema + ";" + agentRoleDefaultIndex }, verify: verifyAgentRoleSchema},
 	{id: "managed", create: managedFullSchema, verify: verifyManagedSchema},
 	{id: "coordination", create: func() string { return coordinationSchema }, verify: verifyCoordinationSchema},
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},

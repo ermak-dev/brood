@@ -54,12 +54,12 @@ func parseActorCreation(w http.ResponseWriter, r *http.Request, actor *actorInpu
 		return actorCreation{}, false
 	}
 	var creation actorCreation
-	if raw, exists := fields["role"]; exists {
-		if json.Unmarshal(raw, &creation.role) != nil || (creation.role != "worker" && creation.role != "master") {
-			writeDetail(w, 400, "role must be worker or master")
+	if raw, exists := fields["roleId"]; exists {
+		if json.Unmarshal(raw, &creation.role) != nil || creation.role == "" {
+			writeDetail(w, 400, "Select a project role; nothing changed")
 			return actorCreation{}, false
 		}
-		delete(fields, "role")
+		delete(fields, "roleId")
 	}
 	if raw, exists := fields["origin"]; exists {
 		trimmed := bytes.TrimSpace(raw)
@@ -82,7 +82,7 @@ func parseActorCreation(w http.ResponseWriter, r *http.Request, actor *actorInpu
 		delete(fields, key)
 	}
 	for key := range fields {
-		writeDetail(w, 400, "unknown actor field: "+key+"; workers accept metadata.name, actorTemplate.name, role and origin")
+		writeDetail(w, 400, "unknown actor field: "+key+"; workers accept metadata.name, actorTemplate.name, roleId and origin")
 		return actorCreation{}, false
 	}
 	return creation, true

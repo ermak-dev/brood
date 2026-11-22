@@ -152,7 +152,7 @@ func (c *Client) AgentCreate(ctx context.Context, swarm string, request AgentReq
 		"actorTemplate": map[string]string{"name": request.Template},
 	}
 	if request.Role != "" {
-		fields["role"] = request.Role
+		fields["roleId"] = request.Role
 	}
 	if request.Origin != "" {
 		fields["origin"] = request.Origin
@@ -166,6 +166,17 @@ func (c *Client) AgentCreate(ctx context.Context, swarm string, request AgentReq
 		return Agent{}, err
 	}
 	return wire.agent(), nil
+}
+
+type AgentRole struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (c *Client) AgentRoles(ctx context.Context, projectID string) ([]AgentRole, error) {
+	var roles []AgentRole
+	err := c.call(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(projectID)+"/roles", nil, &roles)
+	return roles, err
 }
 
 // PoolProfiles lists the names of the pool profiles an agent of the swarm

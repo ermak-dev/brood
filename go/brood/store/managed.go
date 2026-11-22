@@ -75,9 +75,9 @@ type ManagedPool struct {
 // Error must be a sanitized public diagnostic; never pass raw provider responses.
 // It may begin with an unsent mark (Unsent); callers show Diagnostic.
 // OperationID is caller-generated and must be fresh for each new intent.
-// Role defaults to worker. A master retains its approving human's DelegatorID;
-// delegated workers retain the creating master's ParentUID for idempotent retries.
-// These bindings are immutable and never derived from names or guest environment.
+// Role is the ID of the assigned project role. DelegatorID records human
+// approval independently of current role permissions. ParentUID records the
+// creating agent. These bindings are immutable.
 // Origin is the canonical HTTPS Git origin to clone, or empty for an empty
 // workspace. It is immutable; its access mode is recomputed from current policy.
 // Stage is create, start, stop, delete, or done. It fences task callbacks
@@ -318,12 +318,6 @@ func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error)
 // The create intent must commit before the caller writes to PVE. When nested in
 // WithTx, callers must wait for the outer transaction to commit before any write.
 func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (ManagedActor, error) {
-	if a.Role == "" {
-		a.Role = "worker"
-	}
-	if (a.Role != "worker" && a.Role != "master") || (a.Role == "master" && (a.DelegatorID == "" || a.ParentUID != "")) || (a.Role == "worker" && a.DelegatorID != "") {
-		return ManagedActor{}, fmt.Errorf("invalid managed actor delegation")
-	}
 	if a.UID == "" || a.Name == "" || a.SwarmID == "" || a.PoolUID == "" || a.OwnerNonce == "" || a.OperationID == "" || a.CTID <= 0 || a.Resources.CPUMillicores <= 0 || a.Resources.MemoryBytes <= 0 || a.Resources.DiskBytes <= 0 {
 		return ManagedActor{}, fmt.Errorf("managed actor identity, ownership, operation and positive resources are required")
 	}
@@ -346,6 +340,26 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		if sw.State != "active" {
 			return fmt.Errorf("managed actor requires an active swarm")
 		}
+		role, err := s.getAgentRole(ctx, sw.ProjectID, a.Role, false)
+		if err != nil {
+			return err
+		}
+		if a.ParentUID != "" && (!role.Default || a.DelegatorID != "") {
+			return fmt.Errorf("%w: an agent can create children only with the default role and no human delegation", ErrInvalidAgentRole)
+		}
+		if role.RequiresDelegation() && a.DelegatorID == "" {
+			return fmt.Errorf("%w: ask an administrator to assign %q", ErrAgentRoleDelegation, role.Name)
+		}
+		if a.DelegatorID != "" {
+			delegator, err := s.GetUser(ctx, a.DelegatorID)
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			if err != nil || delegator.Disabled || !delegator.IsAdmin {
+				return fmt.Errorf("%w: ask an active administrator to assign %q", ErrAgentRoleDelegation, role.Name)
+			}
+		}
+		a.Role = role.ID
 		count, used, err := s.managedPoolUsage(ctx, p.UID)
 		if err != nil {
 			return err

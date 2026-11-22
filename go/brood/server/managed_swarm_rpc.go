@@ -44,21 +44,14 @@ func managedAddRefusal(err error) string {
 // authorizeMaster rechecks the durable UID/generation and its human approval.
 func (m *managedProvider) authorizeMaster(ctx context.Context, original store.ManagedActor) error {
 	a, err := m.server.store.GetManagedActor(ctx, original.UID)
-	if err != nil || a.Incarnation != original.Incarnation || a.Role != "master" || a.DelegatorID == "" || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
+	if err != nil || a.Incarnation != original.Incarnation || a.DelegatorID == "" || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
 		return app.ErrNotAllowed
 	}
 	u, err := m.server.store.GetUser(ctx, a.DelegatorID)
 	if err != nil || u.Disabled || !u.IsAdmin {
 		return app.ErrNotAllowed
 	}
-	allowed, err := m.server.app.Can(u.ID, app.ActionManageSwarm, app.SwarmRes(a.SwarmID))
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return app.ErrNotAllowed
-	}
-	return nil
+	return m.server.authorizeSwarmManagerIntent(ctx, u.ID, a.SwarmID)
 }
 
 func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, generation int64, req relay.SwarmRequest) relay.SwarmResponse {
@@ -70,6 +63,9 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 	swarm, err := m.server.store.GetSwarm(ctx, from.SwarmID)
 	if err != nil || swarm.State != "active" {
 		return refused
+	}
+	if req.Tool == command.GuestToolList {
+		return m.guestToolList(ctx, from, swarm.ProjectID)
 	}
 	inv, err := command.ParseTool(req.Tool, req.Arguments)
 	spec, ok := command.Lookup(req.Tool)

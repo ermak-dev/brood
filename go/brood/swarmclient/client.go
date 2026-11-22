@@ -21,6 +21,16 @@ const maxFrameBytes = 128 * 1024
 // operator fallback or selecting another identity or endpoint.
 type Client struct{}
 
+func (c Client) ListGuestTools(ctx context.Context) ([]string, error) {
+	result, err := c.Execute(ctx, command.Invocation{Name: command.GuestToolList})
+	if err != nil {
+		return nil, err
+	}
+	var tools []string
+	err = json.Unmarshal(result.Data, &tools)
+	return tools, err
+}
+
 // Execute sends one validated guest command to the local supervisor broker.
 func (Client) Execute(ctx context.Context, invocation command.Invocation) (command.Result, error) {
 	conn, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "unix", socketPath)
@@ -39,6 +49,9 @@ type Request struct {
 
 // NewRequest validates a catalog invocation and builds the scoped broker wire.
 func NewRequest(invocation command.Invocation) (Request, error) {
+	if invocation.Name == command.GuestToolList {
+		return Request{Tool: invocation.Name, Arguments: json.RawMessage(`{}`)}, nil
+	}
 	invocation, err := command.ParseTool(invocation.Name, invocation.Arguments)
 	if err != nil {
 		return Request{}, err

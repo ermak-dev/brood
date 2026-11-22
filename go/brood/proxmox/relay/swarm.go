@@ -71,6 +71,9 @@ type SwarmCaller func(context.Context, SwarmRequest) SwarmResponse
 type SwarmHandler func(context.Context, string, int64, SwarmRequest) SwarmResponse
 
 func validSwarmRequest(r SwarmRequest) bool {
+	if r.Tool == command.GuestToolList {
+		return bytes.Equal(bytes.TrimSpace(r.Arguments), []byte(`{}`))
+	}
 	spec, ok := command.Lookup(r.Tool)
 	if !ok || !spec.Guest {
 		return false

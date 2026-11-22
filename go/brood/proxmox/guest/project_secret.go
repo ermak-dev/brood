@@ -230,7 +230,16 @@ func RunProjectApp(warn io.Writer) error {
 	if os.Chdir(layout.Project) != nil {
 		return secretFailure()
 	}
-	return syscall.Exec("/opt/brood/bin/claude", projectAppArgs(), env)
+	args := projectAppArgs()
+	promptPath := filepath.Join(layout.Home, rolePromptFile)
+	prompt, err := os.Lstat(promptPath)
+	if err != nil || !prompt.Mode().IsRegular() || prompt.Mode().Perm() != 0600 || prompt.Size() > rolePromptLimit {
+		return errors.New("Agent role prompt file is unavailable; restart the session to fetch the current prompt")
+	}
+	if prompt.Size() > 0 {
+		args = append(args, "--append-system-prompt-file", promptPath)
+	}
+	return syscall.Exec("/opt/brood/bin/claude", args, env)
 }
 
 // appLayout fixes every path of the app wrapper; tests substitute temporary ones.

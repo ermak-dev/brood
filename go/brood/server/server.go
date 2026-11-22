@@ -143,6 +143,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProxmoxPools(cfg.proxmox)
 	srv.mountProxmoxConnections()
 	srv.mountProjectSecrets()
+	srv.mountAgentRoles()
 	srv.mountGitCredentials()
 	srv.mountGitRepositories()
 	srv.mountProjectOwnership()
@@ -198,6 +199,10 @@ func (s *Server) Close() error {
 func (s *Server) Handler() http.Handler {
 	browser := s.actorViewHandler(s.browserProtection())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicGuestRolePromptPath(r.URL.Path) {
+			s.serveGuestRolePrompt(w, r)
+			return
+		}
 		if publicProjectSecretPath(r.URL.Path) {
 			s.serveGuestProjectSecrets(w, r)
 			return

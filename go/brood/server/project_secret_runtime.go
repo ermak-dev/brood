@@ -14,6 +14,35 @@ import (
 )
 
 const projectSecretRuntimePrefix = "/api/proxmox/secrets/"
+const guestRolePromptPrefix = "/api/proxmox/role-prompt/"
+
+func publicGuestRolePromptPath(path string) bool {
+	return strings.HasPrefix(path, guestRolePromptPrefix)
+}
+
+func (s *Server) serveGuestRolePrompt(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	const unavailable = "Agent role prompt is unavailable; check the assigned role and retry starting the session"
+	g, _, ok := s.openGuestRuntime(ctx, w, r, guestRolePromptPrefix, unavailable, noGuestRuntimeRest)
+	if !ok {
+		return
+	}
+	role, err := s.store.GetAgentRole(ctx, g.swarm.ProjectID, g.actor.Role)
+	if err != nil {
+		writeDetail(w, http.StatusServiceUnavailable, unavailable)
+		return
+	}
+	if !s.guestRuntimeCurrent(ctx, g) {
+		writeDetail(w, http.StatusUnauthorized, "guest authorization denied")
+		return
+	}
+	control := http.NewResponseController(w)
+	_ = control.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	defer control.SetWriteDeadline(time.Time{})
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(role.Prompt))
+}
 
 var projectSecretActorUID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 

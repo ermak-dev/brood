@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"time"
 
 	"brood.dev/go/brood/command"
@@ -19,7 +20,7 @@ var ErrInvalidArguments = errors.New("Invalid tool arguments")
 
 const maxFrameBytes = 1 << 20
 const version = "2025-03-26"
-const instructions = "brood runs coding agents in containers of their own and joins them into a swarm with one human owner. Call agents to learn your name, your role and the other agents of the swarm. Use send to talk to another agent, or to the human owner with to=operator; the answer arrives later as a message, not as the result of send. Use tail to read your recent terminal output; a master can also read other agents in its swarm. A master may create agents with add and delete the agents it created with rm. An accepted operation is not a completed one: check the result with agents or tail, and when an outcome is reported as unconfirmed, look before you repeat the command."
+const instructions = "brood runs coding agents in containers of their own and joins them into a swarm with one human owner. Call agents to learn your name, your role and the other agents of the swarm. Use send to talk to another agent, or to the human owner with to=operator; the answer arrives later as a message, not as the result of send. Your role determines available tools and permitted targets. An accepted operation is not a completed one: check the result with agents or tail, and when an outcome is reported as unconfirmed, look before you repeat the command."
 
 // GuestSpecs returns catalog commands available through a guest adapter.
 // The executor remains responsible for authorization.
@@ -87,7 +88,25 @@ func Serve(ctx context.Context, input io.Reader, output io.Writer, executor comm
 						fail(-32002, "Server is not initialized")
 						break
 					}
-					response["result"] = map[string]any{"tools": tools}
+					listed := tools
+					if source, ok := executor.(interface {
+						ListGuestTools(context.Context) ([]string, error)
+					}); ok {
+						callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+						names, err := source.ListGuestTools(callCtx)
+						cancel()
+						if err != nil {
+							fail(-32000, "Agent tool list unavailable; retry")
+							break
+						}
+						listed = make([]map[string]any, 0, len(names))
+						for _, entry := range tools {
+							if name, _ := entry["name"].(string); slices.Contains(names, name) {
+								listed = append(listed, entry)
+							}
+						}
+					}
+					response["result"] = map[string]any{"tools": listed}
 				case "tools/call":
 					if !ready {
 						fail(-32002, "Server is not initialized")

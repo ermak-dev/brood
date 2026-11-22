@@ -14,15 +14,17 @@ type Project struct {
 	CreatedAt *string
 }
 
-// CreateProject вставляет проект. Дубликат имени — ошибка уникальности.
+// CreateProject inserts a project and its initial agent roles atomically.
 func (s *Store) CreateProject(ctx context.Context, p Project) error {
-	_, err := s.conn(ctx).ExecContext(ctx,
-		`INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)`,
-		p.ID, p.Name, nowRFC3339())
-	if err != nil {
-		return wrapUnique(err, fmt.Sprintf("project %q", p.Name))
-	}
-	return nil
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		_, err := s.conn(ctx).ExecContext(ctx,
+			`INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)`,
+			p.ID, p.Name, nowRFC3339())
+		if err != nil {
+			return wrapUnique(err, fmt.Sprintf("project %q", p.Name))
+		}
+		return s.seedAgentRoles(ctx, p.ID)
+	})
 }
 
 // GetProject возвращает проект по ID.

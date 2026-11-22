@@ -4,6 +4,7 @@ import { useAdministrator } from '@/features/brood/hooks';
 import { AgentsPage } from '@/features/brood/AgentsPage';
 import { PoolsPage } from '@/features/brood/PoolsPage';
 import { ProjectsPage } from '@/features/brood/ProjectsPage';
+import { RolesPage } from '@/features/brood/RolesPage';
 import { HOME_PATH, visiblePath } from '@/features/brood/routes';
 import { SwarmsPage } from '@/features/brood/SwarmsPage';
 import { UsersPage } from '@/features/brood/UsersPage';
@@ -30,6 +31,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/dashboard', element: <DashboardPage /> },
   { path: PROFILE_PATH, element: <ProfilePage /> },
   { path: '/projects', element: <ProjectsPage /> },
+  { path: '/roles', element: <RolesPage /> },
   { path: '/swarms', element: <SwarmsPage /> },
   { path: '/agents', element: <AgentsPage /> },
   { path: '/pools', element: <PoolsPage /> },

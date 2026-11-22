@@ -1,6 +1,6 @@
 /** Sections open to every signed-in user; everything else is for an
  * administrator. The server checks each request again. */
-const memberPaths = ['/profile', '/projects', '/swarms', '/agents'];
+const memberPaths = ['/profile', '/projects', '/roles', '/swarms', '/agents'];
 
 /** Where a signed-in user lands: agents are what people come for. */
 export const HOME_PATH = '/agents';
@@ -31,6 +31,8 @@ function tableLink(path: string, filters: Record<string, string>) {
   return query ? `${path}?${query}` : path;
 }
 
+/** The role table narrowed to a project. */
+export const rolesOf = (project: string) => tableLink('/roles', { project });
 /** The swarm table narrowed to a project. */
 export const swarmsOf = (project: string) => tableLink('/swarms', { project });
 /** The agent table narrowed to a swarm (and to its project, when known, so

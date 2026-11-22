@@ -23,6 +23,7 @@ import (
 
 const modelAddress = "127.0.0.1:8317"
 const modelBodyLimit = 8 << 20
+const rolePromptPath = "/_brood/role-prompt"
 
 // serverRoute is the supervisor's verified relay origin and scoped token. Every
 // loopback gateway derives its upstream from it, never from the actor request.
@@ -95,9 +96,13 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 			pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 			pr.Out.Host = target.Host
 			pr.Out.Header = make(http.Header)
-			for _, key := range []string{"Accept", "Content-Type", "Anthropic-Version", "Anthropic-Beta"} {
-				for _, value := range pr.In.Header.Values(key) {
-					pr.Out.Header.Add(key, value)
+			if pr.In.URL.Path == rolePromptPath {
+				pr.Out.URL.Path = route.path("/api/proxmox/role-prompt/")
+			} else {
+				for _, key := range []string{"Accept", "Content-Type", "Anthropic-Version", "Anthropic-Beta"} {
+					for _, value := range pr.In.Header.Values(key) {
+						pr.Out.Header.Add(key, value)
+					}
 				}
 			}
 			pr.Out.Header.Set("Authorization", "Bearer "+route.token)
@@ -119,7 +124,7 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 		}
 		expected := "POST"
 		switch r.URL.Path {
-		case "/v1/models":
+		case "/v1/models", rolePromptPath:
 			expected = "GET"
 		case "/v1/messages", "/v1/messages/count_tokens":
 		default:
@@ -143,7 +148,7 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 			return
 		}
 		if expected == "GET" && len(body) != 0 {
-			http.Error(w, "models request must not have a body", 400)
+			http.Error(w, "GET request must not have a body", 400)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)

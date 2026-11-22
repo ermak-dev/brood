@@ -1031,6 +1031,12 @@ func (m *managedProvider) actorByName(ctx context.Context, swarm, name string) (
 
 // managedActorJSON renders a managed actor; originMode is the caller's current
 // recomputation for a.Origin ("" when the origin has no admissible mode).
+func (s *Server) managedActorRoleJSON(ctx context.Context, sw app.Swarm, a store.ManagedActor, p store.ManagedPool, originMode string) map[string]any {
+	out := managedActorJSON(a, p, sw.ID, originMode)
+	out["role"] = s.agentRoleName(ctx, sw.ProjectID, a.Role)
+	return out
+}
+
 func managedActorJSON(a store.ManagedActor, p store.ManagedPool, swarmID, originMode string) map[string]any {
 	state := "ACTOR_STATE_UNSPECIFIED"
 	// Stop, ещё не запрошенный у PVE (#275), — та же остановка, что stopping
@@ -1077,7 +1083,7 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm) ([]any, 
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, managedActorJSON(a, p, sw.ID, access.mode(a.Origin)))
+		out = append(out, m.server.managedActorRoleJSON(ctx, sw, a, p, access.mode(a.Origin)))
 	}
 	return out, nil
 }

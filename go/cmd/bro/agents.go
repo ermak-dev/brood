@@ -54,7 +54,7 @@ func (c *command) roster(ctx context.Context) ([]member, error) {
 
 // role называет роль словом bro: рядовой агент — agent.
 func role(value string) string {
-	if value == "worker" || value == "" {
+	if value == "" {
 		return "agent"
 	}
 	return value
@@ -225,7 +225,7 @@ func (c *command) status(ctx context.Context, args []string) error {
 func (c *command) add(ctx context.Context, args []string) error {
 	flags := newFlags("add")
 	pool := flags.String("pool", "", "")
-	as := flags.String("role", "agent", "")
+	as := flags.String("role", "", "")
 	origin := flags.String("origin", "", "")
 	noWait := flags.Bool("no-wait", false, "")
 	names, err := parseArgs(flags, args, 0)
@@ -235,17 +235,26 @@ func (c *command) add(ctx context.Context, args []string) error {
 	if len(names) > 1 {
 		return unexpected("add", names[1:])
 	}
-	if *as != "agent" && *as != "master" {
-		return errors.New("--role must be agent or master")
-	}
 	op, swarm, err := c.selected(ctx)
 	if err != nil {
 		return err
 	}
 	request := clientapi.AgentRequest{Origin: *origin}
-	if *as == "master" {
-		// Роль рядового агента сервер назначает сам.
-		request.Role = *as
+	if *as != "" {
+		roles, err := op.client.AgentRoles(ctx, swarm.ProjectID)
+		if err != nil {
+			return err
+		}
+		available := make([]string, 0, len(roles))
+		for _, r := range roles {
+			available = append(available, r.Name)
+			if r.Name == *as {
+				request.Role = r.ID
+			}
+		}
+		if request.Role == "" {
+			return fmt.Errorf("choose a project role with --role NAME; available: %s", strings.Join(available, ", "))
+		}
 	}
 	if len(names) == 1 {
 		request.Name = names[0]

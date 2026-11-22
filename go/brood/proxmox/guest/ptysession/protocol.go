@@ -23,6 +23,7 @@ const MaxMessage = 2 * 1024 * 1024
 // Config fixes the trusted child command, environment, directory and initial size.
 type Config struct {
 	Command       []string
+	BeforeStart   func() error // Runs before starting each new child, not when reusing one.
 	Env           []string
 	Dir           string
 	Columns, Rows int

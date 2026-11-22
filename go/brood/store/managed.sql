@@ -40,10 +40,12 @@ CREATE TABLE managed_actors (
     updated_at TEXT NOT NULL,
     deleted_at TEXT,
     stage TEXT NOT NULL DEFAULT 'reconcile' CHECK (stage IN ('reconcile', 'create', 'start', 'stop', 'delete', 'done')),
-    role TEXT NOT NULL DEFAULT 'worker' CHECK (role IN ('worker', 'master')),
+    role TEXT NOT NULL CHECK (role <> ''),
     delegator_id TEXT NOT NULL DEFAULT '',
     parent_uid TEXT NOT NULL DEFAULT '',
-    origin TEXT NOT NULL DEFAULT ''
+    origin TEXT NOT NULL DEFAULT '',
+    live_role_id TEXT GENERATED ALWAYS AS (CASE WHEN phase <> 'deleted' THEN role END) VIRTUAL REFERENCES agent_roles(id),
+    CHECK (parent_uid = '' OR delegator_id = '')
 );
 CREATE TABLE managed_connections (
     uid TEXT PRIMARY KEY,

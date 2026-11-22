@@ -5,7 +5,9 @@ package guest
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,8 +19,48 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const rolePromptFile = ".brood-role-prompt"
+const rolePromptLimit = 24 << 10
+
 func actorPTYConfig(executable string) ptysession.Config {
-	return ptysession.Config{Command: []string{executable, "--brood-guest-app"}, Env: actorEnv(), Dir: "/workspace/home", Columns: 80, Rows: 24}
+	const home = "/workspace/home"
+	return ptysession.Config{
+		Command: []string{executable, "--brood-guest-app"}, Env: actorEnv(), Dir: home, Columns: 80, Rows: 24,
+		BeforeStart: func() error { return stageRolePrompt(home) },
+	}
+}
+
+// Успевший стартовать wrapper считается живым PTY. Загружаем prompt до
+// запуска wrapper, чтобы при сетевом отказе автостарт мог повторить попытку.
+func stageRolePrompt(home string) error {
+	unavailable := errors.New("Agent role prompt is unavailable; no new session was started. Check the server and the assigned role, then retry")
+	// Оставляем время на ответ PTY-клиенту в его пятисекундном окне.
+	client := http.Client{
+		Timeout:       3 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get("http://" + modelAddress + rolePromptPath)
+	if err != nil {
+		return unavailable
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
+		return unavailable
+	}
+	prompt, err := io.ReadAll(io.LimitReader(resp.Body, rolePromptLimit+1))
+	if err != nil || len(prompt) > rolePromptLimit {
+		return unavailable
+	}
+	dir, err := openSecretDirectory(home, false)
+	if err != nil {
+		return unavailable
+	}
+	defer unix.Close(dir)
+	uid, gid := os.Geteuid(), os.Getegid()
+	if secureSecretDirectory(dir, uid, false) != nil || replaceSecretFile(dir, rolePromptFile, prompt, 0600, uid, gid, false) != nil {
+		return unavailable
+	}
+	return nil
 }
 
 func createProductionPTYSocket() (*actorSocket, error) {

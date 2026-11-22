@@ -120,16 +120,9 @@ claude --dangerously-skip-permissions --mcp-config '{"mcpServers":{"brood":{"com
 
 При подключении сервер MCP передаёт Claude Code инструкцию:
 
-> brood runs coding agents in containers of their own and joins them into
-> a swarm with one human owner. Call agents to learn your name, your role
-> and the other agents of the swarm. Use send to talk to another agent, or
-> to the human owner with to=operator; the answer arrives later as a
-> message, not as the result of send. Use tail to read your recent terminal
-> output; a master can also read other agents in its swarm. A master may
-> create agents with add and delete the agents it created with rm. An
-> accepted operation is not a completed one: check
-> the result with agents or tail, and when an outcome is reported as
-> unconfirmed, look before you repeat the command.
+Она называет `agents` для знакомства с роем и `send` для ответа.
+Набор доступных инструментов зависит от роли. Если ответ на операцию
+не подтверждён, проверьте её исход до повтора.
 
 ### Инструменты
 
@@ -159,28 +152,22 @@ claude --dangerously-skip-permissions --mcp-config '{"mcpServers":{"brood":{"com
 что и создающий его мастер, а если у мастера его нет — репозиторий
 проекта.
 
-### Что может мастер
+### Разрешения роли
 
-У агента одна из двух ролей: обычный агент (в API — `worker`) или мастер
-(`master`). Роль задаёт тот, кто создаёт агента.
+Гостевой MCP показывает инструменты, разрешённые роли агента. Сервер
+применяет текущую роль при вызове, в том числе при прямом `bro --guest`
+или вызове из клиента, который помнит старый список инструментов.
 
-| Инструмент | Обычный агент | Мастер |
-|---|---|---|
-| `agents`, `diagnose` | да | да |
-| `send` | да | да |
-| `tail` | только свой вывод | любого агента роя |
-| `add` | нет | да; новый агент — обычный, в пуле мастера |
-| `slash`, `restart`, `start`, `stop`, `rm`, `reset` | нет | только над агентами, которых он сам создал через `add` |
+ - `agents` и `diagnose` включаются независимо.
+ - `send` отдельно разрешается для агентов своего роя и для оператора.
+ - `tail` может быть выключен, разрешён для своего терминала или для всего роя.
+ - `add` создаёт агента с ролью проекта по умолчанию, в пуле вызывающего.
+ - `slash`, `restart`, `start`, `stop`, `rm`, `reset` разрешаются независимо
+   и только для агентов, созданных вызывающим через `add`.
 
-Мастер не управляет самим собой, другими мастерами, агентами, которых
-создал оператор, и агентами другого мастера. Отказ называет причину,
-например
-`"agent-2" was created by the operator, not added by master "lead"; a master manages only the agents it added; nothing changed`.
-
-Права мастера действуют, пока мастер работает, а пользователь, который
-его создал, остаётся действующим администратором с доступом к рою. Если
-это перестаёт быть так, мастер получает отказ на всё, кроме `agents`,
-`send`, `diagnose` и `tail` самого себя.
+Чтение чужих терминалов, создание и управление требуют действующей
+делегации администратора. Роль по умолчанию не может получать эти права.
+Две начальные роли и жизненный цикл промпта описаны в [MODEL.md](MODEL.md).
 
 ### Результат и исходы
 

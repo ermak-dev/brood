@@ -10,7 +10,8 @@ import {
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { accessApi, type Swarm } from '@/services/brood/access';
-import { agentsApi, type Agent, type AgentAction, type AgentRole } from '@/services/brood/agents';
+import { agentsApi, type Agent, type AgentAction } from '@/services/brood/agents';
+import { DELEGATED_ROLE_PERMISSIONS, rolesApi } from '@/services/brood/roles';
 import { useGuide } from './guide';
 import { useAdministrator, useResource } from './hooks';
 import { IconPlay, IconRotateCcw, IconSquare, IconTerminal } from './icons';
@@ -128,8 +129,18 @@ function CreateAgent({
   const profiles = useResource(
     useCallback(() => (swarm ? agentsApi.profiles(swarm) : Promise.resolve([])), [swarm])
   );
+  const projectId = swarms.find(({ id }) => id === swarm)?.project_id ?? '';
+  const roles = useResource(
+    useCallback(() => (projectId ? rolesApi.list(projectId) : Promise.resolve([])), [projectId])
+  );
   const [chosenProfile, setChosenProfile] = useState('');
-  const [role, setRole] = useState<AgentRole>('worker');
+  const [chosenRole, setChosenRole] = useState('');
+  const availableRoles = (roles.data ?? []).filter(
+    (role) => administrator || !role.permissions.some((key) => DELEGATED_ROLE_PERMISSIONS.has(key))
+  );
+  const defaultRole = availableRoles.find((role) => role.default)?.id ?? '';
+  const roleId = availableRoles.some(({ id }) => id === chosenRole) ? chosenRole : defaultRole;
+  const roleOptions = availableRoles.map(({ id, name }) => ({ value: id, label: name }));
   const [checked, setChecked] = useState(false);
   const profileOptions = (profiles.data ?? []).map((name) => ({ value: name, label: name }));
   const profile = profileOptions.some((option) => option.value === chosenProfile)
@@ -175,6 +186,15 @@ function CreateAgent({
         : checked && !profile
           ? t('brood.agents.choose_profile')
           : undefined;
+  const roleProblem =
+    !projectId || roles.loading
+      ? undefined
+      : roles.error ||
+        (!roleOptions.length
+          ? t('brood.agents.no_roles')
+          : checked && !roleId
+            ? t('brood.agents.choose_role')
+            : undefined);
   return (
     <FormSheet
       open={open}
@@ -185,11 +205,11 @@ function CreateAgent({
       submitLabel={t('brood.agents.create')}
       check={() => {
         setChecked(true);
-        return form.check() && swarm !== '' && profile !== '';
+        return form.check() && swarm !== '' && profile !== '' && roleId !== '' && !roles.error;
       }}
-      dirty={(typed && form.dirty) || form.values.origin !== '' || role !== 'worker'}
+      dirty={(typed && form.dirty) || form.values.origin !== '' || roleId !== defaultRole}
       submit={() =>
-        agentsApi.create(swarm, { name, profile, role, origin: form.values.origin.trim() })
+        agentsApi.create(swarm, { name, profile, roleId, origin: form.values.origin.trim() })
       }
       success={t('brood.agents.created', { name })}
       after={after}
@@ -223,7 +243,12 @@ function CreateAgent({
             placeholder={t('brood.agents.choose_swarm')}
             disabled={swarms.length === 0}
             ariaInvalid={Boolean(swarmProblem)}
-            onChange={setChosenSwarm}
+            onChange={(value) => {
+              if (swarms.find(({ id }) => id === value)?.project_id !== projectId) {
+                setChosenRole('');
+              }
+              setChosenSwarm(value);
+            }}
           />
         )}
       </Field>
@@ -251,21 +276,30 @@ function CreateAgent({
           />
         )}
       </Field>
-      {administrator && (
-        <Field label={t('brood.agents.role')} hint={t('brood.agents.role_hint')}>
-          {(id) => (
-            <Select
-              id={id}
-              value={role}
-              options={[
-                { value: 'worker', label: t('brood.agents.roles.worker') },
-                { value: 'master', label: t('brood.agents.roles.master') },
-              ]}
-              onChange={(value) => setRole(value === 'master' ? 'master' : 'worker')}
-            />
-          )}
-        </Field>
-      )}
+      <Field
+        label={t('brood.agents.role')}
+        required
+        hint={t('brood.agents.role_hint')}
+        error={roleProblem}
+      >
+        {(id) => (
+          <Select
+            id={id}
+            value={roleId}
+            options={roleOptions}
+            placeholder={
+              !projectId
+                ? t('brood.agents.role_needs_swarm')
+                : roles.loading
+                  ? t('brood.table.loading')
+                  : t('brood.agents.choose_role')
+            }
+            disabled={roleOptions.length === 0 || Boolean(roles.error)}
+            ariaInvalid={Boolean(roleProblem)}
+            onChange={setChosenRole}
+          />
+        )}
+      </Field>
       <Input
         label={t('brood.agents.origin')}
         hint={t('brood.agents.origin_hint')}
@@ -321,8 +355,7 @@ export function AgentsPage() {
     (PHASES as readonly string[]).includes(phase)
       ? t(`brood.agents.phases.${phase}`)
       : phase || DASH;
-  const roleLabel = (role: string) =>
-    role === 'worker' || role === 'master' ? t(`brood.agents.roles.${role}`) : role || DASH;
+  const roleLabel = (role: string) => role || DASH;
   const badge = (row: Row) => {
     const look = PHASE_LOOK[row.phase] ?? { tone: 'neutral' as const };
     return (

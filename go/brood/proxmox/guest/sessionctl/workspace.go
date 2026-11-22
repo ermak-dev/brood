@@ -135,6 +135,9 @@ func (e *workspaceEngine) handle(ctx context.Context, req relay.SessionRequest) 
 		return workspaceUnknown("session stopped; " + err.Error())
 	}
 	if reply, err = e.call(ctx, ptysession.Request{Action: "ensure"}); err != nil || !reply.OK {
+		if err == nil && reply.Outcome == "refused" {
+			return failure("The previous session stopped, but no new session started. Check the server and the assigned role, then stop and start the agent")
+		}
 		return workspaceUnknown("session launch result is unknown")
 	}
 	if err = workspaceWait(ctx, workspaceStartTimeout, func(ctx context.Context) (bool, error) {

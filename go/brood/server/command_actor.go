@@ -82,15 +82,20 @@ func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, orig
 // and a mutation additionally requires that the master added the target
 // (masterOwns). Callers must retain the returned UID/generation and recheck
 // before side effects.
-func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original store.ManagedActor, name string, mutate bool) (store.ManagedActor, error) {
-	from, _, err := m.authorizeCommandActor(ctx, original)
+func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original store.ManagedActor, name, tool string, mutate bool) (store.ManagedActor, error) {
+	from, sw, err := m.authorizeCommandActor(ctx, original)
 	if err != nil {
 		return store.ManagedActor{}, err
 	}
-	if mutate || name != from.Name {
-		if err := m.authorizeMaster(ctx, from); err != nil {
-			return store.ManagedActor{}, err
+	permission := tool
+	if tool == "tail" {
+		permission = "tail:self"
+		if name != from.Name {
+			permission = "tail:swarm"
 		}
+	}
+	if err := m.authorizeGuestPermission(ctx, from, sw.ProjectID, permission); err != nil {
+		return store.ManagedActor{}, err
 	}
 	target, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, name)
 	if err != nil {
@@ -143,8 +148,6 @@ func ownershipRefusal(from, target store.ManagedActor, owner string) string {
 		// start себя ему не доступен, и рой остаётся без координатора до
 		// решения оператора.
 		return fmt.Sprintf("master %q does not manage itself; the operator does; nothing changed", from.Name)
-	case target.Role == "master":
-		return fmt.Sprintf("%q is another master; %s", target.Name, scope)
 	case target.ParentUID == "":
 		return fmt.Sprintf("%q was created by the operator, not added by master %q; %s", target.Name, from.Name, scope)
 	case owner != "":
@@ -165,7 +168,7 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
-	if err = m.authorizeMaster(ctx, from); err != nil {
+	if err = m.authorizeGuestPermission(ctx, from, sw.ProjectID, inv.Name); err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
 	if inv.Name == "add" {
@@ -173,13 +176,13 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 		if err != nil || pool.SourceFingerprint != from.SourceFingerprint {
 			return command.Result{}, command.Refuse(nil, "The agent was not created: the pool of this master is no longer available. Ask the operator.")
 		}
-		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, args.Name, pool, "worker", args.Origin, &from)
+		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, args.Name, pool, "", args.Origin, &from)
 		if err != nil && a.UID == "" {
 			return command.Result{}, command.Refuse(nil, managedAddRefusal(err))
 		}
 		return actorCommandResult(a), nil
 	}
-	target, err := m.authorizeCommandTarget(ctx, from, args.Name, true)
+	target, err := m.authorizeCommandTarget(ctx, from, args.Name, inv.Name, true)
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}

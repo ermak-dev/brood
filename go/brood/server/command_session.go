@@ -110,12 +110,12 @@ func (m *managedProvider) executeGuestSessionCommand(ctx context.Context, from s
 	if err != nil {
 		return command.Result{}, err
 	}
-	target, err := m.authorizeCommandTarget(ctx, from, name, mutate)
+	target, err := m.authorizeCommandTarget(ctx, from, name, inv.Name, mutate)
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
 	before := func() error {
-		fresh, err := m.authorizeCommandTarget(ctx, from, name, mutate)
+		fresh, err := m.authorizeCommandTarget(ctx, from, name, inv.Name, mutate)
 		if err != nil || fresh.UID != target.UID || fresh.Incarnation != target.Incarnation {
 			return actorCommandError(app.ErrNotAllowed)
 		}
@@ -123,18 +123,14 @@ func (m *managedProvider) executeGuestSessionCommand(ctx context.Context, from s
 	}
 	caller := fmt.Sprintf("actor:%s:%d", from.UID, from.Incarnation)
 	var reserve func(context.Context) (store.ActorOperation, error)
-	if inv.Name == "slash" {
+	if mutate {
 		reserve = func(ctx context.Context) (store.ActorOperation, error) {
 			return m.server.store.AcquireActorSessionOperation(ctx, target, store.NewID(), caller, inv.Name, func(ctx context.Context) error {
-				current, _, err := m.authorizeCommandActorDurable(ctx, from)
+				current, sw, err := m.authorizeCommandActorDurable(ctx, from)
 				if err != nil {
 					return err
 				}
-				user, err := m.server.store.GetUser(ctx, current.DelegatorID)
-				if err != nil || user.Disabled || !user.IsAdmin || current.Role != "master" || current.DelegatorID != from.DelegatorID {
-					return app.ErrNotAllowed
-				}
-				if err := m.server.authorizeSwarmManagerIntent(ctx, current.DelegatorID, current.SwarmID); err != nil {
+				if err := m.authorizeGuestPermission(ctx, current, sw.ProjectID, inv.Name); err != nil {
 					return err
 				}
 				return m.masterOwns(ctx, current, target)
@@ -142,7 +138,7 @@ func (m *managedProvider) executeGuestSessionCommand(ctx context.Context, from s
 		}
 	}
 	result, err := m.callCommandSession(ctx, target, caller, inv, before, reserve)
-	fresh, authErr := m.authorizeCommandTarget(ctx, from, name, mutate)
+	fresh, authErr := m.authorizeCommandTarget(ctx, from, name, inv.Name, mutate)
 	if authErr != nil || fresh.UID != target.UID || fresh.Incarnation != target.Incarnation {
 		return command.Result{}, actorCommandError(app.ErrNotAllowed)
 	}
@@ -205,7 +201,7 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 		return ctx.Err()
 	}
 	var reserve func(context.Context) (store.ActorOperation, error)
-	if inv.Name == "slash" {
+	if mutate {
 		reserve = func(ctx context.Context) (store.ActorOperation, error) {
 			return s.store.AcquireActorSessionOperation(ctx, target, store.NewID(), caller, inv.Name, func(ctx context.Context) error {
 				return s.authorizeSwarmManagerIntent(ctx, userID, swarmID)
