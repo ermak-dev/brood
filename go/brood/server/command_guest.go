@@ -24,18 +24,14 @@ func commandSwarmResponse(result command.Result) relay.SwarmResponse {
 // handleActorCommand executes a catalog command called by an agent. from is
 // the calling agent as the relay authenticated it.
 func (m *managedProvider) handleActorCommand(ctx context.Context, from store.ManagedActor, inv command.Invocation) relay.SwarmResponse {
-	sw, err := m.server.store.GetSwarm(ctx, from.SwarmID)
-	if err != nil {
-		return relay.SwarmResponse{Text: "Swarm unavailable; nothing changed"}
-	}
 	if inv.Name == "agents" || inv.Name == "diagnose" {
-		if err := m.authorizeGuestPermission(ctx, from, sw.ProjectID, inv.Name); err != nil {
+		if err := m.authorizeGuestPermission(ctx, from, inv.Name); err != nil {
 			return relay.SwarmResponse{Text: err.Error()}
 		}
 	}
 	switch inv.Name {
 	case "diagnose":
-		data, _ := json.Marshal(map[string]any{"mode": "agent", "self": from.Name, "role": m.server.agentRoleName(ctx, sw.ProjectID, from.Role), "generation": from.Incarnation, "swarm_id": from.SwarmID, "relay": "connected"})
+		data, _ := json.Marshal(map[string]any{"mode": "agent", "self": from.Name, "role": m.server.agentRoleName(ctx, from.Role), "generation": from.Incarnation, "swarm_id": from.SwarmID, "relay": "connected"})
 		return relay.SwarmResponse{OK: true, Text: string(data), Data: data, Outcome: "completed"}
 	case "tail", "slash", "restart":
 		result, err := m.executeGuestSessionCommand(ctx, from, inv)
@@ -66,7 +62,7 @@ func (m *managedProvider) handleActorCommand(ctx context.Context, from store.Man
 		if args.To == telegramOperator {
 			permission = "send:operator"
 		}
-		if err := m.authorizeGuestPermission(ctx, from, sw.ProjectID, permission); err != nil {
+		if err := m.authorizeGuestPermission(ctx, from, permission); err != nil {
 			return relay.SwarmResponse{Text: err.Error()}
 		}
 		return m.sendFromAgent(ctx, from, args.To, args.Message, args.WaitSeconds)

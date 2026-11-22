@@ -12,15 +12,13 @@ import (
 
 const agentRoleSchema = `CREATE TABLE agent_roles (
     id TEXT PRIMARY KEY NOT NULL,
-    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE,
     prompt TEXT NOT NULL,
     permissions TEXT NOT NULL,
-    is_default INTEGER NOT NULL CHECK (is_default IN (0, 1)),
-    UNIQUE (project_id, name)
+    is_default INTEGER NOT NULL CHECK (is_default IN (0, 1))
 )`
 
-const agentRoleDefaultIndex = `CREATE UNIQUE INDEX agent_roles_default ON agent_roles(project_id) WHERE is_default = 1`
+const agentRoleDefaultIndex = `CREATE UNIQUE INDEX agent_roles_default ON agent_roles(is_default) WHERE is_default = 1`
 
 func verifyAgentRoleSchema(ctx context.Context, tx *sql.Tx) error {
 	if err := checkSchema(ctx, tx, agentRoleSchema); err != nil {
@@ -29,7 +27,7 @@ func verifyAgentRoleSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkObject(ctx, tx, "index", "agent_roles_default", agentRoleDefaultIndex)
 }
 
-// AgentRole is a project-scoped session prompt and set of permissions. Agents
+// AgentRole is a global session prompt and set of permissions. Agents
 // contains the names of non-deleted agents assigned to the role; it is read-only.
 type AgentRole struct {
 	ID          string   `json:"id"`
@@ -112,33 +110,33 @@ func scanAgentRole(row interface{ Scan(...any) error }, includeAgents bool) (Age
 	return role, nil
 }
 
-// GetAgentRole returns one role of the project. An empty roleID selects its default.
-func (s *Store) GetAgentRole(ctx context.Context, projectID, roleID string) (AgentRole, error) {
-	return s.getAgentRole(ctx, projectID, roleID, true)
+// GetAgentRole returns a global role. An empty roleID selects the default.
+func (s *Store) GetAgentRole(ctx context.Context, roleID string) (AgentRole, error) {
+	return s.getAgentRole(ctx, roleID, true)
 }
 
-func (s *Store) getAgentRole(ctx context.Context, projectID, roleID string, includeAgents bool) (AgentRole, error) {
+func (s *Store) getAgentRole(ctx context.Context, roleID string, includeAgents bool) (AgentRole, error) {
 	cols := agentRoleCols
 	if includeAgents {
 		cols += "," + agentRoleAgents
 	}
-	query := `SELECT ` + cols + ` FROM agent_roles WHERE project_id=?`
+	query := `SELECT ` + cols + ` FROM agent_roles`
 	var row *sql.Row
 	if roleID == "" {
-		row = s.conn(ctx).QueryRowContext(ctx, query+` AND is_default=1`, projectID)
+		row = s.conn(ctx).QueryRowContext(ctx, query+` WHERE is_default=1`)
 	} else {
-		row = s.conn(ctx).QueryRowContext(ctx, query+` AND id=?`, projectID, roleID)
+		row = s.conn(ctx).QueryRowContext(ctx, query+` WHERE id=?`, roleID)
 	}
 	role, err := scanAgentRole(row, includeAgents)
 	if errors.Is(err, sql.ErrNoRows) {
-		return AgentRole{}, fmt.Errorf("%w: choose an agent role from this project", ErrNotFound)
+		return AgentRole{}, fmt.Errorf("%w: choose an agent role from the list", ErrNotFound)
 	}
 	return role, err
 }
 
-// ListAgentRoles lists the roles of the project by name.
-func (s *Store) ListAgentRoles(ctx context.Context, projectID string) ([]AgentRole, error) {
-	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT `+agentRoleCols+`,`+agentRoleAgents+` FROM agent_roles WHERE project_id=? ORDER BY name`, projectID)
+// ListAgentRoles lists global roles by name.
+func (s *Store) ListAgentRoles(ctx context.Context) ([]AgentRole, error) {
+	rows, err := s.conn(ctx).QueryContext(ctx, `SELECT `+agentRoleCols+`,`+agentRoleAgents+` FROM agent_roles ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +153,7 @@ func (s *Store) ListAgentRoles(ctx context.Context, projectID string) ([]AgentRo
 }
 
 // CreateAgentRole inserts a role with a generated ID. A new default replaces the old one.
-func (s *Store) CreateAgentRole(ctx context.Context, projectID string, role AgentRole) (AgentRole, error) {
+func (s *Store) CreateAgentRole(ctx context.Context, role AgentRole) (AgentRole, error) {
 	role.Name = strings.TrimSpace(role.Name)
 	if err := role.validate(); err != nil {
 		return AgentRole{}, err
@@ -164,17 +162,14 @@ func (s *Store) CreateAgentRole(ctx context.Context, projectID string, role Agen
 	role.Agents = []string{}
 	role.Permissions = append([]string{}, role.Permissions...)
 	err := s.WithTx(ctx, func(ctx context.Context) error {
-		if _, err := s.GetProject(ctx, projectID); err != nil {
-			return err
-		}
 		_, err := s.conn(ctx).ExecContext(ctx,
-			`INSERT INTO agent_roles (id,project_id,name,prompt,permissions,is_default) VALUES (?,?,?,?,?,0)`,
-			role.ID, projectID, role.Name, role.Prompt, encodeManaged(role.Permissions))
+			`INSERT INTO agent_roles (id,name,prompt,permissions,is_default) VALUES (?,?,?,?,0)`,
+			role.ID, role.Name, role.Prompt, encodeManaged(role.Permissions))
 		if err != nil {
 			return wrapUnique(err, fmt.Sprintf("agent role %q", role.Name))
 		}
 		if role.Default {
-			return s.setDefaultAgentRole(ctx, projectID, role.ID)
+			return s.setDefaultAgentRole(ctx, role.ID)
 		}
 		return nil
 	})
@@ -186,7 +181,7 @@ func (s *Store) CreateAgentRole(ctx context.Context, projectID string, role Agen
 
 // UpdateAgentRole replaces editable fields without ever granting delegated
 // authority to live agents that were created without administrator approval.
-func (s *Store) UpdateAgentRole(ctx context.Context, projectID string, role AgentRole) error {
+func (s *Store) UpdateAgentRole(ctx context.Context, role AgentRole) error {
 	if role.ID == "" {
 		return fmt.Errorf("%w: select a role to update", ErrInvalidAgentRole)
 	}
@@ -195,7 +190,7 @@ func (s *Store) UpdateAgentRole(ctx context.Context, projectID string, role Agen
 		return err
 	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
-		old, err := s.getAgentRole(ctx, projectID, role.ID, false)
+		old, err := s.getAgentRole(ctx, role.ID, false)
 		if err != nil {
 			return err
 		}
@@ -213,35 +208,35 @@ func (s *Store) UpdateAgentRole(ctx context.Context, projectID string, role Agen
 				return err
 			}
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET name=?,prompt=?,permissions=? WHERE project_id=? AND id=?`,
-			role.Name, role.Prompt, encodeManaged(append([]string{}, role.Permissions...)), projectID, role.ID)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET name=?,prompt=?,permissions=? WHERE id=?`,
+			role.Name, role.Prompt, encodeManaged(append([]string{}, role.Permissions...)), role.ID)
 		if err != nil {
 			return wrapUnique(err, fmt.Sprintf("agent role %q", role.Name))
 		}
 		if role.Default && !old.Default {
-			return s.setDefaultAgentRole(ctx, projectID, role.ID)
+			return s.setDefaultAgentRole(ctx, role.ID)
 		}
 		return nil
 	})
 }
 
 // setDefaultAgentRole runs in the same write transaction as the role change.
-func (s *Store) setDefaultAgentRole(ctx context.Context, projectID, roleID string) error {
-	if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET is_default=0 WHERE project_id=? AND is_default=1`, projectID); err != nil {
+func (s *Store) setDefaultAgentRole(ctx context.Context, roleID string) error {
+	if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET is_default=0 WHERE is_default=1`); err != nil {
 		return err
 	}
-	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET is_default=1 WHERE project_id=? AND id=?`, projectID, roleID)
+	_, err := s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET is_default=1 WHERE id=?`, roleID)
 	return err
 }
 
 // DeleteAgentRole removes a non-default role with no live assignments. Agent
 // tombstones retain their original role IDs without blocking deletion.
-func (s *Store) DeleteAgentRole(ctx context.Context, projectID, roleID string) error {
+func (s *Store) DeleteAgentRole(ctx context.Context, roleID string) error {
 	if roleID == "" {
 		return fmt.Errorf("%w: select a role to delete", ErrInvalidAgentRole)
 	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
-		role, err := s.GetAgentRole(ctx, projectID, roleID)
+		role, err := s.GetAgentRole(ctx, roleID)
 		if err != nil {
 			return err
 		}
@@ -251,7 +246,7 @@ func (s *Store) DeleteAgentRole(ctx context.Context, projectID, roleID string) e
 		if len(role.Agents) != 0 {
 			return fmt.Errorf("%w: %q is assigned to %s; remove those agents first", ErrAgentRoleInUse, role.Name, strings.Join(role.Agents, ", "))
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `DELETE FROM agent_roles WHERE project_id=? AND id=?`, projectID, roleID)
+		_, err = s.conn(ctx).ExecContext(ctx, `DELETE FROM agent_roles AND id=?`, roleID)
 		return err
 	})
 }

@@ -1033,7 +1033,7 @@ func (m *managedProvider) actorByName(ctx context.Context, swarm, name string) (
 // recomputation for a.Origin ("" when the origin has no admissible mode).
 func (s *Server) managedActorRoleJSON(ctx context.Context, sw app.Swarm, a store.ManagedActor, p store.ManagedPool, originMode string) map[string]any {
 	out := managedActorJSON(a, p, sw.ID, originMode)
-	out["role"] = s.agentRoleName(ctx, sw.ProjectID, a.Role)
+	out["role"] = s.agentRoleName(ctx, a.Role)
 	return out
 }
 

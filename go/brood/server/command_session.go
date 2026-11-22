@@ -126,11 +126,11 @@ func (m *managedProvider) executeGuestSessionCommand(ctx context.Context, from s
 	if mutate {
 		reserve = func(ctx context.Context) (store.ActorOperation, error) {
 			return m.server.store.AcquireActorSessionOperation(ctx, target, store.NewID(), caller, inv.Name, func(ctx context.Context) error {
-				current, sw, err := m.authorizeCommandActorDurable(ctx, from)
+				current, _, err := m.authorizeCommandActorDurable(ctx, from)
 				if err != nil {
 					return err
 				}
-				if err := m.authorizeGuestPermission(ctx, current, sw.ProjectID, inv.Name); err != nil {
+				if err := m.authorizeGuestPermission(ctx, current, inv.Name); err != nil {
 					return err
 				}
 				return m.masterOwns(ctx, current, target)

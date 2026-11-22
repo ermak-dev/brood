@@ -1,15 +1,18 @@
 package store
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
-// seedAgentRoles вызывается только при вставке нового проекта.
-func (s *Store) seedAgentRoles(ctx context.Context, projectID string) error {
+// seedAgentRoles выполняется в транзакции создания схемы.
+func seedAgentRoles(ctx context.Context, tx *sql.Tx) error {
 	permissions := []string{"agents", "diagnose", "send:agents", "send:operator"}
 	for _, role := range []AgentRole{
 		{Name: "Агент", Prompt: agentRolePrompt, Default: true, Permissions: append(permissions, "tail:self")},
 		{Name: "Мастер", Prompt: masterRolePrompt, Permissions: append(permissions, "tail:swarm", "add", "start", "stop", "restart", "slash")},
 	} {
-		if _, err := s.CreateAgentRole(ctx, projectID, role); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_roles (id,name,prompt,permissions,is_default) VALUES (?,?,?,?,?)`, NewID(), role.Name, role.Prompt, encodeManaged(role.Permissions), role.Default); err != nil {
 			return err
 		}
 	}

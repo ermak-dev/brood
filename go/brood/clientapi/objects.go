@@ -173,9 +173,9 @@ type AgentRole struct {
 	Name string `json:"name"`
 }
 
-func (c *Client) AgentRoles(ctx context.Context, projectID string) ([]AgentRole, error) {
+func (c *Client) AgentRoles(ctx context.Context) ([]AgentRole, error) {
 	var roles []AgentRole
-	err := c.call(ctx, http.MethodGet, "/api/projects/"+url.PathEscape(projectID)+"/roles", nil, &roles)
+	err := c.call(ctx, http.MethodGet, "/api/roles", nil, &roles)
 	return roles, err
 }
 

@@ -100,13 +100,9 @@ func (s *Server) agentRoster(ctx context.Context, swarmID, self string) (command
 		Self   string  `json:"self,omitempty"`
 		Agents []agent `json:"agents"`
 	}{Self: self, Agents: []agent{}}
-	sw, err := s.store.GetSwarm(ctx, swarmID)
-	if err != nil {
-		return command.Result{}, err
-	}
 	for _, a := range agents {
 		if a.Phase != "deleted" {
-			roster.Agents = append(roster.Agents, agent{Name: a.Name, Role: s.agentRoleName(ctx, sw.ProjectID, a.Role), State: a.Phase, Generation: a.Incarnation})
+			roster.Agents = append(roster.Agents, agent{Name: a.Name, Role: s.agentRoleName(ctx, a.Role), State: a.Phase, Generation: a.Incarnation})
 		}
 	}
 	data, err := json.Marshal(roster)

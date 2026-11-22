@@ -241,7 +241,7 @@ func (c *command) add(ctx context.Context, args []string) error {
 	}
 	request := clientapi.AgentRequest{Origin: *origin}
 	if *as != "" {
-		roles, err := op.client.AgentRoles(ctx, swarm.ProjectID)
+		roles, err := op.client.AgentRoles(ctx)
 		if err != nil {
 			return err
 		}
@@ -253,7 +253,7 @@ func (c *command) add(ctx context.Context, args []string) error {
 			}
 		}
 		if request.Role == "" {
-			return fmt.Errorf("choose a project role with --role NAME; available: %s", strings.Join(available, ", "))
+			return fmt.Errorf("choose a role with --role NAME; available: %s", strings.Join(available, ", "))
 		}
 	}
 	if len(names) == 1 {

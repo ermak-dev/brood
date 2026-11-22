@@ -56,7 +56,7 @@ func parseActorCreation(w http.ResponseWriter, r *http.Request, actor *actorInpu
 	var creation actorCreation
 	if raw, exists := fields["roleId"]; exists {
 		if json.Unmarshal(raw, &creation.role) != nil || creation.role == "" {
-			writeDetail(w, 400, "Select a project role; nothing changed")
+			writeDetail(w, 400, "Select an agent role; nothing changed")
 			return actorCreation{}, false
 		}
 		delete(fields, "roleId")

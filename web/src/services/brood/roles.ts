@@ -39,18 +39,17 @@ export interface Role extends RoleInput {
   agents: string[];
 }
 
-const rolesPath = (project: string) => `/api/projects/${encodeURIComponent(project)}/roles`;
-const rolePath = (project: string, id: string) => `${rolesPath(project)}/${encodeURIComponent(id)}`;
+const rolesPath = '/api/roles';
+const rolePath = (id: string) => `${rolesPath}/${encodeURIComponent(id)}`;
 
 export const rolesApi = {
-  list: async (project: string) =>
-    ((await request<Role[]>('GET', rolesPath(project))) ?? []).map((role) => ({
+  list: async () =>
+    ((await request<Role[]>('GET', rolesPath)) ?? []).map((role) => ({
       ...role,
       permissions: role.permissions ?? [],
       agents: role.agents ?? [],
     })),
-  create: (project: string, body: RoleInput) => request<unknown>('POST', rolesPath(project), body),
-  update: (project: string, id: string, body: RoleInput) =>
-    request<unknown>('PUT', rolePath(project, id), body),
-  remove: (project: string, id: string) => request<void>('DELETE', rolePath(project, id)),
+  create: (body: RoleInput) => request<unknown>('POST', rolesPath, body),
+  update: (id: string, body: RoleInput) => request<unknown>('PUT', rolePath(id), body),
+  remove: (id: string) => request<void>('DELETE', rolePath(id)),
 };

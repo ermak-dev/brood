@@ -89,7 +89,7 @@ func (o *managedWorkloadOperation) authorizeParent(ctx context.Context) error {
 	if o.parent == nil {
 		return nil
 	}
-	current, sw, err := o.server.managed.authorizeCommandActorDurable(ctx, *o.parent)
+	current, _, err := o.server.managed.authorizeCommandActorDurable(ctx, *o.parent)
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (o *managedWorkloadOperation) authorizeParent(ctx context.Context) error {
 	case "delete":
 		permission = "rm"
 	}
-	return o.server.managed.authorizeGuestPermission(ctx, current, sw.ProjectID, permission)
+	return o.server.managed.authorizeGuestPermission(ctx, current, permission)
 }
 
 // authorizeIntent проверяет права по тому же snapshot, в котором сохраняется намерение.
@@ -421,9 +421,9 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: name, action: "create", role: role, parent: parent}
 	s.managed.admission.Lock()
 	defer s.managed.admission.Unlock()
-	assigned, err := s.store.GetAgentRole(ctx, sw.ProjectID, role)
+	assigned, err := s.store.GetAgentRole(ctx, role)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "Select a role from this project; no agent was created"}
+		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "Select a role from the list; no agent was created"}
 	}
 	if err != nil {
 		return store.ManagedActor{}, err

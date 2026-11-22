@@ -31,8 +31,6 @@ function tableLink(path: string, filters: Record<string, string>) {
   return query ? `${path}?${query}` : path;
 }
 
-/** The role table narrowed to a project. */
-export const rolesOf = (project: string) => tableLink('/roles', { project });
 /** The swarm table narrowed to a project. */
 export const swarmsOf = (project: string) => tableLink('/swarms', { project });
 /** The agent table narrowed to a swarm (and to its project, when known, so

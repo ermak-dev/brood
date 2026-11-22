@@ -25,7 +25,7 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // schemaVersion: единственная версия схемы. Миграций нет: база другой
 // версии отвергается, оператор её пересоздаёт. 100 — первая схема без
 // Substrate и графа.
-const schemaVersion = 105
+const schemaVersion = 106
 
 //go:embed schema.sql
 var currentSchema string

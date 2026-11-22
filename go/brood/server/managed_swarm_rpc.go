@@ -65,7 +65,7 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 		return refused
 	}
 	if req.Tool == command.GuestToolList {
-		return m.guestToolList(ctx, from, swarm.ProjectID)
+		return m.guestToolList(ctx, from)
 	}
 	inv, err := command.ParseTool(req.Tool, req.Arguments)
 	spec, ok := command.Lookup(req.Tool)

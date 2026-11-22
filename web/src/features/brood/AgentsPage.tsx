@@ -129,18 +129,15 @@ function CreateAgent({
   const profiles = useResource(
     useCallback(() => (swarm ? agentsApi.profiles(swarm) : Promise.resolve([])), [swarm])
   );
-  const projectId = swarms.find(({ id }) => id === swarm)?.project_id ?? '';
-  const roles = useResource(
-    useCallback(() => (projectId ? rolesApi.list(projectId) : Promise.resolve([])), [projectId])
-  );
   const [chosenProfile, setChosenProfile] = useState('');
-  const [chosenRole, setChosenRole] = useState('');
-  const availableRoles = (roles.data ?? []).filter(
-    (role) => administrator || !role.permissions.some((key) => DELEGATED_ROLE_PERMISSIONS.has(key))
+  const roles = useResource(rolesApi.list);
+  const assignableRoles = (roles.data ?? []).filter(
+    (role) => administrator || !role.permissions.some((permission) => DELEGATED_ROLE_PERMISSIONS.has(permission))
   );
-  const defaultRole = availableRoles.find((role) => role.default)?.id ?? '';
-  const roleId = availableRoles.some(({ id }) => id === chosenRole) ? chosenRole : defaultRole;
-  const roleOptions = availableRoles.map(({ id, name }) => ({ value: id, label: name }));
+  const [chosenRole, setChosenRole] = useState('');
+  const defaultRole = assignableRoles.find((role) => role.default)?.id ?? '';
+  const roleId = assignableRoles.some(({ id }) => id === chosenRole) ? chosenRole : defaultRole;
+  const roleOptions = assignableRoles.map(({ id, name }) => ({ value: id, label: name }));
   const [checked, setChecked] = useState(false);
   const profileOptions = (profiles.data ?? []).map((name) => ({ value: name, label: name }));
   const profile = profileOptions.some((option) => option.value === chosenProfile)
@@ -187,7 +184,7 @@ function CreateAgent({
           ? t('brood.agents.choose_profile')
           : undefined;
   const roleProblem =
-    !projectId || roles.loading
+    roles.loading
       ? undefined
       : roles.error ||
         (!roleOptions.length
@@ -243,12 +240,7 @@ function CreateAgent({
             placeholder={t('brood.agents.choose_swarm')}
             disabled={swarms.length === 0}
             ariaInvalid={Boolean(swarmProblem)}
-            onChange={(value) => {
-              if (swarms.find(({ id }) => id === value)?.project_id !== projectId) {
-                setChosenRole('');
-              }
-              setChosenSwarm(value);
-            }}
+            onChange={setChosenSwarm}
           />
         )}
       </Field>
@@ -288,11 +280,7 @@ function CreateAgent({
             value={roleId}
             options={roleOptions}
             placeholder={
-              !projectId
-                ? t('brood.agents.role_needs_swarm')
-                : roles.loading
-                  ? t('brood.table.loading')
-                  : t('brood.agents.choose_role')
+              roles.loading ? t('brood.table.loading') : t('brood.agents.choose_role')
             }
             disabled={roleOptions.length === 0 || Boolean(roles.error)}
             ariaInvalid={Boolean(roleProblem)}

@@ -75,7 +75,7 @@ type ManagedPool struct {
 // Error must be a sanitized public diagnostic; never pass raw provider responses.
 // It may begin with an unsent mark (Unsent); callers show Diagnostic.
 // OperationID is caller-generated and must be fresh for each new intent.
-// Role is the ID of the assigned project role. DelegatorID records human
+// Role is the ID of the assigned global role. DelegatorID records human
 // approval independently of current role permissions. ParentUID records the
 // creating agent. These bindings are immutable.
 // Origin is the canonical HTTPS Git origin to clone, or empty for an empty
@@ -340,7 +340,7 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		if sw.State != "active" {
 			return fmt.Errorf("managed actor requires an active swarm")
 		}
-		role, err := s.getAgentRole(ctx, sw.ProjectID, a.Role, false)
+		role, err := s.getAgentRole(ctx, a.Role, false)
 		if err != nil {
 			return err
 		}

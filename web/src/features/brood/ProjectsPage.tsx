@@ -6,7 +6,6 @@ import {
   IconCheckCircle2,
   IconPencil,
   IconPlus,
-  IconShield,
   IconSidebarProjects,
   IconTrash2,
 } from '@/components/ui/icons';
@@ -21,7 +20,7 @@ import {
 import { useGuide } from './guide';
 import { useAdministrator, useResource } from './hooks';
 import { IconArrowRight, IconBox } from './icons';
-import { createIn, rolesOf, swarmsOf } from './routes';
+import { createIn, swarmsOf } from './routes';
 import { FormSection, FormSheet } from './table/dialogs';
 import { PanelSection, type PanelAction, type PanelSpec } from './table/EntityPanel';
 import { useDialog, useForm } from './table/formState';
@@ -423,13 +422,6 @@ export function ProjectsPage() {
               description: t('brood.projects.open_swarms_hint'),
               tone: 'primary',
               to: swarmsOf(row.id),
-            },
-            {
-              id: 'roles',
-              label: t('brood.roles.title'),
-              icon: IconShield,
-              description: t('brood.roles.open_project_roles'),
-              to: rolesOf(row.id),
             },
             {
               id: 'create_swarm',

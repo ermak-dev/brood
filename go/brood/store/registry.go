@@ -58,6 +58,9 @@ func prepareSchema(ctx context.Context, conn *sql.Conn, want int) error {
 				return fmt.Errorf("initialize database schema (%s): %w", module.id, err)
 			}
 		}
+		if err := seedAgentRoles(ctx, tx); err != nil {
+			return fmt.Errorf("initialize starter agent roles: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version=%d`, want)); err != nil {
 			return fmt.Errorf("initialize schema version: %w", err)
 		}

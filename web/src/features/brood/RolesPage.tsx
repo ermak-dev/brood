@@ -1,10 +1,7 @@
-import { useCallback, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
 import { IconPencil, IconShield, IconTrash2 } from '@/components/ui/icons';
-import { accessApi, type Project } from '@/services/brood/access';
 import {
   DELEGATED_ROLE_PERMISSIONS,
   ROLE_PERMISSIONS,
@@ -12,7 +9,6 @@ import {
   type Role,
 } from '@/services/brood/roles';
 import { useAdministrator, useResource } from './hooks';
-import { panelOf } from './routes';
 import { Field, FormSection, FormSheet } from './table/dialogs';
 import { PanelSection, type PanelSpec } from './table/EntityPanel';
 import { useDialog, useForm } from './table/formState';
@@ -20,40 +16,24 @@ import { TablePage, type Column } from './table/TablePage';
 import { StatusBadge } from './ui';
 import styles from './table/table.module.scss';
 
-type RoleRow = Role & { project: Project };
 const SORT = { column: 'name', desc: false };
 
 function RoleForm({
   open,
   close,
   after,
-  projects,
-  initialProject = '',
   role,
 }: {
   open: boolean;
   close: () => void;
   after: () => unknown;
-  projects: Project[];
-  initialProject?: string;
-  role?: RoleRow;
+  role?: Role;
 }) {
   const { t } = useTranslation();
   const [permissions, setPermissions] = useState(role?.permissions ?? []);
-  const form = useForm(
-    {
-      name: role?.name ?? '',
-      prompt: role?.prompt ?? '',
-      project: role?.project.id ?? initialProject,
-    },
-    (values) => ({
-      name: values.name.trim() ? undefined : t('brood.form.required'),
-      project: projects.some(({ id }) => id === values.project)
-        ? undefined
-        : t('brood.form.required'),
-    })
-  );
-  const projectId = form.values.project;
+  const form = useForm({ name: role?.name ?? '', prompt: role?.prompt ?? '' }, (values) => ({
+    name: values.name.trim() ? undefined : t('brood.form.required'),
+  }));
   const originalPermissions = role?.permissions ?? [];
   const permissionsChanged =
     permissions.length !== originalPermissions.length ||
@@ -71,32 +51,13 @@ function RoleForm({
       dirty={form.dirty || permissionsChanged}
       submit={() => {
         const body = { name: form.values.name.trim(), prompt: form.values.prompt, permissions };
-        return role ? rolesApi.update(projectId, role.id, body) : rolesApi.create(projectId, body);
+        return role ? rolesApi.update(role.id, body) : rolesApi.create(body);
       }}
       success={t(role ? 'brood.roles.saved' : 'brood.roles.created', {
         name: form.values.name.trim(),
       })}
       after={after}
     >
-      {!role && (
-        <Field
-          label={t('brood.swarms.project')}
-          required
-          hint={t('brood.roles.project_hint')}
-          error={form.error('project')}
-        >
-          {(id) => (
-            <Select
-              id={id}
-              value={projectId}
-              options={projects.map((project) => ({ value: project.id, label: project.name }))}
-              placeholder={t('brood.swarms.choose_project')}
-              ariaInvalid={Boolean(form.error('project'))}
-              onChange={(value) => form.set('project', value)}
-            />
-          )}
-        </Field>
-      )}
       <Input
         label={t('brood.name')}
         hint={t('brood.roles.name_hint')}
@@ -151,38 +112,11 @@ function RoleForm({
 export function RolesPage() {
   const { t } = useTranslation();
   const administrator = useAdministrator();
-  const [params] = useSearchParams();
-  const projects = useResource(accessApi.projects);
-  const projectRows = projects.data;
-  const roles = useResource(
-    useCallback(async () => {
-      const lists = await Promise.all(
-        (projectRows ?? []).map(async (project) =>
-          (await rolesApi.list(project.id)).map((role): RoleRow => ({ ...role, project }))
-        )
-      );
-      return lists.flat();
-    }, [projectRows])
-  );
-  const resource = {
-    data: projectRows ? roles.data : null,
-    loading: projects.loading || roles.loading,
-    error: projects.error || roles.error,
-    refresh: async () => {
-      if (projects.data) await roles.refresh();
-      else await projects.refresh();
-    },
-  };
-  const edit = useDialog<RoleRow>();
-  const projectFilter = params.get('project') ?? '';
-  const initialProject = (projectRows ?? []).some(({ id }) => id === projectFilter)
-    ? projectFilter
-    : projectRows?.length === 1
-      ? projectRows[0].id
-      : '';
+  const roles = useResource(rolesApi.list);
+  const edit = useDialog<Role>();
   const permissionLabel = (key: string) =>
     t(`brood.roles.permission.${key}`, { defaultValue: key, nsSeparator: false });
-  const columns: Column<RoleRow>[] = [
+  const columns: Column<Role>[] = [
     {
       id: 'name',
       header: t('brood.name'),
@@ -196,13 +130,6 @@ export function RolesPage() {
       text: (row) => row.name,
       sort: (row) => row.name,
     },
-    {
-      id: 'project',
-      header: t('brood.swarms.project'),
-      cell: (row) => row.project.name,
-      text: (row) => row.project.name,
-      sort: (row) => row.project.name,
-    },
   ];
   if (administrator) {
     columns.push({
@@ -213,20 +140,12 @@ export function RolesPage() {
       sort: (row) => row.agents.length,
     });
   }
-  const panel = (row: RoleRow): PanelSpec => ({
+  const panel = (row: Role): PanelSpec => ({
     icon: IconShield,
     title: row.name,
     badge: row.default ? (
       <StatusBadge tone="neutral">{t('brood.roles.default')}</StatusBadge>
     ) : null,
-    status: (
-      <p className={styles.statusLine}>
-        <span>
-          {t('brood.swarms.project')}
-          <Link to={panelOf('/projects', row.project.id)}>{row.project.name}</Link>
-        </span>
-      </p>
-    ),
     groups: administrator
       ? [
           {
@@ -260,9 +179,8 @@ export function RolesPage() {
                     : undefined,
                 confirm: t('brood.roles.confirm_delete', {
                   name: row.name,
-                  project: row.project.name,
                 }),
-                run: () => rolesApi.remove(row.project.id, row.id),
+                run: () => rolesApi.remove(row.id),
               },
             ],
           },
@@ -313,40 +231,29 @@ export function RolesPage() {
       icon={IconShield}
       description={t('brood.roles.description')}
       create={
-        administrator && projectRows?.length
+        administrator
           ? {
               label: t('brood.roles.create'),
               sheet: (dialog) => (
                 <RoleForm
                   {...dialog}
                   after={roles.refresh}
-                  projects={projectRows}
-                  initialProject={initialProject}
                 />
               ),
             }
           : undefined
       }
-      resource={resource}
-      rowKey={(row) => `${row.project.id}/${row.id}`}
+      resource={roles}
+      rowKey={(row) => row.id}
       rowName={(row) => row.name}
       columns={columns}
-      filters={[
-        {
-          param: 'project',
-          label: t('brood.swarms.project'),
-          all: t('brood.swarms.all_projects'),
-          options: (projectRows ?? []).map(({ id, name }) => ({ value: id, label: name })),
-          value: (row) => row.project.id,
-        },
-      ]}
       panel={panel}
       defaultSort={SORT}
       empty={t('brood.roles.empty')}
     >
       {administrator &&
         edit.mount((dialog, role) => (
-          <RoleForm {...dialog} role={role} projects={[role.project]} after={roles.refresh} />
+          <RoleForm {...dialog} role={role} after={roles.refresh} />
         ))}
     </TablePage>
   );

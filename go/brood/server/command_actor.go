@@ -83,7 +83,7 @@ func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, orig
 // (masterOwns). Callers must retain the returned UID/generation and recheck
 // before side effects.
 func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original store.ManagedActor, name, tool string, mutate bool) (store.ManagedActor, error) {
-	from, sw, err := m.authorizeCommandActor(ctx, original)
+	from, _, err := m.authorizeCommandActor(ctx, original)
 	if err != nil {
 		return store.ManagedActor{}, err
 	}
@@ -94,7 +94,7 @@ func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original s
 			permission = "tail:swarm"
 		}
 	}
-	if err := m.authorizeGuestPermission(ctx, from, sw.ProjectID, permission); err != nil {
+	if err := m.authorizeGuestPermission(ctx, from, permission); err != nil {
 		return store.ManagedActor{}, err
 	}
 	target, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, name)
@@ -168,7 +168,7 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
-	if err = m.authorizeGuestPermission(ctx, from, sw.ProjectID, inv.Name); err != nil {
+	if err = m.authorizeGuestPermission(ctx, from, inv.Name); err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
 	if inv.Name == "add" {

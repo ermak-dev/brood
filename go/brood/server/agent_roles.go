@@ -16,7 +16,7 @@ import (
 )
 
 func (s *Server) mountAgentRoles() {
-	for _, pattern := range []string{"GET /api/projects/{id}/roles", "POST /api/projects/{id}/roles", "PUT /api/projects/{id}/roles/{roleID}", "DELETE /api/projects/{id}/roles/{roleID}"} {
+	for _, pattern := range []string{"GET /api/roles", "POST /api/roles", "PUT /api/roles/{roleID}", "DELETE /api/roles/{roleID}"} {
 		s.mux.HandleFunc(pattern, s.handleAgentRoles)
 	}
 }
@@ -26,32 +26,17 @@ func (s *Server) handleAgentRoles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, projectID := r.Context(), r.PathValue("id")
-	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(projectID))
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	if !allowed {
-		writeDetail(w, 404, "Project not found; nothing changed")
-		return
-	}
+	ctx := r.Context()
 	if r.Method == http.MethodGet {
-		roles, err := s.store.ListAgentRoles(ctx, projectID)
+		roles, err := s.store.ListAgentRoles(ctx)
 		if err != nil {
 			apiError(w, r, err)
 			return
 		}
 		if !user.IsAdmin {
-			visible := roles[:0]
-			for _, role := range roles {
-				if role.RequiresDelegation() {
-					continue
-				}
-				role.Agents, role.Prompt = []string{}, ""
-				visible = append(visible, role)
+			for i := range roles {
+				roles[i].Agents, roles[i].Prompt = []string{}, ""
 			}
-			roles = visible
 		}
 		writeJSON(w, 200, roles)
 		return
@@ -97,10 +82,10 @@ func (s *Server) handleAgentRoles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.managedRoleWrite(ctx, w, r, user.ID, projectID, role)
+	s.managedRoleWrite(ctx, w, r, user.ID, role)
 }
 
-func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r *http.Request, userID, projectID string, role store.AgentRole) {
+func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r *http.Request, userID string, role store.AgentRole) {
 	if s.managed != nil {
 		s.managed.admission.Lock()
 		defer s.managed.admission.Unlock()
@@ -112,20 +97,20 @@ func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r 
 	var err error
 	switch r.Method {
 	case http.MethodPost:
-		role, err = s.store.CreateAgentRole(ctx, projectID, role)
+		role, err = s.store.CreateAgentRole(ctx, role)
 	case http.MethodPut:
 		var current store.AgentRole
-		current, err = s.store.GetAgentRole(ctx, projectID, role.ID)
+		current, err = s.store.GetAgentRole(ctx, role.ID)
 		if err == nil {
 			role.Default = current.Default
-			err = s.store.UpdateAgentRole(ctx, projectID, role)
+			err = s.store.UpdateAgentRole(ctx, role)
 		}
 	case http.MethodDelete:
-		err = s.store.DeleteAgentRole(ctx, projectID, role.ID)
+		err = s.store.DeleteAgentRole(ctx, role.ID)
 	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeDetail(w, 404, "Role or project not found; nothing changed")
+		writeDetail(w, 404, "Role not found; nothing changed")
 	case store.IsUniqueViolation(err):
 		writeDetail(w, 409, "Choose a different role name; nothing changed")
 	case errors.Is(err, store.ErrInvalidAgentRole):
@@ -137,7 +122,7 @@ func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r 
 	case r.Method == http.MethodDelete:
 		w.WriteHeader(204)
 	default:
-		updated, err := s.store.GetAgentRole(ctx, projectID, role.ID)
+		updated, err := s.store.GetAgentRole(ctx, role.ID)
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -150,8 +135,8 @@ func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r 
 	}
 }
 
-func (m *managedProvider) authorizeGuestPermission(ctx context.Context, from store.ManagedActor, projectID, permission string) error {
-	role, err := m.server.store.GetAgentRole(ctx, projectID, from.Role)
+func (m *managedProvider) authorizeGuestPermission(ctx context.Context, from store.ManagedActor, permission string) error {
+	role, err := m.server.store.GetAgentRole(ctx, from.Role)
 	if err != nil || (!slices.Contains(role.Permissions, permission) && !(permission == "tail:self" && slices.Contains(role.Permissions, "tail:swarm"))) {
 		return command.Refuse(app.ErrNotAllowed, "This agent role does not allow "+permission+"; nothing changed. Ask the operator to review the role.")
 	}
@@ -162,16 +147,16 @@ func (m *managedProvider) authorizeGuestPermission(ctx context.Context, from sto
 	return nil
 }
 
-func (s *Server) agentRoleName(ctx context.Context, projectID, roleID string) string {
-	role, err := s.store.GetAgentRole(ctx, projectID, roleID)
+func (s *Server) agentRoleName(ctx context.Context, roleID string) string {
+	role, err := s.store.GetAgentRole(ctx, roleID)
 	if err != nil {
 		return "Unavailable"
 	}
 	return role.Name
 }
 
-func (m *managedProvider) guestToolList(ctx context.Context, from store.ManagedActor, projectID string) relay.SwarmResponse {
-	role, err := m.server.store.GetAgentRole(ctx, projectID, from.Role)
+func (m *managedProvider) guestToolList(ctx context.Context, from store.ManagedActor) relay.SwarmResponse {
+	role, err := m.server.store.GetAgentRole(ctx, from.Role)
 	if err != nil {
 		return relay.SwarmResponse{Text: "Agent role unavailable; retry"}
 	}

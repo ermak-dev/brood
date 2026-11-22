@@ -28,7 +28,7 @@ func (s *Server) serveGuestRolePrompt(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	role, err := s.store.GetAgentRole(ctx, g.swarm.ProjectID, g.actor.Role)
+	role, err := s.store.GetAgentRole(ctx, g.actor.Role)
 	if err != nil {
 		writeDetail(w, http.StatusServiceUnavailable, unavailable)
 		return
