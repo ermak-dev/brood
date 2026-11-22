@@ -38,7 +38,6 @@ type Options struct {
 type Server struct {
 	store   *store.Store
 	managed *managedProvider
-	git     *gitGateway
 	catalog *Catalog
 	gateway *Gateway
 	app     *app.Service
@@ -105,7 +104,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	srv := &Server{store: st, imageSnapshots: make(chan struct{}, 4), catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, git: newGitGateway(cfg.gitRemotes), artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
+	srv := &Server{store: st, imageSnapshots: make(chan struct{}, 4), catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, artifactsDir: cfg.artifactsDir, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
 	srv.telegram.channel = srv.telegramChannel
@@ -144,7 +143,6 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountProxmoxConnections()
 	srv.mountProjectSecrets()
 	srv.mountAgentRoles()
-	srv.mountGitCredentials()
 	srv.mountGitRepositories()
 	srv.mountProjectOwnership()
 	srv.mountProjectImages()
@@ -217,10 +215,6 @@ func (s *Server) Handler() http.Handler {
 		}
 		if publicManagedLLMPath(r.URL.Path) {
 			s.managedLLM.ServeHTTP(w, r)
-			return
-		}
-		if publicManagedGitPath(r.URL.Path) {
-			s.serveManagedGit(w, r)
 			return
 		}
 		if publicGuestPath(r.URL.Path) {

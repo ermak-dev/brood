@@ -2569,6 +2569,9 @@
     },
     "swarms": {
       "title": "스웜",
+      "ssh_public_key": "SSH 공개 키",
+      "ssh_public_key_hint": "Git 호스트의 저장소 설정에서 이 공개 키를 배포 키로 추가하세요. 접근 권한을 취소하려면 Git 호스트에서 배포 키를 삭제하세요.",
+      "no_ssh_public_key": "이 스웜에는 SSH 공개 키가 없습니다.",
       "description": "스웜은 한 프로젝트에서 일하는 에이전트 그룹이며, 소유자와 관리자만 볼 수 있습니다.",
       "create": "스웜 생성",
       "create_hint": "스웜은 만든 사람의 것입니다. 본인과 관리자가 스웜을 보고 그 에이전트를 관리합니다.",
@@ -2632,7 +2635,7 @@
       "choose_role": "역할 선택",
       "no_roles": "사용 가능한 역할이 없습니다. 관리자에게 문의하세요.",
       "origin": "Origin",
-      "origin_hint": "작업 공간에 복제할 Git 저장소의 HTTPS 주소입니다. 비워 두면 프로젝트 저장소를 사용합니다.",
+      "origin_hint": "작업 공간에 복제할 Git 저장소의 SSH / HTTPS 주소입니다. 비워 두면 프로젝트 저장소를 사용합니다.",
       "origin_invalid": "주소에는 공백이 없어야 합니다",
       "no_origin": "없음: 작업 공간이 빈 상태로 시작됩니다",
       "phases": {

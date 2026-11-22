@@ -2575,6 +2575,9 @@
     },
     "swarms": {
       "title": "Swarm",
+      "ssh_public_key": "Khóa công khai SSH",
+      "ssh_public_key_hint": "Thêm khóa công khai này làm khóa triển khai trong phần cài đặt kho lưu trữ trên máy chủ Git. Để thu hồi quyền truy cập, hãy xóa khóa triển khai trên máy chủ Git.",
+      "no_ssh_public_key": "Swarm này không có khóa công khai SSH.",
       "description": "Swarm là một nhóm agent làm việc trong một dự án; chỉ chủ sở hữu và quản trị viên nhìn thấy nó.",
       "create": "Tạo swarm",
       "create_hint": "Swarm thuộc về bạn: bạn và quản trị viên nhìn thấy nó và quản lý các agent của nó.",
@@ -2638,7 +2641,7 @@
       "choose_role": "Chọn vai trò",
       "no_roles": "Không có vai trò khả dụng. Hãy liên hệ quản trị viên.",
       "origin": "Origin",
-      "origin_hint": "Địa chỉ HTTPS của kho Git sẽ được clone vào workspace. Để trống để dùng kho mã của dự án.",
+      "origin_hint": "Địa chỉ SSH / HTTPS của kho Git sẽ được clone vào workspace. Để trống để dùng kho mã của dự án.",
       "origin_invalid": "Địa chỉ không chứa khoảng trắng",
       "no_origin": "Không có: workspace bắt đầu trống",
       "phases": {

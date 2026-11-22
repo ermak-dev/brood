@@ -29,7 +29,7 @@ func TestClonePreservesWorkAfterInterruptedAttempt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(project, "user-work"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	spec := cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Mode: "gateway", Gateway: workspaceGatewayURL, Timeout: time.Second, Git: func(context.Context, []string, ...string) error { t.Fatal("clone ran over user work"); return nil }}
+	spec := cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Timeout: time.Second, Git: func(context.Context, []string, ...string) error { t.Fatal("clone ran over user work"); return nil }}
 	if err := cloneWorkspace(context.Background(), spec); err == nil || !strings.Contains(err.Error(), "workspace preserved") {
 		t.Fatalf("interrupted live workspace did not require explicit recovery: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestClonePreservesWorkAfterInterruptedAttempt(t *testing.T) {
 func TestCloneFailurePreservesConcurrentWork(t *testing.T) {
 	home, project := privateTemp(t), privateTemp(t)
 	var stage string
-	spec := cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Mode: "gateway", Gateway: workspaceGatewayURL, Timeout: time.Second, Git: func(_ context.Context, _ []string, args ...string) error {
+	spec := cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Timeout: time.Second, Git: func(_ context.Context, _ []string, args ...string) error {
 		stage = cloneTestDestination(t, args, project, home)
 		if err := os.MkdirAll(filepath.Join(stage, ".git", "objects"), 0700); err != nil {
 			t.Fatal(err)

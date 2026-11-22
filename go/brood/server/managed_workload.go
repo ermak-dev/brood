@@ -235,7 +235,7 @@ func (o *managedWorkloadOperation) Apply() error {
 		if err != nil {
 			return err
 		}
-		a, err = o.server.reserveManagedActorOrigin(o.context, store.ManagedActor{Template: template, Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
+		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{Template: template, Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
 		if err != nil {
 			return err
 		}
@@ -407,7 +407,7 @@ func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, user
 		managedAPIError(w, r, err)
 		return
 	}
-	writeJSON(w, 201, s.managedActorRoleJSON(r.Context(), sw, a, pool, s.settledOriginMode(r.Context(), sw.ProjectID, a.Origin)))
+	writeJSON(w, 201, s.managedActorRoleJSON(r.Context(), sw, a, pool))
 }
 
 // createManaged is shared by human creation and UID-bound delegated creation.
@@ -442,7 +442,7 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 				return store.ManagedActor{}, app.ErrExists
 			}
 			if origin != "" {
-				canonical, err := gitorigin.Canonical(origin)
+				canonical, err := gitorigin.FromRemote(origin)
 				if err != nil {
 					return store.ManagedActor{}, &originRefusal{detail: err.Error()}
 				}
@@ -472,12 +472,7 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if r.Method == http.MethodGet {
-		mode, err := s.originMode(r.Context(), sw.ProjectID, a.Origin)
-		if err != nil {
-			managedAPIError(w, r, err)
-			return
-		}
-		writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, a, p, mode))
+		writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, a, p))
 		return
 	}
 	if r.Method == http.MethodPut {
@@ -508,5 +503,5 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		w.WriteHeader(202)
 		return
 	}
-	writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, op.saved, p, s.settledOriginMode(r.Context(), sw.ProjectID, op.saved.Origin)))
+	writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, op.saved, p))
 }

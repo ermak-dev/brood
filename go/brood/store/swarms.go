@@ -4,8 +4,13 @@ package store
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
+	"encoding/pem"
 	"fmt"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // Swarm — строка таблицы swarms. State: active или deleted (tombstone).
@@ -35,21 +40,76 @@ func scanSwarm(row interface{ Scan(...any) error }) (Swarm, error) {
 	return w, nil
 }
 
-// CreateSwarm вставляет активный рой. Отсутствующие проект или владелец —
-// нарушение внешнего ключа, занятое имя живого роя в проекте — нарушение
-// уникальности.
+// CreateSwarm inserts a swarm and its new Ed25519 SSH keypair atomically.
 func (s *Store) CreateSwarm(ctx context.Context, w Swarm) error {
 	if w.State == "" {
 		w.State = "active"
 	}
-	_, err := s.conn(ctx).ExecContext(ctx, `
-		INSERT INTO swarms (id, project_id, owner_id, name, state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.ProjectID, w.OwnerID, w.Name, w.State, nowRFC3339(), nowRFC3339())
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return wrapUnique(err, fmt.Sprintf("swarm %q", w.Name))
+		return fmt.Errorf("generate swarm SSH key: %w", err)
 	}
-	return nil
+	sshPublic, err := ssh.NewPublicKey(public)
+	if err != nil {
+		return fmt.Errorf("encode swarm SSH public key: %w", err)
+	}
+	sshPrivate, err := ssh.MarshalPrivateKey(private, "")
+	if err != nil {
+		return fmt.Errorf("encode swarm SSH private key: %w", err)
+	}
+	publicKey := string(ssh.MarshalAuthorizedKey(sshPublic))
+	privateKey := string(pem.EncodeToMemory(sshPrivate))
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		db := s.conn(ctx)
+		// WithTx присоединяется к внешней транзакции. Точка сохранения
+		// откатывает обе записи, даже если вызывающий обработает ошибку.
+		if _, err := db.ExecContext(ctx, `SAVEPOINT swarm_create`); err != nil {
+			return err
+		}
+		released := false
+		defer func() {
+			if !released {
+				cleanup := context.WithoutCancel(ctx)
+				_, _ = db.ExecContext(cleanup, `ROLLBACK TO swarm_create`)
+				_, _ = db.ExecContext(cleanup, `RELEASE swarm_create`)
+			}
+		}()
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO swarms (id, project_id, owner_id, name, state, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			w.ID, w.ProjectID, w.OwnerID, w.Name, w.State, nowRFC3339(), nowRFC3339())
+		if err != nil {
+			return wrapUnique(err, fmt.Sprintf("swarm %q", w.Name))
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO swarm_ssh_keys (swarm_id, public_key, private_key) VALUES (?, ?, ?)`, w.ID, publicKey, privateKey); err != nil {
+			return opaqueStorageError(err, "could not store swarm SSH keypair; no swarm was created")
+		}
+		_, err = db.ExecContext(ctx, `RELEASE swarm_create`)
+		released = err == nil
+		return err
+	})
+}
+
+// GetSwarmSSHPublicKey returns the swarm's OpenSSH authorized key line.
+func (s *Store) GetSwarmSSHPublicKey(ctx context.Context, swarmID string) (string, error) {
+	return s.getSwarmSSHKey(ctx, swarmID, `SELECT public_key FROM swarm_ssh_keys WHERE swarm_id = ?`)
+}
+
+// GetSwarmSSHPrivateKey returns the swarm's OpenSSH private key in PEM format.
+func (s *Store) GetSwarmSSHPrivateKey(ctx context.Context, swarmID string) (string, error) {
+	return s.getSwarmSSHKey(ctx, swarmID, `SELECT private_key FROM swarm_ssh_keys WHERE swarm_id = ?`)
+}
+
+func (s *Store) getSwarmSSHKey(ctx context.Context, swarmID, query string) (string, error) {
+	var key string
+	err := s.conn(ctx).QueryRowContext(ctx, query, swarmID).Scan(&key)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("%w: swarm SSH key", ErrNotFound)
+	}
+	if err != nil {
+		return "", opaqueStorageError(err, "could not read swarm SSH key")
+	}
+	return key, nil
 }
 
 // GetSwarm возвращает рой по ID.

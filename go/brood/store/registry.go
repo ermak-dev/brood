@@ -26,7 +26,6 @@ var schemaModules = []schemaModule{
 	{id: "coordination", create: func() string { return coordinationSchema }, verify: verifyCoordinationSchema},
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
-	{id: "git-credential", create: func() string { return projectGitCredentialSchema }, verify: verifyProjectGitCredentialSchema},
 	{id: "telegram", create: telegramFullSchema, verify: verifyTelegramSchema},
 	{id: "project-ownership", create: func() string { return projectOwnershipSchema }, verify: verifyProjectOwnershipSchema},
 	{id: "project-images", create: func() string { return projectImageSchema }, verify: verifyProjectImageSchema},

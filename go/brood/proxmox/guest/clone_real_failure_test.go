@@ -31,7 +31,7 @@ func TestClonePublishRefusesConcurrentWorkspaceWork(t *testing.T) {
 				}
 				return os.WriteFile(filepath.Join(project, name), []byte("user\n"), 0600)
 			}
-			err := cloneWorkspace(context.Background(), cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Mode: "gateway", Gateway: workspaceGatewayURL, Timeout: time.Second, Git: git})
+			err := cloneWorkspace(context.Background(), cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Timeout: time.Second, Git: git})
 			if err == nil {
 				t.Fatal("concurrent workspace change not refused")
 			}
@@ -49,7 +49,7 @@ func TestClonePublishRefusesConcurrentWorkspaceWork(t *testing.T) {
 func TestRealGitFailurePreservesConcurrentWorkspaceWork(t *testing.T) {
 	project, home := privateTemp(t), privateTemp(t)
 	wrote := make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		err := os.WriteFile(filepath.Join(project, "user-work"), []byte("keep\n"), 0600)
 		select {
 		case wrote <- err:
@@ -58,7 +58,11 @@ func TestRealGitFailurePreservesConcurrentWorkspaceWork(t *testing.T) {
 		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	err := cloneWorkspace(context.Background(), cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Mode: "gateway", Gateway: server.URL + "/origin.git", Timeout: 10 * time.Second})
+	git := func(ctx context.Context, env []string, args ...string) error {
+		args[len(args)-2] = server.URL + "/origin.git"
+		return runCloneGit(ctx, append(env, "GIT_SSL_NO_VERIFY=1"), args...)
+	}
+	err := cloneWorkspace(context.Background(), cloneSpec{Project: project, Home: home, Origin: cloneTestOrigin, Timeout: 10 * time.Second, Git: git})
 	if err == nil {
 		t.Fatal("upstream failure not reported")
 	}

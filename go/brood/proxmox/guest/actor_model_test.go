@@ -61,13 +61,13 @@ func TestWorkspaceOriginFetchModels(t *testing.T) {
 	cfg := server.config()
 	both := actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}
 	for body, want := range map[string]WorkspaceOrigin{
-		`{"origin":"` + cloneTestOrigin + `","mode":"gateway","models":{"model":"glm-5.3","smallModel":"glm-5.3-flash"}}`: {Origin: cloneTestOrigin, Mode: "gateway", Models: both},
-		`{"origin":"","mode":"","models":{"model":"glm-5.3","smallModel":"glm-5.3-flash"}}`:                               {Models: both},
-		`{"models":{"smallModel":"glm-5.3-flash"},"origin":"","mode":""}`:                                                 {Models: actormodel.Models{Small: "glm-5.3-flash"}},
-		`{"origin":"","mode":"","models":{"model":"glm-5.3"}}`:                                                            {Models: actormodel.Models{Model: "glm-5.3"}},
+		`{"origin":"` + cloneTestOrigin + `","sshPrivateKey":"","models":{"model":"glm-5.3","smallModel":"glm-5.3-flash"}}`: {Origin: cloneTestOrigin, Models: both},
+		`{"origin":"","sshPrivateKey":"","models":{"model":"glm-5.3","smallModel":"glm-5.3-flash"}}`:                        {Models: both},
+		`{"models":{"smallModel":"glm-5.3-flash"},"origin":"","sshPrivateKey":""}`:                                          {Models: actormodel.Models{Small: "glm-5.3-flash"}},
+		`{"origin":"","sshPrivateKey":"","models":{"model":"glm-5.3"}}`:                                                     {Models: actormodel.Models{Model: "glm-5.3"}},
 	} {
 		server.serve(body, http.StatusOK)
-		if got, err := FetchWorkspaceOrigin(context.Background(), cfg); err != nil || got != want {
+		if got, err := fetchWorkspace(context.Background(), cfg); err != nil || got.WorkspaceOrigin != want {
 			t.Fatalf("fetch %s: %+v %v", body, got, err)
 		}
 	}
@@ -86,15 +86,15 @@ func TestWorkspaceOriginFetchModels(t *testing.T) {
 		"duplicate name": `{"model":"glm-5.3","model":"private-model"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			server.serve(`{"origin":"","mode":"","models":`+models+`}`, http.StatusOK)
-			got, err := FetchWorkspaceOrigin(context.Background(), cfg)
-			if err == nil || got != (WorkspaceOrigin{}) || strings.Contains(err.Error(), "private") {
+			server.serve(`{"origin":"","sshPrivateKey":"","models":`+models+`}`, http.StatusOK)
+			got, err := fetchWorkspace(context.Background(), cfg)
+			if err == nil || got != (workspacePayload{}) || strings.Contains(err.Error(), "private") {
 				t.Fatalf("not safely rejected: %+v %v", got, err)
 			}
 		})
 	}
-	server.serve(`{"origin":"","mode":"","models":{"model":"glm-5.3"},"models":{"model":"glm-5.3"}}`, http.StatusOK)
-	if got, err := FetchWorkspaceOrigin(context.Background(), cfg); err == nil {
+	server.serve(`{"origin":"","sshPrivateKey":"","models":{"model":"glm-5.3"},"models":{"model":"glm-5.3"}}`, http.StatusOK)
+	if got, err := fetchWorkspace(context.Background(), cfg); err == nil {
 		t.Fatalf("models twice accepted: %+v", got)
 	}
 }
@@ -103,7 +103,7 @@ func TestWorkspaceOriginProjectionModels(t *testing.T) {
 	dir := privateTemp(t)
 	for _, want := range []WorkspaceOrigin{
 		{Models: actormodel.Models{Model: "glm-5.3", Small: "glm-5.3-flash"}},
-		{Origin: cloneTestOrigin, Mode: "gateway", GitIdentity: cloneTestIdentity, Models: actormodel.Models{Small: "glm-5.3-flash"}},
+		{Origin: cloneTestOrigin, GitIdentity: cloneTestIdentity, Models: actormodel.Models{Small: "glm-5.3-flash"}},
 	} {
 		if err := publishWorkspaceOrigin(dir, want, os.Geteuid(), os.Getegid()); err != nil {
 			t.Fatal(err)
@@ -124,7 +124,7 @@ func TestProjectAppPassesInstallationModels(t *testing.T) {
 	if err := publishProjectSecrets(run, projectsecret.Bundle{Vars: map[string]string{"SERVICE_KEY": "synthetic-env"}}, os.Geteuid(), os.Getegid()); err != nil {
 		t.Fatal(err)
 	}
-	layout := appLayout{Project: project, Home: home, Run: run, RunUID: os.Geteuid(), RunGID: os.Getegid(), Gateway: deadGateway(t), CloneTimeout: time.Second}
+	layout := appLayout{Project: project, Home: home, Run: run, RunUID: os.Geteuid(), RunGID: os.Getegid(), CloneTimeout: time.Second}
 	prepare := func(origin WorkspaceOrigin) []string {
 		t.Helper()
 		if err := publishWorkspaceOrigin(run, origin, os.Geteuid(), os.Getegid()); err != nil {

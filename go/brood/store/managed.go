@@ -78,7 +78,7 @@ type ManagedPool struct {
 // Role is the ID of the assigned global role. DelegatorID records human
 // approval independently of current role permissions. ParentUID records the
 // creating agent. These bindings are immutable.
-// Origin is the canonical HTTPS Git origin to clone, or empty for an empty
+// Origin is the canonical Git origin to clone, or empty for an empty
 // workspace. It is immutable; its access mode is recomputed from current policy.
 // Stage is create, start, stop, delete, or done. It fences task callbacks
 // independently of observed Phase. Migrated schema-3 rows start at reconcile:
@@ -322,7 +322,7 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		return ManagedActor{}, fmt.Errorf("managed actor identity, ownership, operation and positive resources are required")
 	}
 	if !storedOrigin(a.Origin) {
-		return ManagedActor{}, fmt.Errorf("managed actor origin must be empty or a canonical HTTPS origin")
+		return ManagedActor{}, fmt.Errorf("managed actor origin must be empty or a canonical HTTPS or SSH origin")
 	}
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {

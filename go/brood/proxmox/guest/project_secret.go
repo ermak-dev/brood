@@ -222,7 +222,7 @@ func RunProjectApp(warn io.Writer) error {
 		return secretFailure()
 	}
 	unix.Umask(0077)
-	layout := appLayout{Project: "/workspace/project", Home: "/workspace/home", Run: projectSecretDirectory, RunUID: 0, RunGID: 1000, Gateway: workspaceGatewayURL, CloneTimeout: 30 * time.Minute}
+	layout := appLayout{Project: "/workspace/project", Home: "/workspace/home", Run: projectSecretDirectory, RunUID: 0, RunGID: 1000, CloneTimeout: 30 * time.Minute}
 	env, err := prepareProjectApp(layout, warn)
 	if err != nil {
 		return err
@@ -246,7 +246,6 @@ func RunProjectApp(warn io.Writer) error {
 type appLayout struct {
 	Project, Home, Run string
 	RunUID, RunGID     int
-	Gateway            string
 	CloneTimeout       time.Duration
 }
 
@@ -257,7 +256,7 @@ func prepareProjectApp(l appLayout, warn io.Writer) ([]string, error) {
 	origin, err := readWorkspaceOrigin(l.Run, l.RunUID, l.RunGID)
 	if err != nil {
 		fmt.Fprintln(warn, "brood: workspace origin is unavailable; the first-start clone is skipped and Claude starts without installation models")
-	} else if err = cloneWorkspace(context.Background(), cloneSpec{Project: l.Project, Home: l.Home, Origin: origin.Origin, Mode: origin.Mode, Identity: origin.GitIdentity, Gateway: l.Gateway, Timeout: l.CloneTimeout}); err != nil {
+	} else if err = cloneWorkspace(context.Background(), cloneSpec{Project: l.Project, Home: l.Home, Origin: origin.Origin, Identity: origin.GitIdentity, Timeout: l.CloneTimeout}); err != nil {
 		fmt.Fprintf(warn, "brood: %s; Claude starts now and the clone is retried on the next start while the workspace is empty\n", err)
 	}
 	bundle, err := readProjectSecrets(l.Run, l.RunUID, l.RunGID)

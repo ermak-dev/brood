@@ -74,7 +74,12 @@ func (s *Server) handleSwarmList(w http.ResponseWriter, r *http.Request) {
 			}
 			owners[sw.OwnerID] = username
 		}
-		out = append(out, swarmListJSON{swarmJSON: toSwarmJSON(sw, username), ProjectName: projects[sw.ProjectID], AgentCount: summaries[sw.ID].ManagedActorCount})
+		row, err := s.swarmWithPublicKey(r.Context(), sw, username)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		out = append(out, swarmListJSON{swarmJSON: row, ProjectName: projects[sw.ProjectID], AgentCount: summaries[sw.ID].ManagedActorCount})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

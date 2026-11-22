@@ -32,7 +32,7 @@
 | `brood/build` | чтение объявления проекта из плейбука `brood.yaml` ([BUILD.md](BUILD.md)) |
 | `brood/projectsecret` | правила секретов проекта: имена, пути, размеры ([SECRETS.md](SECRETS.md)) |
 | `brood/gitcredential` | правила серверных учётных данных Git проекта |
-| `brood/gitorigin` | приведение HTTPS-адреса репозитория к каноническому виду |
+| `brood/gitorigin` | приведение SSH- и HTTPS-адреса репозитория к каноническому виду |
 | `brood/gitidentity` | имя и адрес автора коммитов агента |
 | `brood/actormodel` | проверка имён моделей Claude Code |
 | `brood/telegram` | клиент Telegram Bot API ([TELEGRAM.md](TELEGRAM.md)) |
@@ -163,10 +163,8 @@ CGO выключен везде. Версию программы задаёт `-
 | `PUT /api/projects/{id}/owner` | админ | назначить ответственного |
 | `GET /api/projects/{id}/repository` | участник | репозиторий проекта |
 | `PUT /api/projects/{id}/repository` | админ | задать репозиторий |
-| `GET /api/git-remotes` | админ | репозитории из `BROOD_GIT_REMOTES`, без учётных данных |
 | `GET /api/projects/{id}/secrets` | админ | имена секретов, без значений |
 | `PUT`, `DELETE /api/projects/{id}/secrets/vars`, `.../secrets/files` | админ | записать, удалить переменные и файлы; значения не читаются |
-| `GET`, `PUT`, `DELETE /api/projects/{id}/secrets/git` | админ | серверные учётные данные Git; токен не возвращается |
 | `GET /api/projects/{id}/images` | участник | образы проекта |
 | `POST /api/projects/{id}/images` | участник | собрать образ из снимка USTAR |
 | `GET`, `DELETE /api/projects/{id}/images/{image}` | участник | образ с журналом сборки; удалить образ |
@@ -175,7 +173,7 @@ CGO выключен везде. Версию программы задаёт `-
 
 | Маршрут | Кто | Что делает |
 | --- | --- | --- |
-| `GET /api/swarms` | вошедший | свои рои; администратору — все |
+| `GET /api/swarms` | вошедший | свои рои с публичными SSH-ключами; администратору — все |
 | `GET /api/agents` | вошедший | агенты этих роёв одним списком |
 | `GET /api/projects/{id}/swarms` | участник | рои проекта, видимые вызывающему |
 | `POST /api/projects/{id}/swarms` | участник | создать рой; создатель становится владельцем |

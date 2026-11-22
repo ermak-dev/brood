@@ -1,4 +1,4 @@
-// Package gitorigin canonicalizes and classifies the HTTPS Git origin of a
+// Package gitorigin canonicalizes the direct HTTPS or SSH Git origin of a
 // managed actor. It is pure: no network, DNS, configuration or credentials.
 // Errors describe the violated rule and never echo the submitted value, which
 // may contain userinfo.
@@ -6,27 +6,20 @@ package gitorigin
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 )
 
 // MaxLength bounds the submitted and canonical origin in bytes.
 const MaxLength = 1024
 
-// Access modes of a canonical origin.
-const (
-	// ModeGateway: the server mediates Git with an installation credential.
-	ModeGateway = "gateway"
-	// ModeDirect: the guest clones through its public egress proxy.
-	ModeDirect = "direct"
-)
-
 var (
 	errLength    = errors.New("origin must be at most 1024 bytes")
 	errText      = errors.New("origin must contain only visible ASCII characters")
-	errScheme    = errors.New("origin must be an https:// URL")
+	errScheme    = errors.New("origin must be an https:// or ssh://git@ repository URL")
 	errUserinfo  = errors.New("origin must not contain credentials")
 	errQuery     = errors.New("origin must not contain a query, fragment or percent-encoding")
-	errPort      = errors.New("origin must not specify a port other than 443")
+	errPort      = errors.New("origin must specify a valid port (HTTPS uses 443)")
 	errHost      = errors.New("origin host must be a DNS name, not an IP address")
 	errPath      = errors.New("origin requires a repository path")
 	errSegment   = errors.New("origin path segments must be nonempty names of letters, digits, '.', '_', '~' or '-' and not '.' or '..'")
@@ -44,10 +37,11 @@ func Canonical(raw string) (string, error) {
 			return "", errText
 		}
 	}
-	if len(raw) < len("https://") || !strings.EqualFold(raw[:len("https://")], "https://") {
+	scheme, rest, ok := strings.Cut(raw, "://")
+	scheme = strings.ToLower(scheme)
+	if !ok || (scheme != "ssh" && scheme != "https") {
 		return "", errScheme
 	}
-	rest := raw[len("https://"):]
 	if strings.ContainsAny(rest, "?#%") {
 		return "", errQuery
 	}
@@ -55,12 +49,26 @@ func Canonical(raw string) (string, error) {
 	if !found {
 		return "", errPath
 	}
+	if scheme == "ssh" {
+		var ok bool
+		authority, ok = strings.CutPrefix(authority, "git@")
+		if !ok {
+			return "", errors.New("SSH origin must use the git user")
+		}
+	}
 	if strings.Contains(authority, "@") {
 		return "", errUserinfo
 	}
 	host, port, hasPort := strings.Cut(authority, ":")
-	if hasPort && port != "443" {
-		return "", errPort
+	suffix := ""
+	if hasPort {
+		number, err := strconv.Atoi(port)
+		if err != nil || strconv.Itoa(number) != port || number < 1 || number > 65535 || (scheme == "https" && number != 443) {
+			return "", errPort
+		}
+		if scheme == "ssh" && number != 22 {
+			suffix = ":" + port
+		}
 	}
 	host = strings.ToLower(host)
 	if !dnsName(host) {
@@ -75,71 +83,29 @@ func Canonical(raw string) (string, error) {
 			return "", errSegment
 		}
 	}
-	canonical := "https://" + host + "/" + path
+	if scheme == "ssh" {
+		host = "git@" + host
+	}
+	canonical := scheme + "://" + host + suffix + "/" + path
 	if len(canonical) > MaxLength {
 		return "", errMalformed
 	}
 	return canonical, nil
 }
 
-// FromRemote converts a credential-free checkout remote to a runtime HTTPS
-// origin. SSH conversion supports Git's conventional user and default port only;
-// a custom SSH port cannot be inferred as an HTTPS endpoint.
+// FromRemote accepts a URL or the conventional git@host:path syntax, preserving SSH.
 func FromRemote(raw string) (string, error) {
 	if len(raw) > MaxLength {
 		return "", errLength
 	}
-	for i := 0; i < len(raw); i++ {
-		if raw[i] < 0x21 || raw[i] > 0x7e {
-			return "", errText
-		}
-	}
-	if strings.HasPrefix(raw, "git@") {
-		host, path, found := strings.Cut(strings.TrimPrefix(raw, "git@"), ":")
-		if !found {
+	if hostPath, ok := strings.CutPrefix(raw, "git@"); ok {
+		host, path, found := strings.Cut(hostPath, ":")
+		if !found || strings.Contains(host, "/") {
 			return "", errMalformed
 		}
-		return Canonical("https://" + host + "/" + path)
-	}
-	if strings.HasPrefix(raw, "ssh://git@") {
-		authority, path, found := strings.Cut(strings.TrimPrefix(raw, "ssh://git@"), "/")
-		if !found {
-			return "", errPath
-		}
-		host, port, hasPort := strings.Cut(authority, ":")
-		if hasPort && port != "22" {
-			return "", errors.New("origin SSH port must be 22")
-		}
-		return Canonical("https://" + host + "/" + path)
+		return Canonical("ssh://git@" + host + "/" + strings.TrimPrefix(path, "/"))
 	}
 	return Canonical(raw)
-}
-
-// Host returns the hostname of a canonical origin, or "" for any other input.
-func Host(origin string) string {
-	canonical, err := Canonical(origin)
-	if err != nil || canonical != origin {
-		return ""
-	}
-	host, _, _ := strings.Cut(strings.TrimPrefix(origin, "https://"), "/")
-	return host
-}
-
-// Mode classifies a canonical origin against current policy. Gateway requires
-// exact equality with the project repository and an installation remote for
-// it; direct requires a public host. Any other origin has no mode ("").
-func Mode(origin, repository string, configured, public func(string) bool) string {
-	host := Host(origin)
-	if host == "" {
-		return ""
-	}
-	if origin == repository && configured(origin) {
-		return ModeGateway
-	}
-	if public(host) {
-		return ModeDirect
-	}
-	return ""
 }
 
 // dnsName accepts lowercase LDH labels of 1..63 bytes, at most 253 bytes in

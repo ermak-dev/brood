@@ -104,7 +104,7 @@ func topics() []topic {
 				{"NAME", "agent name (default: the next free agent-N)"},
 				{"--pool NAME", "pool to place the agent in (default: the only pool)"},
 				{"--role NAME", "master may create and direct other agents (default: agent)"},
-				{"--origin URL", "HTTPS Git repository to clone (default: the project repository)"},
+				{"--origin URL", "SSH or HTTPS Git repository to clone (default: the project repository)"},
 				{"--no-wait", "return at once instead of waiting for the agent to run"},
 				argSwarm,
 			},

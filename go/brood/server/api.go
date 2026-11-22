@@ -49,6 +49,7 @@ type swarmJSON struct {
 	ProjectID     string `json:"project_id"`
 	OwnerID       string `json:"owner_id"`
 	OwnerUsername string `json:"owner_username"`
+	SSHPublicKey  string `json:"sshPublicKey"`
 	Role          string `json:"role"`
 	Name          string `json:"name"`
 	State         string `json:"state"`
@@ -64,6 +65,17 @@ func toSwarmJSON(sw app.Swarm, ownerUsername string) swarmJSON {
 		CreatedAt: sw.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: sw.UpdatedAt.UTC().Format(time.RFC3339),
 	}
+}
+
+// swarmWithPublicKey дополняет ответ для роя, к которому уже проверен доступ.
+func (s *Server) swarmWithPublicKey(ctx context.Context, sw app.Swarm, ownerUsername string) (swarmJSON, error) {
+	key, err := s.store.GetSwarmSSHPublicKey(ctx, sw.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return swarmJSON{}, err
+	}
+	out := toSwarmJSON(sw, ownerUsername)
+	out.SSHPublicKey = key
+	return out, nil
 }
 
 // writeJSON пишет успешный ответ JSON.
@@ -406,8 +418,12 @@ func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []ap
 			username = owner.Username
 			owners[sw.OwnerID] = username
 		}
-		item := swarmRowJSON{swarmJSON: toSwarmJSON(sw, username), ManagedActorCount: summary.ManagedActorCount}
-		out = append(out, item)
+		row, err := s.swarmWithPublicKey(r.Context(), sw, username)
+		if err != nil {
+			apiError(w, r, err)
+			return
+		}
+		out = append(out, swarmRowJSON{swarmJSON: row, ManagedActorCount: summary.ManagedActorCount})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -418,7 +434,12 @@ func (s *Server) writeSwarm(w http.ResponseWriter, r *http.Request, status int, 
 		apiError(w, r, err)
 		return
 	}
-	writeJSON(w, status, toSwarmJSON(sw, owner.Username))
+	out, err := s.swarmWithPublicKey(r.Context(), sw, owner.Username)
+	if err != nil {
+		apiError(w, r, err)
+		return
+	}
+	writeJSON(w, status, out)
 }
 
 // handleSwarm — GET/DELETE /api/swarms/{id}: рой с проверкой доступа.

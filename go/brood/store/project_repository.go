@@ -8,7 +8,7 @@ import (
 	"brood.dev/go/brood/gitorigin"
 )
 
-// storedOrigin допускает пустой origin или уже канонический HTTPS origin:
+// storedOrigin допускает пустой origin или уже канонический HTTPS/SSH origin:
 // хранилище не нормализует ввод молча, это делает вызывающий.
 func storedOrigin(origin string) bool {
 	if origin == "" {
@@ -32,10 +32,10 @@ func (s *Store) ProjectRepository(ctx context.Context, projectID string) (string
 
 // SetProjectRepository replaces the project's repository; "" clears it.
 // Callers authorize the declaration; the store accepts only canonical origins
-// and existing projects. Declaration does not grant gateway or egress access.
+// and existing projects. Setting the repository does not grant access to it.
 func (s *Store) SetProjectRepository(ctx context.Context, projectID, origin string) error {
 	if !storedOrigin(origin) {
-		return fmt.Errorf("project repository must be empty or a canonical HTTPS origin")
+		return fmt.Errorf("project repository must be empty or a canonical HTTPS or SSH origin")
 	}
 	return s.WithTx(ctx, func(ctx context.Context) error {
 		if _, err := s.GetProject(ctx, projectID); err != nil {

@@ -2576,6 +2576,9 @@
     },
     "swarms": {
       "title": "Swarms",
+      "ssh_public_key": "SSH public key",
+      "ssh_public_key_hint": "Add this public key as a deploy key in the repository settings on your Git host. To revoke access, remove the deploy key from the Git host.",
+      "no_ssh_public_key": "No SSH public key for this swarm.",
       "description": "A swarm is a group of agents working in one project; only its owner and administrators see it.",
       "create": "Create swarm",
       "create_hint": "A swarm is yours: you and administrators see it and manage its agents.",
@@ -2641,7 +2644,7 @@
       "choose_role": "Choose a role",
       "no_roles": "No roles are available. Ask an administrator.",
       "origin": "Origin",
-      "origin_hint": "HTTPS address of the Git repository to clone into the workspace. Leave empty to use the project repository.",
+      "origin_hint": "SSH / HTTPS address of the Git repository to clone into the workspace. Leave empty to use the project repository.",
       "origin_invalid": "An address has no spaces",
       "no_origin": "None: the workspace starts empty",
       "phases": {

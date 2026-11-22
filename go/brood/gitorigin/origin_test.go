@@ -45,7 +45,7 @@ func TestCanonicalRejectsUnsafeOrigins(t *testing.T) {
 	for _, input := range []string{
 		"",
 		"http://git.example.com/repo",
-		"ssh://git@git.example.com/repo",
+
 		"git@git.example.com:group/repo.git",
 		"file:///srv/repo.git",
 		"https:git.example.com/repo",
@@ -110,51 +110,6 @@ func TestCanonicalRejectsUnsafeOrigins(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "secret-sentinel") || (input != "" && strings.Contains(err.Error(), input)) {
 			t.Fatalf("error echoes input: %v", err)
-		}
-	}
-}
-
-// SPEC: gateway requires exact equality with the project repository and an
-// installation remote; direct requires a public allowlisted host; otherwise
-// the origin has no access mode. An empty or noncanonical origin has no mode.
-func TestMode(t *testing.T) {
-	repository := "https://git.example.com/group/repo.git"
-	configured := func(origin string) bool { return origin == repository || origin == "https://github.com/org/private" }
-	public := func(host string) bool { return host == "github.com" || host == "gitlab.com" }
-	for _, tc := range []struct{ origin, repository, want string }{
-		{repository, repository, ModeGateway},
-		{"https://github.com/org/private", "https://github.com/org/private", ModeGateway},
-		{"https://github.com/org/private", repository, ModeDirect},
-		{"https://github.com/owner/public", repository, ModeDirect},
-		{"https://gitlab.com/owner/public", "", ModeDirect},
-		{repository, "", ""},
-		{repository, "https://git.example.com/group/other.git", ""},
-		{"https://git.example.com/group/other.git", repository, ""},
-		{"https://unlisted.example/repo", repository, ""},
-		{"https://api.github.com.evil.example/repo", repository, ""},
-		{"", repository, ""},
-		{"", "", ""},
-		{"https://GitHub.com/owner/public", repository, ""},
-		{"https://github.com:443/owner/public", repository, ""},
-		{"https://github.com/owner/public/", repository, ""},
-	} {
-		if got := Mode(tc.origin, tc.repository, configured, public); got != tc.want {
-			t.Fatalf("Mode(%q, %q) = %q; want %q", tc.origin, tc.repository, got, tc.want)
-		}
-	}
-	unconfigured := func(string) bool { return false }
-	if got := Mode(repository, repository, unconfigured, public); got != "" {
-		t.Fatalf("unconfigured repository received %q", got)
-	}
-}
-
-func TestHost(t *testing.T) {
-	if got := Host("https://git.example.com/group/repo.git"); got != "git.example.com" {
-		t.Fatalf("Host = %q", got)
-	}
-	for _, input := range []string{"", "https://Git.example.com/repo", "http://git.example.com/repo", "https://git.example.com:443/repo"} {
-		if got := Host(input); got != "" {
-			t.Fatalf("Host(%q) = %q; want empty for a noncanonical origin", input, got)
 		}
 	}
 }

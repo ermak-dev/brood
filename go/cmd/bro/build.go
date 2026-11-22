@@ -36,7 +36,7 @@ its plays declares the project in the reserved variable vars.brood:
     brood:
       project: my-project          required
       description: TEXT            optional
-      repository: URL              optional; default: Git origin as HTTPS; "" disables cloning
+      repository: URL              optional; default: Git origin; "" disables cloning
       limits:                      optional; integer or null (unlimited), 0 forbids;
         swarms: 4                  a present block sets all four limits
         agents: 12

@@ -20,10 +20,6 @@ import (
 	"brood.dev/go/brood/gitidentity"
 )
 
-// workspaceGatewayURL is the actor-visible clone URL in gateway mode; the
-// clone's remote origin keeps it, so later fetch and push use the gateway too.
-const workspaceGatewayURL = "http://" + gitAddress + "/origin.git"
-
 // Маркер переживает прерванный wrapper, но не доказывает происхождение файлов:
 // другая сессия могла записать работу до следующего старта.
 const cloneMarker = "workspace-clone.pending"
@@ -34,11 +30,10 @@ type cloneGit func(ctx context.Context, env []string, args ...string) error
 // cloneSpec fixes every input of the first-start clone; nothing comes from the actor.
 type cloneSpec struct {
 	Project, Home string
-	Origin, Mode  string
+	Origin        string
 	// Identity is the installation-assigned commit identity (#249); zero
 	// leaves the clone without user.name and user.email, as before.
 	Identity gitidentity.Identity
-	Gateway  string
 	Timeout  time.Duration
 	Git      cloneGit // nil: /usr/bin/git
 }
@@ -48,10 +43,10 @@ func cloneFailure(reason string) error { return errors.New("workspace clone fail
 // cloneWorkspace clones only an empty workspace. Contents are preserved after
 // failure or interruption; recovery must never delete possible user work.
 func cloneWorkspace(parent context.Context, s cloneSpec) error {
-	if s.Origin == "" && s.Mode == "" {
+	if s.Origin == "" {
 		return nil
 	}
-	if err := checkWorkspaceOrigin(WorkspaceOrigin{Origin: s.Origin, Mode: s.Mode, GitIdentity: s.Identity}); err != nil {
+	if err := checkWorkspaceOrigin(WorkspaceOrigin{Origin: s.Origin, GitIdentity: s.Identity}); err != nil {
 		return cloneFailure(err.Error())
 	}
 	git := s.Git
@@ -90,12 +85,10 @@ func cloneWorkspace(parent context.Context, s cloneSpec) error {
 	defer os.RemoveAll(staging)
 	ctx, cancel := context.WithTimeout(parent, s.Timeout)
 	defer cancel()
-	source, env := s.Gateway, cloneEnv(s.Home, "http")
-	if s.Mode == "direct" {
-		source, env = s.Origin, cloneEnv(s.Home, "https")
-	}
+	protocol, _, _ := strings.Cut(s.Origin, ":")
+	env := cloneEnv(s.Home, protocol)
 	fixed := []string{"-c", "credential.helper=", "-c", "http.followRedirects=false", "-c", "core.hooksPath=/dev/null"}
-	cloneErr := git(ctx, env, append(fixed, "clone", "--", source, staging)...)
+	cloneErr := git(ctx, env, append(fixed, "clone", "--", s.Origin, staging)...)
 	if cloneErr != nil {
 		cloneErr = cloneFailure(cloneErr.Error())
 	} else if git(ctx, env, append(fixed, "-C", staging, "config", "brood.origin", s.Origin)...) != nil {
@@ -169,7 +162,13 @@ func publishClone(state int, staging, project string) error {
 }
 
 func cloneEnv(home, protocol string) []string {
-	return []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false", "GIT_ALLOW_PROTOCOL=" + protocol}
+	env := []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false", "GIT_ALLOW_PROTOCOL=" + protocol}
+	if protocol == "ssh" {
+		// Клон не читает пользовательскую конфигурацию и не открывает запросы в PTY.
+		env = append(env, "GIT_SSH_COMMAND="+sshClient+" -F /dev/null -o BatchMode=yes -o IdentityFile="+workspaceSSHKeyPath+
+			" -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="+sshKnownHosts+" -o UpdateHostKeys=no")
+	}
+	return env
 }
 
 func emptyWorkspace(path string) (bool, error) {
@@ -209,7 +208,20 @@ func runCloneGit(ctx context.Context, env []string, args ...string) error {
 		return errors.New("git timed out")
 	}
 	if err != nil {
-		return errors.New(gitReason(stderr.Bytes()))
+		// Git и SSH могут вывести произвольный текст удалённой стороны.
+		diagnostics := string(stderr.Bytes())
+		switch {
+		case strings.Contains(diagnostics, "REMOTE HOST IDENTIFICATION HAS CHANGED"):
+			return errors.New("SSH host key changed; verify the Git host key before updating known_hosts")
+		case strings.Contains(diagnostics, "Host key verification failed"):
+			return errors.New("SSH host key verification failed; check the Git host and known_hosts")
+		case strings.Contains(diagnostics, "Permission denied (publickey"):
+			return errors.New("SSH authentication failed; authorize the swarm public key on the Git host")
+		case strings.Contains(diagnostics, "could not resolve host") || strings.Contains(diagnostics, "Could not resolve hostname"):
+			return errors.New("Git host name could not be resolved; check the origin and DNS")
+		default:
+			return errors.New("Git could not clone the repository; check the origin, connectivity and access")
+		}
 	}
 	return nil
 }

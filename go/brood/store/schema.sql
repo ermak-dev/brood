@@ -31,6 +31,12 @@ CREATE TABLE swarms (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE swarm_ssh_keys (
+    swarm_id    TEXT NOT NULL PRIMARY KEY REFERENCES swarms(id) ON DELETE CASCADE,
+    public_key  TEXT NOT NULL UNIQUE,
+    private_key TEXT NOT NULL
+);
+
 CREATE TABLE sessions (
     token_hash TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

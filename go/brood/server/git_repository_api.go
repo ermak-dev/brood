@@ -17,17 +17,11 @@ import (
 
 const projectRepositoryBodyLimit = 4 << 10
 
-type gitRemoteItem struct {
-	Origin               string `json:"origin"`
-	CredentialConfigured bool   `json:"credentialConfigured"`
-}
-
 type projectRepositoryJSON struct {
 	Origin string `json:"origin"`
 }
 
 func (s *Server) mountGitRepositories() {
-	s.mux.HandleFunc("GET /api/git-remotes", s.handleGitRemotes)
 	s.mux.HandleFunc("PUT /api/projects/sync", s.handleProjectSync)
 	s.mux.HandleFunc("GET /api/projects/{id}/repository", s.handleProjectRepository)
 	s.mux.HandleFunc("PUT /api/projects/{id}/repository", s.handleProjectRepositoryUpdate)
@@ -37,24 +31,6 @@ func (s *Server) mountGitRepositories() {
 func (s *Server) freshAdmin(ctx context.Context, id string) bool {
 	user, err := s.store.GetUser(ctx, id)
 	return err == nil && !user.Disabled && user.IsAdmin
-}
-
-// handleGitRemotes — GET /api/git-remotes: настроенные remotes без учётных данных.
-func (s *Server) handleGitRemotes(w http.ResponseWriter, r *http.Request) {
-	user, ok := currentUser(w, r)
-	if !ok {
-		return
-	}
-	if !s.freshAdmin(r.Context(), user.ID) {
-		writeDetail(w, http.StatusForbidden, "administrator access required for Git remotes")
-		return
-	}
-	items := []gitRemoteItem{}
-	for _, origin := range s.git.remotes.origins() {
-		items = append(items, gitRemoteItem{Origin: origin, CredentialConfigured: s.git.remotes[origin].configured()})
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 // handleProjectRepository — GET /api/projects/{id}/repository для участников проекта.
@@ -87,7 +63,7 @@ func (s *Server) handleProjectRepository(w http.ResponseWriter, r *http.Request)
 }
 
 // handleProjectRepositoryUpdate — PUT /api/projects/{id}/repository: только
-// администратор (CSRF проверяет middleware) задаёт канонический HTTPS origin или "".
+// администратор (CSRF проверяет middleware) задаёт SSH или HTTPS origin или "".
 // Сессию и роль транзакция перечитывает после чтения тела, до записи.
 func (s *Server) handleProjectRepositoryUpdate(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
@@ -111,7 +87,7 @@ func (s *Server) handleProjectRepositoryUpdate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if origin != "" {
-		canonical, err := gitorigin.Canonical(origin)
+		canonical, err := gitorigin.FromRemote(origin)
 		if err != nil {
 			writeDetail(w, http.StatusUnprocessableEntity, "invalid project repository: "+err.Error())
 			return

@@ -18,8 +18,16 @@ import (
 // cmdFixture: export печатает фикстуру установки из текущей базы, apply
 // читает её из stdin и вставляет в базу.
 func cmdFixture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) != 1 || (args[0] != "export" && args[0] != "apply") {
-		fmt.Fprintln(stderr, "brood fixture: expected export or apply")
+	var project, swarm string
+	if len(args) == 3 && args[0] == "export" && args[1] == "--swarm" {
+		var ok bool
+		project, swarm, ok = strings.Cut(args[2], "/")
+		if !ok || project == "" || swarm == "" || strings.Contains(swarm, "/") {
+			fmt.Fprintln(stderr, "brood fixture: select a swarm as PROJECT/SWARM")
+			return 1
+		}
+	} else if len(args) != 1 || (args[0] != "export" && args[0] != "apply") {
+		fmt.Fprintln(stderr, "brood fixture: expected export [--swarm PROJECT/SWARM] or apply")
 		return 1
 	}
 	cfg, err := server.LoadConfigEnv()
@@ -35,7 +43,12 @@ func cmdFixture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	if args[0] == "export" {
-		f, err := st.ExportFixture(ctx)
+		var f store.Fixture
+		if swarm != "" {
+			f, err = st.ExportFixtureForSwarm(ctx, project, swarm)
+		} else {
+			f, err = st.ExportFixture(ctx)
+		}
 		if err != nil {
 			fmt.Fprintf(stderr, "brood fixture: %s\n", err)
 			return 1

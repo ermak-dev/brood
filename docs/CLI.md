@@ -122,7 +122,7 @@ bro join brood/review
 | `NAME` | Имя агента; по умолчанию первое свободное `agent-N` |
 | `--pool NAME` | Пул для агента; по умолчанию единственный пул, принимающий агентов |
 | `--role NAME` | Имя глобальной роли; без флага назначается роль по умолчанию. Роль с делегированными правами назначает только администратор |
-| `--origin URL` | HTTPS-адрес Git-репозитория для рабочей копии; по умолчанию репозиторий проекта |
+| `--origin URL` | SSH- или HTTPS-адрес Git-репозитория для рабочей копии; по умолчанию репозиторий проекта |
 | `--no-wait` | Вернуться сразу, не дожидаясь запуска |
 
 `bro add` показывает смену состояний одной строкой и ждёт `running` или
@@ -208,7 +208,7 @@ claude mcp add brood -- bro mcp
 | `bro build --plan` | Напечатать разобранное объявление в JSON, без обращения к серверу |
 | `bro image list [--project NAME] [--json]` | Список образов проекта |
 | `bro image rm IMAGE [--project NAME]` | Удалить образ |
-| `bro secret --project ID_OR_NAME file\|var\|git add\|list\|remove ...` | Управлять секретами проекта |
+| `bro secret --project ID_OR_NAME file\|var add\|list\|remove ...` | Управлять секретами проекта |
 
 `bro build` и образы описаны в [BUILD.md](BUILD.md), `bro secret` —
 в [SECRETS.md](SECRETS.md).

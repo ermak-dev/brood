@@ -223,7 +223,7 @@ func TestProjectAppPreparesUnattendedClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	var warnings bytes.Buffer
-	layout := appLayout{Project: project, Home: home, Run: run, RunUID: os.Geteuid(), RunGID: os.Getegid(), Gateway: deadGateway(t), CloneTimeout: time.Second}
+	layout := appLayout{Project: project, Home: home, Run: run, RunUID: os.Geteuid(), RunGID: os.Getegid(), CloneTimeout: time.Second}
 	if _, err := prepareProjectApp(layout, &warnings); err != nil || warnings.Len() != 0 {
 		t.Fatalf("app preparation: %v %q", err, warnings.String())
 	}

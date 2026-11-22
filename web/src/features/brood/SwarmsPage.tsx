@@ -256,6 +256,16 @@ export function SwarmsPage() {
             <dd>{new Date(row.created_at).toLocaleString(i18n.resolvedLanguage)}</dd>
           </dl>
         </PanelSection>
+        <PanelSection title={t('brood.swarms.ssh_public_key')}>
+          {row.sshPublicKey ? (
+            <>
+              <Copyable value={row.sshPublicKey} />
+              <p className={styles.fieldHint}>{t('brood.swarms.ssh_public_key_hint')}</p>
+            </>
+          ) : (
+            <p>{t('brood.swarms.no_ssh_public_key')}</p>
+          )}
+        </PanelSection>
         <PanelSection title={t('brood.panel.commands')}>
           <Commands
             items={[

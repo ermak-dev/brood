@@ -75,6 +75,7 @@ export interface Swarm {
   name: string;
   created_at: string;
   agentCount: number;
+  sshPublicKey: string;
 }
 
 const segment = encodeURIComponent;

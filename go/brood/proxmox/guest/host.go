@@ -31,6 +31,7 @@ const (
 // машинному маршруту без BROOD_GUEST_CA_PEM_B64 и Git по HTTPS.
 var hostPackages = []struct{ path, name string }{
 	{"/usr/bin/git", "git"},
+	{sshClient, "openssh-client"},
 	{"/etc/ssl/certs/ca-certificates.crt", "ca-certificates"},
 }
 

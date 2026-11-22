@@ -15,7 +15,6 @@ type ProjectSyncResult struct {
 	Repository string `json:"repository"`
 	Created    bool   `json:"created"`
 	Changed    bool   `json:"changed"`
-	OriginMode string `json:"origin_mode"`
 }
 
 // publicProjectSyncError возвращает только фиксированные публичные сообщения.

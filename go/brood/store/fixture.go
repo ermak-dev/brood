@@ -9,11 +9,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // Фикстура установки содержит активных администраторов, их привязки
 // Telegram, подключения Proxmox и пулы, не удалённые на момент экспорта.
-// Контейнеры, образы и рои не восстанавливаются из фикстуры.
+// При явном выборе роя экспорт также сохраняет его проект, образы и SSH-ключ.
 
 // FixtureVersion — версия формата фикстуры.
 const FixtureVersion = 1
@@ -33,7 +35,9 @@ type FixtureTable struct {
 
 // fixtureTables — таблицы в порядке вставки: внешние ключи ссылаются только
 // на предыдущие.
-var fixtureTables = []struct{ name, query string }{
+type fixtureTableSpec struct{ name, query string }
+
+var fixtureTables = []fixtureTableSpec{
 	{"users", `SELECT * FROM users WHERE is_admin = 1 AND disabled = 0 ORDER BY id`},
 	{"sessions", `SELECT * FROM sessions WHERE token_hash IN (
 		SELECT session_hash FROM user_telegram_links
@@ -44,6 +48,14 @@ var fixtureTables = []struct{ name, query string }{
 	{"managed_pools", `SELECT * FROM managed_pools WHERE state <> 'deleted' ORDER BY uid`},
 }
 
+var fixtureSwarmTables = []fixtureTableSpec{
+	{"projects", `SELECT * FROM projects WHERE id=?`},
+	{"project_repositories", `SELECT * FROM project_repositories WHERE project_id=?`},
+	{"project_images", `SELECT id, project_id, pool_uid, ctid, owner_nonce, state, snapshot, playbook, created_at, updated_at FROM project_images WHERE project_id=? AND state='ready' AND pool_uid IN (SELECT uid FROM managed_pools WHERE state<>'deleted') ORDER BY id`},
+	{"swarms", `SELECT * FROM swarms WHERE id=?`},
+	{"swarm_ssh_keys", `SELECT * FROM swarm_ssh_keys WHERE swarm_id=?`},
+}
+
 // fixtureCleared — колонки, которые ссылаются на состояние вне фикстуры.
 var fixtureCleared = map[string][]string{"user_telegram_links": {"default_swarm_id"}}
 
@@ -51,22 +63,56 @@ var fixtureColumn = regexp.MustCompile(`^[a-z_]+$`)
 
 // ExportFixture возвращает фикстуру установки, включая секреты подключений.
 func (s *Store) ExportFixture(ctx context.Context) (Fixture, error) {
+	return s.exportFixture(ctx, "", "")
+}
+
+// ExportFixtureForSwarm exports the installation and one named admin-owned swarm, without agents.
+func (s *Store) ExportFixtureForSwarm(ctx context.Context, project, swarm string) (Fixture, error) {
+	return s.exportFixture(ctx, project, swarm)
+}
+
+func (s *Store) exportFixture(ctx context.Context, project, swarm string) (Fixture, error) {
 	f := Fixture{Version: FixtureVersion}
-	for _, t := range fixtureTables {
-		table, err := s.exportFixtureTable(ctx, t.name, t.query)
-		if err != nil {
-			return Fixture{}, err
+	err := s.WithTx(ctx, func(ctx context.Context) error {
+		for _, t := range fixtureTables {
+			table, err := s.exportFixtureTable(ctx, t.name, t.query)
+			if err != nil {
+				return err
+			}
+			f.Tables = append(f.Tables, table)
 		}
-		f.Tables = append(f.Tables, table)
-	}
-	if len(f.Tables[0].Rows) == 0 {
-		return Fixture{}, fmt.Errorf("fixture export: no enabled administrator")
+		if len(f.Tables[0].Rows) == 0 {
+			return fmt.Errorf("fixture export: no enabled administrator")
+		}
+		if project == "" && swarm == "" {
+			return nil
+		}
+		var projectID, swarmID string
+		err := s.conn(ctx).QueryRowContext(ctx, `SELECT p.id,s.id FROM projects p JOIN swarms s ON s.project_id=p.id JOIN users u ON u.id=s.owner_id WHERE p.name=? AND s.name=? AND s.state='active' AND u.is_admin=1 AND u.disabled=0`, project, swarm).Scan(&projectID, &swarmID)
+		if err != nil {
+			return fmt.Errorf("fixture export: select an active swarm owned by an enabled administrator: %w", err)
+		}
+		for _, t := range fixtureSwarmTables {
+			id := projectID
+			if t.name == "swarms" || t.name == "swarm_ssh_keys" {
+				id = swarmID
+			}
+			table, err := s.exportFixtureTable(ctx, t.name, t.query, id)
+			if err != nil {
+				return err
+			}
+			f.Tables = append(f.Tables, table)
+		}
+		return validateFixtureSwarmKeys(f.Tables)
+	})
+	if err != nil {
+		return Fixture{}, err
 	}
 	return f, nil
 }
 
-func (s *Store) exportFixtureTable(ctx context.Context, name, query string) (FixtureTable, error) {
-	rows, err := s.db.QueryContext(ctx, query)
+func (s *Store) exportFixtureTable(ctx context.Context, name, query string, args ...any) (FixtureTable, error) {
+	rows, err := s.conn(ctx).QueryContext(ctx, query, args...)
 	if err != nil {
 		return FixtureTable{}, fmt.Errorf("fixture export %s: %w", name, err)
 	}
@@ -128,10 +174,14 @@ func DecodeFixture(data []byte) (Fixture, error) {
 // ApplyFixture вставляет строки фикстуры одной транзакцией; существующие
 // строки с тем же ключом обновляются.
 func (s *Store) ApplyFixture(ctx context.Context, f Fixture) error {
+	if err := validateFixtureSwarmKeys(f.Tables); err != nil {
+		return err
+	}
+	tables := append(append([]fixtureTableSpec(nil), fixtureTables...), fixtureSwarmTables...)
 	byName := map[string]FixtureTable{}
 	for _, t := range f.Tables {
 		known := false
-		for _, allowed := range fixtureTables {
+		for _, allowed := range tables {
 			known = known || allowed.name == t.Name
 		}
 		if !known {
@@ -147,7 +197,7 @@ func (s *Store) ApplyFixture(ctx context.Context, f Fixture) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, allowed := range fixtureTables {
+	for _, allowed := range tables {
 		for i, row := range byName[allowed.name].Rows {
 			query, args, err := fixtureInsert(allowed.name, row)
 			if err != nil {
@@ -159,6 +209,43 @@ func (s *Store) ApplyFixture(ctx context.Context, f Fixture) error {
 		}
 	}
 	return tx.Commit()
+}
+
+func validateFixtureSwarmKeys(tables []FixtureTable) error {
+	swarms := map[string]bool{}
+	pairs := map[string]bool{}
+	for _, table := range tables {
+		switch table.Name {
+		case "swarms":
+			for _, row := range table.Rows {
+				id, _ := row["id"].(string)
+				if id == "" || swarms[id] {
+					return fmt.Errorf("fixture: invalid or duplicate swarm identity")
+				}
+				swarms[id] = true
+			}
+		case "swarm_ssh_keys":
+			for _, row := range table.Rows {
+				id, _ := row["swarm_id"].(string)
+				pub, _ := row["public_key"].(string)
+				priv, _ := row["private_key"].(string)
+				signer, err := ssh.ParsePrivateKey([]byte(priv))
+				if id == "" || pairs[id] || err != nil || signer.PublicKey().Type() != ssh.KeyAlgoED25519 || strings.TrimSpace(pub) != strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))) {
+					return fmt.Errorf("fixture: invalid or mismatched swarm SSH keypair")
+				}
+				pairs[id] = true
+			}
+		}
+	}
+	if len(swarms) != len(pairs) {
+		return fmt.Errorf("fixture: each restored swarm needs exactly one SSH keypair")
+	}
+	for id := range swarms {
+		if !pairs[id] {
+			return fmt.Errorf("fixture: restored swarm is missing its SSH keypair")
+		}
+	}
+	return nil
 }
 
 func fixtureInsert(table string, row map[string]any) (string, []any, error) {

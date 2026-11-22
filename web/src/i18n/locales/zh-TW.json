@@ -2594,6 +2594,9 @@
     },
     "swarms": {
       "title": "蜂群",
+      "ssh_public_key": "SSH 公開金鑰",
+      "ssh_public_key_hint": "在 Git 託管平台的儲存庫設定中，將此公開金鑰新增為部署金鑰。若要撤銷存取權限，請從 Git 託管平台移除此部署金鑰。",
+      "no_ssh_public_key": "此蜂群沒有 SSH 公開金鑰。",
       "description": "蜂群是在同一專案中工作的一組代理人,只有擁有者和管理員可見。",
       "create": "建立蜂群",
       "create_hint": "蜂群歸您所有:您和管理員可以看到它並管理其中的代理人。",
@@ -2657,7 +2660,7 @@
       "choose_role": "選擇角色",
       "no_roles": "沒有可用角色。請聯絡管理員。",
       "origin": "Origin",
-      "origin_hint": "要複製到工作區的 Git 儲存庫的 HTTPS 位址。留空則使用專案儲存庫。",
+      "origin_hint": "要複製到工作區的 Git 儲存庫的 SSH / HTTPS 位址。留空則使用專案儲存庫。",
       "origin_invalid": "位址不能包含空格",
       "no_origin": "無:工作區一開始是空的",
       "phases": {

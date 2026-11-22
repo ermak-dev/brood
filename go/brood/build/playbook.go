@@ -478,7 +478,7 @@ func sourceFault(value string) string {
 }
 
 // Load reads directory/brood.yaml. An absent brood.repository becomes the
-// Git origin of that checkout, normalized to HTTPS; Git itself is optional.
+// Git origin of that checkout, normalized without changing its transport; Git itself is optional.
 func Load(directory string) (*Project, error) {
 	absolute, err := filepath.Abs(directory)
 	if err != nil {

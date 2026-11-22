@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"brood.dev/go/brood/proxmox/guest"
 	"brood.dev/go/brood/proxmox/relay"
 )
 
@@ -32,9 +31,9 @@ func TestSupervisorAutostartsAfterActorAndSurvivesFailure(t *testing.T) {
 	runtime := newFake()
 	events := make(chan string, 8)
 	d := dependencies{euid: func() int { return 0 }, secrets: func(context.Context, relay.ClientConfig) error { events <- "secrets"; return nil },
-		origin: func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error) {
+		workspace: func(context.Context, relay.ClientConfig) error {
 			events <- "origin"
-			return guest.WorkspaceOrigin{}, nil
+			return nil
 		},
 		start: func(context.Context) (actorRuntime, error) { events <- "actor"; return runtime, nil },
 		relay: func(ctx context.Context, _ relay.ClientConfig) error {

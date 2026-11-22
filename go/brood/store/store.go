@@ -25,7 +25,7 @@ var errIncompatibleSchema = errors.New("incompatible database schema")
 // schemaVersion: единственная версия схемы. Миграций нет: база другой
 // версии отвергается, оператор её пересоздаёт. 100 — первая схема без
 // Substrate и графа.
-const schemaVersion = 106
+const schemaVersion = 107
 
 //go:embed schema.sql
 var currentSchema string
@@ -48,9 +48,8 @@ func dsn(path string) string {
 		"&_pragma=synchronous(NORMAL)"
 }
 
-// Open открывает текущую базу или создаёт новую по пути. База прежней
-// версии мигрирует до текущей (#274); несовместимая схема отвергается без
-// изменения таблиц.
+// Open opens the current database or creates one at path. An incompatible
+// schema is rejected without changing its tables.
 func Open(ctx context.Context, path string) (*Store, error) {
 	if path != ":memory:" {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
@@ -91,16 +90,8 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // Close закрывает соединение с базой.
 func (s *Store) Close() error { return s.db.Close() }
 
-// initializeSchema применяет единую схему. Пустая база (версия 0 без
-// объектов) создаётся целиком и получает schemaVersion; совпадающая
-// версия проверяется; старая версия с цепочкой миграций доводится до
-// текущей (#274); новее релиза, вне цепочки или с упавшим шагом дают отказ, а
-// файл остаётся на последней зафиксированной версии. Проверка, создание и
-// каждый шаг держат BEGIN IMMEDIATE: конкурентные Open не видят частичную
-// схему. Модули схемы объявляют только свой DDL и проверку (#205).
+// initializeSchema creates or verifies the current schema without migrations.
 func (s *Store) initializeSchema(ctx context.Context) error {
-	// Закреплённое соединение: прагма внешних ключей вокруг шага миграции
-	// действует на то соединение, в котором идёт шаг.
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("begin schema initialization: %w", err)

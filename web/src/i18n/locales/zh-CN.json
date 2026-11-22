@@ -2566,6 +2566,9 @@
     },
     "swarms": {
       "title": "蜂群",
+      "ssh_public_key": "SSH 公钥",
+      "ssh_public_key_hint": "在 Git 托管平台的仓库设置中，将此公钥添加为部署密钥。要撤销访问权限，请从 Git 托管平台移除该部署密钥。",
+      "no_ssh_public_key": "此蜂群没有 SSH 公钥。",
       "description": "蜂群是在同一项目中工作的一组智能体,只有所有者和管理员可见。",
       "create": "创建蜂群",
       "create_hint": "蜂群归您所有:您和管理员可以看到它并管理其中的智能体。",
@@ -2629,7 +2632,7 @@
       "choose_role": "选择角色",
       "no_roles": "没有可用角色。请联系管理员。",
       "origin": "Origin",
-      "origin_hint": "要克隆到工作区的 Git 仓库的 HTTPS 地址。留空则使用项目仓库。",
+      "origin_hint": "要克隆到工作区的 Git 仓库的 SSH / HTTPS 地址。留空则使用项目仓库。",
       "origin_invalid": "地址不能包含空格",
       "no_origin": "无:工作区初始为空",
       "phases": {

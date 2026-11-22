@@ -61,7 +61,7 @@ func usage(stderr io.Writer) {
 	fmt.Fprint(stderr, `usage:
   brood serve [--env-file FILE]  run the server
   brood bootstrap-admin     create the first administrator interactively
-  brood fixture export      print the installation fixture (admins, Telegram links, Proxmox pools) as JSON
+  brood fixture export [--swarm PROJECT/SWARM]  print the installation fixture as JSON
   brood fixture apply       insert the installation fixture JSON from stdin
   brood version             print the binary version
 

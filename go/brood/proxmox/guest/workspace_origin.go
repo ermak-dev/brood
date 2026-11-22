@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"brood.dev/go/brood/actormodel"
@@ -17,9 +18,16 @@ import (
 	"brood.dev/go/brood/proxmox/relay"
 )
 
-// FetchWorkspaceOrigin reads only this actor generation's server-assigned origin.
-func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig) (WorkspaceOrigin, error) {
-	fail := func() (WorkspaceOrigin, error) { return WorkspaceOrigin{}, originFailure() }
+type workspacePayload struct {
+	WorkspaceOrigin
+	sshPrivateKey string
+}
+
+// JSON может экранировать байты ключа; отдельно ограничиваем декодированное поле.
+const workspacePayloadLimit = workspaceOriginLimit + 6*workspaceSSHKeyLimit
+
+func fetchWorkspace(parent context.Context, cfg relay.ClientConfig) (workspacePayload, error) {
+	fail := func() (workspacePayload, error) { return workspacePayload{}, originFailure() }
 	route, err := newServerRoute(cfg)
 	if err != nil {
 		return fail()
@@ -44,18 +52,19 @@ func FetchWorkspaceOrigin(parent context.Context, cfg relay.ClientConfig) (Works
 	if response.StatusCode != http.StatusOK {
 		return fail()
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, (4<<10)+1))
-	if err != nil || len(data) > 4<<10 {
+	data, err := io.ReadAll(io.LimitReader(response.Body, workspacePayloadLimit+1))
+	if err != nil || len(data) > workspacePayloadLimit {
 		return fail()
 	}
-	origin, err := decodeWorkspaceOrigin(data)
-	if err != nil || ValidateWorkspaceOrigin(origin.Origin, origin.Mode) != nil {
+	var key string
+	origin, err := decodeWorkspaceOrigin(data, &key)
+	if err != nil {
 		return fail()
 	}
-	return origin, nil
+	return workspacePayload{WorkspaceOrigin: origin, sshPrivateKey: key}, nil
 }
 
-func decodeWorkspaceOrigin(data []byte) (WorkspaceOrigin, error) {
+func decodeWorkspaceOrigin(data []byte, sshPrivateKey *string) (WorkspaceOrigin, error) {
 	fail := func() (WorkspaceOrigin, error) { return WorkspaceOrigin{}, originFailure() }
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	first, err := decoder.Token()
@@ -68,7 +77,7 @@ func decodeWorkspaceOrigin(data []byte) (WorkspaceOrigin, error) {
 	for decoder.More() {
 		token, err := decoder.Token()
 		key, ok := token.(string)
-		if err != nil || !ok || (key != "origin" && key != "mode" && key != "gitIdentity" && key != "models") {
+		if err != nil || !ok || (key != "origin" && key != "gitIdentity" && key != "models" && (key != "sshPrivateKey" || sshPrivateKey == nil)) {
 			return fail()
 		}
 		if _, exists := fields[key]; exists {
@@ -103,13 +112,19 @@ func decodeWorkspaceOrigin(data []byte) (WorkspaceOrigin, error) {
 	}
 	end, err := decoder.Token()
 	_, hasOrigin := fields["origin"]
-	_, hasMode := fields["mode"]
-	if err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || !hasOrigin || !hasMode {
+	key, hasKey := fields["sshPrivateKey"]
+	if err != nil || end != json.Delim('}') || decoder.Decode(new(any)) != io.EOF || !hasOrigin || (sshPrivateKey != nil && !hasKey) {
 		return fail()
 	}
-	origin := WorkspaceOrigin{Origin: fields["origin"], Mode: fields["mode"], GitIdentity: identity, Models: models}
+	origin := WorkspaceOrigin{Origin: fields["origin"], GitIdentity: identity, Models: models}
 	if checkWorkspaceOrigin(origin) != nil {
 		return fail()
+	}
+	if hasKey {
+		if len(key) > workspaceSSHKeyLimit || strings.ContainsRune(key, 0) {
+			return fail()
+		}
+		*sshPrivateKey = key
 	}
 	return origin, nil
 }
@@ -164,17 +179,20 @@ func decodeModels(raw json.RawMessage) (actormodel.Models, bool) {
 	return actormodel.Models{Model: names["model"], Small: names["smallModel"]}, true
 }
 
-// RefreshWorkspaceOrigin stages the verified response for the UID 1000 wrapper.
-func RefreshWorkspaceOrigin(ctx context.Context, cfg relay.ClientConfig) (WorkspaceOrigin, error) {
+// RefreshWorkspace stages the verified metadata and runtime SSH credential before the actor starts.
+func RefreshWorkspace(ctx context.Context, cfg relay.ClientConfig) error {
 	if os.Geteuid() != 0 {
-		return WorkspaceOrigin{}, errors.New("workspace origin requires guest root")
+		return errors.New("workspace setup requires guest root")
 	}
-	origin, err := FetchWorkspaceOrigin(ctx, cfg)
+	workspace, err := fetchWorkspace(ctx, cfg)
 	if err != nil {
-		return WorkspaceOrigin{}, err
+		return err
 	}
-	if err := PublishWorkspaceOrigin(origin); err != nil {
-		return WorkspaceOrigin{}, err
+	if err := prepareRunDirectory(); err != nil {
+		return err
 	}
-	return origin, nil
+	if err := publishWorkspaceSSH(workspace.sshPrivateKey); err != nil {
+		return err
+	}
+	return publishWorkspaceOrigin(projectSecretDirectory, workspace.WorkspaceOrigin, 0, 1000)
 }

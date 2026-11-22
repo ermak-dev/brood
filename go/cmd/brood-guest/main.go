@@ -32,9 +32,6 @@ import (
 type config struct {
 	relay             relay.ClientConfig
 	deliveryDirectory string
-	// workspace не секретен: origin и режим клона (#147) и Git-идентичность
-	// актора (#249), как их отдал сервер.
-	workspace guest.WorkspaceOrigin
 	// stage — стадия supervisor (#155): bootstrap качает артефакты и
 	// exec-ается в runtime; runtime сразу ведёт сервисы.
 	stage string
@@ -68,8 +65,7 @@ type dependencies struct {
 	mcp               func(context.Context) error
 	broker            func(context.Context) (swarmBroker, error)
 	model             func(context.Context, relay.ClientConfig) (service, error)
-	git               func(context.Context, relay.ClientConfig) (service, error)
-	origin            func(context.Context, relay.ClientConfig) (guest.WorkspaceOrigin, error)
+	workspace         func(context.Context, relay.ClientConfig) error
 	// artifacts читает манифест сервера и отдаёт его установщику набора
 	// (#155, #184); reexec подменяет процесс на runtime-стадию набора.
 	artifacts func(context.Context, relay.ClientConfig, guest.ArtifactRelease) error
@@ -284,13 +280,10 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		}
 		refresh = func(ctx context.Context) error { return d.secrets(ctx, cfg) }
 	}
-	if d.origin != nil {
-		origin, err := d.origin(ctx, c.relay)
-		if err != nil {
-			cancel()
-			return errors.New("guest workspace origin initialization failed")
+	if d.workspace != nil {
+		if err := d.workspace(ctx, c.relay); err != nil {
+			return fmt.Errorf("guest workspace initialization failed: %w", err)
 		}
-		c.workspace = origin
 	}
 	if d.broker != nil {
 		broker, err := d.broker(ctx)
@@ -310,16 +303,6 @@ func supervise(parent context.Context, c config, d dependencies) error {
 		}
 		defer boundedClose(model)
 		go func() { model.Wait(); cancel() }()
-	}
-	// Только gateway-режим открывает 8318: direct-клон ходит к origin сам.
-	if d.git != nil && c.workspace.Mode == "gateway" {
-		git, err := d.git(ctx, c.relay)
-		if err != nil {
-			cancel()
-			return errors.New("guest Git gateway initialization failed")
-		}
-		defer boundedClose(git)
-		go func() { git.Wait(); cancel() }()
 	}
 	runtime, err := d.start(ctx)
 	if err != nil {
@@ -465,9 +448,7 @@ func main() {
 		actor: guest.RunActor, attach: guest.RunPTYAttach, message: runMessageHelper,
 		session: runSessionHelper, mcp: runMCP, broker: func(ctx context.Context) (swarmBroker, error) { return guest.StartSwarmBroker(ctx) }, model: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
 			return guest.StartModelGateway(ctx, cfg)
-		}, git: func(ctx context.Context, cfg relay.ClientConfig) (service, error) {
-			return guest.StartGitGateway(ctx, cfg)
-		}, origin: guest.RefreshWorkspaceOrigin, euid: os.Geteuid, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, prepareHost: func(ctx context.Context) error {
+		}, workspace: guest.RefreshWorkspace, euid: os.Geteuid, artifacts: guest.FetchArtifacts, reexec: reexecRuntime, prepareHost: func(ctx context.Context) error {
 			notices, err := guest.PrepareHost(ctx)
 			for _, notice := range notices {
 				fmt.Fprintln(os.Stderr, "guest host notice: "+notice)

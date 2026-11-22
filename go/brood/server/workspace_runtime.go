@@ -15,24 +15,13 @@ const workspaceRuntimePrefix = "/api/proxmox/workspace/"
 
 func publicWorkspacePath(path string) bool { return strings.HasPrefix(path, workspaceRuntimePrefix) }
 
-// workspaceOrigin — ответ /api/proxmox/workspace: origin актора и его режим на
-// этот запрос, либо оба пустые. GitIdentity (#249) идёт только с origin и
-// только при настроенном BROOD_ACTOR_GIT_DOMAIN: без клона ей некуда писаться.
-// Models (#263) — модели Claude Code из настроек установки; идут и без origin:
-// Claude запускается в каждом акторе, клон ему не нужен.
 type workspaceOrigin struct {
-	Origin      string               `json:"origin"`
-	Mode        string               `json:"mode"`
-	GitIdentity gitidentity.Identity `json:"gitIdentity,omitzero"`
-	Models      actormodel.Models    `json:"models,omitzero"`
+	Origin        string               `json:"origin"`
+	SSHPrivateKey string               `json:"sshPrivateKey"`
+	GitIdentity   gitidentity.Identity `json:"gitIdentity,omitzero"`
+	Models        actormodel.Models    `json:"models,omitzero"`
 }
 
-// serveGuestWorkspace отдаёт root supervisor гостя источник клона workspace
-// (#146). Bootstrap env origin не несёт: прежние guest image отказывают в
-// загрузке на незнакомое BROOD_GUEST_* имя. Авторизация — та же, что у
-// секретов проекта. Режим пересчитывается на каждом запросе; origin, который
-// режим потерял (сменился repository проекта, убран remote), не отдаётся, и
-// гость не клонирует.
 func (s *Server) serveGuestWorkspace(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -40,14 +29,13 @@ func (s *Server) serveGuestWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	mode, err := s.originMode(ctx, g.swarm.ProjectID, g.actor.Origin)
+	privateKey, err := s.store.GetSwarmSSHPrivateKey(ctx, g.swarm.ID)
 	if err != nil {
-		writeDetail(w, 503, "workspace origin delivery unavailable")
+		writeDetail(w, 503, "swarm SSH identity unavailable")
 		return
 	}
-	body := workspaceOrigin{}
-	if mode != "" {
-		body = workspaceOrigin{Origin: g.actor.Origin, Mode: mode}
+	body := workspaceOrigin{Origin: g.actor.Origin, SSHPrivateKey: privateKey, Models: s.actorModels}
+	if body.Origin != "" {
 		if s.actorGitDomain != "" {
 			// Имя актора проверено при создании; отказ здесь — нарушенный
 			// инвариант, и он виден, а не молча оставляет актора без идентичности.
@@ -57,7 +45,6 @@ func (s *Server) serveGuestWorkspace(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	body.Models = s.actorModels
 	data, err := json.Marshal(body)
 	if err != nil {
 		writeDetail(w, 503, "workspace origin delivery unavailable")

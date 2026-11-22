@@ -24,7 +24,6 @@ type projectSyncJSON struct {
 	Repository string `json:"repository"`
 	Created    bool   `json:"created"`
 	Changed    bool   `json:"changed"`
-	OriginMode string `json:"origin_mode"`
 }
 
 func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
@@ -46,18 +45,12 @@ func (s *Server) handleProjectSync(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, http.StatusServiceUnavailable, "project sync failed")
 		return
 	}
-	// Ошибка чтения после фиксации не превращает запись в отказ: режим пуст,
-	// следующее чтение пересчитает его.
-	mode := ""
-	if access, err := s.projectGitAccess(r.Context(), result.ID); err == nil {
-		mode = access.mode(result.Repository)
-	}
 	status := http.StatusOK
 	if result.Created {
 		status = http.StatusCreated
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, projectSyncJSON{ID: result.ID, Name: result.Name, Repository: result.Repository, Created: result.Created, Changed: result.Changed, OriginMode: mode})
+	writeJSON(w, status, projectSyncJSON{ID: result.ID, Name: result.Name, Repository: result.Repository, Created: result.Created, Changed: result.Changed})
 }
 
 func (s *Server) syncProject(ctx context.Context, userID string, declaration store.ProjectDeclaration, authorize func(context.Context) bool) (store.ProjectSyncResult, error) {

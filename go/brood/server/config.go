@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -41,9 +42,6 @@ func (e *ConfigError) Error() string {
 // заполнены через lookup; необходимые проверки выполняет New.
 type Config struct {
 	proxmox *proxmoxRegistry
-	// gitRemotes — remotes установки (BROOD_GIT_REMOTES); токены остаются
-	// на сервере и не экспортируются.
-	gitRemotes gitRemotes
 	// DBPath — путь файла SQLite (BROOD_DB_PATH, по умолчанию ./brood.db).
 	DBPath string
 	// Addr — адрес HTTP-слушателя (BROOD_ADDR, по умолчанию 127.0.0.1:8080).
@@ -90,11 +88,10 @@ type Config struct {
 	telegramBotToken string
 }
 
-// String, GoString and Format keep server credentials, including the
-// installation Git remotes, out of diagnostic formatting with any verb.
+// String, GoString and Format keep server credentials out of diagnostic formatting.
 func (Config) String() string               { return "server.Config{redacted}" }
 func (c Config) GoString() string           { return c.String() }
-func (c Config) Format(f fmt.State, _ rune) { redactFormat(f, c) }
+func (c Config) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.String()) }
 
 // getenv — источник окружения: интерфейс для тестов.
 type getenv func(string) string
@@ -163,9 +160,6 @@ func LoadConfig(get getenv) (Config, error) {
 		return cfg, err
 	}
 	cfg.proxmox = registry
-	if cfg.gitRemotes, err = loadGitRemotes(envGet(get, gitRemotesSetting)); err != nil {
-		return cfg, err
-	}
 	for _, trust := range []struct {
 		setting string
 		value   *[]byte
