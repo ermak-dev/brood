@@ -336,7 +336,7 @@ export function MainLayout() {
   const isPluginResourcePage = location.pathname.startsWith('/plugin-pages');
   const showSidebarLabels = !sidebarCollapsed || sidebarOpen;
 
-  // Keep floating header height available to sticky mobile elements and overlays.
+  // The toolbar can wrap; reserve space for its rendered height in the page.
   useLayoutEffect(() => {
     const updateHeaderHeight = () => {
       const height = headerRef.current?.offsetHeight;
@@ -362,6 +362,7 @@ export function MainLayout() {
         resizeObserver.disconnect();
       }
       window.removeEventListener('resize', updateHeaderHeight);
+      document.documentElement.style.removeProperty('--header-height');
     };
   }, []);
 

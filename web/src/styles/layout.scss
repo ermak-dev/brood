@@ -1,7 +1,8 @@
 @use './variables.scss' as *;
 
 :root {
-  --header-height: 80px;
+  --header-height: calc(var(--shell-gutter) + var(--floating-control-size) + 14px);
+  --header-content-gap: 20px;
   --shell-gutter: 24px;
   --sidebar-panel-width: 216px;
   --sidebar-collapsed-width: 60px;
@@ -85,7 +86,12 @@
   right: 0;
   left: 0;
   z-index: $z-dropdown + 1;
-  height: var(--header-height);
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: var(--shell-gutter) var(--shell-gutter) 0;
   pointer-events: none;
   background: transparent;
   border: 0;
@@ -143,9 +149,8 @@
 
   .mobile-sidebar-actions,
   .header-actions {
-    position: absolute;
-    top: var(--shell-gutter);
     display: inline-flex;
+    flex: 0 0 auto;
     align-items: center;
     gap: 4px;
     padding: 6px;
@@ -164,12 +169,11 @@
   }
 
   .mobile-sidebar-actions {
-    left: var(--shell-gutter);
     display: none;
   }
 
   .header-actions {
-    right: var(--shell-gutter);
+    position: relative;
   }
 
   .mobile-sidebar-actions .btn,
@@ -839,7 +843,7 @@
 .main-content {
   flex: 1 0 auto;
   min-height: 100%;
-  padding: 70px clamp(20px, 3vw, 48px) 40px;
+  padding: calc(var(--header-height) + var(--header-content-gap)) clamp(20px, 3vw, 48px) 40px;
   display: flex;
   flex-direction: column;
   gap: $spacing-lg;
@@ -850,7 +854,7 @@
   &.main-content-logs {
     flex: 1 1 auto;
     min-height: 0;
-    padding: 70px clamp(20px, 3vw, 48px) 24px;
+    padding-bottom: 24px;
     overflow: hidden;
   }
 
@@ -873,7 +877,7 @@
 
 @media (max-width: $breakpoint-mobile) {
   :root {
-    --header-height: 74px;
+    --header-content-gap: 20px;
     --shell-gutter: 12px;
     --sidebar-panel-width: min(280px, calc(100vw - 24px));
     --floating-control-size: 36px;
@@ -888,16 +892,16 @@
   }
 
   .main-header {
+    justify-content: space-between;
+
     .sidebar-toggle-floating {
       display: none;
     }
 
     .header-actions {
-      top: var(--shell-gutter);
-      right: var(--shell-gutter);
-      max-width: calc(
-        100vw - var(--shell-gutter) - var(--shell-gutter) - var(--floating-control-size) - 14px
-      );
+      margin-left: auto;
+      max-width: 100%;
+      flex-wrap: wrap;
       padding: 5px;
       gap: 2px;
       border-radius: 14px;
@@ -905,8 +909,6 @@
 
     .mobile-sidebar-actions {
       display: inline-flex;
-      top: var(--shell-gutter);
-      left: var(--shell-gutter);
       padding: 5px;
       gap: 2px;
       border-radius: 14px;
@@ -916,9 +918,9 @@
       display: inline-flex;
     }
 
-    .language-menu-popover {
-      right: auto;
-      left: 0;
+    .language-menu,
+    .theme-menu {
+      position: static;
     }
 
     .theme-menu-popover {
@@ -1034,7 +1036,8 @@
   }
 
   .main-content {
-    padding: calc(var(--header-height) + 16px) $spacing-md $spacing-lg;
+    padding-inline: $spacing-md;
+    padding-bottom: $spacing-lg;
 
     &.main-content-plugin-resource {
       min-height: 0;
@@ -1045,7 +1048,8 @@
     &.main-content-logs {
       flex: 1 1 auto;
       min-height: 0;
-      padding: calc(var(--header-height) + 8px) 8px max(8px, env(safe-area-inset-bottom));
+      padding-inline: 8px;
+      padding-bottom: max(8px, env(safe-area-inset-bottom));
       overflow: hidden;
     }
   }
