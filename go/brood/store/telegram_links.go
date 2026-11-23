@@ -52,10 +52,10 @@ var (
 // State is unlinked, linked or error; Reason explains an error. ChatID and
 // TelegramUserID are set only while linked, LinkCodeExpiresAt only while a
 // link code waits.
-// DefaultSwarmID is the swarm the chat's commands use when they name none
-// (/use, #284), empty without one; whether the user still reads it is checked
-// where it is used. TelegramUsername is the Telegram username of the linked
-// chat's sender (#294), without @: the one the confirmed link code came with,
+// DefaultActorUID is the chat's explicit recipient, empty until selected.
+// It remains set if the agent disappears so delivery cannot fall back silently.
+// TelegramUsername is the linked chat's sender name (#294), without @:
+// the one the confirmed link code came with,
 // then the latest one an update of the link brought (NoteTelegramUsername);
 // empty for a sender without one and whenever the chat is not linked.
 type TelegramLink struct {
@@ -67,7 +67,7 @@ type TelegramLink struct {
 	State             string
 	Reason            string
 	LinkCodeExpiresAt string
-	DefaultSwarmID    string
+	DefaultActorUID   string
 	TelegramUsername  string
 	UpdatedAt         string
 }
@@ -92,7 +92,7 @@ type TelegramLinkConfirmation struct {
 // привязки получает её значения по умолчанию.
 const telegramLinkView = `SELECT u.id, l.bot_token IS NOT NULL, coalesce(l.bot_username, ''),
 	coalesce(l.chat_id, 0), coalesce(l.telegram_user_id, 0), coalesce(l.state, 'unlinked'),
-	coalesce(l.reason, ''), coalesce(l.link_code_expires_at, ''), coalesce(l.default_swarm_id, ''),
+	coalesce(l.reason, ''), coalesce(l.link_code_expires_at, ''), coalesce(l.default_actor_uid, ''),
 	coalesce(l.telegram_username, ''), coalesce(l.updated_at, '')
 	FROM users u LEFT JOIN user_telegram_links l ON l.user_id = u.id WHERE u.id = ?`
 
@@ -102,7 +102,7 @@ func (s *Store) GetTelegramLink(ctx context.Context, userID string) (TelegramLin
 	var link TelegramLink
 	err := s.conn(ctx).QueryRowContext(ctx, telegramLinkView, userID).Scan(&link.UserID, &link.HasBotToken,
 		&link.BotUsername, &link.ChatID, &link.TelegramUserID, &link.State, &link.Reason,
-		&link.LinkCodeExpiresAt, &link.DefaultSwarmID, &link.TelegramUsername, &link.UpdatedAt)
+		&link.LinkCodeExpiresAt, &link.DefaultActorUID, &link.TelegramUsername, &link.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TelegramLink{}, fmt.Errorf("%w: user %q", ErrNotFound, userID)
 	}
@@ -326,7 +326,7 @@ func (s *Store) ConfirmTelegramLink(ctx context.Context, in TelegramLinkConfirma
 		if err != nil {
 			return err
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = 'linked', reason = NULL, chat_id = ?, telegram_user_id = ?, telegram_username = ?, session_hash = ?, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = 'linked', reason = NULL, chat_id = ?, telegram_user_id = ?, telegram_username = ?, session_hash = ?, default_actor_uid = NULL, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
 			in.ChatID, in.TelegramUserID, telegramUsernameValue(in.Username), session, nowRFC3339(), userID)
 		if IsUniqueViolation(err) {
 			return ErrTelegramChatTaken
@@ -511,30 +511,22 @@ func telegramTokenByte(b byte) bool {
 // не повторяет.
 var errTelegramReasonToken = fmt.Errorf("%w: a link error reason must not carry a bot token", ErrTelegramInvalid)
 
-const telegramSwarmReader = `w.state <> 'deleted' AND (u.is_admin = 1 OR w.owner_id = u.id)`
-
-// SetTelegramSwarm makes swarmID the default swarm of the user's linked chat
-// (/use, #284) and returns the link. One transaction checks the telegram
-// session of the update with authorize and that the user reads the swarm by
-// the swarm view rule: a swarm the user does not read
-// is ErrNotFound, as if it did not exist. A user without a live link, or a
-// session authorize refuses: ErrTelegramUnlinked. A refusal writes nothing.
-func (s *Store) SetTelegramSwarm(ctx context.Context, userID, swarmID string, authorize func(context.Context) bool) (TelegramLink, error) {
-	var link TelegramLink
-	err := s.WithTx(ctx, func(ctx context.Context) error {
-		if authorize == nil || !authorize(ctx) {
-			return ErrTelegramUnlinked
-		}
-		var readable bool
-		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM users u JOIN swarms w ON w.id = ?
-			WHERE u.id = ? AND u.disabled = 0 AND `+telegramSwarmReader+`)`, swarmID, userID).Scan(&readable); err != nil {
+// SetTelegramActor selects a running agent for the same verified chat session.
+// Revoked access, an unavailable agent or a new link leaves the selection unchanged.
+func (s *Store) SetTelegramActor(ctx context.Context, userID, session, actorUID string) error {
+	return s.WithTx(ctx, func(ctx context.Context) error {
+		var allowed bool
+		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM managed_actors a JOIN swarms w ON w.id = a.swarm_id JOIN users u ON u.id = ?
+			WHERE a.uid = ? AND a.phase = 'running' AND a.desired = 'running' AND w.state = 'active'
+			  AND u.disabled = 0 AND (u.is_admin = 1 OR w.owner_id = u.id))`, userID, actorUID).Scan(&allowed); err != nil {
 			return err
 		}
-		if !readable {
-			return fmt.Errorf("%w: swarm %q", ErrNotFound, swarmID)
+		if !allowed {
+			return ErrNotFound
 		}
-		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET default_swarm_id = ?, updated_at = ? WHERE user_id = ? AND state = 'linked'`,
-			swarmID, nowRFC3339(), userID)
+		result, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET default_actor_uid = ?, updated_at = ?
+			WHERE user_id = ? AND state = 'linked' AND session_hash = ?`, actorUID, nowRFC3339(), userID, session)
 		if err != nil {
 			return err
 		}
@@ -543,13 +535,8 @@ func (s *Store) SetTelegramSwarm(ctx context.Context, userID, swarmID string, au
 		} else if n == 0 {
 			return ErrTelegramUnlinked
 		}
-		link, err = s.GetTelegramLink(ctx, userID)
-		return err
+		return nil
 	})
-	if err != nil {
-		return TelegramLink{}, err
-	}
-	return link, nil
 }
 
 // NoteTelegramUsername keeps the Telegram username that an update of the
@@ -682,7 +669,7 @@ func (s *Store) dropTelegramLink(ctx context.Context, userID, state string, reas
 	if err := s.conn(ctx).QueryRowContext(ctx, `SELECT session_hash FROM user_telegram_links WHERE user_id = ?`, userID).Scan(&session); err != nil {
 		return err
 	}
-	if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = ?, reason = ?, chat_id = NULL, telegram_user_id = NULL, telegram_username = NULL, session_hash = NULL, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
+	if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE user_telegram_links SET state = ?, reason = ?, chat_id = NULL, telegram_user_id = NULL, telegram_username = NULL, default_actor_uid = NULL, session_hash = NULL, link_code_hash = NULL, link_code_expires_at = NULL, updated_at = ? WHERE user_id = ?`,
 		state, reason, nowRFC3339(), userID); err != nil {
 		return err
 	}

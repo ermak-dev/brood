@@ -8,14 +8,18 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"brood.dev/go/brood/actormodel"
 )
 
 const agentRoleSchema = `CREATE TABLE agent_roles (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL UNIQUE,
     prompt TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
     permissions TEXT NOT NULL,
-    is_default INTEGER NOT NULL CHECK (is_default IN (0, 1))
+    is_default INTEGER NOT NULL CHECK (is_default IN (0, 1)),
+    is_builtin_master INTEGER NOT NULL DEFAULT 0 CHECK (is_builtin_master IN (0, 1))
 )`
 
 const agentRoleDefaultIndex = `CREATE UNIQUE INDEX agent_roles_default ON agent_roles(is_default) WHERE is_default = 1`
@@ -27,12 +31,23 @@ func verifyAgentRoleSchema(ctx context.Context, tx *sql.Tx) error {
 	return checkObject(ctx, tx, "index", "agent_roles_default", agentRoleDefaultIndex)
 }
 
-// AgentRole is a global session prompt and set of permissions. Agents
+// BuiltInMasterRoleID returns the seeded master's role ID, or an empty ID if it was deleted.
+func (s *Store) BuiltInMasterRoleID(ctx context.Context) (string, error) {
+	var id string
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT id FROM agent_roles WHERE is_builtin_master = 1`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// AgentRole is a global session prompt, model override, and set of permissions. Agents
 // contains the names of non-deleted agents assigned to the role; it is read-only.
 type AgentRole struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	Prompt      string   `json:"prompt"`
+	Model       string   `json:"model"`
 	Permissions []string `json:"permissions"`
 	Default     bool     `json:"default"`
 	Agents      []string `json:"agents"`
@@ -60,6 +75,9 @@ func delegatedAgentPermission(permission string) bool {
 }
 
 func (r AgentRole) validate() error {
+	if r.Model != "" && !actormodel.ValidName(r.Model) {
+		return fmt.Errorf("%w: choose a valid model ID", ErrInvalidAgentRole)
+	}
 	if r.Name == "" {
 		return fmt.Errorf("%w: enter a name for the role", ErrInvalidAgentRole)
 	}
@@ -86,13 +104,13 @@ func (r AgentRole) validate() error {
 	return nil
 }
 
-const agentRoleCols = `id,name,prompt,permissions,is_default`
+const agentRoleCols = `id,name,prompt,model,permissions,is_default`
 const agentRoleAgents = `(SELECT json_group_array(name ORDER BY name,uid) FROM managed_actors WHERE live_role_id=agent_roles.id)`
 
 func scanAgentRole(row interface{ Scan(...any) error }, includeAgents bool) (AgentRole, error) {
 	var role AgentRole
 	var permissions, agents string
-	fields := []any{&role.ID, &role.Name, &role.Prompt, &permissions, &role.Default}
+	fields := []any{&role.ID, &role.Name, &role.Prompt, &role.Model, &permissions, &role.Default}
 	if includeAgents {
 		fields = append(fields, &agents)
 	}
@@ -163,8 +181,8 @@ func (s *Store) CreateAgentRole(ctx context.Context, role AgentRole) (AgentRole,
 	role.Permissions = append([]string{}, role.Permissions...)
 	err := s.WithTx(ctx, func(ctx context.Context) error {
 		_, err := s.conn(ctx).ExecContext(ctx,
-			`INSERT INTO agent_roles (id,name,prompt,permissions,is_default) VALUES (?,?,?,?,0)`,
-			role.ID, role.Name, role.Prompt, encodeManaged(role.Permissions))
+			`INSERT INTO agent_roles (id,name,prompt,model,permissions,is_default) VALUES (?,?,?,?,?,0)`,
+			role.ID, role.Name, role.Prompt, role.Model, encodeManaged(role.Permissions))
 		if err != nil {
 			return wrapUnique(err, fmt.Sprintf("agent role %q", role.Name))
 		}
@@ -208,8 +226,8 @@ func (s *Store) UpdateAgentRole(ctx context.Context, role AgentRole) error {
 				return err
 			}
 		}
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET name=?,prompt=?,permissions=? WHERE id=?`,
-			role.Name, role.Prompt, encodeManaged(append([]string{}, role.Permissions...)), role.ID)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET name=?,prompt=?,model=?,permissions=? WHERE id=?`,
+			role.Name, role.Prompt, role.Model, encodeManaged(append([]string{}, role.Permissions...)), role.ID)
 		if err != nil {
 			return wrapUnique(err, fmt.Sprintf("agent role %q", role.Name))
 		}

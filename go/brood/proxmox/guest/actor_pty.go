@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/proxmox/guest/ptyattach"
 	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"golang.org/x/sys/unix"
@@ -21,18 +22,19 @@ import (
 
 const rolePromptFile = ".brood-role-prompt"
 const rolePromptLimit = 24 << 10
+const roleModelEnv = "BROOD_ROLE_MODEL"
 
 func actorPTYConfig(executable string) ptysession.Config {
 	const home = "/workspace/home"
 	return ptysession.Config{
 		Command: []string{executable, "--brood-guest-app"}, Env: actorEnv(), Dir: home, Columns: 80, Rows: 24,
-		BeforeStart: func() error { return stageRolePrompt(home) },
+		BeforeStart: func() ([]string, error) { return stageRolePrompt(home) },
 	}
 }
 
 // Успевший стартовать wrapper считается живым PTY. Загружаем prompt до
 // запуска wrapper, чтобы при сетевом отказе автостарт мог повторить попытку.
-func stageRolePrompt(home string) error {
+func stageRolePrompt(home string) ([]string, error) {
 	unavailable := errors.New("Agent role prompt is unavailable; no new session was started. Check the server and the assigned role, then retry")
 	// Оставляем время на ответ PTY-клиенту в его пятисекундном окне.
 	client := http.Client{
@@ -41,26 +43,30 @@ func stageRolePrompt(home string) error {
 	}
 	resp, err := client.Get("http://" + modelAddress + rolePromptPath)
 	if err != nil {
-		return unavailable
+		return nil, unavailable
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
-		return unavailable
+		return nil, unavailable
+	}
+	model := resp.Header.Get(actormodel.RoleModelHeader)
+	if model != "" && !actormodel.ValidName(model) {
+		return nil, unavailable
 	}
 	prompt, err := io.ReadAll(io.LimitReader(resp.Body, rolePromptLimit+1))
 	if err != nil || len(prompt) > rolePromptLimit {
-		return unavailable
+		return nil, unavailable
 	}
 	dir, err := openSecretDirectory(home, false)
 	if err != nil {
-		return unavailable
+		return nil, unavailable
 	}
 	defer unix.Close(dir)
 	uid, gid := os.Geteuid(), os.Getegid()
 	if secureSecretDirectory(dir, uid, false) != nil || replaceSecretFile(dir, rolePromptFile, prompt, 0600, uid, gid, false) != nil {
-		return unavailable
+		return nil, unavailable
 	}
-	return nil
+	return []string{roleModelEnv + "=" + model}, nil
 }
 
 func createProductionPTYSocket() (*actorSocket, error) {
@@ -106,13 +112,15 @@ func runActorPTY(executable string, driftty bool) error {
 		return err
 	}
 	defer listener.Close()
-	host, err := ptysession.New(actorPTYConfig(executable))
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+	config := actorPTYConfig(executable)
+	config.OnSessionEvent = sessionEventQueue(ctx)
+	host, err := ptysession.New(config)
 	if err != nil {
 		return errors.New("cannot initialize actor PTY host")
 	}
 	defer host.Close()
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- host.Serve(ctx, listener) }()
 	// Без ttyd (его нет в пакетах Debian, кладёт установщик) PTY-хост живёт

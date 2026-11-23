@@ -193,6 +193,11 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 	if err != nil {
 		return command.Result{}, actorCommandError(app.ErrNotFound)
 	}
+	return s.executeOperatorSessionTarget(ctx, userID, caller, inv, target, mutate)
+}
+
+func (s *Server) executeOperatorSessionTarget(ctx context.Context, userID, caller string, inv command.Invocation, target store.ManagedActor, mutate bool) (command.Result, error) {
+	swarmID := target.SwarmID
 	owner := s.authorizeSwarmOwnerIntent(ctx, userID, swarmID) == nil
 	before := func() error {
 		if err := s.operatorSessionAuthority(ctx, userID, swarmID, target); err != nil {

@@ -116,10 +116,15 @@ func NewModelGateway(cfg relay.ClientConfig) (http.Handler, error) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) { http.Error(w, "model gateway unavailable", 502) },
 	}
+	sessionEvents := sessionEventHandler(route)
 	slots := make(chan struct{}, 8)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != modelAddress || r.Header.Get("Origin") != "" || r.URL.RawPath != "" || !modelQuery(r.URL.Path, r.URL.RawQuery) || r.URL.ForceQuery || r.URL.User != nil {
 			http.Error(w, "model request denied", 403)
+			return
+		}
+		if r.URL.Path == localSessionEventPath {
+			sessionEvents.ServeHTTP(w, r)
 			return
 		}
 		expected := "POST"

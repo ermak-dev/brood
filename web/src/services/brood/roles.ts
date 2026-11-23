@@ -32,6 +32,7 @@ export const DELEGATED_ROLE_PERMISSIONS: ReadonlySet<string> = new Set([
 export interface RoleInput {
   name: string;
   prompt: string;
+  model: string;
   permissions: string[];
 }
 
@@ -45,6 +46,7 @@ const rolesPath = '/api/roles';
 const rolePath = (id: string) => `${rolesPath}/${encodeURIComponent(id)}`;
 
 export const rolesApi = {
+  models: async () => (await request<string[]>('GET', `${rolesPath}/models`)) ?? [],
   list: async () =>
     ((await request<Role[]>('GET', rolesPath)) ?? []).map((role) => ({
       ...role,

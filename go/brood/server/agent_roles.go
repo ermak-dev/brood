@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/command"
 	"brood.dev/go/brood/proxmox/relay"
@@ -16,6 +17,7 @@ import (
 )
 
 func (s *Server) mountAgentRoles() {
+	s.mux.HandleFunc("GET /api/roles/models", s.handleRoleModels)
 	for _, pattern := range []string{"GET /api/roles", "POST /api/roles", "PUT /api/roles/{roleID}", "DELETE /api/roles/{roleID}"} {
 		s.mux.HandleFunc(pattern, s.handleAgentRoles)
 	}
@@ -50,17 +52,22 @@ func (s *Server) handleAgentRoles(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Name        string   `json:"name"`
 			Prompt      string   `json:"prompt"`
+			Model       string   `json:"model"`
 			Permissions []string `json:"permissions"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&input) != nil || decoder.Decode(new(any)) != io.EOF {
-			writeDetail(w, 400, "Expected a role name, prompt, and permissions; nothing changed")
+			writeDetail(w, 400, "Expected role settings: name, prompt, model, and permissions; nothing changed")
 			return
 		}
 		role.Name, role.Prompt, role.Permissions = strings.TrimSpace(input.Name), input.Prompt, input.Permissions
 		if role.Name == "" || len(role.Name) > 120 || len(role.Prompt) > 24<<10 {
 			writeDetail(w, 400, "Choose a name of 1 to 120 bytes and a prompt of at most 24 KiB; nothing changed")
+			return
+		}
+		role.Model = strings.TrimSpace(input.Model)
+		if !s.validateRoleModel(w, r, role) {
 			return
 		}
 		seen := map[string]bool{}
@@ -83,6 +90,40 @@ func (s *Server) handleAgentRoles(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.managedRoleWrite(ctx, w, r, user.ID, role)
+}
+
+func (s *Server) validateRoleModel(w http.ResponseWriter, r *http.Request, role store.AgentRole) bool {
+	if role.Model == "" {
+		return true
+	}
+	if !actormodel.ValidName(role.Model) {
+		writeDetail(w, 400, "Choose a valid model ID; nothing changed")
+		return false
+	}
+	if r.Method == http.MethodPut {
+		current, err := s.store.GetAgentRole(r.Context(), role.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			writeDetail(w, 404, "Role not found; nothing changed")
+			return false
+		}
+		if err != nil {
+			apiError(w, r, err)
+			return false
+		}
+		if current.Model == role.Model {
+			return true
+		}
+	}
+	models, err := s.roleModelCatalog(r.Context())
+	if err != nil {
+		writeDetail(w, 503, "Agent models are unavailable; check the model gateway and retry. Nothing changed")
+		return false
+	}
+	if !slices.Contains(models, role.Model) {
+		writeDetail(w, 400, "The selected model is not listed by the agent model gateway; refresh the list and choose another model. Nothing changed")
+		return false
+	}
+	return true
 }
 
 func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r *http.Request, userID string, role store.AgentRole) {

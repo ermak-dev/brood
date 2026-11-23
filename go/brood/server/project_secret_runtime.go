@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/projectsecret"
 	"brood.dev/go/brood/store"
 )
@@ -40,6 +41,9 @@ func (s *Server) serveGuestRolePrompt(w http.ResponseWriter, r *http.Request) {
 	control := http.NewResponseController(w)
 	_ = control.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	defer control.SetWriteDeadline(time.Time{})
+	if role.Model != "" {
+		w.Header().Set(actormodel.RoleModelHeader, role.Model)
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(role.Prompt))
 }
@@ -79,7 +83,16 @@ func (s *Server) openGuestRuntime(ctx context.Context, w http.ResponseWriter, r 
 		writeDetail(w, 405, "method not allowed")
 		return g, nil, false
 	}
-	if r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.ForceQuery || r.ContentLength != 0 {
+	if r.ContentLength != 0 {
+		writeDetail(w, 404, "not found")
+		return g, nil, false
+	}
+	return s.authorizeGuestRuntime(ctx, w, r, prefix, restOK)
+}
+
+func (s *Server) authorizeGuestRuntime(ctx context.Context, w http.ResponseWriter, r *http.Request, prefix string, restOK func([]string) bool) (guestRuntime, []string, bool) {
+	var g guestRuntime
+	if r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.ForceQuery || !strings.HasPrefix(r.URL.Path, prefix) {
 		writeDetail(w, 404, "not found")
 		return g, nil, false
 	}

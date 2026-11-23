@@ -12,6 +12,9 @@ import "errors"
 // guest within its 4 KiB limit.
 const MaxName = 256
 
+// RoleModelHeader carries the session-specific override on the guest role route.
+const RoleModelHeader = "X-Brood-Role-Model"
+
 // Models are the installation-assigned model names. An empty field leaves the
 // choice to Claude Code; the zero value is "no installation models".
 type Models struct {

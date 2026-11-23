@@ -16,13 +16,16 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"brood.dev/go/brood/actormodel"
 	"brood.dev/go/brood/projectsecret"
+	"brood.dev/go/brood/proxmox/guest/ptysession"
 	"brood.dev/go/brood/proxmox/relay"
 	"golang.org/x/sys/unix"
 )
@@ -238,6 +241,20 @@ func RunProjectApp(warn io.Writer) error {
 	}
 	if prompt.Size() > 0 {
 		args = append(args, "--append-system-prompt-file", promptPath)
+	}
+	if model := os.Getenv(roleModelEnv); model != "" {
+		if !actormodel.ValidName(model) {
+			return errors.New("Invalid agent role model; select a valid model and restart the session")
+		}
+		env = slices.DeleteFunc(env, func(entry string) bool {
+			name, _, _ := strings.Cut(entry, "=")
+			return name == "ANTHROPIC_MODEL" || name == "ANTHROPIC_DEFAULT_OPUS_MODEL" || name == "ANTHROPIC_DEFAULT_SONNET_MODEL"
+		})
+		env = append(env, claudeModelEnv(actormodel.Models{Model: model})...)
+	}
+	if epoch := os.Getenv(ptysession.SessionEpochEnv); epoch != "" {
+		args = append(args, "--settings", sessionHookSettings())
+		env = append(env, ptysession.SessionEpochEnv+"="+epoch)
 	}
 	return syscall.Exec("/opt/brood/bin/claude", args, env)
 }

@@ -22,11 +22,12 @@ const MaxMessage = 2 * 1024 * 1024
 
 // Config fixes the trusted child command, environment, directory and initial size.
 type Config struct {
-	Command       []string
-	BeforeStart   func() error // Runs before starting each new child, not when reusing one.
-	Env           []string
-	Dir           string
-	Columns, Rows int
+	Command        []string
+	BeforeStart    func() ([]string, error) // Returns extra environment for each new child.
+	OnSessionEvent func(SessionEvent)       // Enqueues an event without blocking the PTY host.
+	Env            []string
+	Dir            string
+	Columns, Rows  int
 }
 
 // State identifies one owned child instance.
@@ -41,13 +42,14 @@ type State struct {
 
 // Request starts every connection. Attach switches to Frame after its Reply.
 type Request struct {
-	Action   string `json:"action"`
-	Proof    string `json:"proof,omitempty"`
-	Data     []byte `json:"data,omitempty"`
-	Columns  int    `json:"columns,omitempty"`
-	Rows     int    `json:"rows,omitempty"`
-	Lines    int    `json:"lines,omitempty"`
-	ReadOnly bool   `json:"readOnly,omitempty"`
+	Action   string       `json:"action"`
+	Proof    string       `json:"proof,omitempty"`
+	Data     []byte       `json:"data,omitempty"`
+	Columns  int          `json:"columns,omitempty"`
+	Rows     int          `json:"rows,omitempty"`
+	Lines    int          `json:"lines,omitempty"`
+	ReadOnly bool         `json:"readOnly,omitempty"`
+	Hook     *SessionHook `json:"hook,omitempty"`
 }
 
 // Reply reports complete, refused, or unknown mutation outcome.

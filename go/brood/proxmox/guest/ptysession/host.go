@@ -35,6 +35,8 @@ type child struct {
 	done     chan struct{}
 	readDone chan struct{}
 	exitErr  error
+	stopping bool
+	turn     sessionTurn
 }
 type subscription struct {
 	conn     net.Conn
@@ -46,18 +48,19 @@ type subscription struct {
 // Host owns at most one child. All screen updates, subscriptions, mutations and
 // writer ownership changes share one lock, including the replay/live handoff.
 type Host struct {
-	mu          sync.Mutex
-	config      Config
-	current     *child
-	writer      *subscription
-	subscribers map[*subscription]bool
-	connections map[net.Conn]bool
-	listener    net.Listener
-	closing     bool
-	closeOnce   sync.Once
-	closed      chan struct{}
-	closeErr    error
-	finishGroup func(int) error
+	mu           sync.Mutex
+	config       Config
+	current      *child
+	writer       *subscription
+	subscribers  map[*subscription]bool
+	connections  map[net.Conn]bool
+	listener     net.Listener
+	closing      bool
+	closeOnce    sync.Once
+	closed       chan struct{}
+	closeErr     error
+	finishGroup  func(int) error
+	launchFailed bool
 }
 
 // New validates trusted configuration but does not start a child.
@@ -123,26 +126,42 @@ func openPTY(columns, rows int) (*os.File, *os.File, error) {
 	}
 	return master, slave, nil
 }
-func (h *Host) startLocked() error {
+func (h *Host) startLocked() (startErr error) {
 	if h.current != nil && h.current.exitErr != nil {
 		return h.current.exitErr
 	}
 	if h.current != nil && h.current.state.Running {
 		return nil
 	}
+	defer func() {
+		if startErr != nil {
+			h.sessionLaunchFailedLocked()
+		}
+	}()
 	c := h.config
 	if c.BeforeStart != nil {
-		if err := c.BeforeStart(); err != nil {
+		extraEnv, err := c.BeforeStart()
+		if err != nil {
 			return err
 		}
+		c.Env = append(append([]string(nil), c.Env...), extraEnv...)
 	}
 	master, slave, err := openPTY(c.Columns, c.Rows)
 	if err != nil {
 		return err
 	}
 	defer slave.Close()
+	var nonce [24]byte
+	if _, err = rand.Read(nonce[:]); err != nil {
+		_ = master.Close()
+		return err
+	}
+	epoch := hex.EncodeToString(nonce[:])
 	cmd := exec.Command(c.Command[0], c.Command[1:]...)
 	cmd.Env = c.Env
+	if c.OnSessionEvent != nil {
+		cmd.Env = append(append([]string(nil), c.Env...), SessionEpochEnv+"="+epoch)
+	}
 	cmd.Dir = c.Dir
 	cmd.Stdin = slave
 	cmd.Stdout = slave
@@ -159,16 +178,9 @@ func (h *Host) startLocked() error {
 		_ = master.Close()
 		return err
 	}
-	var nonce [24]byte
-	if _, err = rand.Read(nonce[:]); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = master.Close()
-		return err
-	}
-	epoch := hex.EncodeToString(nonce[:])
 	p := &child{cmd: cmd, master: master, observer: newObserver(c.Columns, c.Rows), state: State{PID: cmd.Process.Pid, Start: start, Epoch: epoch, Running: true, Columns: c.Columns, Rows: c.Rows}, proof: fmt.Sprintf("%d:%s:%s", cmd.Process.Pid, start, epoch), done: make(chan struct{}), readDone: make(chan struct{})}
 	h.current = p
+	h.launchFailed = false
 	go h.readPTY(p)
 	go h.reap(p)
 	return nil
@@ -227,6 +239,7 @@ func (h *Host) reap(p *child) {
 		// Не освобождаем PID и не разрешаем новый сеанс при неподтверждённой очистке.
 		p.exitErr = fmt.Errorf("PTY session cleanup is unconfirmed: %w", err)
 	}
+	h.sessionExitedLocked(p, p.cmd.ProcessState)
 	_ = p.master.Close()
 	final := Frame{Type: "closed"}
 	if p.exitErr != nil {
@@ -300,7 +313,11 @@ func (h *Host) killLocked(p *child) error {
 	if err := h.ownedLocked(p.proof); err != nil {
 		return err
 	}
-	return unix.Kill(-p.state.PID, unix.SIGKILL)
+	if err := unix.Kill(-p.state.PID, unix.SIGKILL); err != nil {
+		return err
+	}
+	p.stopping = true
+	return nil
 }
 func (h *Host) resizeLocked(p *child, columns, rows int) error {
 	if !validSize(columns, rows) {
@@ -338,6 +355,7 @@ func (h *Host) inputLocked(p *child, data []byte) (bool, error) {
 	if n != len(data) {
 		return n > 0, errors.New("PTY input write incomplete")
 	}
+	h.sessionInputLocked(p, data)
 	return true, nil
 }
 
@@ -355,6 +373,24 @@ func (h *Host) Serve(ctx context.Context, l net.Listener) error {
 	defer stop()
 	var wg sync.WaitGroup
 	defer func() { _ = h.Close(); wg.Wait() }()
+	if h.config.OnSessionEvent != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tick := time.NewTicker(time.Second)
+			defer tick.Stop()
+			for {
+				select {
+				case <-h.closed:
+					return
+				case <-tick.C:
+					h.mu.Lock()
+					h.sessionHeartbeatLocked()
+					h.mu.Unlock()
+				}
+			}
+		}()
+	}
 	slots := make(chan struct{}, maxConnections)
 	for {
 		c, err := l.Accept()
@@ -416,6 +452,9 @@ func (h *Host) handle(c net.Conn) {
 func (h *Host) requestLocked(r Request) Reply {
 	fail := func(e error) Reply { return h.refusedLocked(e) }
 	switch r.Action {
+	case "session_hook":
+		h.sessionHookLocked(r.Hook)
+		return Reply{OK: true, Outcome: "complete"}
 	case "status":
 		return h.replyLocked()
 	case "ensure":

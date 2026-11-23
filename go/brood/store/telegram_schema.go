@@ -5,6 +5,8 @@ import (
 	"database/sql"
 )
 
+// Выбранный UID не связан внешним ключом: удаление агента не должно
+// превратить явный выбор в автоматическую адресацию мастеру.
 const userTelegramLinksSchema = `CREATE TABLE user_telegram_links (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     bot_token TEXT CHECK (length(bot_token) > 0),
@@ -17,7 +19,7 @@ const userTelegramLinksSchema = `CREATE TABLE user_telegram_links (
     state TEXT NOT NULL CHECK (state IN ('unlinked', 'linked', 'error')),
     reason TEXT CHECK (length(reason) > 0),
     updated_at TEXT NOT NULL,
-    default_swarm_id TEXT REFERENCES swarms(id) ON DELETE SET NULL,
+    default_actor_uid TEXT CHECK (default_actor_uid IS NULL OR (state = 'linked' AND length(default_actor_uid) > 0)),
     telegram_username TEXT CHECK (telegram_username IS NULL OR (state = 'linked' AND length(telegram_username) BETWEEN 1 AND 32 AND telegram_username NOT GLOB '*[^A-Za-z0-9_]*')),
     CHECK ((bot_token IS NULL) = (bot_username IS NULL)),
     CHECK ((link_code_hash IS NULL) = (link_code_expires_at IS NULL)),
@@ -37,8 +39,8 @@ const telegramSessionRevoked = "telegram session was revoked: link the chat agai
 // мешает удалению. Триггер на любом виде сессии: привязка, которую запись
 // мимо хранилища направила на веб-сессию, иначе запретила бы её удаление.
 // Отвязка сначала снимает ссылку сама, и триггер её не находит. Имя
-// собеседника снимается вместе с чатом (#294).
-const sessionTelegramRevoke = `CREATE TRIGGER sessions_telegram_revoke BEFORE DELETE ON sessions BEGIN UPDATE user_telegram_links SET state = 'error', reason = '` + telegramSessionRevoked + `', chat_id = NULL, telegram_user_id = NULL, telegram_username = NULL, session_hash = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE session_hash = OLD.token_hash; END`
+// собеседника и выбранный адресат снимаются вместе с чатом.
+const sessionTelegramRevoke = `CREATE TRIGGER sessions_telegram_revoke BEFORE DELETE ON sessions BEGIN UPDATE user_telegram_links SET state = 'error', reason = '` + telegramSessionRevoked + `', chat_id = NULL, telegram_user_id = NULL, telegram_username = NULL, default_actor_uid = NULL, session_hash = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE session_hash = OLD.token_hash; END`
 
 func telegramFullSchema() string {
 	return userTelegramLinksSchema + ";" + sessionTelegramRevoke

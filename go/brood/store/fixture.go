@@ -57,7 +57,7 @@ var fixtureSwarmTables = []fixtureTableSpec{
 }
 
 // fixtureCleared — колонки, которые ссылаются на состояние вне фикстуры.
-var fixtureCleared = map[string][]string{"user_telegram_links": {"default_swarm_id"}}
+var fixtureCleared = map[string][]string{"user_telegram_links": {"default_actor_uid"}}
 
 var fixtureColumn = regexp.MustCompile(`^[a-z_]+$`)
 

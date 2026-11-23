@@ -46,10 +46,11 @@ type Server struct {
 	views   actorViews
 	// telegram — поллеры ботов, telegramChannel — канал шины между
 	// владельцем роя и его агентами.
-	telegram        *telegramBots
-	telegramChannel *telegramChannel
-	mux             *http.ServeMux
-	cancel          context.CancelFunc
+	telegram         *telegramBots
+	telegramChannel  *telegramChannel
+	telegramActivity *telegramActivity
+	mux              *http.ServeMux
+	cancel           context.CancelFunc
 
 	// artifactsDir — каталог доставки артефактов бутстрапа гостя.
 	artifactsDir   string
@@ -61,8 +62,9 @@ type Server struct {
 	// отдаются, модель выбирает Claude Code.
 	actorModels actormodel.Models
 
-	managedLLM     http.Handler
-	imageSnapshots chan struct{}
+	roleModelCatalog func(context.Context) ([]string, error)
+	managedLLM       http.Handler
+	imageSnapshots   chan struct{}
 }
 
 // New открывает хранилище по cfg.DBPath и собирает сервер целиком.
@@ -108,6 +110,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv := &Server{store: st, imageSnapshots: make(chan struct{}, 4), catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, artifactsDir: cfg.artifactsDir, artifactOrigin: cfg.artifactOrigin, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
+	srv.telegramActivity = newTelegramActivity(srv)
 	srv.telegram.channel = srv.telegramChannel
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
@@ -151,11 +154,13 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
 	srv.managedLLM = srv.managedLLMHandler(cfg)
+	srv.roleModelCatalog = newRoleModelCatalog(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)
 	srv.managed.start(proxyCtx)
 	srv.telegram.start(proxyCtx)
+	srv.telegramActivity.start(proxyCtx)
 	return srv, nil
 }
 
@@ -185,6 +190,9 @@ func (s *Server) Close() error {
 	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
 	// Поллеры и отправитель Telegram пишут в базу: остановлены до её
 	// закрытия.
+	if s.telegramActivity != nil {
+		s.telegramActivity.wait()
+	}
 	s.telegram.close()
 	s.proxy.Close()
 	s.managed.close()
@@ -198,6 +206,10 @@ func (s *Server) Close() error {
 func (s *Server) Handler() http.Handler {
 	browser := s.actorViewHandler(s.browserProtection())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicGuestSessionEventPath(r.URL.Path) {
+			s.serveGuestSessionEvent(w, r)
+			return
+		}
 		if publicGuestRolePromptPath(r.URL.Path) {
 			s.serveGuestRolePrompt(w, r)
 			return

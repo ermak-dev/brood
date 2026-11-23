@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { IconPencil, IconShield, IconTrash2 } from '@/components/ui/icons';
 import {
   DELEGATED_ROLE_PERMISSIONS,
@@ -31,9 +32,23 @@ function RoleForm({
 }) {
   const { t } = useTranslation();
   const [permissions, setPermissions] = useState(role?.permissions ?? []);
-  const form = useForm({ name: role?.name ?? '', prompt: role?.prompt ?? '' }, (values) => ({
-    name: values.name.trim() ? undefined : t('brood.form.required'),
-  }));
+  const models = useResource(rolesApi.models);
+  const form = useForm(
+    { name: role?.name ?? '', prompt: role?.prompt ?? '', model: role?.model ?? '' },
+    (values) => ({ name: values.name.trim() ? undefined : t('brood.form.required') })
+  );
+  const modelOptions = [
+    { value: '', label: t('brood.roles.model_default') },
+    ...(models.data ?? []).map((id) => ({ value: id, label: id })),
+  ];
+  if (form.values.model && !modelOptions.some(({ value }) => value === form.values.model)) {
+    modelOptions.push({
+      value: form.values.model,
+      label: models.loading || models.error
+        ? form.values.model
+        : t('brood.roles.model_not_listed', { model: form.values.model }),
+    });
+  }
   const originalPermissions = role?.permissions ?? [];
   const permissionsChanged =
     permissions.length !== originalPermissions.length ||
@@ -50,7 +65,8 @@ function RoleForm({
       check={form.check}
       dirty={form.dirty || permissionsChanged}
       submit={() => {
-        const body = { name: form.values.name.trim(), prompt: form.values.prompt, permissions };
+        const { model, prompt } = form.values;
+        const body = { name: form.values.name.trim(), prompt, model, permissions };
         return role ? rolesApi.update(role.id, body) : rolesApi.create(body);
       }}
       success={t(role ? 'brood.roles.saved' : 'brood.roles.created', {
@@ -65,6 +81,20 @@ function RoleForm({
         autoComplete="off"
         {...form.field('name')}
       />
+      <Field
+        label={t('brood.roles.model')}
+        hint={models.loading ? t('brood.roles.models_loading') : t('brood.roles.model_hint')}
+        error={models.error ? t('brood.roles.models_unavailable') : undefined}
+      >
+        {(id) => (
+          <Select
+            id={id}
+            value={form.values.model}
+            options={modelOptions}
+            onChange={(model) => form.set('model', model)}
+          />
+        )}
+      </Field>
       <Field label={t('brood.roles.prompt')} hint={t('brood.roles.prompt_hint')}>
         {(id) => (
           <textarea
@@ -188,6 +218,9 @@ export function RolesPage() {
       : [],
     details: (
       <>
+        <PanelSection title={t('brood.roles.model')}>
+          <p>{row.model || t('brood.roles.model_default')}</p>
+        </PanelSection>
         {administrator && (
           <PanelSection title={t('brood.roles.prompt')}>
             {row.prompt ? (

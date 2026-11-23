@@ -8,11 +8,14 @@ import (
 // seedAgentRoles выполняется в транзакции создания схемы.
 func seedAgentRoles(ctx context.Context, tx *sql.Tx) error {
 	permissions := []string{"agents", "diagnose", "send:agents", "send:operator"}
-	for _, role := range []AgentRole{
-		{Name: "Агент", Prompt: agentRolePrompt, Default: true, Permissions: append(permissions, "tail:self", "artifact_get")},
-		{Name: "Мастер", Prompt: masterRolePrompt, Permissions: append(permissions, "tail:swarm", "add", "start", "stop", "restart", "slash", "artifact_publish", "artifact_get")},
+	for _, role := range []struct {
+		AgentRole
+		master bool
+	}{
+		{AgentRole: AgentRole{Name: "Агент", Model: "glm-5.4", Prompt: agentRolePrompt, Default: true, Permissions: append(permissions, "tail:self", "artifact_get")}},
+		{AgentRole: AgentRole{Name: "Мастер", Model: "glm-5.4", Prompt: masterRolePrompt, Permissions: append(permissions, "tail:swarm", "add", "start", "stop", "restart", "slash", "artifact_publish", "artifact_get")}, master: true},
 	} {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_roles (id,name,prompt,permissions,is_default) VALUES (?,?,?,?,?)`, NewID(), role.Name, role.Prompt, encodeManaged(role.Permissions), role.Default); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_roles (id,name,prompt,model,permissions,is_default,is_builtin_master) VALUES (?,?,?,?,?,?,?)`, NewID(), role.Name, role.Prompt, role.Model, encodeManaged(role.Permissions), role.Default, role.master); err != nil {
 			return err
 		}
 	}

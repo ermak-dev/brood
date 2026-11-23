@@ -615,12 +615,12 @@ func (p *telegramPoller) run(ctx context.Context) {
 			offset = 0
 		}
 		for _, u := range updates {
-			p.handle(ctx, u)
 			if ctx.Err() != nil {
-				// Прерванное обновление не подтверждается: следующий поллер
-				// этого бота обработает его снова.
 				return
 			}
+			p.handle(ctx, u)
+			// Прерванная отправка могла дойти до агента. Следующий поллер
+			// не должен снова пытаться доставить обработанное обновление.
 			offset = telegram.NextOffset(offset, []telegram.Update{u})
 			p.bots.setOffset(p.botID, offset)
 		}
@@ -741,6 +741,10 @@ func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 	if u.Malformed {
 		return
 	}
+	if q := u.CallbackQuery; q != nil {
+		p.handleCallback(ctx, q)
+		return
+	}
 	m := u.Message
 	if m == nil || m.From == nil || m.From.IsBot || !m.Chat.Private() || m.Chat.ID <= 0 || m.Chat.ID != m.From.ID {
 		return
@@ -752,7 +756,8 @@ func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 	}
 	if chat.linked() {
 		p.noteSender(ctx, chat, m.From)
-		p.reply(ctx, chat.chatID, p.bots.channel.receive(ctx, chat, m))
+		response := p.bots.channel.receive(ctx, chat, m)
+		p.respond(ctx, chat, response)
 		return
 	}
 	if !command || name != "start" {
@@ -766,6 +771,50 @@ func (p *telegramPoller) handle(ctx context.Context, u telegram.Update) {
 		return
 	}
 	p.confirm(ctx, m, arg)
+}
+
+// handleCallback подтверждает нажатие даже при недоступной или старой
+// привязке; в таком случае в чат ничего не отправляется.
+func (p *telegramPoller) handleCallback(ctx context.Context, q *telegram.CallbackQuery) {
+	m := q.Message
+	if !strings.HasPrefix(q.Data, telegramUseCallback) || m == nil || q.From.IsBot || !m.Chat.Private() || m.Chat.ID <= 0 || m.Chat.ID != q.From.ID {
+		_ = p.client.AnswerCallbackQuery(ctx, q.ID, telegramStaleChoice)
+		return
+	}
+	chat, err := p.chatOwner(ctx, m.Chat.ID, q.From.ID)
+	if err != nil || !chat.linked() {
+		_ = p.client.AnswerCallbackQuery(ctx, q.ID, telegramStaleChoice)
+		return
+	}
+	response, ok := p.bots.channel.useCallback(ctx, chat, q.Data)
+	if !ok {
+		_ = p.client.AnswerCallbackQuery(ctx, q.ID, telegramStaleChoice)
+		return
+	}
+	_ = p.client.AnswerCallbackQuery(ctx, q.ID, "")
+	p.respond(ctx, chat, response)
+}
+
+// respond рендерит choices как inline keyboard. Проверка привязки не даёт
+// отправить ответ старой сессии в заново привязанный чат.
+func (p *telegramPoller) respond(ctx context.Context, chat telegramChat, response telegramResponse) {
+	if response.text == "" || !chat.active(ctx, p.bots.store) {
+		return
+	}
+	var markup telegram.ReplyMarkup
+	if len(response.choices) > 0 {
+		keyboard := &telegram.InlineKeyboardMarkup{}
+		for _, choices := range response.choices {
+			var row []telegram.InlineKeyboardButton
+			for _, choice := range choices {
+				row = append(row, telegram.InlineKeyboardButton{Text: choice.label, CallbackData: choice.action})
+			}
+			keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, row)
+		}
+		markup = keyboard
+	}
+	text := telegramClipText(strings.ToValidUTF8(response.text, "?"), telegram.MessageLimit)
+	_, _ = p.client.SendMessage(ctx, chat.chatID, text, markup)
 }
 
 // telegramCommand разбирает команду бота: "/name", "/name@bot" и аргумент

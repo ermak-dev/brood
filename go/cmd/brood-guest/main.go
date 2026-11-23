@@ -195,6 +195,10 @@ func dispatch(ctx context.Context, args []string, env func() []string, d depende
 	if len(args) == 1 && args[0] == "--brood-guest-session" {
 		return d.session(ctx)
 	}
+	if len(args) == 1 && args[0] == "--brood-guest-session-hook" {
+		guest.RunSessionHook(ctx, os.Stdin)
+		return nil
+	}
 	if len(args) == 1 && args[0] == "--brood-guest-autostart" {
 		return d.boot(ctx)
 	}
