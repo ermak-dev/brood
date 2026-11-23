@@ -42,8 +42,9 @@ const WriteTimeout = 5 * time.Second
 // Delivery distinguishes a written user frame from a confirmed delivery.
 // Idle only confirms the separate idle subscription, never the user message.
 type Delivery struct {
-	Status string
-	Idle   bool
+	Status    string
+	Idle      bool
+	MessageID string
 }
 
 // Exchange sends one message and listens on a separate reverse Unix socket.
@@ -131,7 +132,7 @@ func Exchange(ctx context.Context, socketPath, token, name, body string, waitSec
 		deadline = d
 	}
 	_ = listener.SetDeadline(deadline)
-	result := Delivery{Status: "unconfirmed"}
+	result := Delivery{Status: "unconfirmed", MessageID: msgID}
 	for {
 		incoming, err := listener.AcceptUnix()
 		if err != nil {

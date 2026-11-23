@@ -26,6 +26,8 @@ type telegramFocus struct {
 	chat              telegramChat
 	target, selection string
 	expires           time.Time
+	generation        int64
+	revision          uint64
 }
 
 type telegramTypingTarget struct {
@@ -34,14 +36,15 @@ type telegramTypingTarget struct {
 }
 
 type telegramActivity struct {
-	server  *Server
-	mu      sync.Mutex
-	turns   map[string]telegramTurn
-	focus   map[string]telegramFocus
-	next    map[string]time.Time
-	sending map[string]bool
-	slots   chan struct{}
-	done    chan struct{}
+	server        *Server
+	mu            sync.Mutex
+	turns         map[string]telegramTurn
+	focus         map[string]telegramFocus
+	next          map[string]time.Time
+	sending       map[string]bool
+	slots         chan struct{}
+	done          chan struct{}
+	focusRevision uint64
 }
 
 func newTelegramActivity(s *Server) *telegramActivity {
@@ -64,20 +67,34 @@ func (a *telegramActivity) update(g guestRuntime, event guestSessionEvent) {
 	a.turns[g.uid] = telegramTurn{guest: g, event: event, expires: time.Now().Add(telegramActivityLease)}
 }
 
-func (s *Server) noteTelegramDelivery(chat telegramChat, actorUID string) {
-	if s.telegramActivity == nil {
-		return
+// focusTelegramSubmission returns a rollback for a definite no-send result.
+func (s *Server) focusTelegramSubmission(ctx context.Context, chat telegramChat, actorUID string, generation int64) func() {
+	a := s.telegramActivity
+	if a == nil {
+		return func() {}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	link, current, ok := s.liveTelegramLink(ctx, chat.userID)
 	if !ok || current.session != chat.session {
-		return
+		return func() {}
 	}
-	a := s.telegramActivity
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.focus[chat.userID] = telegramFocus{chat: chat, target: actorUID, selection: link.DefaultActorUID, expires: time.Now().Add(telegramFocusLease)}
+	previous, hadPrevious := a.focus[chat.userID]
+	a.focusRevision++
+	revision := a.focusRevision
+	a.focus[chat.userID] = telegramFocus{chat: chat, target: actorUID, selection: link.DefaultActorUID, generation: generation, revision: revision, expires: time.Now().Add(telegramFocusLease)}
+	a.mu.Unlock()
+	return func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.focus[chat.userID].revision != revision {
+			return
+		}
+		if hadPrevious && previous.chat.session == chat.session && time.Now().Before(previous.expires) {
+			a.focus[chat.userID] = previous
+		} else {
+			delete(a.focus, chat.userID)
+		}
+	}
 }
 
 func (s *Server) clearTelegramFocus(chat telegramChat) {
@@ -140,7 +157,7 @@ func (a *telegramActivity) round(ctx context.Context, pending *sync.WaitGroup) {
 	targets := map[string]telegramTypingTarget{}
 	for user, focus := range focuses {
 		turn, ok := turns[focus.target]
-		if ok {
+		if ok && turn.guest.generation == focus.generation {
 			targets[user] = telegramTypingTarget{focus: focus, turn: turn}
 		}
 	}

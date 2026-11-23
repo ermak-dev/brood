@@ -89,6 +89,9 @@ func (m messageReceiver) receive(ctx context.Context, req relay.MessageRequest) 
 	case err != nil:
 		return relay.MessageResponse{Verdict: "Claude session message exchange failed"}
 	}
+	if result.Status == "unconfirmed" && ccmsg.TranscriptHasPeerMessage(session.ID, result.MessageID) {
+		result.Status = "delivered"
+	}
 	return deliveryResponse(result, req.WaitSec)
 }
 

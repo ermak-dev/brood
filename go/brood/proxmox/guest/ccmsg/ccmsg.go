@@ -259,6 +259,7 @@ func readSessionFile(path string) ([]byte, error) {
 
 // Session — запись файла ~/.claude/sessions/<pid>.json, сколько нужно каналу.
 type Session struct {
+	ID                  string
 	PID                 int
 	Name                string
 	SocketPath          string
@@ -284,6 +285,7 @@ func FindSessions(sessionsDir string) ([]Session, error) {
 			continue
 		}
 		var s struct {
+			ID              string  `json:"sessionId"`
 			PID             int     `json:"pid"`
 			Name            string  `json:"name"`
 			Socket          string  `json:"messagingSocketPath"`
@@ -294,7 +296,7 @@ func FindSessions(sessionsDir string) ([]Session, error) {
 		if json.Unmarshal(data, &s) != nil || s.Socket == "" {
 			continue
 		}
-		out = append(out, Session{PID: s.PID, Name: s.Name, SocketPath: s.Socket,
+		out = append(out, Session{ID: s.ID, PID: s.PID, Name: s.Name, SocketPath: s.Socket,
 			Status: s.Status, StatusUpdatedAtMsec: s.StatusUpdatedAt, CWD: s.CWD})
 	}
 	// Свежие первыми: на каталог накапливается по файлу на смерть каждой

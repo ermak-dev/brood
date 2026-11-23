@@ -7,6 +7,8 @@ import (
 	"os"
 	"syscall"
 	"time"
+
+	"brood.dev/go/brood/proxmox/guest/ccmsg"
 )
 
 const SessionEpochEnv = "BROOD_SESSION_EPOCH"
@@ -62,6 +64,36 @@ type sessionTurn struct {
 	pauseTool, pauseID string
 	nextHeartbeat      time.Time
 	pendingEscape      time.Time
+	lastTransition     time.Time
+}
+
+func (h *Host) observeClaudeActivityLocked(p *child) {
+	id, status, changed := ccmsg.ReadSessionActivity(p.state.PID)
+	t := &p.turn
+	if id == "" || !changed.After(t.lastTransition) {
+		return
+	}
+	if t.sessionID != id {
+		h.endTurnLocked(t)
+		*t = sessionTurn{sessionID: id}
+	}
+	switch status {
+	case "busy", "shell":
+		// Ход из межсессионного inbox не всегда вызывает UserPromptSubmit.
+		if t.state == "paused" {
+			h.emitSessionStateLocked(t, "working", "")
+		} else if t.state != "working" {
+			t.turnID = rand.Text()
+			h.emitSessionStateLocked(t, "working", "")
+		}
+	case "idle":
+		h.endTurnLocked(t)
+	case "requires_action", "waiting":
+		if t.state == "working" {
+			h.emitSessionStateLocked(t, "idle", "")
+			t.state = "paused"
+		}
+	}
 }
 
 func (h *Host) sessionHookLocked(hook *SessionHook) {
@@ -116,9 +148,13 @@ func (h *Host) sessionHookLocked(hook *SessionHook) {
 }
 
 func (h *Host) emitSessionStateLocked(t *sessionTurn, state, code string) {
+	now := time.Now()
+	if t.state != state {
+		t.lastTransition = now
+	}
 	t.state = state
 	if state == "working" {
-		t.nextHeartbeat = time.Now().Add(sessionHeartbeat)
+		t.nextHeartbeat = now.Add(sessionHeartbeat)
 	}
 	h.config.OnSessionEvent(SessionEvent{SessionID: t.sessionID, TurnID: t.turnID, State: state, ErrorCode: code})
 }
@@ -129,6 +165,7 @@ func (h *Host) endTurnLocked(t *sessionTurn) {
 	} else if t.state == "paused" {
 		// Уже передали idle на паузе. Не возобновлять этот ход после конца.
 		t.state = "idle"
+		t.lastTransition = time.Now()
 	}
 }
 
@@ -159,6 +196,7 @@ func (h *Host) sessionHeartbeatLocked() {
 		p.turn.pendingEscape = time.Time{}
 		h.endTurnLocked(&p.turn)
 	}
+	h.observeClaudeActivityLocked(p)
 	if p.turn.state == "working" && !now.Before(p.turn.nextHeartbeat) {
 		h.emitSessionStateLocked(&p.turn, "working", "")
 	}

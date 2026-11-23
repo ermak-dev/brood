@@ -294,10 +294,13 @@ func (c *telegramChannel) deliver(ctx context.Context, chat telegramChat, user s
 		return c.sendSlash(ctx, chat, target, text), false
 	}
 	msg := relay.MessageRequest{From: "operator:" + user.Username, Body: operatorMessageBody(text)}
+	undoFocus := c.server.focusTelegramSubmission(ctx, chat, target.UID, target.Incarnation)
 	result, sent, err := c.server.deliverToActor(ctx, target.SwarmID, resolve, msg, authorize)
+	if !sent {
+		undoFocus()
+	}
 	switch {
 	case err == nil && result.Outcome == "completed":
-		c.server.noteTelegramDelivery(chat, target.UID)
 		return telegramResponse{}, false
 	case sent:
 		return telegramResponse{text: fmt.Sprintf("Delivery to %s is unconfirmed. Check before sending again.", target.path)}, false
