@@ -131,15 +131,16 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		Swarms:    srv.gateway,
 		Authorize: srv.app.Can,
 		// Две native-проверки по 5 секунд должны уложиться в минутный отзыв.
-		RecheckInterval: 45 * time.Second,
-		CurrentUser:     srv.actorViewUser,
-		RequestHook:     srv.actorViewRequest,
-		ResponseHook:    srv.actorViewResponse,
-		BeginUpgrade:    srv.beginManagedTerminal,
-		Upstream:        &managedResolver{server: srv},
-		DialContext:     srv.managed.dial,
-		UpstreamValid:   srv.managed.validTarget,
-		Revalidate:      srv.validProxySession,
+		RecheckInterval:  45 * time.Second,
+		CurrentUser:      srv.actorViewUser,
+		RequestHook:      srv.actorViewRequest,
+		ResponseHook:     srv.actorViewResponse,
+		BeginUpgrade:     srv.beginManagedTerminal,
+		Upstream:         &managedResolver{server: srv},
+		DialContext:      srv.managed.dial,
+		UpstreamValid:    srv.managed.validTarget,
+		Revalidate:       srv.validProxySession,
+		RevalidateStream: srv.validProxyStream,
 	})
 	srv.mux = http.NewServeMux()
 	srv.mount()
@@ -162,6 +163,13 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.telegram.start(proxyCtx)
 	srv.telegramActivity.start(proxyCtx)
 	return srv, nil
+}
+
+func (s *Server) validProxyStream(r *http.Request) bool {
+	if v, ok := r.Context().Value(actorViewKey{}).(actorView); ok {
+		return s.validActorViewAccess(v)
+	}
+	return s.validProxySession(r)
 }
 
 func (s *Server) validProxySession(r *http.Request) bool {

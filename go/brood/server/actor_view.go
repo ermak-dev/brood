@@ -43,12 +43,12 @@ func (s *Server) actorViewUser(ctx context.Context) (proxy.Identity, bool) {
 	return proxy.Identity{ID: user.ID, Username: user.Username}, true
 }
 
-// validActorView проверяет исходную сессию, актуальные права и неизменность
-// привязки роя. Cookie браузера на sandbox-маршруте не являются полномочием.
 func (s *Server) validActorView(v actorView) bool {
-	if !time.Now().Before(v.expires) {
-		return false
-	}
+	return time.Now().Before(v.expires) && s.validActorViewAccess(v)
+}
+
+// Cookie браузера на sandbox-маршруте не заменяет исходную сессию.
+func (s *Server) validActorViewAccess(v actorView) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	id, _, err := auth.NewSessions(s.store, 0).Load(ctx, v.session, time.Now())

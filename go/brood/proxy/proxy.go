@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"brood.dev/go/brood/app"
@@ -156,8 +157,10 @@ type Config struct {
 	BeginUpgrade func(*http.Request) (UpgradeReservation, error)
 	// RouterTLS supplies projected mTLS credentials for HTTPS ingress.
 	RouterTLS *TLSFiles
-	// Revalidate checks the original session on long-lived requests.
+	// Revalidate checks the original request, including while an upgrade is pending.
 	Revalidate func(*http.Request) bool
+	// RevalidateStream replaces Revalidate after a successful upgrade.
+	RevalidateStream func(*http.Request) bool
 	// UpstreamValid fences the resolved provider incarnation on long-lived requests.
 	UpstreamValid func(*url.URL) bool
 	// Swarms — чтение роёв по ID.
@@ -383,24 +386,16 @@ func (p *Proxy) revoke(lc *liveConn, reason string) {
 	})
 }
 
-// track регистрирует живое соединение.
-func (p *Proxy) sessionCheck(r *http.Request) func() bool {
-	if p.cfg.Revalidate == nil {
-		return nil
-	}
-	return func() bool { return p.cfg.Revalidate(r) }
-}
-
-func (p *Proxy) targetCheck(r *http.Request, base *url.URL) func() bool {
-	session := p.sessionCheck(r)
-	if session == nil && p.cfg.UpstreamValid == nil {
+func (p *Proxy) targetCheck(r *http.Request, base *url.URL, revalidate func(*http.Request) bool) func() bool {
+	if revalidate == nil && p.cfg.UpstreamValid == nil {
 		return nil
 	}
 	return func() bool {
-		return (session == nil || session()) && (p.cfg.UpstreamValid == nil || p.cfg.UpstreamValid(base))
+		return (revalidate == nil || revalidate(r)) && (p.cfg.UpstreamValid == nil || p.cfg.UpstreamValid(base))
 	}
 }
 
+// track регистрирует живое соединение.
 func (p *Proxy) track(lc *liveConn) {
 	p.mu.Lock()
 	p.conns[lc] = struct{}{}
@@ -627,7 +622,7 @@ func filterCookies(header string) string {
 // с таймаутами, копия заголовков ответа без hop-by-hop.
 func (p *Proxy) servePlain(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, actor string, base *url.URL) {
 	ctx, cancel := context.WithCancel(r.Context())
-	lc := &liveConn{user: user, swarm: sw, actor: actor, cancel: cancel, valid: p.targetCheck(r, base)}
+	lc := &liveConn{user: user, swarm: sw, actor: actor, cancel: cancel, valid: p.targetCheck(r, base, p.cfg.Revalidate)}
 	p.track(lc)
 	defer p.untrack(lc)
 	r.Body = http.MaxBytesReader(w, r.Body, p.cfg.MaxBodyBytes)
@@ -723,7 +718,19 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 		return
 	}
 	defer serverConn.Close()
-	lc := &liveConn{user: user, swarm: sw, actor: actor, client: clientConn, server: serverConn, valid: p.targetCheck(r, base)}
+	opening := p.targetCheck(r, base, p.cfg.Revalidate)
+	valid := opening
+	var established atomic.Bool
+	if p.cfg.RevalidateStream != nil {
+		stream := p.targetCheck(r, base, p.cfg.RevalidateStream)
+		valid = func() bool {
+			if established.Load() {
+				return stream()
+			}
+			return opening == nil || opening()
+		}
+	}
+	lc := &liveConn{user: user, swarm: sw, actor: actor, client: clientConn, server: serverConn, valid: valid}
 	p.track(lc)
 	defer p.untrack(lc)
 	_ = serverConn.SetDeadline(time.Now().Add(p.cfg.ResponseHeaderTimeout))
@@ -775,11 +782,15 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 		return
 	}
 	upResp.Body.Close()
-
+	if p.cfg.RevalidateStream != nil && opening != nil && !opening() {
+		writeRawResponse(clientBuf, http.StatusForbidden, "terminal access changed; open it again from the agents list")
+		return
+	}
 	if err := writeUpgradeResponse(clientBuf, upResp); err != nil {
 		return
 	}
 
+	established.Store(true)
 	// Handshake прошёл; соединение уже в реестре переоценки.
 	p.bridge(clientBuf, serverBuf, clientConn, serverConn)
 }
