@@ -321,13 +321,29 @@ func (c *telegramChannel) sendSlash(ctx context.Context, chat telegramChat, targ
 	ctx = context.WithValue(ctx, commandSessionAuthorityKey{}, func(ctx context.Context) bool { return chat.active(ctx, c.server.store) })
 	result, err := c.server.executeOperatorSessionTarget(ctx, chat.userID, "telegram:"+strconv.FormatInt(chat.chatID, 10), command.Invocation{Name: "slash", Arguments: args}, target.ManagedActor, true)
 	if err == nil {
-		return telegramResponse{}
+		if result.Outcome == "observed" {
+			return telegramResponse{text: fmt.Sprintf("%s · terminal output:\n%s", target.path, result.Text)}
+		}
+		if text == "Escape" {
+			return telegramResponse{text: fmt.Sprintf("Interrupt sent to %s. Check the terminal if it is still working.", target.path)}
+		}
+		return telegramResponse{text: fmt.Sprintf("Command sent to %s, but no result was confirmed. Check the terminal before repeating it.", target.path)}
 	}
 	if result.Outcome == "unconfirmed" || result.Outcome == "unknown" {
 		return telegramResponse{text: fmt.Sprintf("Delivery to %s is unconfirmed. Check before sending again.", target.path)}
 	}
 	if reason := command.PublicReason(err); reason != "" {
 		return telegramResponse{text: reason}
+	}
+	if result.Outcome == "failed" {
+		switch err.Error() {
+		case "close the active terminal writer before changing the session", "PTY writer conflict":
+			return telegramResponse{text: fmt.Sprintf("The command was not sent to %s: its writable terminal is open. Close the terminal or switch to read-only view, then retry.", target.path)}
+		case "invalid slash arguments", "slash command is too long", "slash command must start with / or be Escape":
+			return telegramResponse{text: "The command was not sent. Enter a single slash command of at most 255 bytes."}
+		case "no proven live Claude session and PTY holder", "session connection is closed", "trusted PTY control unavailable; nothing changed":
+			return telegramResponse{text: fmt.Sprintf("The command was not sent to %s: its Claude Code session could not be reached. Check the agent and retry.", target.path)}
+		}
 	}
 	return telegramResponse{text: "The command was not sent. Check the agent and try again."}
 }

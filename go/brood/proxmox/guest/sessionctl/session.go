@@ -172,6 +172,11 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 		if err != nil || before.HolderProof == "" {
 			return failure("no proven live Claude session and PTY holder")
 		}
+		var baseline string
+		var capture bool
+		if strings.HasPrefix(req.Caller, "telegram:") && a.Command != "Escape" {
+			baseline, capture = e.slashSnapshot(ctx, before.HolderProof)
+		}
 		data := []byte(a.Command + "\r")
 		if a.Command == "Escape" {
 			data = []byte{0x1b}
@@ -183,6 +188,11 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 		after, err := e.prove(ctx)
 		if err != nil || before != after {
 			return relay.SessionResponse{Text: "session changed after input; delivery is unknown", Outcome: "unknown"}
+		}
+		if capture {
+			if output := e.waitSlashOutput(ctx, before.HolderProof, a.Command, baseline); output != "" {
+				return relay.SessionResponse{OK: true, Text: output, Outcome: "observed"}
+			}
 		}
 		return relay.SessionResponse{OK: true, Text: "input submitted; command completion is not confirmed", Outcome: "submitted"}
 	}
