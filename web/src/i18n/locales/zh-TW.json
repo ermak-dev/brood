@@ -2493,7 +2493,7 @@
       "name_hint": "此名稱會顯示在代理人清單和角色選單中。",
       "model": "模型",
       "model_default": "使用安裝預設值",
-      "model_hint": "在代理下次啟動工作階段時生效，不會中斷目前的工作階段。",
+      "model_hint": "沒有已儲存選擇時使用的初始模型。透過 /model 選擇的模型在工作階段重新啟動後仍然有效。",
       "model_not_listed": "{{model}}（不在清單中）",
       "models_loading": "正在從閘道載入模型…",
       "models_unavailable": "無法載入模型。可以保留目前的選擇或使用安裝預設值。",

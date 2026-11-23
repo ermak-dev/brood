@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -226,6 +225,10 @@ func RunProjectApp(warn io.Writer) error {
 	}
 	unix.Umask(0077)
 	layout := appLayout{Project: "/workspace/project", Home: "/workspace/home", Run: projectSecretDirectory, RunUID: 0, RunGID: 1000, CloneTimeout: 30 * time.Minute}
+	layout.RoleModel = os.Getenv(roleModelEnv)
+	if layout.RoleModel != "" && !actormodel.ValidName(layout.RoleModel) {
+		return errors.New("Invalid agent role model; select a valid model and restart the session")
+	}
 	env, err := prepareProjectApp(layout, warn)
 	if err != nil {
 		return err
@@ -242,16 +245,6 @@ func RunProjectApp(warn io.Writer) error {
 	if prompt.Size() > 0 {
 		args = append(args, "--append-system-prompt-file", promptPath)
 	}
-	if model := os.Getenv(roleModelEnv); model != "" {
-		if !actormodel.ValidName(model) {
-			return errors.New("Invalid agent role model; select a valid model and restart the session")
-		}
-		env = slices.DeleteFunc(env, func(entry string) bool {
-			name, _, _ := strings.Cut(entry, "=")
-			return name == "ANTHROPIC_MODEL" || name == "ANTHROPIC_DEFAULT_OPUS_MODEL" || name == "ANTHROPIC_DEFAULT_SONNET_MODEL"
-		})
-		env = append(env, claudeModelEnv(actormodel.Models{Model: model})...)
-	}
 	if epoch := os.Getenv(ptysession.SessionEpochEnv); epoch != "" {
 		args = append(args, "--settings", sessionHookSettings())
 		env = append(env, ptysession.SessionEpochEnv+"="+epoch)
@@ -264,6 +257,7 @@ type appLayout struct {
 	Project, Home, Run string
 	RunUID, RunGID     int
 	CloneTimeout       time.Duration
+	RoleModel          string
 }
 
 // prepareProjectApp clones a fresh workspace before file secrets, which need a
@@ -293,9 +287,15 @@ func prepareProjectApp(l appLayout, warn io.Writer) ([]string, error) {
 	if err := prepareClaudeConfig(l.Home, l.Project); err != nil {
 		fmt.Fprintf(warn, "brood: %s; Claude may stop on its first-run dialogs\n", err)
 	}
-	// Модели установки (#263) — после секретов: проектный секрет не назовётся
-	// ANTHROPIC_* (projectsecret их резервирует). Без проекции origin их нет,
-	// и Claude выбирает модель сам, как до #263.
+	model := l.RoleModel
+	if model == "" {
+		model = origin.Models.Model
+	}
+	if model != "" {
+		if err := seedClaudeModel(l.Home, model); err != nil {
+			fmt.Fprintf(warn, "brood: %s; Claude keeps its existing model settings\n", err)
+		}
+	}
 	return append(env, claudeModelEnv(origin.Models)...), nil
 }
 

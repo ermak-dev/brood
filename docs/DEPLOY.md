@@ -51,7 +51,7 @@ make -C go build
 | `BROOD_ARTIFACTS_DIR` | абсолютный путь каталога с программами агента. Без него агент не устанавливается | `/var/lib/brood/artifacts` |
 | `BROOD_PROXMOX_POOLS`, `BROOD_PROXMOX_TOKENS` | подключения Proxmox, заданные в окружении вместо формы панели; задаются вместе, см. ниже | JSON |
 | `BROOD_ACTOR_GIT_DOMAIN` | домен адреса, под которым агенты подписывают коммиты (`<агент>@<домен>`). Без него сервер имя автора агентам не задаёт | `agents.example.com` |
-| `BROOD_ACTOR_MODEL`, `BROOD_ACTOR_SMALL_MODEL` | модель Claude Code агентов: основная и для быстрых задач. Без них модель выбирает Claude Code | имя модели шлюза |
+| `BROOD_ACTOR_MODEL`, `BROOD_ACTOR_SMALL_MODEL` | модели Claude Code агентов: начальная (при отсутствии модели роли или сохранённого выбора) и для быстрых задач | имя модели шлюза |
 
 Шлюз моделей — [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI).
 Его можно встроить в процесс `brood` или подключить по существующим

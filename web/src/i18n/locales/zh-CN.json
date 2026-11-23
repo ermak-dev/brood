@@ -2465,7 +2465,7 @@
       "name_hint": "此名称会显示在智能体列表和角色选择器中。",
       "model": "模型",
       "model_default": "使用安装默认值",
-      "model_hint": "在代理下次启动会话时生效，不会中断当前会话。",
+      "model_hint": "没有已保存选择时使用的初始模型。通过 /model 选择的模型在会话重启后仍然有效。",
       "model_not_listed": "{{model}}（不在列表中）",
       "models_loading": "正在从网关加载模型…",
       "models_unavailable": "无法加载模型。可以保留当前选择或使用安装默认值。",

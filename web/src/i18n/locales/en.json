@@ -2469,7 +2469,7 @@
       "name_hint": "This name appears in the agent list and in the role selector.",
       "model": "Model",
       "model_default": "Use installation default",
-      "model_hint": "Applies the next time an agent session starts; a running session is not interrupted.",
+      "model_hint": "Initial model for agents with no saved choice. A choice made with /model survives a session restart.",
       "model_not_listed": "{{model}} (not listed)",
       "models_loading": "Loading models from the gateway…",
       "models_unavailable": "Could not load models. You can keep the current choice or use the installation default.",

@@ -2474,7 +2474,7 @@
       "name_hint": "Tên này xuất hiện trong danh sách agent và mục chọn vai trò.",
       "model": "Mô hình",
       "model_default": "Dùng mặc định của hệ thống",
-      "model_hint": "Áp dụng khi phiên tác nhân mới bắt đầu; phiên đang chạy không bị gián đoạn.",
+      "model_hint": "Mô hình ban đầu cho tác nhân chưa có lựa chọn đã lưu. Lựa chọn qua /model vẫn được giữ khi khởi động lại phiên.",
       "model_not_listed": "{{model}} (không có trong danh sách)",
       "models_loading": "Đang tải mô hình từ cổng kết nối…",
       "models_unavailable": "Không tải được mô hình. Bạn có thể giữ lựa chọn hiện tại hoặc dùng mặc định của hệ thống.",

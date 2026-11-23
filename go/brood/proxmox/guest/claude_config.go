@@ -85,11 +85,7 @@ func prepareClaudeConfig(home, project string) error {
 	if err := mergeClaudeJSON(homeFD, ".claude.json", func(o map[string]json.RawMessage) bool { return unattendedConfig(o, project) }); err != nil {
 		reasons = append(reasons, err.Error())
 	}
-	settings, err := secretChildDirectory(homeFD, ".claude", true)
-	if err == nil && secureSecretDirectory(settings, os.Geteuid(), false) != nil {
-		unix.Close(settings)
-		err = secretFailure()
-	}
+	settings, err := openClaudeSettings(homeFD)
 	if err != nil {
 		reasons = append(reasons, "~/.claude is not a private directory; settings left unchanged")
 	} else {
@@ -102,6 +98,43 @@ func prepareClaudeConfig(home, project string) error {
 		return errors.New(strings.Join(reasons, "; "))
 	}
 	return nil
+}
+
+// seedClaudeModel writes only when Claude has no saved preference. In
+// particular, the setting written by /model must survive a Brood restart.
+func seedClaudeModel(home, model string) error {
+	fd, err := openSecretDirectory(home, false)
+	if err != nil {
+		return errors.New("Claude home is unavailable or unsafe")
+	}
+	defer unix.Close(fd)
+	if secureSecretDirectory(fd, os.Geteuid(), false) != nil {
+		return errors.New("Claude home is unavailable or unsafe")
+	}
+	settings, err := openClaudeSettings(fd)
+	if err != nil {
+		return errors.New("~/.claude is unavailable or unsafe; settings left unchanged")
+	}
+	defer unix.Close(settings)
+	initial, _ := json.Marshal(model)
+	return mergeClaudeJSON(settings, "settings.json", func(o map[string]json.RawMessage) bool {
+		if _, exists := o["model"]; exists {
+			return false
+		}
+		return setJSON(o, "model", initial)
+	})
+}
+
+func openClaudeSettings(homeFD int) (int, error) {
+	settings, err := secretChildDirectory(homeFD, ".claude", true)
+	if err != nil {
+		return -1, err
+	}
+	if err := secureSecretDirectory(settings, os.Geteuid(), false); err != nil {
+		unix.Close(settings)
+		return -1, err
+	}
+	return settings, nil
 }
 
 func unattendedConfig(o map[string]json.RawMessage, project string) bool {
