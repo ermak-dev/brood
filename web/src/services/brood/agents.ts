@@ -1,11 +1,10 @@
 /**
- * brood: agents of the swarms the caller may see. The API still calls an
- * agent an "actor" (go/brood/server/
- * api_lists.go, api_actors.go, managed_json.go, managed_runtime.go).
+ * brood: agents of the swarms the caller may see
+ * (go/brood/server/api_actors.go, api_lists.go, managed_json.go).
  */
 import { request } from './http';
 
-export type AgentAction = 'resume' | 'stop' | 'reset';
+export type AgentAction = 'start' | 'stop' | 'reset';
 
 export interface Agent {
   name: string;
@@ -23,14 +22,14 @@ export interface Agent {
   /** The Proxmox node of the pool. */
   node: string;
   ctid: number | null;
-  /** The pool profile the agent was created from. */
+  /** The template profile of the container. */
   profile: string;
   /** The repository cloned into the workspace; '' when none. */
   origin: string;
-  /** What the pool gives the agent; decimal strings, '' when unknown. */
-  cpuMillicores: string;
-  memoryBytes: string;
-  diskBytes: string;
+  /** What the pool gives the agent; 0 when unknown. */
+  cpuMillicores: number;
+  memoryBytes: number;
+  diskBytes: number;
   /** RFC 3339. */
   createdAt: string;
   /** The verdict on a running agent: free, busy, idle, needs_action, waiting,
@@ -51,28 +50,33 @@ export interface Agent {
 
 export interface NewAgent {
   name: string;
-  profile: string;
+  /** A pool from `profiles`. */
+  pool: string;
   roleId: string;
   origin: string;
 }
 
 interface WireAgent {
-  metadata?: { name?: string; swarm?: string };
-  swarmName?: string;
-  projectID?: string;
-  projectName?: string;
-  role?: string;
-  phase?: string;
-  status?: { errorMessage?: string; errorCode?: string };
-  placement?: { ctid?: number; pool?: string; node?: string };
-  profile?: string;
-  origin?: string;
-  templateDefinition?: {
-    resources?: { cpuMillicores?: string; memoryBytes?: string; diskBytes?: string };
-  };
-  createdAt?: string;
+  name: string;
+  swarm: string;
+  swarmName: string;
+  projectId: string;
+  projectName: string;
+  role: string;
+  phase: string;
+  error: string;
+  errorCode: string;
+  pool: string;
+  node: string;
+  ctid: number;
+  profile: string;
+  origin: string;
+  cpuMillicores: number;
+  memoryBytes: number;
+  diskBytes: number;
+  createdAt: string;
   work?: {
-    activity?: string;
+    activity: string;
     detail?: string;
     branch?: string;
     uncommitted?: number;
@@ -81,53 +85,31 @@ interface WireAgent {
   };
 }
 
-const fromWire = (wire: WireAgent): Agent => ({
-  name: wire.metadata?.name ?? '',
-  swarmId: wire.metadata?.swarm ?? '',
-  swarmName: wire.swarmName ?? '',
-  projectId: wire.projectID ?? '',
-  projectName: wire.projectName ?? '',
-  role: wire.role ?? '',
-  phase: wire.phase ?? '',
-  error: wire.status?.errorMessage ?? '',
-  errorCode: wire.status?.errorCode ?? '',
-  pool: wire.placement?.pool ?? '',
-  node: wire.placement?.node ?? '',
-  ctid: wire.placement?.ctid || null,
-  profile: wire.profile ?? '',
-  origin: wire.origin ?? '',
-  cpuMillicores: wire.templateDefinition?.resources?.cpuMillicores ?? '',
-  memoryBytes: wire.templateDefinition?.resources?.memoryBytes ?? '',
-  diskBytes: wire.templateDefinition?.resources?.diskBytes ?? '',
-  createdAt: wire.createdAt ?? '',
-  activity: wire.work?.activity ?? '',
-  activityDetail: wire.work?.detail ?? '',
-  branch: wire.work?.branch ?? '',
-  uncommitted: wire.work?.uncommitted ?? null,
-  unpushed: wire.work?.unpushed ?? null,
-  model: wire.work?.model ?? '',
+const fromWire = ({ swarm, ctid, work, ...wire }: WireAgent): Agent => ({
+  ...wire,
+  swarmId: swarm,
+  ctid: ctid || null,
+  activity: work?.activity ?? '',
+  activityDetail: work?.detail ?? '',
+  branch: work?.branch ?? '',
+  uncommitted: work?.uncommitted ?? null,
+  unpushed: work?.unpushed ?? null,
+  model: work?.model ?? '',
 });
 
 const segment = encodeURIComponent;
 const swarmPath = (swarm: string) => `/api/swarms/${segment(swarm)}`;
-const agentPath = (swarm: string, name: string) => `${swarmPath(swarm)}/actors/${segment(name)}`;
+const agentPath = (swarm: string, name: string) => `${swarmPath(swarm)}/agents/${segment(name)}`;
 
 export const agentsApi = {
-  list: async () =>
-    (await request<{ results: WireAgent[] }>('GET', '/api/agents')).results.map(fromWire),
-  /** Names of the pool profiles an agent of the swarm can be created from. */
-  profiles: async (swarm: string) =>
-    (
-      await request<{ results: { metadata: { name: string } }[] }>(
-        'GET',
-        `${swarmPath(swarm)}/templates`
-      )
-    ).results.map((profile) => profile.metadata.name),
+  list: async () => (await request<WireAgent[]>('GET', '/api/agents')).map(fromWire),
+  /** Names of the pools an agent of the swarm can be created in. */
+  profiles: (swarm: string) => request<string[]>('GET', `${swarmPath(swarm)}/profiles`),
   /** The server rejects any field beyond these four. */
-  create: (swarm: string, { name, profile, roleId, origin }: NewAgent) =>
-    request<unknown>('POST', `${swarmPath(swarm)}/actors`, {
-      metadata: { name },
-      actorTemplate: { name: profile },
+  create: (swarm: string, { name, pool, roleId, origin }: NewAgent) =>
+    request<unknown>('POST', `${swarmPath(swarm)}/agents`, {
+      name,
+      pool,
       roleId,
       ...(origin ? { origin } : {}),
     }),

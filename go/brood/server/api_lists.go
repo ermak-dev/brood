@@ -96,21 +96,14 @@ func (s *Server) handleAgentList(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	results := []any{}
+	agents := []agentJSON{}
 	for _, sw := range swarms {
-		rows, err := s.managed.actorsJSON(r.Context(), sw)
+		rows, err := s.agentsJSON(r.Context(), sw, projects[sw.ProjectID])
 		if err != nil {
 			apiError(w, r, err)
 			return
 		}
-		for _, row := range rows {
-			if agent, ok := row.(map[string]any); ok {
-				agent["swarmName"] = sw.Name
-				agent["projectID"] = sw.ProjectID
-				agent["projectName"] = projects[sw.ProjectID]
-			}
-			results = append(results, row)
-		}
+		agents = append(agents, rows...)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+	writeJSON(w, http.StatusOK, agents)
 }

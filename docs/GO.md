@@ -183,14 +183,23 @@ CGO выключен везде. Версию программы задаёт `-
 | `POST /api/projects/{id}/swarms` | участник | создать рой; создатель становится владельцем |
 | `GET`, `DELETE /api/swarms/{id}` | владелец | рой; удалить рой без агентов |
 | `POST /api/swarms/{id}/transfer` | владелец | передать рой другому пользователю |
-| `GET /api/swarms/{id}/actors` | владелец | агенты роя |
-| `POST /api/swarms/{id}/actors` | владелец | создать агента |
-| `GET /api/swarms/{id}/actors/{name}` | владелец | агент |
-| `PUT`, `POST /api/swarms/{id}/actors/{name}` | владелец | запустить, остановить, сбросить, перезапустить сессию |
-| `DELETE /api/swarms/{id}/actors/{name}` | владелец | удалить агента |
-| `GET /api/swarms/{id}/templates`, `.../templates/{name}` | владелец | пулы, в которых можно создать агента, и доля ресурсов на агента |
+| `GET /api/swarms/{id}/agents` | владелец | агенты роя |
+| `POST /api/swarms/{id}/agents` | владелец | создать агента: `{name, pool, roleId, origin}`; пустые роль и репозиторий — роль по умолчанию и репозиторий проекта |
+| `GET /api/swarms/{id}/agents/{name}` | владелец | агент |
+| `POST /api/swarms/{id}/agents/{name}` | владелец | `{action}`: `start`, `stop` или `reset` |
+| `DELETE /api/swarms/{id}/agents/{name}` | владелец | удалить агента |
+| `GET /api/swarms/{id}/profiles` | владелец | имена пулов, в которых можно создать агента |
 | `/api/swarms/{id}/proxy/agents/{name}/` | владелец | терминал агента: выдаёт одноразовый адрес `/agent-view/...` и перенаправляет на него; `?mode=rw` — терминал с вводом, `?mode=ro` — снимки экрана |
 | `POST /api/commands/{tool}` | по команде | выполнить команду каталога, см. ниже |
+
+Списки агентов и профилей — JSON-массивы. Агент — плоский объект: `name`,
+`uid`, `swarm`, `swarmName`, `projectId`, `projectName`, `role` (имя роли),
+`phase`, `desired`, `generation`, `error`, `errorCode`, `pool`, `node`,
+`ctid`, `profile` (профиль шаблона), `origin`, `cpuMillicores`,
+`memoryBytes`, `diskBytes`, `createdAt` и у работающего агента `work` —
+вердикт о работе ([MODEL.md](MODEL.md)). `phase` — состояние, какое видит
+человек: остановка или удаление, ещё не отправленные в Proxmox, уже
+показываются как `stopping` или `deleting`.
 
 ### Пулы
 

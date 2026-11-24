@@ -21,7 +21,6 @@ import (
 )
 
 const managedProfile = "claude-proxmox"
-const managedTemplatePrefix = "claude-proxmox-"
 const gib int64 = 1 << 30
 const mib int64 = 1 << 20
 
@@ -295,30 +294,17 @@ func (s *Server) admitWorkload(ctx context.Context, userID, swarmID string, op a
 	return s.app.AdmitWorkload(ctx, userID, swarmID, op)
 }
 
-func managedTemplateJSON(pool store.ManagedPool) map[string]any {
-	resources, _ := managedActorResources(pool)
-	return map[string]any{"metadata": map[string]any{"name": managedTemplatePrefix + pool.Name, "uid": managedTemplatePrefix + pool.UID, "version": managedDecimal(pool.Revision)}, "provider": "proxmox", "profile": managedProfile, "readOnly": true, "capabilities": managedCapabilities(), "resources": map[string]any{"limits": map[string]string{"cpuMillicores": managedDecimal(resources.CPUMillicores), "memoryBytes": managedDecimal(resources.MemoryBytes)}}}
-}
-func managedCapabilities() map[string]bool {
-	return map[string]bool{"workspace": true, "terminal": true, "memoryCheckpoint": false}
-}
-
-func (m *managedProvider) templatePool(ctx context.Context, name string) (store.ManagedPool, error) {
-	if !strings.HasPrefix(name, managedTemplatePrefix) {
-		return store.ManagedPool{}, store.ErrNotFound
-	}
-	return m.poolByName(ctx, strings.TrimPrefix(name, managedTemplatePrefix))
-}
-
-func (s *Server) managedTemplates(ctx context.Context) ([]any, error) {
+// agentProfiles — имена пулов, в которых сейчас можно создать агента:
+// включённых и совпадающих с настройкой установки.
+func (s *Server) agentProfiles(ctx context.Context) ([]string, error) {
 	pools, err := s.managed.pools(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := []any{}
+	out := []string{}
 	for _, p := range pools {
 		if p.State == "enabled" && s.managed.poolAvailable(p) {
-			out = append(out, managedTemplateJSON(p))
+			out = append(out, p.Name)
 		}
 	}
 	return out, nil

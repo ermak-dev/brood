@@ -20,75 +20,52 @@ type Swarm struct {
 	AgentCount  int64  `json:"agentCount"`
 }
 
-// Agent is one agent with its placement. Phase is the observed state of its
-// container; ErrorMessage explains the phase "error".
+// Agent is one agent with its placement, as the server shows it. Phase is the
+// state of its container; Error explains the phase "error".
 type Agent struct {
-	Name         string `json:"name"`
-	Swarm        string `json:"swarm"`
-	SwarmName    string `json:"swarm_name,omitempty"`
-	ProjectName  string `json:"project_name,omitempty"`
-	Role         string `json:"role"`
-	Phase        string `json:"phase"`
-	Pool         string `json:"pool"`
-	CTID         int64  `json:"ctid"`
-	Origin       string `json:"origin"`
-	ErrorCode    string `json:"error_code,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	CreatedAt    string `json:"created_at"`
-	// Work of a running agent; Activity is empty for any other agent.
-	// Uncommitted and Unpushed are nil when the clone was not measured.
-	Activity    string `json:"activity,omitempty"`
-	Detail      string `json:"detail,omitempty"`
-	Branch      string `json:"branch,omitempty"`
-	Uncommitted *int   `json:"uncommitted,omitempty"`
-	Unpushed    *int   `json:"unpushed,omitempty"`
-	Model       string `json:"model,omitempty"`
+	Name          string `json:"name"`
+	Swarm         string `json:"swarm"`
+	SwarmName     string `json:"swarmName"`
+	ProjectID     string `json:"projectId"`
+	ProjectName   string `json:"projectName"`
+	Role          string `json:"role"`
+	Phase         string `json:"phase"`
+	Desired       string `json:"desired"`
+	Pool          string `json:"pool"`
+	Node          string `json:"node"`
+	CTID          int64  `json:"ctid"`
+	Profile       string `json:"profile"`
+	Origin        string `json:"origin"`
+	CPUMillicores int64  `json:"cpuMillicores"`
+	MemoryBytes   int64  `json:"memoryBytes"`
+	DiskBytes     int64  `json:"diskBytes"`
+	Error         string `json:"error"`
+	ErrorCode     string `json:"errorCode"`
+	CreatedAt     string `json:"createdAt"`
+	// Work of a running agent; nil for any other agent.
+	Work *AgentWork `json:"work"`
 }
 
-// agentWire — форма агента в ответах сервера.
-type agentWire struct {
-	Metadata struct {
-		Name  string `json:"name"`
-		Swarm string `json:"swarm"`
-	} `json:"metadata"`
-	SwarmName   string `json:"swarmName"`
-	ProjectName string `json:"projectName"`
-	Role        string `json:"role"`
-	Phase       string `json:"phase"`
-	Origin      string `json:"origin"`
-	CreatedAt   string `json:"createdAt"`
-	Placement   struct {
-		Pool string `json:"pool"`
-		CTID int64  `json:"ctid"`
-	} `json:"placement"`
-	Status struct {
-		ErrorCode    string `json:"errorCode"`
-		ErrorMessage string `json:"errorMessage"`
-	} `json:"status"`
-	Work struct {
-		Activity    string `json:"activity"`
-		Detail      string `json:"detail"`
-		Branch      string `json:"branch"`
-		Uncommitted *int   `json:"uncommitted"`
-		Unpushed    *int   `json:"unpushed"`
-		Model       string `json:"model"`
-	} `json:"work"`
+// AgentWork is what a running agent does and what its clone holds. Activity
+// is the verdict: free, busy, idle, needs_action, waiting, error, offline or
+// unknown; Detail explains it. Uncommitted and Unpushed are nil when the
+// clone was not measured.
+type AgentWork struct {
+	Activity    string `json:"activity"`
+	Detail      string `json:"detail"`
+	Branch      string `json:"branch"`
+	Uncommitted *int   `json:"uncommitted"`
+	Unpushed    *int   `json:"unpushed"`
+	Model       string `json:"model"`
 }
 
-func (w agentWire) agent() Agent {
-	return Agent{
-		Name: w.Metadata.Name, Swarm: w.Metadata.Swarm, SwarmName: w.SwarmName, ProjectName: w.ProjectName,
-		Role: w.Role, Phase: w.Phase, Pool: w.Placement.Pool, CTID: w.Placement.CTID, Origin: w.Origin,
-		ErrorCode: w.Status.ErrorCode, ErrorMessage: w.Status.ErrorMessage, CreatedAt: w.CreatedAt,
-		Activity: w.Work.Activity, Detail: w.Work.Detail, Branch: w.Work.Branch,
-		Uncommitted: w.Work.Uncommitted, Unpushed: w.Work.Unpushed, Model: w.Work.Model,
-	}
-}
-
-// AgentRequest describes a new agent. Template is a pool profile from
-// PoolProfiles. An empty Role and Origin leave the choice to the server.
+// AgentRequest describes a new agent. Pool is a name from PoolProfiles. An
+// empty Role and Origin leave the choice to the server.
 type AgentRequest struct {
-	Name, Template, Role, Origin string
+	Name   string `json:"name"`
+	Pool   string `json:"pool"`
+	Role   string `json:"roleId,omitempty"`
+	Origin string `json:"origin,omitempty"`
 }
 
 // Pool is a Proxmox pool with its limits and current use. State is empty for
@@ -131,59 +108,39 @@ func (c *Client) SwarmDelete(ctx context.Context, swarm string) error {
 }
 
 // Agents lists the agents of one swarm, or of every usable swarm when swarm
-// is empty; only the latter fills SwarmName and ProjectName.
+// is empty.
 func (c *Client) Agents(ctx context.Context, swarm string) ([]Agent, error) {
 	path := "/api/agents"
 	if swarm != "" {
 		path = agentsPath(swarm)
 	}
-	var list struct {
-		Results []agentWire `json:"results"`
-	}
-	if err := c.call(ctx, http.MethodGet, path, nil, &list); err != nil {
+	var agents []Agent
+	if err := c.call(ctx, http.MethodGet, path, nil, &agents); err != nil {
 		return nil, err
-	}
-	agents := make([]Agent, 0, len(list.Results))
-	for _, wire := range list.Results {
-		agents = append(agents, wire.agent())
 	}
 	return agents, nil
 }
 
 // Agent returns one agent of the swarm with its current phase.
 func (c *Client) Agent(ctx context.Context, swarm, name string) (Agent, error) {
-	var wire agentWire
-	if err := c.call(ctx, http.MethodGet, agentsPath(swarm)+"/"+url.PathEscape(name), nil, &wire); err != nil {
-		return Agent{}, err
-	}
-	return wire.agent(), nil
+	var agent Agent
+	err := c.call(ctx, http.MethodGet, agentsPath(swarm)+"/"+url.PathEscape(name), nil, &agent)
+	return agent, err
 }
 
 // AgentCreate asks the server to create an agent and returns it in its
 // initial phase; the container is provisioned afterwards.
 func (c *Client) AgentCreate(ctx context.Context, swarm string, request AgentRequest) (Agent, error) {
-	if request.Name == "" || request.Template == "" {
-		return Agent{}, errors.New("agent name and pool profile are required")
+	if request.Name == "" || request.Pool == "" {
+		return Agent{}, errors.New("agent name and pool are required")
 	}
-	fields := map[string]any{
-		"metadata":      map[string]string{"name": request.Name},
-		"actorTemplate": map[string]string{"name": request.Template},
-	}
-	if request.Role != "" {
-		fields["roleId"] = request.Role
-	}
-	if request.Origin != "" {
-		fields["origin"] = request.Origin
-	}
-	body, err := json.Marshal(fields)
+	body, err := json.Marshal(request)
 	if err != nil {
 		return Agent{}, err
 	}
-	var wire agentWire
-	if err := c.call(ctx, http.MethodPost, agentsPath(swarm), body, &wire); err != nil {
-		return Agent{}, err
-	}
-	return wire.agent(), nil
+	var agent Agent
+	err = c.call(ctx, http.MethodPost, agentsPath(swarm), body, &agent)
+	return agent, err
 }
 
 type AgentRole struct {
@@ -197,22 +154,12 @@ func (c *Client) AgentRoles(ctx context.Context) ([]AgentRole, error) {
 	return roles, err
 }
 
-// PoolProfiles lists the names of the pool profiles an agent of the swarm
-// can be created from.
+// PoolProfiles lists the names of the pools an agent of the swarm can be
+// created in.
 func (c *Client) PoolProfiles(ctx context.Context, swarm string) ([]string, error) {
-	var list struct {
-		Results []struct {
-			Metadata struct {
-				Name string `json:"name"`
-			} `json:"metadata"`
-		} `json:"results"`
-	}
-	if err := c.call(ctx, http.MethodGet, "/api/swarms/"+url.PathEscape(swarm)+"/templates", nil, &list); err != nil {
+	var names []string
+	if err := c.call(ctx, http.MethodGet, "/api/swarms/"+url.PathEscape(swarm)+"/profiles", nil, &names); err != nil {
 		return nil, err
-	}
-	names := make([]string, 0, len(list.Results))
-	for _, profile := range list.Results {
-		names = append(names, profile.Metadata.Name)
 	}
 	return names, nil
 }
@@ -251,5 +198,5 @@ func (c *Client) Pools(ctx context.Context) ([]Pool, error) {
 }
 
 func agentsPath(swarm string) string {
-	return "/api/swarms/" + url.PathEscape(swarm) + "/actors"
+	return "/api/swarms/" + url.PathEscape(swarm) + "/agents"
 }

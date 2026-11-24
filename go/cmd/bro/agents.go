@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -77,8 +78,8 @@ func note(agent clientapi.Agent) string {
 	if agent.Phase != "error" {
 		return ""
 	}
-	if agent.ErrorMessage != "" {
-		return agent.ErrorMessage
+	if agent.Error != "" {
+		return agent.Error
 	}
 	return agent.ErrorCode
 }
@@ -108,8 +109,11 @@ func (c *command) swarmRows(ctx context.Context, op *operator, swarm clientapi.S
 func allRows(agents []clientapi.Agent) []agentRow {
 	rows := make([]agentRow, 0, len(agents))
 	for _, agent := range agents {
-		rows = append(rows, agentRow{Name: agent.Name, Swarm: agent.ProjectName + "/" + agent.SwarmName, Role: role(agent.Role), State: agent.Phase, Pool: agent.Pool, CTID: agent.CTID, Created: agent.CreatedAt, Note: note(agent),
-			work: work{Activity: agent.Activity, Detail: agent.Detail, Branch: agent.Branch, Uncommitted: agent.Uncommitted, Unpushed: agent.Unpushed, Model: agent.Model}})
+		row := agentRow{Name: agent.Name, Swarm: agent.ProjectName + "/" + agent.SwarmName, Role: role(agent.Role), State: agent.Phase, Pool: agent.Pool, CTID: agent.CTID, Created: agent.CreatedAt, Note: note(agent)}
+		if w := agent.Work; w != nil {
+			row.work = work{Activity: w.Activity, Detail: w.Detail, Branch: w.Branch, Uncommitted: w.Uncommitted, Unpushed: w.Unpushed, Model: w.Model}
+		}
+		rows = append(rows, row)
 	}
 	return rows
 }
@@ -300,7 +304,7 @@ func (c *command) add(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if request.Template, err = pickProfile(profiles, *pool); err != nil {
+	if request.Pool, err = pickPool(profiles, *pool); err != nil {
 		return err
 	}
 	agent, err := op.client.AgentCreate(ctx, swarm.ID, request)
@@ -331,32 +335,22 @@ func freeName(ctx context.Context, op *operator, swarm clientapi.Swarm) (string,
 	}
 }
 
-// pickProfile выбирает профиль пула: названный пул или единственный.
-// Профиль называется именем пула с префиксом сервера.
-func pickProfile(profiles []string, pool string) (string, error) {
-	if len(profiles) == 0 {
+// pickPool выбирает пул из принимающих агентов: названный или единственный.
+func pickPool(pools []string, pool string) (string, error) {
+	if len(pools) == 0 {
 		return "", errors.New("no pool accepts new agents; an administrator enables one with: bro pool enable NAME")
 	}
-	available := strings.Join(profiles, ", ")
+	available := strings.Join(pools, ", ")
 	if pool == "" {
-		if len(profiles) == 1 {
-			return profiles[0], nil
+		if len(pools) == 1 {
+			return pools[0], nil
 		}
 		return "", fmt.Errorf("choose a pool with --pool NAME; available: %s", available)
 	}
-	var matched []string
-	for _, profile := range profiles {
-		if profile == pool {
-			return profile, nil
-		}
-		if strings.HasSuffix(profile, "-"+pool) {
-			matched = append(matched, profile)
-		}
+	if !slices.Contains(pools, pool) {
+		return "", fmt.Errorf("pool %s does not accept new agents; available: %s", pool, available)
 	}
-	if len(matched) != 1 {
-		return "", fmt.Errorf("pool %s does not name one pool profile; available: %s", pool, available)
-	}
-	return matched[0], nil
+	return pool, nil
 }
 
 // awaitAgent показывает смену фаз одной строкой и ждёт running или error.

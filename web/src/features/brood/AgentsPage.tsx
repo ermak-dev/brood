@@ -96,7 +96,7 @@ type Row = Agent & { requested?: boolean };
 type Verb = AgentAction | 'delete';
 /** What the row shows from the request until the server reports a change. */
 const REQUESTED_PHASE: Record<Verb, string> = {
-  resume: 'provisioning',
+  start: 'provisioning',
   stop: 'stopping',
   reset: 'resetting',
   delete: 'deleting',
@@ -235,7 +235,7 @@ function CreateAgent({
       }}
       dirty={(typed && form.dirty) || form.values.origin !== '' || roleId !== defaultRole}
       submit={() =>
-        agentsApi.create(swarm, { name, profile, roleId, origin: form.values.origin.trim() })
+        agentsApi.create(swarm, { name, pool: profile, roleId, origin: form.values.origin.trim() })
       }
       success={t('brood.agents.created', { name })}
       after={after}
@@ -584,7 +584,7 @@ export function AgentsPage() {
               blocked: terminalBlocked(row),
             },
             {
-              id: 'resume',
+              id: 'start',
               label: t('brood.agents.start'),
               icon: IconPlay,
               description: t('brood.agents.start_hint'),
@@ -592,7 +592,7 @@ export function AgentsPage() {
                 settled && (row.phase === 'stopped' || row.phase === 'error')
                   ? undefined
                   : t('brood.agents.not_startable', { state }),
-              run: request(row, 'resume'),
+              run: request(row, 'start'),
               notice: notice(t('brood.agents.start')),
             },
             {

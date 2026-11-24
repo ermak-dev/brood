@@ -1,5 +1,5 @@
-// API воркеров роя: /api/swarms/{id}/actors и /api/swarms/{id}/templates.
-// Воркер — контейнер Proxmox; шаблон — профиль включённого пула.
+// API агентов роя: /api/swarms/{id}/agents и /api/swarms/{id}/profiles.
+// Агент — контейнер Proxmox; профиль — включённый пул, в котором его создают.
 package server
 
 import (
@@ -11,29 +11,16 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// maxResourceBody — потолок тела запроса создания воркера.
+// maxResourceBody — потолок тела запроса создания агента.
 const maxResourceBody int64 = 1 << 20
 
-// actorInput — тело создания воркера: имя и шаблон пула. Остальное задаёт
-// профиль пула, клиент его не переопределяет.
-type actorInput struct {
-	Metadata struct {
-		Name string `json:"name"`
-	} `json:"metadata"`
-	ActorTemplate struct {
-		Name string `json:"name"`
-	} `json:"actorTemplate"`
-}
-
-func (s *Server) mountActorAPI() {
-	s.mux.HandleFunc("GET /api/swarms/{id}/actors", s.handleSwarmActors)
-	s.mux.HandleFunc("POST /api/swarms/{id}/actors", s.handleSwarmActors)
-	s.mux.HandleFunc("GET /api/swarms/{id}/actors/{name}", s.handleSwarmActor)
-	s.mux.HandleFunc("PUT /api/swarms/{id}/actors/{name}", s.handleSwarmActor)
-	s.mux.HandleFunc("POST /api/swarms/{id}/actors/{name}", s.handleSwarmActor)
-	s.mux.HandleFunc("DELETE /api/swarms/{id}/actors/{name}", s.handleSwarmActor)
-	s.mux.HandleFunc("GET /api/swarms/{id}/templates", s.handleSwarmTemplates)
-	s.mux.HandleFunc("GET /api/swarms/{id}/templates/{name}", s.handleSwarmTemplate)
+func (s *Server) mountAgentAPI() {
+	s.mux.HandleFunc("GET /api/swarms/{id}/agents", s.handleSwarmAgents)
+	s.mux.HandleFunc("POST /api/swarms/{id}/agents", s.handleSwarmAgents)
+	s.mux.HandleFunc("GET /api/swarms/{id}/agents/{name}", s.handleSwarmAgent)
+	s.mux.HandleFunc("POST /api/swarms/{id}/agents/{name}", s.handleSwarmAgent)
+	s.mux.HandleFunc("DELETE /api/swarms/{id}/agents/{name}", s.handleSwarmAgent)
+	s.mux.HandleFunc("GET /api/swarms/{id}/profiles", s.handleSwarmProfiles)
 
 	// Терминал агента: пропуск и прямой поток WebSocket.
 	s.mux.HandleFunc("/api/swarms/{id}/proxy/agents/{name}", s.handleAgentTerminal)
@@ -92,8 +79,8 @@ func readAction(w http.ResponseWriter, r *http.Request, allowed ...string) (stri
 	return "", false
 }
 
-// handleSwarmActors — GET/POST /api/swarms/{id}/actors.
-func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
+// handleSwarmAgents — GET/POST /api/swarms/{id}/agents.
+func (s *Server) handleSwarmAgents(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return
@@ -103,41 +90,44 @@ func (s *Server) handleSwarmActors(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		actors, err := s.managed.actorsJSON(r.Context(), sw)
+		agents, err := s.agentsJSON(r.Context(), sw, s.projectName(r.Context(), sw))
 		if err != nil {
 			apiError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"results": actors})
+		writeJSON(w, http.StatusOK, agents)
 		return
 	}
-	var input actorInput
-	creation, parsed := parseActorCreation(w, r, &input)
+	input, parsed := readAgentInput(w, r)
 	if !parsed {
 		return
 	}
-	if input.Metadata.Name == "" {
-		writeDetail(w, http.StatusBadRequest, "metadata.name is required")
+	if input.Name == "" {
+		writeDetail(w, http.StatusBadRequest, "name the agent; no agent was created")
+		return
+	}
+	if input.Pool == "" {
+		writeDetail(w, http.StatusBadRequest, "choose a pool for the agent; no agent was created")
 		return
 	}
 	sw, ok := s.swarmFor(w, r, user)
 	if !ok {
 		return
 	}
-	pool, err := s.managed.templatePool(r.Context(), input.ActorTemplate.Name)
+	pool, err := s.managed.poolByName(r.Context(), input.Pool)
 	if errors.Is(err, store.ErrNotFound) {
-		writeDetail(w, http.StatusBadRequest, "actorTemplate.name must name an enabled Proxmox pool profile")
+		writeDetail(w, http.StatusBadRequest, "pool "+input.Pool+" not found; no agent was created. Choose a pool from the list")
 		return
 	}
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	s.createManagedActor(w, r, user.ID, sw, input.Metadata.Name, pool, creation)
+	s.createManagedActor(w, r, user.ID, sw, input, pool)
 }
 
-// handleSwarmActor — GET/PUT/POST/DELETE /api/swarms/{id}/actors/{name}.
-func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
+// handleSwarmAgent — GET/POST/DELETE /api/swarms/{id}/agents/{name}.
+func (s *Server) handleSwarmAgent(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return
@@ -148,7 +138,7 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.managed.actorByName(r.Context(), sw.ID, r.PathValue("name"))
 	if errors.Is(err, store.ErrNotFound) {
-		writeDetail(w, http.StatusNotFound, "actor not found")
+		writeDetail(w, http.StatusNotFound, "agent "+r.PathValue("name")+" not found; it may have been deleted, reload the list")
 		return
 	}
 	if err != nil {
@@ -159,8 +149,9 @@ func (s *Server) handleSwarmActor(w http.ResponseWriter, r *http.Request) {
 	s.handleManagedActor(w, r, user.ID, sw, a)
 }
 
-// handleSwarmTemplates — GET /api/swarms/{id}/templates: профили включённых пулов.
-func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
+// handleSwarmProfiles — GET /api/swarms/{id}/profiles: имена пулов, в которых
+// можно создать агента.
+func (s *Server) handleSwarmProfiles(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return
@@ -168,31 +159,10 @@ func (s *Server) handleSwarmTemplates(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.swarmFor(w, r, user); !ok {
 		return
 	}
-	templates, err := s.managedTemplates(r.Context())
+	profiles, err := s.agentProfiles(r.Context())
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": templates})
-}
-
-// handleSwarmTemplate — GET /api/swarms/{id}/templates/{name}.
-func (s *Server) handleSwarmTemplate(w http.ResponseWriter, r *http.Request) {
-	user, ok := currentUser(w, r)
-	if !ok {
-		return
-	}
-	if _, ok := s.swarmFor(w, r, user); !ok {
-		return
-	}
-	pool, err := s.managed.templatePool(r.Context(), r.PathValue("name"))
-	if errors.Is(err, store.ErrNotFound) {
-		writeDetail(w, http.StatusNotFound, "template not found")
-		return
-	}
-	if err != nil {
-		apiError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, managedTemplateJSON(pool))
+	writeJSON(w, http.StatusOK, profiles)
 }

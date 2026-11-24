@@ -403,13 +403,13 @@ func (o *managedWorkloadOperation) Apply() error {
 	return err
 }
 
-func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, name string, pool store.ManagedPool, creation actorCreation) {
-	a, err := s.createManaged(r.Context(), userID, sw, name, pool, creation.role, creation.origin, nil)
+func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input agentInput, pool store.ManagedPool) {
+	a, err := s.createManaged(r.Context(), userID, sw, input.Name, pool, input.RoleID, input.Origin, nil)
 	if err != nil {
 		managedAPIError(w, r, err)
 		return
 	}
-	writeJSON(w, 201, s.managedActorRoleJSON(r.Context(), sw, a, pool))
+	s.writeAgent(w, r, 201, sw, a, pool)
 }
 
 // createManaged is shared by human creation and UID-bound delegated creation.
@@ -474,26 +474,15 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	if r.Method == http.MethodGet {
-		writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, a, p))
-		return
-	}
-	if r.Method == http.MethodPut {
-		writeDetail(w, 409, "an agent cannot be edited; create a new one")
+		s.writeAgent(w, r, 200, sw, a, p)
 		return
 	}
 	action := "delete"
 	if r.Method == http.MethodPost {
 		var ok bool
-		action, ok = readAction(w, r, "resume", "stop", "reset", "suspend")
+		action, ok = readAction(w, r, "start", "stop", "reset")
 		if !ok {
 			return
-		}
-		if action == "suspend" {
-			writeDetail(w, 409, "suspend is not supported; stop the agent instead, its workspace is kept")
-			return
-		}
-		if action == "resume" {
-			action = "start"
 		}
 	}
 	op := &managedWorkloadOperation{server: s, context: r.Context(), swarm: sw, pool: p, name: a.Name, action: action, actor: a}
@@ -505,5 +494,5 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		w.WriteHeader(202)
 		return
 	}
-	writeJSON(w, 200, s.managedActorRoleJSON(r.Context(), sw, op.saved, p))
+	s.writeAgent(w, r, 200, sw, op.saved, p)
 }

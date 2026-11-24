@@ -275,9 +275,9 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /api/swarms/{id}", s.handleSwarm)
 	s.mux.HandleFunc("DELETE /api/swarms/{id}", s.handleSwarm)
 	s.mux.HandleFunc("POST /api/swarms/{id}/transfer", s.handleSwarmTransfer)
-	// Агенты роя, пулы для их создания и терминал агента под
+	// Агенты роя, профили для их создания и терминал агента под
 	// /api/swarms/{id}/proxy/agents/.
-	s.mountActorAPI()
+	s.mountAgentAPI()
 	s.mountStatic()
 }
 
