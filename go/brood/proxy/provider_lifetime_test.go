@@ -15,8 +15,8 @@ func TestProviderDialContextLifetime(t *testing.T) {
 	a, b := net.Pipe()
 	defer b.Close()
 	var lifetime context.Context
-	p := New(Config{DialTimeout: 20 * time.Millisecond, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { lifetime = ctx; return a, nil }})
-	conn, err := p.dialContext(context.Background(), "tcp", "managed.invalid:8080")
+	p := New(Config{DialTimeout: 20 * time.Millisecond, Dial: func(ctx context.Context, _ Target) (net.Conn, error) { lifetime = ctx; return a, nil }})
+	conn, err := p.dial(context.Background(), Target{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +40,8 @@ func TestProviderDialContextLifetime(t *testing.T) {
 	}
 }
 func TestProviderDialOpeningBounded(t *testing.T) {
-	p := New(Config{DialTimeout: 10 * time.Millisecond, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }})
-	if _, err := p.dialContext(context.Background(), "tcp", "managed.invalid:8080"); err == nil {
+	p := New(Config{DialTimeout: 10 * time.Millisecond, Dial: func(ctx context.Context, _ Target) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }})
+	if _, err := p.dial(context.Background(), Target{}); err == nil {
 		t.Fatal("unbounded provider opening")
 	}
 }

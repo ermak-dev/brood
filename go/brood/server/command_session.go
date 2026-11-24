@@ -18,7 +18,7 @@ type sessionRelay interface {
 }
 
 // readonlyTerminalOperation is the guest's read-only screen snapshot protocol
-// behind the read-only terminal page (serveReadonlyActorView). It is not a
+// behind the read-only terminal page (serveReadonlyAgentView). It is not a
 // catalog command.
 const readonlyTerminalOperation = "session_terminal"
 

@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -50,7 +49,8 @@ func TestUpgradeSubmissionBoundaryOutcomes(t *testing.T) {
 			checks, releases, finishes := 0, 0, 0
 			outcome := UpgradeSubmissionUnknown
 			p := New(Config{
-				BeginUpgrade: func(*http.Request) (UpgradeReservation, error) {
+				Host: "agent.invalid",
+				BeginUpgrade: func(*http.Request, Target) (UpgradeReservation, error) {
 					return UpgradeReservation{
 						BeforeSubmit: func() (func(), error) {
 							checks++
@@ -65,7 +65,7 @@ func TestUpgradeSubmissionBoundaryOutcomes(t *testing.T) {
 						Finish: func(value UpgradeOutcome) { finishes++; outcome = value },
 					}, nil
 				},
-				DialContext: func(context.Context, string, string) (net.Conn, error) {
+				Dial: func(context.Context, Target) (net.Conn, error) {
 					if fault == "dial" {
 						return nil, errors.New("unavailable")
 					}
@@ -80,7 +80,7 @@ func TestUpgradeSubmissionBoundaryOutcomes(t *testing.T) {
 			w := upgradeFaultWriter{httptest.NewRecorder(), a, bufio.NewReadWriter(bufio.NewReader(strings.NewReader("")), bufio.NewWriter(io.Discard))}
 			r := httptest.NewRequest("GET", "http://panel.invalid/ws", nil).WithContext(ctx)
 			r.Header.Set("Upgrade", "websocket")
-			p.serveUpgrade(w, r, Identity{}, app.Swarm{}, "a", &url.URL{Scheme: "http", Host: "actor.invalid"})
+			p.serveUpgrade(w, r, Identity{}, app.Swarm{}, "a", Target{}, "/ws")
 			wantChecks, wantReleases, wantWrites := 1, 1, int32(0)
 			wantOutcome := UpgradeNotSubmitted
 			if fault == "dial" {
@@ -104,9 +104,9 @@ func TestUpgradeSubmissionSurvivesHandshakeFaults(t *testing.T) {
 		t.Run(fault, func(t *testing.T) {
 			var effects atomic.Int32
 			outcome := UpgradeNotSubmitted
-			p := New(Config{BeginUpgrade: func(*http.Request) (UpgradeReservation, error) {
+			p := New(Config{Host: "agent.invalid", BeginUpgrade: func(*http.Request, Target) (UpgradeReservation, error) {
 				return UpgradeReservation{Finish: func(value UpgradeOutcome) { outcome = value }}, nil
-			}, DialContext: func(context.Context, string, string) (net.Conn, error) {
+			}, Dial: func(context.Context, Target) (net.Conn, error) {
 				a, b := net.Pipe()
 				go func() {
 					defer b.Close()
@@ -134,7 +134,7 @@ func TestUpgradeSubmissionSurvivesHandshakeFaults(t *testing.T) {
 			w := upgradeFaultWriter{httptest.NewRecorder(), a, bufio.NewReadWriter(bufio.NewReader(strings.NewReader("")), bufio.NewWriter(output))}
 			r := httptest.NewRequest("GET", "http://panel.invalid/ws", nil)
 			r.Header.Set("Upgrade", "websocket")
-			p.serveUpgrade(w, r, Identity{}, app.Swarm{}, "a", &url.URL{Scheme: "http", Host: "actor.invalid"})
+			p.serveUpgrade(w, r, Identity{}, app.Swarm{}, "a", Target{}, "/ws")
 			if effects.Load() != 1 {
 				t.Fatalf("fault did not reach upstream effect: %d", effects.Load())
 			}

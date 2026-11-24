@@ -134,10 +134,10 @@ export const agentsApi = {
   act: (swarm: string, name: string, action: AgentAction) =>
     request<unknown>('POST', agentPath(swarm, name), { action }),
   remove: (swarm: string, name: string) => request<void>('DELETE', agentPath(swarm, name)),
-  /** A GET here issues a short-lived actor view and redirects to the terminal. */
+  /** A GET here issues a short-lived terminal ticket and redirects to the terminal. */
   terminal: (swarm: string, name: string) =>
-    `${swarmPath(swarm)}/proxy/actors/${segment(name)}/?mode=rw`,
+    `${swarmPath(swarm)}/proxy/agents/${segment(name)}/?mode=rw`,
   /** The same session as a read-only snapshot: nothing typed reaches the agent. */
   view: (swarm: string, name: string) =>
-    `${swarmPath(swarm)}/proxy/actors/${segment(name)}/?mode=ro`,
+    `${swarmPath(swarm)}/proxy/agents/${segment(name)}/?mode=ro`,
 };

@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1082,18 +1081,4 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm) ([]any, 
 		out = append(out, row)
 	}
 	return out, nil
-}
-
-func managedGeneration(host string) (string, int64, bool) {
-	name, port, err := net.SplitHostPort(host)
-	if err != nil || port != "8080" {
-		return "", 0, false
-	}
-	value, ok := strings.CutSuffix(name, ".proxmox.invalid")
-	if !ok {
-		return "", 0, false
-	}
-	uid, g, ok := strings.Cut(value, ".")
-	generation, err := strconv.ParseInt(g, 10, 64)
-	return uid, generation, ok && err == nil && generation > 0 && viewSegment(uid)
 }

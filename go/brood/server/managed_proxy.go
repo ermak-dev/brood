@@ -1,79 +1,73 @@
 package server
 
 import (
-	"brood.dev/go/brood/app"
 	"context"
 	"errors"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"brood.dev/go/brood/app"
 	"brood.dev/go/brood/proxy"
 	"brood.dev/go/brood/store"
 )
 
-type managedResolver struct {
-	server *Server
-}
+// guestTerminalHost — адрес ttyd внутри агента (proxmox/guest): туда агент
+// ведёт поток relay brood-terminal, его же ttyd ждёт в Host и Origin.
+const guestTerminalHost = "127.0.0.1:8080"
 
-func (r *managedResolver) ActorUpstream(swarmID, name string) (*url.URL, error) {
+// resolveTerminal выбирает агента роя для прокси терминала: UID и
+// поколение берутся из базы, запрос на них не влияет.
+func (m *managedProvider) resolveTerminal(swarmID, name string) (proxy.Target, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	a, err := r.server.managed.actorByName(ctx, swarmID, name)
+	a, err := m.actorByName(ctx, swarmID, name)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, proxy.ErrUnknownActor
+		return proxy.Target{}, proxy.ErrUnknownAgent
 	}
 	if err != nil {
-		return nil, err
+		return proxy.Target{}, err
 	}
-	target := &url.URL{Scheme: "http", Host: a.UID + "." + managedDecimal(a.Incarnation) + ".proxmox.invalid:8080"}
-	if !r.server.managed.validTarget(target) {
-		return nil, &app.APIError{Status: 503, Detail: "managed terminal is not ready; explicitly resume the actor if stopped"}
+	target := proxy.Target{UID: a.UID, Generation: a.Incarnation}
+	if !m.validTerminal(target) {
+		return proxy.Target{}, &app.APIError{Status: http.StatusServiceUnavailable, Detail: "the agent terminal is not ready; start the agent if it is stopped"}
 	}
 	return target, nil
 }
 
-func (m *managedProvider) targetActor(ctx context.Context, host string) (store.ManagedActor, error) {
-	uid, generation, ok := managedGeneration(host)
-	if !ok {
-		return store.ManagedActor{}, proxy.ErrUnknownActor
-	}
-	a, err := m.server.store.GetManagedActor(ctx, uid)
+// terminalAgent — агент цели, если это поколение ещё работает и на связи.
+func (m *managedProvider) terminalAgent(ctx context.Context, target proxy.Target) (store.ManagedActor, error) {
+	a, err := m.server.store.GetManagedActor(ctx, target.UID)
 	if err != nil {
 		return a, err
 	}
 	if sw, err := m.server.store.GetSwarm(ctx, a.SwarmID); err != nil || sw.State != "active" {
-		return a, proxy.ErrUnknownActor
+		return a, proxy.ErrUnknownAgent
 	}
-	verified, ok := m.verified.Load(uid)
-	if !ok || verified != generation || a.Phase != "running" || a.Desired != "running" || a.Incarnation != generation || m.hub == nil || !m.hub.Connected(uid, generation) {
-		return a, proxy.ErrUnknownActor
+	verified, ok := m.verified.Load(target.UID)
+	if !ok || verified != target.Generation || a.Phase != "running" || a.Desired != "running" || a.Incarnation != target.Generation || m.hub == nil || !m.hub.Connected(target.UID, target.Generation) {
+		return a, proxy.ErrUnknownAgent
 	}
 	p, err := m.server.store.GetManagedPool(ctx, a.PoolUID)
 	if err != nil {
 		return a, err
 	}
 	if !m.poolAvailable(p) {
-		return a, proxy.ErrUnknownActor
+		return a, proxy.ErrUnknownAgent
 	}
 	return a, nil
 }
-func (m *managedProvider) validTarget(target *url.URL) bool {
-	if target.Scheme == "https" {
-		return true
-	}
+
+func (m *managedProvider) validTerminal(target proxy.Target) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := m.targetActor(ctx, target.Host)
+	_, err := m.terminalAgent(ctx, target)
 	return err == nil
 }
-func (m *managedProvider) dial(ctx context.Context, network, address string) (net.Conn, error) {
-	if network != "tcp" {
-		return nil, proxy.ErrUnknownActor
-	}
-	a, err := m.targetActor(ctx, address)
+
+func (m *managedProvider) dialTerminal(ctx context.Context, target proxy.Target) (net.Conn, error) {
+	a, err := m.terminalAgent(ctx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -89,26 +83,28 @@ func (s *Server) guestRoute(w http.ResponseWriter, r *http.Request) {
 }
 func publicGuestPath(path string) bool { return strings.HasPrefix(path, "/api/proxmox/guest/") }
 
-func (s *Server) managedViewBinding(ctx context.Context, swarm, name string) (string, int64, error) {
+// agentViewBinding — UID и поколение работающего агента, к которым
+// привязан пропуск терминала.
+func (s *Server) agentViewBinding(ctx context.Context, swarm, name string) (string, int64, error) {
 	a, err := s.managed.actorByName(ctx, swarm, name)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", 0, nil
-	}
 	if err != nil {
 		return "", 0, err
 	}
 	if a.Phase != "running" || a.Desired != "running" {
-		return "", 0, proxy.ErrUnknownActor
+		return "", 0, proxy.ErrUnknownAgent
 	}
 	if sw, err := s.store.GetSwarm(ctx, swarm); err != nil || sw.State != "active" {
-		return "", 0, proxy.ErrUnknownActor
+		return "", 0, proxy.ErrUnknownAgent
 	}
 	return a.UID, a.Incarnation, nil
 }
-func (s *Server) validManagedView(ctx context.Context, v actorView) bool {
-	uid, generation, err := s.managedViewBinding(ctx, v.swarm, v.actor)
-	if err != nil || uid != v.managedUID || generation != v.generation {
+
+// validAgentViewBinding — пропуск ведёт к тому же поколению агента, а
+// пропуск с вводом — ещё и к рою, которым пользователь управляет.
+func (s *Server) validAgentViewBinding(ctx context.Context, v agentView) bool {
+	uid, generation, err := s.agentViewBinding(ctx, v.swarm, v.agent)
+	if err != nil || uid != v.uid || generation != v.generation {
 		return false
 	}
-	return v.readOnly || uid == "" || s.authorizeSwarmOwnerIntent(ctx, v.userID, v.swarm) == nil
+	return v.readOnly || s.authorizeSwarmOwnerIntent(ctx, v.userID, v.swarm) == nil
 }

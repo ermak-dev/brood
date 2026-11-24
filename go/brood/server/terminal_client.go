@@ -12,9 +12,8 @@ import (
 //go:embed static/driftty.html
 var drifttyClient []byte
 
-func useDrifttyClient(r *http.Request, response *http.Response, view actorView) {
-	if view.managedUID == "" || r.Method != http.MethodGet || response.StatusCode != http.StatusOK ||
-		r.URL.Path != "/swarms/"+view.swarm+"/actors/"+view.actor+"/" ||
+func useDrifttyClient(r *http.Request, response *http.Response, view agentView) {
+	if r.Method != http.MethodGet || response.StatusCode != http.StatusOK || r.URL.Path != view.path() ||
 		!strings.EqualFold(strings.TrimSpace(strings.SplitN(response.Header.Get("Content-Type"), ";", 2)[0]), "text/html") {
 		return
 	}

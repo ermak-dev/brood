@@ -41,7 +41,7 @@ type Server struct {
 	app     *app.Service
 	auth    *auth.Service
 	proxy   *proxy.Proxy
-	views   actorViews
+	views   agentViews
 	// telegram — поллеры ботов, telegramChannel — канал шины между
 	// владельцем роя и его агентами.
 	telegram         *telegramBots
@@ -99,7 +99,7 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	if err := st.RecoverActorOperations(ctx); err != nil {
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	srv := &Server{store: st, app: app.NewService(st), imageSnapshots: make(chan struct{}, 4), views: actorViews{tickets: make(map[string]actorView)}, artifactsDir: cfg.artifactsDir, artifactOrigin: cfg.artifactOrigin, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
+	srv := &Server{store: st, app: app.NewService(st), imageSnapshots: make(chan struct{}, 4), artifactsDir: cfg.artifactsDir, artifactOrigin: cfg.artifactOrigin, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
 	srv.telegramActivity = newTelegramActivity(srv)
@@ -112,21 +112,22 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	authCfg := auth.Config{Secure: cfg.SecureCookies, Secret: cfg.SessionSecret, Argon2: opts.argon2}
 	srv.auth = auth.NewService(st, authCfg, time.Now)
 
-	// Actor ingress shares session/CSRF protection. A lifecycle-bound
+	// The agent terminal shares session/CSRF protection. A lifecycle-bound
 	// ticker rechecks authorization and the original session, including
-	// ordinary requests still waiting for upstream headers or bodies.
+	// ordinary requests still waiting for the agent's headers or bodies.
 	srv.proxy = proxy.New(proxy.Config{
 		Swarms:    proxySwarms{srv.app},
 		Authorize: proxyAuthorizer(srv.app),
-		// Две native-проверки по 5 секунд должны уложиться в минутный отзыв.
+		// Две проверки по 5 секунд должны уложиться в минутный отзыв.
 		RecheckInterval:  45 * time.Second,
-		CurrentUser:      srv.actorViewUser,
-		RequestHook:      srv.actorViewRequest,
-		ResponseHook:     srv.actorViewResponse,
-		BeginUpgrade:     srv.beginManagedTerminal,
-		Upstream:         &managedResolver{server: srv},
-		DialContext:      srv.managed.dial,
-		UpstreamValid:    srv.managed.validTarget,
+		CurrentUser:      srv.agentViewUser,
+		RequestHook:      srv.agentViewRequest,
+		ResponseHook:     srv.agentViewResponse,
+		BeginUpgrade:     srv.beginAgentTerminal,
+		Resolve:          srv.managed.resolveTerminal,
+		Dial:             srv.managed.dialTerminal,
+		TargetValid:      srv.managed.validTerminal,
+		Host:             guestTerminalHost,
 		Revalidate:       srv.validProxySession,
 		RevalidateStream: srv.validProxyStream,
 	})
@@ -168,15 +169,15 @@ func proxyAuthorizer(service *app.Service) proxy.Authorizer {
 }
 
 func (s *Server) validProxyStream(r *http.Request) bool {
-	if v, ok := r.Context().Value(actorViewKey{}).(actorView); ok {
-		return s.validActorViewAccess(v)
+	if v, ok := r.Context().Value(agentViewKey{}).(agentView); ok {
+		return s.validAgentViewAccess(v)
 	}
 	return s.validProxySession(r)
 }
 
 func (s *Server) validProxySession(r *http.Request) bool {
-	if v, ok := r.Context().Value(actorViewKey{}).(actorView); ok {
-		return s.validActorView(v)
+	if v, ok := r.Context().Value(agentViewKey{}).(agentView); ok {
+		return s.validAgentView(v)
 	}
 	cookie, err := r.Cookie(auth.CookieSession)
 	if err != nil {
@@ -212,7 +213,7 @@ func (s *Server) Close() error {
 // Handler возвращает собранный обработчик: middleware сессий и CSRF
 // поверх всех маршрутов, /healthz и статика — без аутентификации.
 func (s *Server) Handler() http.Handler {
-	browser := s.actorViewHandler(s.browserProtection())
+	browser := s.agentViewHandler(s.browserProtection())
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if publicGuestSessionEventPath(r.URL.Path) {
 			s.serveGuestSessionEvent(w, r)
@@ -274,9 +275,8 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /api/swarms/{id}", s.handleSwarm)
 	s.mux.HandleFunc("DELETE /api/swarms/{id}", s.handleSwarm)
 	s.mux.HandleFunc("POST /api/swarms/{id}/transfer", s.handleSwarmTransfer)
-	// Actor/template/policy роя, воркеры и глобальная политика — тонкий
-	// прокси к ateapi с проверкой владения роем (#32); он же подключает
-	// маршруты proxy под /api/swarms/{id}/proxy/.
+	// Агенты роя, пулы для их создания и терминал агента под
+	// /api/swarms/{id}/proxy/agents/.
 	s.mountActorAPI()
 	s.mountStatic()
 }

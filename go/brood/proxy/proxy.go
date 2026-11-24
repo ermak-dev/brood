@@ -1,9 +1,10 @@
-// Пакет proxy проксирует HTTP и WebSocket терминала агента.
-// Цель соединения вычисляет сервер из роя и агента; пользователь
-// не управляет адресом или заголовками выбора агента. Права проверяются до соединения и
-// переоцениваются по интервалу: отозванный доступ закрывает живые
-// соединения. Библиотека молчит: события уходят в аудит-колбэк,
-// отказы — статусами с причиной строкой.
+// Package proxy forwards HTTP and WebSocket requests to the terminal of an
+// agent. The server picks the agent from the swarm and the agent name and
+// hands the proxy a Target; the client controls neither the address nor any
+// header that could select another agent. Access is checked before the
+// connection and re-evaluated on an interval: revoked access closes live
+// connections. The library stays silent: decisions go to the audit callback,
+// refusals are statuses with a plain reason.
 package proxy
 
 import (
@@ -24,39 +25,27 @@ import (
 	"brood.dev/go/brood/app"
 )
 
-// Дефолты; переопределяются конфигурацией.
+// Defaults; the configuration overrides them.
 const (
-	// DefaultRecheckInterval — период переоценки прав живых соединений.
+	// DefaultRecheckInterval is the period of access re-evaluation for live connections.
 	DefaultRecheckInterval = 60 * time.Second
-	// DefaultMaxBodyBytes — потолок тела не-WebSocket запроса.
+	// DefaultMaxBodyBytes caps the body of a non-WebSocket request.
 	DefaultMaxBodyBytes int64 = 4 << 20
-	// DefaultDialTimeout — потолок установления соединения с актором.
+	// DefaultDialTimeout caps opening a stream to the agent terminal.
 	DefaultDialTimeout = 10 * time.Second
-	// DefaultResponseHeaderTimeout — потолок ожидания статусной строки
-	// upstream для не-WebSocket запроса.
+	// DefaultResponseHeaderTimeout caps the wait for the status line of the
+	// agent terminal on a non-WebSocket request.
 	DefaultResponseHeaderTimeout = 60 * time.Second
 )
 
-// Заголовки, которыми выбирают актора на стороне ateapi-router. Их
-// клиент прислать не может: прокси стирает их и задаёт сам.
-const (
-	// HeaderActor — имя актора-цели.
-	HeaderActor = "X-Actor"
-	// HeaderAtespace — atespace роя цели.
-	HeaderAtespace = "X-Atespace"
-	// HeaderActorTarget — составной селектор цели ateapi-router.
-	HeaderActorTarget = "X-Actor-Target"
-)
-
-// Имена cookie сессии и CSRF brood: вверх не идут никогда.
+// Имена cookie сессии и CSRF brood: к агенту не идут никогда.
 const (
 	cookieSession = "session"
 	cookieCSRF    = "csrf"
 )
 
-// strippedHeaders — заголовки выбора цели: клиент не задаёт адрес
-// актора ни напрямую, ни составным селектором.
-var strippedHeaders = []string{HeaderActor, HeaderAtespace, HeaderActorTarget, "Ate-Target-Actor", "Authorization", "X-CSRFToken"}
+// credentialHeaders — учётные данные панели: к агенту не идут.
+var credentialHeaders = []string{"Authorization", "X-CSRFToken"}
 
 // hopHeaders — hop-by-hop заголовки RFC 7230; переносятся вручную
 // только Upgrade и Connection в upgrade-запросе.
@@ -77,50 +66,51 @@ const (
 	headerConnection = "Connection"
 )
 
-// ErrUnknownActor — резолвер не знает актора в atespace роя.
-var ErrUnknownActor = errors.New("actor is not routable in its swarm")
+// ErrUnknownAgent reports that the swarm has no reachable agent of that name.
+var ErrUnknownAgent = errors.New("agent is not reachable in its swarm")
 
-// Identity — пользователь, прошедший аутентификацию. Минимальный
-// интерфейс к слою auth: идентификатор для app.Can и имя для аудита.
+// Target is the agent the server selected for a request: the container UID
+// and its generation. It comes from the server's records, never from the
+// request.
+type Target struct {
+	UID        string
+	Generation int64
+}
+
+// Identity is an authenticated user: the ID for app.Can and the name for audit.
 type Identity struct {
 	ID       string
 	Username string
 }
 
-// CurrentUser возвращает пользователя аутентифицированного запроса;
-// ok=false — аноним (сессии нет). Реализация — обёртка над middleware
-// auth (UserFromContext); сам прокси аутентификацией не занимается.
+// CurrentUser returns the user of an authenticated request; ok=false means
+// an anonymous request. The proxy does no authentication itself.
 type CurrentUser func(ctx context.Context) (Identity, bool)
 
-// Authorizer — проверка прав; реализация — app.Service.Can, действие
-// app.ActionManageSwarm, ресурс app.SwarmRes. Ошибка — внутренний
-// сбой, не запрет.
+// Authorizer checks access; the implementation is app.Service.Can with
+// app.ActionManageSwarm on app.SwarmRes. An error is an internal failure,
+// not a refusal.
 type Authorizer func(userID string, action app.Action, res app.Resource) (bool, error)
 
-// SwarmLookup — чтение роя по ID; реализация — app.Store.
+// SwarmLookup reads a swarm by ID; the implementation is app.Store.
 type SwarmLookup interface {
 	SwarmByID(id string) (app.Swarm, bool, error)
 }
 
-// UpstreamResolver находит URL агента по рою и имени.
-type UpstreamResolver interface {
-	ActorUpstream(swarmID, actor string) (*url.URL, error)
-}
-
-// AuditEvent — факт решения прокси: кто, куда, чем и разрешено ли.
-// Поля плоские для slog.Attr.
+// AuditEvent is one decision of the proxy: who, where, how and whether it
+// was allowed. The fields are flat for slog.Attr.
 type AuditEvent struct {
 	Username string
 	SwarmID  string
-	Actor    string
+	Agent    string
 	Method   string
 	Allowed  bool
-	// Reason — контекст решения (not permitted, swarm is not active,
-	// access revoked и т.п.); пуст у разрешённых запросов.
+	// Reason is the context of the decision (not permitted, swarm is not
+	// active, access revoked and so on); empty for allowed requests.
 	Reason string
 }
 
-// Audit — приёмник событий аудита; nil — аудит выключен.
+// Audit receives audit events; nil disables audit.
 type Audit func(event AuditEvent)
 
 // UpgradeOutcome describes submission, not completion of upstream effects.
@@ -144,67 +134,69 @@ type UpgradeReservation struct {
 	Finish func(UpgradeOutcome)
 }
 
-// Config — зависимости и настройки прокси.
+// Config holds the dependencies and settings of the proxy.
 type Config struct {
-	// DialContext optionally routes plain HTTP and upgrades to a managed provider.
-	// HTTPS always retains the native router's verified TLS transport.
-	DialContext func(context.Context, string, string) (net.Conn, error)
+	// Resolve selects the agent of the swarm by name. ErrUnknownAgent answers
+	// 404; an *app.APIError with status 503 passes its detail to the client.
+	Resolve func(swarmID, agent string) (Target, error)
+	// Dial opens a stream to the terminal of the target. The context bounds
+	// the opening and keeps the stream alive until Close.
+	Dial func(ctx context.Context, target Target) (net.Conn, error)
+	// TargetValid confirms on long-lived requests that the target generation
+	// is still the reachable one; nil skips the check.
+	TargetValid func(Target) bool
+	// Host is the address of the terminal inside the agent. It is the Host and
+	// the Origin of every request to the agent: the client's own Origin is
+	// checked before the proxy.
+	Host string
 	// RequestHook applies server-controlled policy after outbound sanitization.
 	RequestHook func(out, original *http.Request)
 	// ResponseHook applies server-controlled policy before any headers are sent.
 	ResponseHook func(original *http.Request, response *http.Response) error
-	// BeginUpgrade reserves provider-specific mutation authority before upgrade I/O.
-	BeginUpgrade func(*http.Request) (UpgradeReservation, error)
-	// RouterTLS supplies projected mTLS credentials for HTTPS ingress.
-	RouterTLS *TLSFiles
+	// BeginUpgrade reserves mutation authority on the target before upgrade I/O.
+	BeginUpgrade func(*http.Request, Target) (UpgradeReservation, error)
 	// Revalidate checks the original request, including while an upgrade is pending.
 	Revalidate func(*http.Request) bool
 	// RevalidateStream replaces Revalidate after a successful upgrade.
 	RevalidateStream func(*http.Request) bool
-	// UpstreamValid fences the resolved provider incarnation on long-lived requests.
-	UpstreamValid func(*url.URL) bool
-	// Swarms — чтение роёв по ID.
+	// Swarms reads swarms by ID.
 	Swarms SwarmLookup
-	// Authorize — гейт прав до соединения.
+	// Authorize is the access gate before any connection.
 	Authorize Authorizer
-	// CurrentUser — текущий пользователь из контекста запроса.
+	// CurrentUser returns the user from the request context.
 	CurrentUser CurrentUser
-	// Upstream — резолвер адреса актора.
-	Upstream UpstreamResolver
-	// Audit — события решений (nil допустим).
+	// Audit receives decisions; nil is allowed.
 	Audit Audit
-	// RecheckInterval — период переоценки прав живых соединений;
-	// 0 — DefaultRecheckInterval.
+	// RecheckInterval is the period of access re-evaluation for live
+	// connections; 0 means DefaultRecheckInterval.
 	RecheckInterval time.Duration
-	// MaxBodyBytes — потолок тела не-WS запроса; 0 — DefaultMaxBodyBytes.
+	// MaxBodyBytes caps a non-WebSocket body; 0 means DefaultMaxBodyBytes.
 	MaxBodyBytes int64
-	// DialTimeout — потолок соединения с актором; 0 — DefaultDialTimeout.
+	// DialTimeout caps opening a stream; 0 means DefaultDialTimeout.
 	DialTimeout time.Duration
-	// ResponseHeaderTimeout — потолок статусной строки upstream; 0 —
+	// ResponseHeaderTimeout caps the wait for the status line; 0 means
 	// DefaultResponseHeaderTimeout.
 	ResponseHeaderTimeout time.Duration
-	// Logger — slog; nil — slog.Default().
+	// Logger is the slog logger; nil means slog.Default().
 	Logger *slog.Logger
 }
 
-// Proxy — HTTP handler прокси и реестр живых соединений.
+// Proxy forwards requests to agent terminals and tracks live connections.
 type Proxy struct {
 	cfg    Config
 	logger *slog.Logger
-	once   sync.Once
-	rt     http.RoundTripper
 
 	mu    sync.Mutex
 	conns map[*liveConn]struct{}
 }
 
-// liveConn — живое upgrade-соединение с отслеживаемым доступом.
+// liveConn — живое соединение с отслеживаемым доступом.
 // close зовут и переоценка, и завершение копирования: флаг страхует
 // от двойного закрытия, параллельные Close TCPConn безопасны.
 type liveConn struct {
 	user   Identity
 	swarm  app.Swarm
-	actor  string
+	agent  string
 	mu     sync.Mutex
 	closed bool
 	client net.Conn
@@ -231,8 +223,8 @@ func (lc *liveConn) close() {
 	}
 }
 
-// New собирает прокси из зависимостей. Swarms, Authorize, CurrentUser
-// и Upstream обязательны; нулевые интервалы заменяются дефолтами.
+// New builds the proxy. Resolve, Dial, Host, Swarms, Authorize and
+// CurrentUser are required; zero intervals take the defaults.
 func New(cfg Config) *Proxy {
 	if cfg.RecheckInterval <= 0 {
 		cfg.RecheckInterval = DefaultRecheckInterval
@@ -253,41 +245,34 @@ func New(cfg Config) *Proxy {
 	return &Proxy{cfg: cfg, logger: logger, conns: make(map[*liveConn]struct{})}
 }
 
-// transport — разделяемый RoundTripper с таймаутами конфигурации.
-func (p *Proxy) transport() http.RoundTripper {
-	p.once.Do(func() {
-		p.rt = &http.Transport{
-			DialContext:    p.dialContext,
-			DialTLSContext: p.dialTLS,
-			// Projected identity rotation must affect the next request, not
-			// wait for a pooled TLS connection to expire.
-			DisableKeepAlives:     p.cfg.RouterTLS != nil,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: p.cfg.ResponseHeaderTimeout,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
-	})
-	return p.rt
+// transport — RoundTripper одного запроса к одной цели. Общий пул
+// соединений не нужен: поток ведёт к конкретному агенту и другому
+// запросу достаться не должен.
+func (p *Proxy) transport(target Target) *http.Transport {
+	return &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return p.dial(ctx, target)
+		},
+		DisableKeepAlives:     true,
+		ResponseHeaderTimeout: p.cfg.ResponseHeaderTimeout,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 }
 
-type providerConn struct {
+type agentConn struct {
 	net.Conn
 	cancel context.CancelFunc
 }
 
-func (c *providerConn) Close() error { c.cancel(); return c.Conn.Close() }
+func (c *agentConn) Close() error { c.cancel(); return c.Conn.Close() }
 
-func (p *Proxy) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	if p.cfg.DialContext == nil {
-		return (&net.Dialer{Timeout: p.cfg.DialTimeout, KeepAlive: 30 * time.Second}).DialContext(ctx, network, address)
-	}
-	// Relay Dial binds context to the returned stream, not just opening.
-	// Disarm the opening timer on success and release context on Close.
+// dial открывает поток к терминалу цели. Поток relay живёт, пока жив
+// контекст Dial: таймер ограничивает только открытие, контекст
+// отпускает Close.
+func (p *Proxy) dial(ctx context.Context, target Target) (net.Conn, error) {
 	lifetime, cancel := context.WithCancel(ctx)
 	timer := time.AfterFunc(p.cfg.DialTimeout, cancel)
-	conn, err := p.cfg.DialContext(lifetime, network, address)
+	conn, err := p.cfg.Dial(lifetime, target)
 	stopped := timer.Stop()
 	if err != nil || !stopped || lifetime.Err() != nil {
 		cancel()
@@ -299,10 +284,10 @@ func (p *Proxy) dialContext(ctx context.Context, network, address string) (net.C
 		}
 		return nil, context.DeadlineExceeded
 	}
-	return &providerConn{Conn: conn, cancel: cancel}, nil
+	return &agentConn{Conn: conn, cancel: cancel}, nil
 }
 
-// Close terminates active requests and idle upstream connections.
+// Close terminates active requests and upgraded connections.
 func (p *Proxy) Close() {
 	p.mu.Lock()
 	current := make([]*liveConn, 0, len(p.conns))
@@ -313,14 +298,11 @@ func (p *Proxy) Close() {
 	for _, lc := range current {
 		p.untrack(lc)
 	}
-	if rt, ok := p.transport().(*http.Transport); ok {
-		rt.CloseIdleConnections()
-	}
 }
 
-// Start запускает фоновую переоценку прав живых соединений; стоп —
-// отмена контекста. Без вызова прокси работает, но отзывает доступ
-// только по явному RecheckNow.
+// Start runs the access re-evaluation of live connections until ctx is
+// canceled. Without it the proxy still works but revokes access only on an
+// explicit RecheckNow.
 func (p *Proxy) Start(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(p.cfg.RecheckInterval)
@@ -337,9 +319,9 @@ func (p *Proxy) Start(ctx context.Context) {
 	}()
 }
 
-// RecheckNow переоценивает права всех живых соединений и закрывает
-// отозванные. Публично: сервер может звать по событию (блокировка,
-// смена членства), не дожидаясь тикера.
+// RecheckNow re-evaluates access of all live connections and closes the
+// revoked ones. The server may call it on an event without waiting for the
+// ticker.
 func (p *Proxy) RecheckNow() {
 	p.mu.Lock()
 	current := make([]*liveConn, 0, len(p.conns))
@@ -381,17 +363,17 @@ func (p *Proxy) revoke(lc *liveConn, reason string) {
 	p.mu.Unlock()
 	lc.close()
 	p.emit(AuditEvent{
-		Username: lc.user.Username, SwarmID: lc.swarm.ID, Actor: lc.actor,
+		Username: lc.user.Username, SwarmID: lc.swarm.ID, Agent: lc.agent,
 		Allowed: false, Reason: reason,
 	})
 }
 
-func (p *Proxy) targetCheck(r *http.Request, base *url.URL, revalidate func(*http.Request) bool) func() bool {
-	if revalidate == nil && p.cfg.UpstreamValid == nil {
+func (p *Proxy) targetCheck(r *http.Request, target Target, revalidate func(*http.Request) bool) func() bool {
+	if revalidate == nil && p.cfg.TargetValid == nil {
 		return nil
 	}
 	return func() bool {
-		return (revalidate == nil || revalidate(r)) && (p.cfg.UpstreamValid == nil || p.cfg.UpstreamValid(base))
+		return (revalidate == nil || revalidate(r)) && (p.cfg.TargetValid == nil || p.cfg.TargetValid(target))
 	}
 }
 
@@ -418,31 +400,18 @@ func (p *Proxy) emit(e AuditEvent) {
 	p.logger.Info("proxy access",
 		"user", e.Username,
 		"swarm", e.SwarmID,
-		"actor", e.Actor,
+		"agent", e.Agent,
 		"method", e.Method,
 		"allowed", e.Allowed,
 		"reason", e.Reason)
 }
 
-// Mount регистрирует маршруты прокси в mux сервера:
-// /swarms/{id}/actors/{name}[/путь актора]. {rest...} склеивается
-// обратно actorSubPath-ом, mux-паттерн только отбирает запросы.
-func (p *Proxy) Mount(mux *http.ServeMux) {
-	for _, method := range []string{
-		http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
-		http.MethodPatch, http.MethodDelete, http.MethodOptions,
-	} {
-		mux.Handle(method+" /swarms/{swarm}/actors/{actor}", p)
-		mux.Handle(method+" /swarms/{swarm}/actors/{actor}/{rest...}", p)
-	}
-}
-
-// ServeHTTP — /swarms/{id}/actors/{name}[/путь актора]. Порядок:
-// рой -> пользователь -> права -> состояние роя -> резолв -> мост.
-func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	swarmID := r.PathValue("swarm")
-	actor := r.PathValue("actor")
-	if swarmID == "" || actor == "" {
+// Serve forwards r to the terminal of the agent named agent in swarm
+// swarmID. path is the path inside the terminal, "/" for its root; the
+// server takes all three from its own route. Order: swarm, user, access,
+// swarm state, target, bridge.
+func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, swarmID, agent, path string) {
+	if swarmID == "" || agent == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -461,12 +430,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
-	if !p.gate(w, r, user, sw, actor) {
+	if !p.gate(w, r, user, sw, agent) {
 		return
 	}
-	base, err := p.cfg.Upstream.ActorUpstream(sw.ID, actor)
+	target, err := p.cfg.Resolve(sw.ID, agent)
 	if err != nil {
-		if errors.Is(err, ErrUnknownActor) {
+		if errors.Is(err, ErrUnknownAgent) {
 			http.NotFound(w, r)
 			return
 		}
@@ -475,21 +444,21 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, apiErr.Detail, http.StatusServiceUnavailable)
 			return
 		}
-		http.Error(w, "cannot resolve actor upstream", http.StatusBadGateway)
+		http.Error(w, "cannot find the agent terminal", http.StatusBadGateway)
 		return
 	}
 	if isUpgrade(r) {
-		p.serveUpgrade(w, r, user, sw, actor, base)
+		p.serveUpgrade(w, r, user, sw, agent, target, path)
 		return
 	}
-	p.servePlain(w, r, user, sw, actor, base)
+	p.servePlain(w, r, user, sw, agent, target, path)
 }
 
-// gate — авторизация до всякого соединения с upstream. Отказ и чужой
-// рой — 404 без перечисления (как Python-панель прячет чужие
-// проекты); не-active рой — 409 с состоянием. false — ответ записан.
-func (p *Proxy) gate(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, actor string) bool {
-	event := AuditEvent{Username: user.Username, SwarmID: sw.ID, Actor: actor, Method: r.Method}
+// gate — авторизация до всякого соединения с агентом. Отказ и чужой
+// рой — 404 без перечисления; не-active рой — 409 с состоянием.
+// false — ответ записан.
+func (p *Proxy) gate(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, agent string) bool {
+	event := AuditEvent{Username: user.Username, SwarmID: sw.ID, Agent: agent, Method: r.Method}
 	allowed, err := p.cfg.Authorize(user.ID, app.ActionManageSwarm, app.SwarmRes(sw.ID))
 	switch {
 	case err != nil:
@@ -513,43 +482,12 @@ func (p *Proxy) gate(w http.ResponseWriter, r *http.Request, user Identity, sw a
 	return true
 }
 
-// ─── адрес цели ────────────────────────────────────────────────────────────
+// ─── запрос к агенту ───────────────────────────────────────────────────────
 
-// targetURL строит адрес upstream: путь после имени актора
-// сохраняется, query тоже.
-func targetURL(base *url.URL, r *http.Request) *url.URL {
-	out := *base
-	out.Path = singleJoiningSlash(base.Path, actorSubPath(r))
-	out.RawQuery = r.URL.RawQuery
-	return &out
-}
-
-// actorSubPath — часть пути после /swarms/{id}/actors/{name}, без
-// самого имени актора; "/" для пути, равного имени.
-func actorSubPath(r *http.Request) string {
-	const marker = "/actors/"
-	idx := strings.Index(r.URL.Path, marker)
-	if idx < 0 {
-		return "/"
-	}
-	rest := r.URL.Path[idx+len(marker):] // "{actor}[/путь]"
-	if slash := strings.Index(rest, "/"); slash >= 0 {
-		return rest[slash:]
-	}
-	return "/"
-}
-
-// singleJoiningSlash соединяет пути ровно одной косой чертой.
-func singleJoiningSlash(a, b string) string {
-	aslash := strings.HasSuffix(a, "/")
-	bslash := strings.HasPrefix(b, "/")
-	switch {
-	case aslash && bslash:
-		return a + b[1:]
-	case !aslash && !bslash:
-		return a + "/" + b
-	}
-	return a + b
+// agentURL — адрес запроса к терминалу: путь внутри терминала и query
+// исходного запроса. Хост не выбирает соединение: поток открывает Dial.
+func (p *Proxy) agentURL(r *http.Request, path string) *url.URL {
+	return &url.URL{Scheme: "http", Host: p.cfg.Host, Path: path, RawQuery: r.URL.RawQuery}
 }
 
 // isUpgrade — запрос смены протокола (WebSocket и совместимые).
@@ -564,10 +502,11 @@ func isUpgrade(r *http.Request) bool {
 	return false
 }
 
-// cleanOutbound подготавливает запрос к upstream: срезает hop-by-hop,
-// заголовки выбора цели и cookie сессии brood, добавляет адрес клиента
-// и серверные заголовки цели. Host уже задан самим запросом.
-func (p *Proxy) cleanOutbound(out *http.Request, orig *http.Request, sw app.Swarm, actor string) {
+// cleanOutbound подготавливает запрос к агенту: срезает hop-by-hop,
+// учётные данные и cookie сессии brood, добавляет адрес клиента. Host и
+// Origin — адрес терминала в агенте: ttyd сверяет их между собой, а
+// Origin клиента сервер проверил до прокси.
+func (p *Proxy) cleanOutbound(out *http.Request, orig *http.Request) {
 	if ip, _, err := net.SplitHostPort(orig.RemoteAddr); err == nil {
 		prior, ok := out.Header["X-Forwarded-For"]
 		if ok && len(prior) > 0 {
@@ -580,7 +519,7 @@ func (p *Proxy) cleanOutbound(out *http.Request, orig *http.Request, sw app.Swar
 	for _, h := range hopHeaders {
 		out.Header.Del(h)
 	}
-	for _, h := range strippedHeaders {
+	for _, h := range credentialHeaders {
 		out.Header.Del(h)
 	}
 	if c := strings.Join(out.Header.Values("Cookie"), ";"); c != "" {
@@ -591,8 +530,8 @@ func (p *Proxy) cleanOutbound(out *http.Request, orig *http.Request, sw app.Swar
 			out.Header.Set("Cookie", filtered)
 		}
 	}
-	// Цель задаёт только сервер.
-	out.Header.Set(HeaderActor, actor)
+	out.Host = p.cfg.Host
+	out.Header.Set("Origin", "http://"+p.cfg.Host)
 	// Ответ не для кэшей клиента прокси.
 	out.Header.Del("Accept-Encoding")
 	if p.cfg.RequestHook != nil {
@@ -620,33 +559,34 @@ func filterCookies(header string) string {
 
 // servePlain — не-upgrade запрос: потолок тела, свой Transport
 // с таймаутами, копия заголовков ответа без hop-by-hop.
-func (p *Proxy) servePlain(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, actor string, base *url.URL) {
+func (p *Proxy) servePlain(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, agent string, target Target, path string) {
 	ctx, cancel := context.WithCancel(r.Context())
-	lc := &liveConn{user: user, swarm: sw, actor: actor, cancel: cancel, valid: p.targetCheck(r, base, p.cfg.Revalidate)}
+	lc := &liveConn{user: user, swarm: sw, agent: agent, cancel: cancel, valid: p.targetCheck(r, target, p.cfg.Revalidate)}
 	p.track(lc)
 	defer p.untrack(lc)
 	r.Body = http.MaxBytesReader(w, r.Body, p.cfg.MaxBodyBytes)
 	out := r.Clone(ctx)
-	out.URL = targetURL(base, r)
-	out.Host = r.Host
-	p.cleanOutbound(out, r, sw, actor)
+	out.URL = p.agentURL(r, path)
+	p.cleanOutbound(out, r)
 	// Соединение от имени прокси, не клиента.
 	out.RequestURI = ""
 
-	response, err := p.transport().RoundTrip(out)
+	transport := p.transport(target)
+	defer transport.CloseIdleConnections()
+	response, err := transport.RoundTrip(out)
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 			return
 		}
-		http.Error(w, "actor upstream is unavailable", http.StatusBadGateway)
+		http.Error(w, "the agent terminal is unavailable", http.StatusBadGateway)
 		return
 	}
 	defer response.Body.Close()
 	if p.cfg.ResponseHook != nil {
 		if err := p.cfg.ResponseHook(r, response); err != nil {
-			http.Error(w, "actor response rejected", http.StatusBadGateway)
+			http.Error(w, "the agent terminal response was rejected", http.StatusBadGateway)
 			return
 		}
 	}
@@ -666,15 +606,16 @@ func (p *Proxy) servePlain(w http.ResponseWriter, r *http.Request, user Identity
 // ─── upgrade/WebSocket ─────────────────────────────────────────────────────
 
 // serveUpgrade — WebSocket: ручной мост с хайджеком обеих сторон,
-// регистрацией в реестре переоценки и двойным закрытием.
-func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, actor string, base *url.URL) {
+// регистрацией в реестре переоценки и двойным закрытием. Рукопожатие с
+// агентом — запрос HTTP/1.1 по потоку Dial.
+func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identity, sw app.Swarm, agent string, target Target, path string) {
 	outcome := UpgradeNotSubmitted
 	var reservation UpgradeReservation
 	if p.cfg.BeginUpgrade != nil {
 		var err error
-		reservation, err = p.cfg.BeginUpgrade(r)
+		reservation, err = p.cfg.BeginUpgrade(r, target)
 		if err != nil {
-			http.Error(w, "actor stream conflicts with active work or current authority", http.StatusConflict)
+			http.Error(w, "the terminal stream cannot open: the agent is busy or your access changed; open it again from the agents list", http.StatusConflict)
 			return
 		}
 		if reservation.Finish != nil {
@@ -692,37 +633,30 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 	}
 	defer clientConn.Close()
 
-	target := targetURL(base, r)
-	upReq, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), nil)
+	upReq, err := http.NewRequestWithContext(r.Context(), r.Method, p.agentURL(r, path).String(), nil)
 	if err != nil {
-		writeRawResponse(clientBuf, http.StatusBadGateway, "invalid upstream address")
+		writeRawResponse(clientBuf, http.StatusBadGateway, "invalid agent terminal address")
 		return
 	}
 	for k, vs := range r.Header {
 		upReq.Header[k] = vs
 	}
-	upReq.Host = r.Host
-	p.cleanOutbound(upReq, r, sw, actor)
+	p.cleanOutbound(upReq, r)
 	// Upgrade-семантика сохраняется, но цель выбрал сервер.
 	upReq.Header.Set(headerConnection, "Upgrade")
 	upReq.Header.Set(headerUpgrade, r.Header.Get(headerUpgrade))
 
-	var serverConn net.Conn
-	if target.Scheme == "https" {
-		serverConn, err = p.dialTLS(r.Context(), "tcp", target.Host)
-	} else {
-		serverConn, err = p.dialContext(r.Context(), "tcp", target.Host)
-	}
+	serverConn, err := p.dial(r.Context(), target)
 	if err != nil {
-		writeRawResponse(clientBuf, http.StatusBadGateway, "actor upstream is unavailable")
+		writeRawResponse(clientBuf, http.StatusBadGateway, "the agent terminal is unavailable")
 		return
 	}
 	defer serverConn.Close()
-	opening := p.targetCheck(r, base, p.cfg.Revalidate)
+	opening := p.targetCheck(r, target, p.cfg.Revalidate)
 	valid := opening
 	var established atomic.Bool
 	if p.cfg.RevalidateStream != nil {
-		stream := p.targetCheck(r, base, p.cfg.RevalidateStream)
+		stream := p.targetCheck(r, target, p.cfg.RevalidateStream)
 		valid = func() bool {
 			if established.Load() {
 				return stream()
@@ -730,7 +664,7 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 			return opening == nil || opening()
 		}
 	}
-	lc := &liveConn{user: user, swarm: sw, actor: actor, client: clientConn, server: serverConn, valid: valid}
+	lc := &liveConn{user: user, swarm: sw, agent: agent, client: clientConn, server: serverConn, valid: valid}
 	p.track(lc)
 	defer p.untrack(lc)
 	_ = serverConn.SetDeadline(time.Now().Add(p.cfg.ResponseHeaderTimeout))
@@ -754,24 +688,24 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 		}
 		return serverBuf.Flush()
 	}(); err != nil {
-		writeRawResponse(clientBuf, http.StatusBadGateway, "cannot submit to actor upstream")
+		writeRawResponse(clientBuf, http.StatusBadGateway, "cannot send the request to the agent terminal")
 		return
 	}
 	upResp, err := http.ReadResponse(serverBuf.Reader, upReq)
 	if err != nil {
-		writeRawResponse(clientBuf, http.StatusBadGateway, "invalid actor upstream response")
+		writeRawResponse(clientBuf, http.StatusBadGateway, "the agent terminal sent an invalid response")
 		return
 	}
 	_ = serverConn.SetDeadline(time.Time{})
 	if p.cfg.ResponseHook != nil {
 		if err := p.cfg.ResponseHook(r, upResp); err != nil {
 			upResp.Body.Close()
-			writeRawResponse(clientBuf, http.StatusBadGateway, "actor response rejected")
+			writeRawResponse(clientBuf, http.StatusBadGateway, "the agent terminal response was rejected")
 			return
 		}
 	}
 	if upResp.StatusCode != http.StatusSwitchingProtocols {
-		// Отказ upstream уходит клиенту как есть: настоящий статус.
+		// Отказ агента уходит клиенту как есть: настоящий статус.
 		if err := upResp.Write(clientBuf); err != nil {
 			return
 		}
@@ -795,7 +729,7 @@ func (p *Proxy) serveUpgrade(w http.ResponseWriter, r *http.Request, user Identi
 	p.bridge(clientBuf, serverBuf, clientConn, serverConn)
 }
 
-// writeUpgradeResponse пишет клиенту 101 с заголовками upstream.
+// writeUpgradeResponse пишет клиенту 101 с заголовками агента.
 func writeUpgradeResponse(clientBuf *bufio.ReadWriter, upResp *http.Response) error {
 	upgrade := upResp.Header.Get(headerUpgrade)
 	if upgrade == "" {

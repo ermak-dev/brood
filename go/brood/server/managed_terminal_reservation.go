@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,8 +15,8 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// actorViewAuthority binds local transaction reads to the original web session.
-func (s *Server) actorViewAuthority(ctx context.Context, v actorView) context.Context {
+// agentViewAuthority binds local transaction reads to the original web session.
+func (s *Server) agentViewAuthority(ctx context.Context, v agentView) context.Context {
 	return context.WithValue(ctx, commandSessionAuthorityKey{}, func(ctx context.Context) bool {
 		if !time.Now().Before(v.expires) {
 			return false
@@ -27,45 +26,42 @@ func (s *Server) actorViewAuthority(ctx context.Context, v actorView) context.Co
 	})
 }
 
-// beginManagedTerminal authorizes an explicitly selected writable terminal
+// beginAgentTerminal authorizes an explicitly selected writable terminal
 // stream right before the upgrade request is sent to the agent. Ttyd has no
 // acknowledged detach or effect outcome.
-func (s *Server) beginManagedTerminal(r *http.Request) (proxy.UpgradeReservation, error) {
-	target, err := s.store.LookupManagedActor(r.Context(), r.PathValue("swarm"), r.PathValue("actor"))
-	if errors.Is(err, store.ErrNotFound) {
-		return proxy.UpgradeReservation{}, nil
-	}
+func (s *Server) beginAgentTerminal(r *http.Request, target proxy.Target) (proxy.UpgradeReservation, error) {
+	agent, err := s.store.GetManagedActor(r.Context(), target.UID)
 	if err != nil {
 		return proxy.UpgradeReservation{}, err
 	}
-	if r.Method != http.MethodGet || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || !s.validProxySession(r) {
+	if agent.Incarnation != target.Generation || r.Method != http.MethodGet || !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || !s.validProxySession(r) {
 		return proxy.UpgradeReservation{}, app.ErrNotAllowed
 	}
-	user, ok := s.actorViewUser(r.Context())
+	user, ok := s.agentViewUser(r.Context())
 	if !ok {
 		return proxy.UpgradeReservation{}, app.ErrNotAllowed
 	}
 	ctx := s.webCommandContext(r, user.ID)
-	if v, ok := r.Context().Value(actorViewKey{}).(actorView); ok {
-		if v.readOnly || v.managedUID != target.UID || v.generation != target.Incarnation {
+	if v, ok := r.Context().Value(agentViewKey{}).(agentView); ok {
+		if v.readOnly || v.uid != agent.UID || v.generation != agent.Incarnation {
 			return proxy.UpgradeReservation{}, app.ErrNotAllowed
 		}
-		ctx = s.actorViewAuthority(r.Context(), v)
+		ctx = s.agentViewAuthority(r.Context(), v)
 	} else if r.URL.Query().Get("mode") != "rw" || len(r.URL.Query()["mode"]) != 1 {
 		return proxy.UpgradeReservation{}, app.ErrNotAllowed
 	}
 	authorize := func(ctx context.Context) error {
-		if err := s.authorizeSwarmManagerIntent(ctx, user.ID, target.SwarmID); err != nil {
+		if err := s.authorizeSwarmManagerIntent(ctx, user.ID, agent.SwarmID); err != nil {
 			return err
 		}
-		current, err := s.store.LookupManagedActor(ctx, target.SwarmID, target.Name)
+		current, err := s.store.LookupManagedActor(ctx, agent.SwarmID, agent.Name)
 		if err != nil {
 			return err
 		}
-		if sw, err := s.store.GetSwarm(ctx, target.SwarmID); err != nil || sw.State != "active" {
+		if sw, err := s.store.GetSwarm(ctx, agent.SwarmID); err != nil || sw.State != "active" {
 			return app.ErrNotAllowed
 		}
-		if current.UID != target.UID || current.Incarnation != target.Incarnation || current.Desired != "running" || current.Phase != "running" || current.Stage != "done" || current.Operation != "start" {
+		if current.UID != agent.UID || current.Incarnation != agent.Incarnation || current.Desired != "running" || current.Phase != "running" || current.Stage != "done" || current.Operation != "start" {
 			return app.ErrNotAllowed
 		}
 		return nil
@@ -76,7 +72,7 @@ func (s *Server) beginManagedTerminal(r *http.Request) (proxy.UpgradeReservation
 	// Право проверяется прямо перед отправкой запроса агенту.
 	return proxy.UpgradeReservation{
 		BeforeSubmit: func() (func(), error) {
-			release, err := s.managed.effects.acquire(ctx, target.UID)
+			release, err := s.managed.effects.acquire(ctx, agent.UID)
 			if err != nil {
 				return nil, err
 			}
@@ -89,10 +85,10 @@ func (s *Server) beginManagedTerminal(r *http.Request) (proxy.UpgradeReservation
 	}, nil
 }
 
-// serveReadonlyActorView uses the guest's explicit read-only snapshot RPC, not
+// serveReadonlyAgentView uses the guest's explicit read-only snapshot RPC, not
 // ttyd, whose fixed attach executable always acquires a writable PTY attachment.
 // Neither query parameters nor an Upgrade can turn this capability into a writer.
-func (s *Server) serveReadonlyActorView(w http.ResponseWriter, r *http.Request, v actorView, rest string) {
+func (s *Server) serveReadonlyAgentView(w http.ResponseWriter, r *http.Request, v agentView, rest string) {
 	w.Header().Set("X-Brood-Terminal-Mode", "ro")
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -105,11 +101,11 @@ func (s *Server) serveReadonlyActorView(w http.ResponseWriter, r *http.Request, 
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	ctx, cancel := context.WithTimeout(s.actorViewAuthority(r.Context(), v), 30*time.Second)
+	ctx, cancel := context.WithTimeout(s.agentViewAuthority(r.Context(), v), 30*time.Second)
 	defer cancel()
 	caller := "browser-readonly:" + store.NewID()
 	invoke := func(ctx context.Context, args map[string]any) (command.Result, error) {
-		args["name"] = v.actor
+		args["name"] = v.agent
 		raw, _ := json.Marshal(args)
 		return s.executeOperatorSessionCommand(ctx, v.userID, v.swarm, caller, command.Invocation{Name: readonlyTerminalOperation, Arguments: raw})
 	}

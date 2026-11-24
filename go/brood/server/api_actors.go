@@ -35,22 +35,9 @@ func (s *Server) mountActorAPI() {
 	s.mux.HandleFunc("GET /api/swarms/{id}/templates", s.handleSwarmTemplates)
 	s.mux.HandleFunc("GET /api/swarms/{id}/templates/{name}", s.handleSwarmTemplate)
 
-	// Proxy к воркерам: Mount пишет свои пути /swarms/{id}/actors/... в
-	// под-роутер, который сервер выставляет под /api/swarms/{id}/proxy/.
-	sub := http.NewServeMux()
-	s.proxy.Mount(sub)
-	s.mux.Handle("/api/swarms/{id}/proxy/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Upgrade") == "" {
-			s.issueActorView(w, r)
-			return
-		}
-		clone := r.Clone(r.Context())
-		urlCopy := *r.URL
-		clone.URL = &urlCopy
-		clone.URL.Path = "/swarms/" + r.PathValue("id") + strings.TrimPrefix(r.URL.Path, "/api/swarms/"+r.PathValue("id")+"/proxy")
-		clone.URL.RawPath = ""
-		sub.ServeHTTP(w, clone)
-	}))
+	// Терминал агента: пропуск и прямой поток WebSocket.
+	s.mux.HandleFunc("/api/swarms/{id}/proxy/agents/{name}", s.handleAgentTerminal)
+	s.mux.HandleFunc("/api/swarms/{id}/proxy/agents/{name}/{path...}", s.handleAgentTerminal)
 }
 
 // swarmFor пропускает владельца роя и администратора. Недоступный рой

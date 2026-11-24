@@ -38,7 +38,7 @@ func (c *Client) TerminalTicket(ctx context.Context, swarm, agent string, readOn
 	if readOnly {
 		mode = "ro"
 	}
-	path := "/api/swarms/" + url.PathEscape(swarm) + "/proxy/actors/" + url.PathEscape(agent) + "/?mode=" + mode
+	path := "/api/swarms/" + url.PathEscape(swarm) + "/proxy/agents/" + url.PathEscape(agent) + "/?mode=" + mode
 	resp, err := c.request(ctx, http.MethodGet, path, nil, 0, "", c.http.Timeout)
 	if err != nil {
 		return "", err
@@ -52,7 +52,7 @@ func (c *Client) TerminalTicket(ctx context.Context, swarm, agent string, readOn
 		return "", &APIError{Status: resp.StatusCode, Detail: plainRefusal(resp, "the server refused to open the terminal")}
 	}
 	location, err := url.Parse(resp.Header.Get("Location"))
-	if err != nil || location.Host != "" || !strings.HasPrefix(location.Path, "/actor-view/") || !strings.HasSuffix(location.Path, "/") {
+	if err != nil || location.Host != "" || !strings.HasPrefix(location.Path, "/agent-view/") || !strings.HasSuffix(location.Path, "/") {
 		return "", errors.New("server answered with an unexpected terminal location")
 	}
 	return location.Path, nil
