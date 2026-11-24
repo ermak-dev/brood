@@ -369,7 +369,7 @@ func (o *managedWorkloadOperation) Apply() error {
 			}
 			// Отказ брони называет идущую операцию над workspace: общий
 			// текст отправил бы сверять задачу провайдера.
-			var held *store.CoordinationConflictError
+			var held *store.OperationConflictError
 			if errors.As(err, &held) {
 				return fmt.Errorf("%w: %w", app.ErrConflict, held)
 			}

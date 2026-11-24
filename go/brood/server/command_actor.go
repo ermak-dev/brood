@@ -173,7 +173,7 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 	}
 	if inv.Name == "add" {
 		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
-		if err != nil || pool.SourceFingerprint != from.SourceFingerprint {
+		if err != nil {
 			return command.Result{}, command.Refuse(nil, "The agent was not created: the pool of this master is no longer available. Ask the operator.")
 		}
 		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, args.Name, pool, "", args.Origin, &from)
@@ -253,7 +253,7 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 // отказом без её текста.
 func actorCommandError(err error) error {
 	var refusal *command.Refusal
-	var held *store.CoordinationConflictError
+	var held *store.OperationConflictError
 	var waiting *waitingRefusal
 	switch {
 	case errors.As(err, &refusal):

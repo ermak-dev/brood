@@ -81,36 +81,32 @@ type ManagedPool struct {
 // Origin is the canonical Git origin to clone, or empty for an empty
 // workspace. It is immutable; its access mode is recomputed from current policy.
 // Stage is create, start, stop, delete, or done. It fences task callbacks
-// independently of observed Phase. Migrated schema-3 rows start at reconcile:
-// callers must settle their existing task before new work, even if Phase looks
-// terminal. A legacy reset is refused because schema 3 rotated ownership early.
+// independently of observed Phase.
 type ManagedActor struct {
-	Role              string
-	DelegatorID       string
-	ParentUID         string
-	UID               string
-	Name              string
-	SwarmID           string
-	PoolUID           string
-	ClusterIdentity   string
-	SourceFingerprint string
-	Template          ManagedTemplateSnapshot
-	Incarnation       int64
-	Phase             string
-	Desired           string
-	Resources         ManagedResources
-	CTID              int
-	OwnerNonce        string
-	OperationID       string
-	Operation         string
-	Stage             string
-	UPID              string
-	Error             string
-	Revision          int64
-	CreatedAt         string
-	UpdatedAt         string
-	DeletedAt         *string
-	Origin            string
+	Role            string
+	DelegatorID     string
+	ParentUID       string
+	UID             string
+	Name            string
+	SwarmID         string
+	PoolUID         string
+	ClusterIdentity string
+	Template        ManagedTemplateSnapshot
+	Incarnation     int64
+	Phase           string
+	Desired         string
+	Resources       ManagedResources
+	CTID            int
+	OwnerNonce      string
+	OperationID     string
+	Operation       string
+	Stage           string
+	UPID            string
+	Error           string
+	Revision        int64
+	CreatedAt       string
+	UpdatedAt       string
+	Origin          string
 }
 
 func validateManagedPool(p ManagedPool) error {
@@ -298,14 +294,12 @@ func managedFits(p ManagedPool, count int64, used, extra ManagedResources) bool 
 	return count <= p.MaxActors && used.CPUMillicores <= p.Resources.CPUMillicores && extra.CPUMillicores <= p.Resources.CPUMillicores-used.CPUMillicores && used.MemoryBytes <= p.Resources.MemoryBytes && extra.MemoryBytes <= p.Resources.MemoryBytes-used.MemoryBytes && used.DiskBytes <= p.Resources.DiskBytes && extra.DiskBytes <= p.Resources.DiskBytes-used.DiskBytes
 }
 
-const managedActorCols = `uid,name,swarm_id,pool_uid,cluster_identity,source_fingerprint,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,deleted_at,stage,role,delegator_id,parent_uid,origin`
-
-const managedActorReadCols = managedActorCols
+const managedActorCols = `uid,name,swarm_id,pool_uid,cluster_identity,template,incarnation,phase,desired,cpu_millicores,memory_bytes,disk_bytes,ctid,owner_nonce,operation_id,operation,upid,error,revision,created_at,updated_at,stage,role,delegator_id,parent_uid,origin`
 
 func scanManagedActor(row interface{ Scan(...any) error }) (ManagedActor, error) {
 	var a ManagedActor
 	var template string
-	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.PoolUID, &a.ClusterIdentity, &a.SourceFingerprint, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.DeletedAt, &a.Stage, &a.Role, &a.DelegatorID, &a.ParentUID, &a.Origin)
+	err := row.Scan(&a.UID, &a.Name, &a.SwarmID, &a.PoolUID, &a.ClusterIdentity, &template, &a.Incarnation, &a.Phase, &a.Desired, &a.Resources.CPUMillicores, &a.Resources.MemoryBytes, &a.Resources.DiskBytes, &a.CTID, &a.OwnerNonce, &a.OperationID, &a.Operation, &a.UPID, &a.Error, &a.Revision, &a.CreatedAt, &a.UpdatedAt, &a.Stage, &a.Role, &a.DelegatorID, &a.ParentUID, &a.Origin)
 	if err == nil {
 		err = json.Unmarshal([]byte(template), &a.Template)
 	}
@@ -368,7 +362,6 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 			return ErrPoolCapacity
 		}
 		a.ClusterIdentity = p.Source.ClusterIdentity
-		a.SourceFingerprint = p.SourceFingerprint
 		// Клон образа проекта называет образ сам; иначе базовый шаблон пула.
 		if _, image := ProjectImageFromURI(a.Template.URI); !image {
 			a.Template = p.Template
@@ -383,8 +376,7 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 		a.Revision = 1
 		a.CreatedAt = nowRFC3339()
 		a.UpdatedAt = a.CreatedAt
-		a.DeletedAt = nil
-		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.PoolUID, a.ClusterIdentity, a.SourceFingerprint, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.DeletedAt, a.Stage, a.Role, a.DelegatorID, a.ParentUID, a.Origin)
+		_, err = s.conn(ctx).ExecContext(ctx, `INSERT INTO managed_actors (`+managedActorCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.Name, a.SwarmID, a.PoolUID, a.ClusterIdentity, encodeManaged(a.Template), a.Incarnation, a.Phase, a.Desired, a.Resources.CPUMillicores, a.Resources.MemoryBytes, a.Resources.DiskBytes, a.CTID, a.OwnerNonce, a.OperationID, a.Operation, a.UPID, a.Error, a.Revision, a.CreatedAt, a.UpdatedAt, a.Stage, a.Role, a.DelegatorID, a.ParentUID, a.Origin)
 		if err != nil {
 			return wrapUnique(err, "managed actor name or CTID")
 		}
@@ -396,7 +388,7 @@ func (s *Store) ReserveManagedActor(ctx context.Context, a ManagedActor) (Manage
 
 // GetManagedActor returns immutable identity, intent and latest reconciliation state.
 func (s *Store) GetManagedActor(ctx context.Context, uid string) (ManagedActor, error) {
-	a, err := scanManagedActor(s.conn(ctx).QueryRowContext(ctx, `SELECT `+managedActorReadCols+` FROM managed_actors WHERE uid=?`, uid))
+	a, err := scanManagedActor(s.conn(ctx).QueryRowContext(ctx, `SELECT `+managedActorCols+` FROM managed_actors WHERE uid=?`, uid))
 	if err == sql.ErrNoRows {
 		err = fmt.Errorf("%w: managed actor", ErrNotFound)
 	}
@@ -406,7 +398,7 @@ func (s *Store) GetManagedActor(ctx context.Context, uid string) (ManagedActor, 
 // ListManagedActors lists all rows for reconciliation; an empty swarmID means all swarms.
 // Deleted tombstones are included so callers can distinguish absent from retired UIDs.
 func (s *Store) ListManagedActors(ctx context.Context, swarmID string) ([]ManagedActor, error) {
-	query := `SELECT ` + managedActorReadCols + ` FROM managed_actors`
+	query := `SELECT ` + managedActorCols + ` FROM managed_actors`
 	args := []any{}
 	if swarmID != "" {
 		query += ` WHERE swarm_id=?`
@@ -468,7 +460,7 @@ func (s *Store) UpdateManagedActor(ctx context.Context, a ManagedActor, expected
 		if a.Phase != "provisioning" && a.Phase != "running" && a.Phase != "stopped" && a.Phase != "stopping" && a.Phase != "error" && a.Phase != "deleting" {
 			return fmt.Errorf("invalid managed actor phase")
 		}
-		if (old.UPID != "" || old.Stage == "done" || old.Stage == "reconcile") && a.UPID != old.UPID {
+		if (old.UPID != "" || old.Stage == "done") && a.UPID != old.UPID {
 			return fmt.Errorf("managed task is already bound or requires stage reconciliation")
 		}
 		if mark := a.Unsent(); mark != "" && mark != old.Unsent() {
@@ -618,8 +610,7 @@ func (s *Store) ConfirmManagedActorDeleted(ctx context.Context, uid string, expe
 		a.Error = a.Diagnostic()
 		a.Revision++
 		a.UpdatedAt = nowRFC3339()
-		a.DeletedAt = ptrManaged(a.UpdatedAt)
-		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET phase='deleted',stage='done',error=?,revision=?,updated_at=?,deleted_at=? WHERE uid=?`, a.Error, a.Revision, a.UpdatedAt, a.DeletedAt, uid)
+		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE managed_actors SET phase='deleted',stage='done',error=?,revision=?,updated_at=? WHERE uid=?`, a.Error, a.Revision, a.UpdatedAt, uid)
 		result = a
 		return err
 	})
@@ -631,7 +622,7 @@ func (s *Store) ConfirmManagedActorDeleted(ctx context.Context, uid string, expe
 // submission response must be reconciled externally, never blindly resubmitted.
 func (s *Store) BindManagedActorTask(ctx context.Context, uid string, expected int64, operationID, stage, upid string) (ManagedActor, error) {
 	return s.changeManagedStage(ctx, uid, expected, operationID, stage, func(a *ManagedActor) error {
-		if upid == "" || stage == "done" || stage == "reconcile" {
+		if upid == "" || stage == "done" {
 			return fmt.Errorf("active managed task stage and nonempty UPID are required")
 		}
 		if a.UPID != "" && a.UPID != upid {
@@ -659,11 +650,8 @@ func (s *Store) ConfirmManagedActorStage(ctx context.Context, uid string, expect
 		if stage == "done" || stage == "delete" {
 			return fmt.Errorf("managed stage requires deletion or reset confirmation")
 		}
-		if stage == "reconcile" && a.Operation == "reset" {
-			return fmt.Errorf("legacy reset ownership requires manual reconciliation")
-		}
-		cleanup := (a.Operation == "delete" || a.Operation == "reset") && (stage == "stop" || stage == "reconcile")
-		if (stage == "stop" || (stage == "reconcile" && a.Operation == "stop")) && observed == "running" {
+		cleanup := (a.Operation == "delete" || a.Operation == "reset") && stage == "stop"
+		if stage == "stop" && observed == "running" {
 			return fmt.Errorf("managed stop requires confirmed stopped or absent CT")
 		}
 		if cleanup {
@@ -862,13 +850,11 @@ func (s *Store) ReopenManagedActorStop(ctx context.Context, uid string, expected
 	})
 }
 
-func ptrManaged(value string) *string { return &value }
-
 // LookupManagedActor resolves an actor by its name within one swarm for
 // swarm-scoped delivery. Deleted tombstones resolve to ErrNotFound.
 func (s *Store) LookupManagedActor(ctx context.Context, swarmID, name string) (ManagedActor, error) {
 	a, err := scanManagedActor(s.conn(ctx).QueryRowContext(ctx,
-		`SELECT `+managedActorReadCols+` FROM managed_actors WHERE swarm_id=? AND name=? AND phase<>'deleted'`, swarmID, name))
+		`SELECT `+managedActorCols+` FROM managed_actors WHERE swarm_id=? AND name=? AND phase<>'deleted'`, swarmID, name))
 	if err == sql.ErrNoRows {
 		return a, fmt.Errorf("%w: managed actor", ErrNotFound)
 	}

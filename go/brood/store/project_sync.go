@@ -88,8 +88,7 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 			if err != nil {
 				return err
 			}
-			err = s.conn(ctx).QueryRowContext(ctx, `SELECT description FROM command_project_details WHERE project_id=?`, project.ID).Scan(&description)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			if err := s.conn(ctx).QueryRowContext(ctx, `SELECT description FROM projects WHERE id=?`, project.ID).Scan(&description); err != nil {
 				return err
 			}
 			if declaration.Capacity != nil {
@@ -124,7 +123,7 @@ func (s *Store) SyncProject(ctx context.Context, actorID, expectedProjectID stri
 			}
 		}
 		if descriptionChanged {
-			if _, err := s.conn(ctx).ExecContext(ctx, `INSERT INTO command_project_details(project_id,description) VALUES (?,?) ON CONFLICT(project_id) DO UPDATE SET description=excluded.description`, project.ID, *declaration.Description); err != nil {
+			if _, err := s.conn(ctx).ExecContext(ctx, `UPDATE projects SET description=? WHERE id=?`, *declaration.Description, project.ID); err != nil {
 				return err
 			}
 		}

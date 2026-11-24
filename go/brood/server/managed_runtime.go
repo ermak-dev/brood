@@ -573,7 +573,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	}
 	// Воркер из базового шаблона обязан совпадать с шаблоном пула; клон
 	// образа проекта называет свой образ, и владение им проверяет клиент.
-	if _, clone := store.ProjectImageFromURI(a.Template.URI); a.SourceFingerprint != p.SourceFingerprint || (!clone && a.Template != p.Template) {
+	if _, clone := store.ProjectImageFromURI(a.Template.URI); !clone && a.Template != p.Template {
 		return a, proxmox.ErrOwnership
 	}
 	// Незапрошенный Start не отправлялся: его можно запросить.
@@ -609,9 +609,6 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	if a.Stage != "done" && a.UPID == "" && !waitingStop {
 		return a, proxmox.ErrUncertain
 	}
-	if a.Stage == "reconcile" && a.Operation == "reset" {
-		return a, fmt.Errorf("%w: legacy reset requires manual ownership reconciliation; allocation retained", app.ErrConflict)
-	}
 	// Done фиксирует согласование task, включая отказ. Сохранённый UPID —
 	// доказательство, а не повод читать заново уже истёкшие логи PVE.
 	if a.Stage != "done" && a.UPID != "" {
@@ -635,9 +632,9 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		return a, err
 	}
 	stage := a.Stage
-	if stage == "done" || stage == "reconcile" {
+	if stage == "done" {
 		stage = a.Operation
-		if a.Operation == "reset" && a.Stage == "done" {
+		if a.Operation == "reset" {
 			stage = "create"
 		}
 	}

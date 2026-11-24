@@ -55,7 +55,7 @@ func (m *managedProvider) targetActor(ctx context.Context, host string) (store.M
 	if err != nil {
 		return a, err
 	}
-	if p.SourceFingerprint != a.SourceFingerprint || !m.poolAvailable(p) {
+	if !m.poolAvailable(p) {
 		return a, proxy.ErrUnknownActor
 	}
 	return a, nil

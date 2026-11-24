@@ -10,7 +10,7 @@ func (s *Store) BeginOwnerManagedActorOperation(ctx context.Context, a ManagedAc
 	var result ManagedActor
 	err := s.WithTx(ctx, func(ctx context.Context) error {
 		if authorize == nil {
-			return newCoordinationConflict("owner authority is required")
+			return newOperationConflict("owner authority is required")
 		}
 		if err := authorize(ctx); err != nil {
 			return err

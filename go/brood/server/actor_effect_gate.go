@@ -80,7 +80,7 @@ func (m *managedProvider) fenceSessionOpen(ctx context.Context, op store.ActorOp
 		}
 		current, err := m.server.store.CurrentActorOperation(ctx, op.UID)
 		if err == nil && current != op {
-			err = store.ErrCoordinationConflict
+			err = store.ErrOperationConflict
 		}
 		if err == nil && authorize != nil {
 			err = authorize(ctx)

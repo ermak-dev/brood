@@ -10,9 +10,10 @@ CREATE TABLE users (
 );
 
 CREATE TABLE projects (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE project_members (
@@ -63,5 +64,6 @@ CREATE TABLE sessions (
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     expires_at TEXT,
-    data       BLOB
-, kind TEXT NOT NULL DEFAULT 'web' CHECK (kind IN ('web', 'telegram')));
+    data       BLOB,
+    kind       TEXT NOT NULL DEFAULT 'web' CHECK (kind IN ('web', 'telegram'))
+);

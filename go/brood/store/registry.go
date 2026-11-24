@@ -23,7 +23,7 @@ var schemaModules = []schemaModule{
 	{id: "project-capacity", create: func() string { return projectCapacitySchema }, verify: verifyProjectCapacitySchema},
 	{id: "agent-roles", create: func() string { return agentRoleSchema + ";" + agentRoleDefaultIndex }, verify: verifyAgentRoleSchema},
 	{id: "managed", create: managedFullSchema, verify: verifyManagedSchema},
-	{id: "coordination", create: func() string { return coordinationSchema }, verify: verifyCoordinationSchema},
+	{id: "actor-operations", create: func() string { return actorOperationSchema }, verify: verifyActorOperationSchema},
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
 	{id: "telegram", create: telegramFullSchema, verify: verifyTelegramSchema},
@@ -115,9 +115,9 @@ func verifyManagedSchema(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-// verifyCoordinationSchema сверяет таблицу броней операций над workspace.
-func verifyCoordinationSchema(ctx context.Context, tx *sql.Tx) error {
-	return checkSchema(ctx, tx, coordinationSchema)
+// verifyActorOperationSchema сверяет таблицу броней операций над агентами.
+func verifyActorOperationSchema(ctx context.Context, tx *sql.Tx) error {
+	return checkSchema(ctx, tx, actorOperationSchema)
 }
 
 // verifyProjectSecretSchema сверяет таблицы секретов проектов.
