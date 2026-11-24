@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,28 +16,19 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// accessSwarm находит рой запроса и проверяет действие; недоступный рой
-// скрыт как 404.
-func (s *Server) accessSwarm(w http.ResponseWriter, r *http.Request, action app.Action) (store.User, app.Swarm, bool) {
+// accessSwarm находит живой рой запроса для его владельца или
+// администратора; недоступный рой скрыт как 404.
+func (s *Server) accessSwarm(w http.ResponseWriter, r *http.Request) (store.User, app.Swarm, bool) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return user, app.Swarm{}, false
 	}
-	swarm, err := s.app.GetSwarm(user.ID, r.PathValue("id"))
+	swarm, err := s.app.GetSwarm(r.Context(), user.ID, r.PathValue("id"))
 	if errors.Is(err, app.ErrNotAllowed) {
-		err = app.ErrNotFound
+		err = fmt.Errorf("%w: swarm not found", app.ErrNotFound)
 	}
 	if err != nil {
 		apiError(w, r, err)
-		return user, app.Swarm{}, false
-	}
-	allowed, err := s.app.Can(user.ID, action, app.SwarmRes(swarm.ID))
-	if err != nil {
-		apiError(w, r, err)
-		return user, app.Swarm{}, false
-	}
-	if !allowed {
-		writeDetail(w, http.StatusForbidden, "swarm owner access required")
 		return user, app.Swarm{}, false
 	}
 	return user, swarm, true

@@ -118,7 +118,7 @@ func telegramCanMessage(user store.User, sw store.Swarm) bool {
 }
 
 func (c *telegramChannel) swarms(ctx context.Context, user store.User) ([]telegramSwarm, error) {
-	projects, err := c.server.gateway.Projects()
+	projects, err := c.server.store.ListProjects(ctx)
 	if err != nil {
 		return nil, err
 	}

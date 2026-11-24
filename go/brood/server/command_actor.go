@@ -74,7 +74,7 @@ func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, orig
 	if sw.State != "active" {
 		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
 	}
-	return a, toAppSwarm(sw), nil
+	return a, app.SwarmOf(sw), nil
 }
 
 // authorizeCommandTarget is shared with session command adapters. An agent may
@@ -196,7 +196,7 @@ func (s *Server) executeActorCommand(ctx context.Context, userID, swarmID string
 	if err != nil {
 		return command.Result{}, err
 	}
-	allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+	allowed, err := s.app.Can(ctx, userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
@@ -214,7 +214,7 @@ func (s *Server) executeActorCommand(ctx context.Context, userID, swarmID string
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
-	return s.applyActorCommand(ctx, userID, toAppSwarm(sw), a, lifecycleAction(inv.Name), nil)
+	return s.applyActorCommand(ctx, userID, app.SwarmOf(sw), a, lifecycleAction(inv.Name), nil)
 }
 
 // lifecycleAction maps a catalog command to the lifecycle operation it starts.
@@ -234,7 +234,7 @@ func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Sw
 		return command.Result{}, actorCommandError(err)
 	}
 	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: a.Name, action: action, actor: a, parent: parent}
-	err = s.admitWorkload(userID, sw.ID, op)
+	err = s.admitWorkload(ctx, userID, sw.ID, op)
 	if err != nil && op.saved.UID == "" {
 		if op.intent.UID != "" {
 			result := actorCommandResult(op.intent)

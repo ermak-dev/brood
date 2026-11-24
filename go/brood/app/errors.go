@@ -6,30 +6,23 @@ import (
 )
 
 // Ошибки прикладного слоя: строкой с причиной, без паник и трассировок.
-// HTTP-слой отображает их статусами, CLI — текстом.
+// HTTP-слой отображает их статусами, команды — текстом.
 var (
-	// ErrNotAllowed — операция запрещена правилами доступа.
+	// ErrNotAllowed refuses an operation the access rules do not permit.
 	ErrNotAllowed = errors.New("not allowed")
-	// ErrNotFound — объект не существует или недоступен вызывающему.
+	// ErrNotFound reports an object that does not exist or is hidden from the caller.
 	ErrNotFound = errors.New("not found")
-	// ErrDisabled — пользователь заблокирован.
-	ErrDisabled = errors.New("user disabled")
-	// ErrExists — объект с такими ключами уже есть.
+	// ErrExists reports an object with the same key.
 	ErrExists = errors.New("already exists")
-	// ErrConflict — конфликт состояния, например чужой atespace с тем же
-	// именем.
+	// ErrConflict reports a state that changed or does not permit the operation.
 	ErrConflict = errors.New("conflict")
-	// ErrState — переход состояния роя нелегален.
-	ErrState = errors.New("illegal state transition")
-	// ErrSwarmNotEmpty identifies a confirmed atomic refusal without native deletion.
-	ErrSwarmNotEmpty = errors.New("swarm is not empty")
-	// ErrInvalidWorkload rejects unresolved resources or placement outside the shard.
+	// ErrInvalidWorkload rejects an agent without a name or resolved CPU and memory.
 	ErrInvalidWorkload = errors.New("invalid workload admission")
-	// ErrInvalidCapacity rejects unsupported shard limits or worker labels.
-	ErrInvalidCapacity = errors.New("invalid shard capacity")
+	// ErrInvalidCapacity rejects malformed project limits or pool budgets.
+	ErrInvalidCapacity = errors.New("invalid capacity")
 )
 
-// APIError — отказ, готовый к HTTP-ответу: статус и причина строкой.
+// APIError is a refusal ready for an HTTP response: a status and the reason.
 type APIError struct {
 	Status int
 	Detail string

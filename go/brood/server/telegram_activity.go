@@ -213,7 +213,7 @@ func (a *telegramActivity) send(parent context.Context, target telegramTypingTar
 	if !ok || chat.session != f.chat.session || link.DefaultActorUID != f.selection {
 		return
 	}
-	allowed, err := s.app.Can(chat.userID, app.ActionManageSwarm, app.SwarmRes(t.guest.swarm.ID))
+	allowed, err := s.app.Can(ctx, chat.userID, app.ActionManageSwarm, app.SwarmRes(t.guest.swarm.ID))
 	if err != nil || !allowed || !s.guestRuntimeCurrent(ctx, t.guest) || !s.managed.hub.Connected(t.guest.uid, t.guest.generation) {
 		return
 	}

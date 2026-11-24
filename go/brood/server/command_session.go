@@ -159,7 +159,7 @@ func (s *Server) operatorSessionAuthority(ctx context.Context, userID, swarmID s
 	if err != nil || sw.State != "active" {
 		return app.ErrNotAllowed
 	}
-	allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+	allowed, err := s.app.Can(ctx, userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
 	if err != nil || !allowed {
 		return app.ErrNotAllowed
 	}
@@ -175,7 +175,7 @@ func (s *Server) operatorSessionAuthority(ctx context.Context, userID, swarmID s
 // executeOperatorSessionCommand executes tail, slash and restart of a human,
 // and the read-only terminal snapshot of the panel.
 func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swarmID, caller string, inv command.Invocation) (command.Result, error) {
-	allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+	allowed, err := s.app.Can(ctx, userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
 	if err != nil {
 		return command.Result{}, err
 	}

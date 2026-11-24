@@ -8,7 +8,10 @@ import (
 	"strconv"
 
 	"brood.dev/go/brood/app"
+	"brood.dev/go/brood/store"
 )
+
+// Лимиты проекта в API: десятичные строки, null — без предела.
 
 type capacityJSON struct {
 	MaxSwarms        *string `json:"max_swarms"`
@@ -34,12 +37,12 @@ func limitString(value *int64) *string {
 	return &result
 }
 
-func formatCapacity(capacity app.ShardCapacity) capacityJSON {
-	return capacityJSON{MaxSwarms: limitString(capacity.MaxSwarms), MaxActors: limitString(capacity.MaxActors), MaxCPUMillicores: limitString(capacity.MaxCPUMillicores), MaxMemoryBytes: limitString(capacity.MaxMemoryBytes)}
+func formatCapacity(limits store.ProjectCapacity) capacityJSON {
+	return capacityJSON{MaxSwarms: limitString(limits.MaxSwarms), MaxActors: limitString(limits.MaxActors), MaxCPUMillicores: limitString(limits.MaxCPUMillicores), MaxMemoryBytes: limitString(limits.MaxMemoryBytes)}
 }
 
-func parseCapacity(body capacityJSON) (app.ShardCapacity, error) {
-	result := app.ShardCapacity{}
+func parseCapacity(body capacityJSON) (store.ProjectCapacity, error) {
+	result := store.ProjectCapacity{}
 	for _, field := range []struct {
 		name   string
 		input  *string
@@ -63,7 +66,9 @@ func parseCapacity(body capacityJSON) (app.ShardCapacity, error) {
 	return result, nil
 }
 
-func (s *Server) handleShardCapacity(w http.ResponseWriter, r *http.Request) {
+// handleProjectLimits — PUT /api/projects/{id}/capacity: лимиты проекта,
+// только админ.
+func (s *Server) handleProjectLimits(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return
@@ -76,25 +81,29 @@ func (s *Server) handleShardCapacity(w http.ResponseWriter, r *http.Request) {
 	if !decodeAccessBody(w, r, &body) {
 		return
 	}
-	capacity, err := parseCapacity(body)
+	limits, err := parseCapacity(body)
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	if err := s.app.SetShardCapacity(user.ID, r.PathValue("id"), capacity); err != nil {
+	if err := s.app.SetProjectLimits(r.Context(), user.ID, r.PathValue("id"), limits); err != nil {
 		apiError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleProjectDetail — GET /api/projects/{id}: проект, его лимиты и
+// занятое. Занятое считается по агентам роёв; сбой подсчёта не скрывает
+// проект, а отдаётся причиной в usage_error.
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return
 	}
+	ctx := r.Context()
 	id := r.PathValue("id")
-	capacity, err := s.app.ShardCapacity(user.ID, id)
+	limits, err := s.app.ProjectLimits(ctx, user.ID, id)
 	if errors.Is(err, app.ErrNotAllowed) {
 		err = app.ErrNotFound
 	}
@@ -102,40 +111,31 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	project, err := s.store.GetProject(r.Context(), id)
+	project, err := s.store.GetProject(ctx, id)
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
-	swarms, err := s.gateway.SwarmsByProject(id)
+	rows, err := s.store.ListSwarmsByProject(ctx, id)
 	if err != nil {
 		apiError(w, r, err)
 		return
 	}
+	swarms := app.SwarmsOf(rows)
 	var usage *usageJSON
 	unavailable := ""
-	live := false
-	for _, swarm := range swarms {
-		if swarm.State != app.StateDeleted {
-			live = true
-			break
-		}
-	}
-	var reservations []app.ActorReservation
-	if live {
-		reservations, err = s.shardReservations(r.Context(), swarms)
-	}
+	agents, err := s.agentReservations(ctx, swarms)
 	if err == nil {
-		var used app.ShardUsage
-		used, err = app.ShardUsageFromRecords(id, swarms, reservations)
+		var used app.ProjectUsage
+		used, err = app.ProjectUsageOf(id, swarms, agents)
 		if err == nil {
 			usage = &usageJSON{Swarms: strconv.FormatInt(used.Swarms, 10), Actors: strconv.FormatInt(used.Actors, 10), CPUMillicores: strconv.FormatInt(used.CPUMillicores, 10), MemoryBytes: strconv.FormatInt(used.MemoryBytes, 10)}
 		}
 	}
 	if err != nil {
-		unavailable = "shard resource inventory is unavailable; verify native connectivity and swarm bindings"
+		unavailable = "project usage is unavailable: the agents of its swarms could not be counted; reload the page"
 	}
-	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(id))
+	allowed, err := s.app.Can(ctx, user.ID, app.ActionViewProject, app.ProjectRes(id))
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -151,5 +151,5 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 		Usage          *usageJSON   `json:"usage"`
 		UsageAvailable bool         `json:"usage_available"`
 		UsageError     string       `json:"usage_error,omitempty"`
-	}{ID: project.ID, Name: project.Name, Capacity: formatCapacity(capacity), Usage: usage, UsageAvailable: usage != nil, UsageError: unavailable})
+	}{ID: project.ID, Name: project.Name, Capacity: formatCapacity(limits), Usage: usage, UsageAvailable: usage != nil, UsageError: unavailable})
 }

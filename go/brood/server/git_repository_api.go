@@ -40,7 +40,7 @@ func (s *Server) handleProjectRepository(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := r.PathValue("id")
-	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(id))
+	allowed, err := s.app.Can(r.Context(), user.ID, app.ActionViewProject, app.ProjectRes(id))
 	if err != nil {
 		apiError(w, r, err)
 		return

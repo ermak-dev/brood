@@ -24,7 +24,7 @@ var (
 var errMessageNotSent = errors.New("the agent refused the message before it was sent")
 
 func (s *Server) sendOperatorCommand(ctx context.Context, userID, swarmID string, inv command.Invocation) (command.Result, error) {
-	allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+	allowed, err := s.app.Can(ctx, userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
 	if err != nil {
 		return command.Result{}, err
 	}
@@ -70,8 +70,8 @@ func (s *Server) deliverOperatorMessage(ctx context.Context, userID, swarmID str
 	if err != nil || user.Disabled {
 		return command.Result{}, false, app.ErrNotAllowed
 	}
-	manager := func(context.Context) error {
-		allowed, err := s.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
+	manager := func(ctx context.Context) error {
+		allowed, err := s.app.Can(ctx, userID, app.ActionManageSwarm, app.SwarmRes(swarmID))
 		if err != nil || !allowed {
 			return app.ErrNotAllowed
 		}

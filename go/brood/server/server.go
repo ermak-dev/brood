@@ -38,8 +38,6 @@ type Options struct {
 type Server struct {
 	store   *store.Store
 	managed *managedProvider
-	catalog *Catalog
-	gateway *Gateway
 	app     *app.Service
 	auth    *auth.Service
 	proxy   *proxy.Proxy
@@ -95,31 +93,21 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	if err := cfg.validateAdapters(); err != nil {
 		return nil, err
 	}
-	catalog, err := OpenCatalog(cfg.DBPath)
-	if err != nil {
-		return nil, err
-	}
 	if err := st.FailBuildingProjectImages(ctx); err != nil {
-		catalog.Close()
 		return nil, errors.New("project image recovery failed")
 	}
 	if err := st.RecoverActorOperations(ctx); err != nil {
-		catalog.Close()
 		return nil, errors.New("workspace operation recovery failed")
 	}
-	srv := &Server{store: st, imageSnapshots: make(chan struct{}, 4), catalog: catalog, views: actorViews{tickets: make(map[string]actorView)}, artifactsDir: cfg.artifactsDir, artifactOrigin: cfg.artifactOrigin, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
+	srv := &Server{store: st, app: app.NewService(st), imageSnapshots: make(chan struct{}, 4), views: actorViews{tickets: make(map[string]actorView)}, artifactsDir: cfg.artifactsDir, artifactOrigin: cfg.artifactOrigin, actorGitDomain: cfg.ActorGitDomain, actorModels: cfg.ActorModels}
 	srv.telegram = newTelegramBots(st, cfg, opts.telegram)
 	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
 	srv.telegramActivity = newTelegramActivity(srv)
 	srv.telegram.channel = srv.telegramChannel
 	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
 	if err := srv.managed.initialize(cfg); err != nil {
-		catalog.Close()
 		return nil, err
 	}
-
-	srv.gateway = StoreGateway(st, catalog)
-	srv.app = app.NewService(srv.gateway, time.Now, store.NewID)
 
 	authCfg := auth.Config{Secure: cfg.SecureCookies, Secret: cfg.SessionSecret, Argon2: opts.argon2}
 	srv.auth = auth.NewService(st, authCfg, time.Now)
@@ -128,8 +116,8 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	// ticker rechecks authorization and the original session, including
 	// ordinary requests still waiting for upstream headers or bodies.
 	srv.proxy = proxy.New(proxy.Config{
-		Swarms:    srv.gateway,
-		Authorize: srv.app.Can,
+		Swarms:    proxySwarms{srv.app},
+		Authorize: proxyAuthorizer(srv.app),
 		// Две native-проверки по 5 секунд должны уложиться в минутный отзыв.
 		RecheckInterval:  45 * time.Second,
 		CurrentUser:      srv.actorViewUser,
@@ -163,6 +151,20 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.telegram.start(proxyCtx)
 	srv.telegramActivity.start(proxyCtx)
 	return srv, nil
+}
+
+// proxySwarms и proxyAuthorizer отдают прокси рой и проверку прав. Его
+// интерфейсы контекста запроса не несут, поэтому чтение идёт с фоновым.
+type proxySwarms struct{ app *app.Service }
+
+func (p proxySwarms) SwarmByID(id string) (app.Swarm, bool, error) {
+	return p.app.SwarmByID(context.Background(), id)
+}
+
+func proxyAuthorizer(service *app.Service) proxy.Authorizer {
+	return func(userID string, action app.Action, res app.Resource) (bool, error) {
+		return service.Can(context.Background(), userID, action, res)
+	}
 }
 
 func (s *Server) validProxyStream(r *http.Request) bool {
@@ -204,9 +206,7 @@ func (s *Server) Close() error {
 	s.telegram.close()
 	s.proxy.Close()
 	s.managed.close()
-	var errs []error
-	errs = append(errs, s.catalog.Close(), s.store.Close())
-	return errors.Join(errs...)
+	return s.store.Close()
 }
 
 // Handler возвращает собранный обработчик: middleware сессий и CSRF
@@ -264,7 +264,7 @@ func (s *Server) mount() {
 	s.mux.HandleFunc("GET /api/projects", s.handleProjects)
 	s.mux.HandleFunc("POST /api/projects", s.handleProjects)
 	s.mux.HandleFunc("GET /api/projects/{id}", s.handleProjectDetail)
-	s.mux.HandleFunc("PUT /api/projects/{id}/capacity", s.handleShardCapacity)
+	s.mux.HandleFunc("PUT /api/projects/{id}/capacity", s.handleProjectLimits)
 	s.mux.HandleFunc("DELETE /api/projects/{id}", s.handleProjectDelete)
 	s.mux.HandleFunc("GET /api/projects/{id}/members", s.handleMemberList)
 	s.mux.HandleFunc("POST /api/projects/{id}/members", s.handleMembers)

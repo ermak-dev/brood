@@ -1,370 +1,244 @@
 package app
 
-import "fmt"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
 
-// CreateProject создаёт проект. Только активный администратор.
-func (s *Service) CreateProject(actorID, name string) (Project, error) {
-	if err := s.requireAdmin(actorID); err != nil {
-		return Project{}, err
+	"brood.dev/go/brood/store"
+)
+
+// CreateProject creates a project. Only an active administrator may.
+func (s *Service) CreateProject(ctx context.Context, actorID, name string) (store.Project, error) {
+	if err := s.requireAdmin(ctx, actorID); err != nil {
+		return store.Project{}, err
 	}
-	id := s.newID()
-	p := Project{ID: id, Name: name}
-	if err := s.store.CreateProject(p); err != nil {
-		return Project{}, fmt.Errorf("create project: %w", err)
+	p := store.Project{ID: store.NewID(), Name: name}
+	if err := s.store.CreateProject(ctx, p); err != nil {
+		return store.Project{}, fmt.Errorf("create project: %w", err)
 	}
 	return p, nil
 }
 
-// AddMember добавляет пользователя в проект. Только администратор.
-func (s *Service) AddMember(actorID, projectID, userID string) error {
-	if err := s.requireAdmin(actorID); err != nil {
+// AddMember adds a user to a project. Only an active administrator may.
+func (s *Service) AddMember(ctx context.Context, actorID, projectID, userID string) error {
+	if err := s.requireAdmin(ctx, actorID); err != nil {
 		return err
 	}
-	if _, ok, err := s.store.UserByID(userID); err != nil {
-		return err
-	} else if !ok {
-		return fmt.Errorf("%w: user %s", ErrNotFound, userID)
+	err := s.store.AddMember(ctx, projectID, userID)
+	switch {
+	case store.IsUniqueViolation(err):
+		return fmt.Errorf("%w: the user is already a member of the project", ErrExists)
+	case store.IsForeignKeyViolation(err):
+		return fmt.Errorf("%w: the project or the user does not exist", ErrNotFound)
 	}
-	if err := s.store.AddMembership(Membership{ProjectID: projectID, UserID: userID}); err != nil {
-		return fmt.Errorf("add member: %w", err)
-	}
-	return nil
+	return err
 }
 
-// RemoveMember исключает пользователя из проекта. Только администратор.
-// Рои исключённого не удаляются: он просто теряет доступ.
-func (s *Service) RemoveMember(actorID, projectID, userID string) error {
-	if err := s.requireAdmin(actorID); err != nil {
+// RemoveMember removes a user from a project. Only an active administrator
+// may. The user's swarms stay and remain open to the user.
+func (s *Service) RemoveMember(ctx context.Context, actorID, projectID, userID string) error {
+	if err := s.requireAdmin(ctx, actorID); err != nil {
 		return err
 	}
-	if err := s.store.RemoveMembership(projectID, userID); err != nil {
-		return fmt.Errorf("remove member: %w", err)
+	err := s.store.RemoveMember(ctx, projectID, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("%w: the user is not a member of the project", ErrNotFound)
 	}
-	return nil
+	return err
 }
 
-// SetUserDisabled блокирует или разблокирует пользователя. Только
-// администратор; защита последнего админа и отзыв сессий должны
-// выполняться хранилищем атомарно.
-func (s *Service) SetUserDisabled(actorID, userID string, disabled bool) error {
-	if err := s.requireAdmin(actorID); err != nil {
-		return err
-	}
-	u, ok, err := s.store.UserByID(userID)
+// ListProjectsFor lists the projects the user is a member of, and every
+// project to an active administrator.
+func (s *Service) ListProjectsFor(ctx context.Context, userID string) ([]store.Project, error) {
+	user, err := s.activeUser(ctx, userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !ok {
-		return fmt.Errorf("%w: user %s", ErrNotFound, userID)
+	if user.IsAdmin {
+		return s.store.ListProjects(ctx)
 	}
-	u.Disabled = disabled
-	if err := s.store.UpdateUser(u); err != nil {
-		return fmt.Errorf("update user: %w", err)
-	}
-	return nil
+	return s.store.ListMemberProjects(ctx, userID)
 }
 
-// CreateSwarm создаёт рой в проекте. Вызывающий — активный участник
-// проекта или администратор; создатель становится владельцем.
-// Идемпотентно по имени в проекте: повтор после сбоя провижининга
-// продолжает то же создание, а не заводит второго роя.
-func (s *Service) CreateSwarm(userID, projectID, name string) (Swarm, error) {
-	if _, ok, err := s.store.ProjectByID(projectID); err != nil {
-		return Swarm{}, err
-	} else if !ok {
-		return Swarm{}, fmt.Errorf("%w: project %s", ErrNotFound, projectID)
+// ListSwarmsFor lists the live swarms of a project that the caller owns,
+// and every live swarm of the project to an active administrator. The
+// caller must see the project.
+func (s *Service) ListSwarmsFor(ctx context.Context, userID, projectID string) ([]Swarm, error) {
+	if err := s.projectExists(ctx, projectID); err != nil {
+		return nil, err
 	}
-	if _, _, err := s.authorizeCreateSwarm(userID, projectID); err != nil {
-		return Swarm{}, err
-	}
-	unlock := s.lockProject(projectID)
-	defer unlock()
-	if _, _, err := s.authorizeCreateSwarm(userID, projectID); err != nil {
-		return Swarm{}, err
-	}
-
-	// Имя роя уникально в проекте. Незавершённое создание того же
-	// владельца продолжается, чужое имя — отказ.
-	existing, found, err := s.findSwarmByName(projectID, name)
+	user, err := s.activeUser(ctx, userID)
 	if err != nil {
-		return Swarm{}, err
+		return nil, err
 	}
-	if found {
-		if existing.OwnerID == userID {
-			return existing, nil
+	if !user.IsAdmin {
+		member, err := s.store.IsMember(ctx, projectID, userID)
+		if err != nil {
+			return nil, err
 		}
-		return Swarm{}, fmt.Errorf("%w: swarm name %s in project", ErrExists, name)
+		if !member {
+			return nil, ErrNotAllowed
+		}
 	}
-
-	capacity, err := s.store.ProjectCapacity(projectID)
+	rows, err := s.store.ListSwarmsByProject(ctx, projectID)
 	if err != nil {
-		return Swarm{}, err
+		return nil, err
 	}
-	swarms, err := s.store.SwarmsByProject(projectID)
-	if err != nil {
-		return Swarm{}, err
+	var out []Swarm
+	for _, row := range rows {
+		if row.State != string(StateDeleted) && (user.IsAdmin || row.OwnerID == userID) {
+			out = append(out, SwarmOf(row))
+		}
 	}
-	usage, err := ShardUsageFromRecords(projectID, swarms, nil)
-	if err != nil {
-		return Swarm{}, err
-	}
-	if err := CheckShardCapacity(ShardCapacity{MaxSwarms: capacity.MaxSwarms}, usage, ShardUsage{Swarms: 1}); err != nil {
-		return Swarm{}, err
-	}
-
-	sw := Swarm{
-		ID:        s.newID(),
-		ProjectID: projectID,
-		OwnerID:   userID,
-		Name:      name,
-		State:     StateActive,
-		CreatedAt: s.now(),
-		UpdatedAt: s.now(),
-	}
-	if err := s.store.SaveSwarm(sw); err != nil {
-		return Swarm{}, fmt.Errorf("save swarm: %w", err)
-	}
-	return sw, nil
+	return out, nil
 }
 
-// DeleteSwarm удаляет рой: владелец или активный админ. Идемпотентно.
-// Рой с неудалёнными воркерами хранилище удалить не даёт.
-func (s *Service) DeleteSwarm(userID, swarmID string) error {
-	sw, err := s.swarmForDeletion(userID, swarmID)
+// GetSwarm returns a live swarm to its owner or an active administrator.
+// A deleted swarm does not exist for anyone.
+func (s *Service) GetSwarm(ctx context.Context, userID, swarmID string) (Swarm, error) {
+	sw, err := s.readSwarm(ctx, swarmID, true)
 	if err != nil {
-		return err
+		return Swarm{}, err
 	}
-	unlock := s.lockProject(sw.ProjectID)
+	if err := s.requireOwner(ctx, userID, sw); err != nil {
+		return Swarm{}, err
+	}
+	return SwarmOf(sw), nil
+}
+
+// CreateSwarm creates a swarm in a project for an active member or an
+// administrator; the creator becomes its owner. It is idempotent by name:
+// a retry by the same owner returns the existing swarm, a name another
+// owner holds is refused. The project limit on swarms is checked in the
+// same transaction as the write.
+func (s *Service) CreateSwarm(ctx context.Context, userID, projectID, name string) (Swarm, error) {
+	if err := s.projectExists(ctx, projectID); err != nil {
+		return Swarm{}, err
+	}
+	if err := s.requireMember(ctx, userID, projectID); err != nil {
+		return Swarm{}, err
+	}
+	unlock, err := s.lockProject(ctx, projectID)
+	if err != nil {
+		return Swarm{}, err
+	}
 	defer unlock()
-	sw, err = s.swarmForDeletion(userID, swarmID)
-	if err != nil {
-		return err
-	}
-	if sw.State == StateDeleted {
-		return nil
-	}
-	if guard, ok := s.store.(interface{ CheckSwarmDeletion(string) error }); ok {
-		if err := guard.CheckSwarmDeletion(sw.ID); err != nil {
+	var created store.Swarm
+	err = s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.requireMember(ctx, userID, projectID); err != nil {
 			return err
 		}
-	}
-	sw.State = StateDeleted
-	sw.UpdatedAt = s.now()
-	if err := s.store.UpdateSwarm(sw); err != nil {
-		return fmt.Errorf("update swarm: %w", err)
-	}
-	return nil
-}
-
-func (s *Service) swarmForDeletion(userID, swarmID string) (Swarm, error) {
-	swarm, ok, err := s.store.SwarmByID(swarmID)
-	if err != nil {
-		return Swarm{}, err
-	}
-	if !ok {
-		return Swarm{}, fmt.Errorf("%w: swarm %s", ErrNotFound, swarmID)
-	}
-	user, ok, err := s.store.UserByID(userID)
-	if err != nil {
-		return Swarm{}, err
-	}
-	if !ok || user.Disabled {
-		return Swarm{}, ErrNotAllowed
-	}
-	if !user.IsAdmin && swarm.OwnerID != userID {
-		return Swarm{}, ErrNotAllowed
-	}
-	return swarm, nil
-}
-
-// TransferSwarm changes the primary owner, revoking the previous primary grant.
-// An active owner or administrator may transfer to an active member or administrator.
-func (s *Service) TransferSwarm(actorID, swarmID, newOwnerID string) error {
-	actor, ok, err := s.store.UserByID(actorID)
-	if err != nil {
-		return err
-	}
-	if !ok || actor.Disabled {
-		return ErrNotAllowed
-	}
-	sw, ok, err := s.store.SwarmByID(swarmID)
-	if err != nil {
-		return err
-	}
-	if !ok || sw.State == StateDeleted {
-		return fmt.Errorf("%w: swarm %s", ErrNotFound, swarmID)
-	}
-	if !actor.IsAdmin && sw.OwnerID != actorID {
-		return ErrNotAllowed
-	}
-	newOwner, ok, err := s.store.UserByID(newOwnerID)
-	if err != nil {
-		return err
-	}
-	if !ok || newOwner.Disabled {
-		return ErrNotAllowed
-	}
-	member, err := s.store.IsMember(sw.ProjectID, newOwnerID)
-	if err != nil {
-		return err
-	}
-	if !member && !newOwner.IsAdmin {
-		return ErrNotAllowed
-	}
-	if err := s.store.ChangeSwarmOwner(actorID, sw.ID, sw.OwnerID, newOwnerID); err != nil {
-		return fmt.Errorf("transfer swarm: %w", err)
-	}
-	return nil
-}
-
-// GetSwarm выдаёт рой по ID с проверкой доступа: владелец-участник или
-// активный админ; удалённый рой не существует ни для кого.
-func (s *Service) GetSwarm(userID, swarmID string) (Swarm, error) {
-	ok, err := s.Can(userID, ActionViewSwarm, SwarmRes(swarmID))
-	if err != nil {
-		return Swarm{}, err
-	}
-	if !ok {
-		sw, exists, err := s.store.SwarmByID(swarmID)
+		rows, err := s.store.ListSwarmsByProject(ctx, projectID)
 		if err != nil {
-			return Swarm{}, err
+			return err
 		}
-		if !exists || sw.State == StateDeleted {
-			return Swarm{}, fmt.Errorf("%w: swarm %s", ErrNotFound, swarmID)
+		for _, row := range rows {
+			if row.State == string(StateDeleted) || row.Name != name {
+				continue
+			}
+			if row.OwnerID != userID {
+				return fmt.Errorf("%w: swarm name is already in use", ErrExists)
+			}
+			created = row
+			return nil
 		}
-		return Swarm{}, ErrNotAllowed
+		limits, err := s.store.GetProjectCapacity(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		usage, err := ProjectUsageOf(projectID, SwarmsOf(rows), nil)
+		if err != nil {
+			return err
+		}
+		if err := checkLimits(limits, usage, ProjectUsage{Swarms: 1}); err != nil {
+			return err
+		}
+		id := store.NewID()
+		if err := s.store.CreateSwarm(ctx, store.Swarm{ID: id, ProjectID: projectID, OwnerID: userID, Name: name, State: string(StateActive)}); err != nil {
+			return err
+		}
+		created, err = s.store.GetSwarm(ctx, id)
+		return err
+	})
+	if store.IsUniqueViolation(err) {
+		return Swarm{}, fmt.Errorf("%w: swarm name is already in use", ErrExists)
 	}
-	sw, _, err := s.store.SwarmByID(swarmID)
-	return sw, err
+	if err != nil {
+		return Swarm{}, err
+	}
+	return SwarmOf(created), nil
 }
 
-// ListProjectsFor перечисляет проекты членства, а админу — все проекты.
-func (s *Service) ListProjectsFor(userID string) ([]Project, error) {
-	u, ok, err := s.store.UserByID(userID)
-	if err != nil {
-		return nil, err
-	}
-	if !ok || u.Disabled {
-		return nil, ErrNotAllowed
-	}
-	if u.IsAdmin {
-		return s.store.Projects()
-	}
-	return s.store.ProjectsForUser(userID)
-}
-
-// ListSwarmsFor перечисляет собственные рои участника проекта,
-// а активному администратору — все неудалённые рои проекта.
-func (s *Service) ListSwarmsFor(userID, projectID string) ([]Swarm, error) {
-	ok, err := s.Can(userID, ActionViewProject, ProjectRes(projectID))
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		if _, exists, err2 := s.store.ProjectByID(projectID); err2 != nil || !exists {
-			return nil, fmt.Errorf("%w: project %s", ErrNotFound, projectID)
-		}
-		return nil, ErrNotAllowed
-	}
-	u, exists, err := s.store.UserByID(userID)
-	if err != nil {
-		return nil, err
-	}
-	if !exists || u.Disabled {
-		return nil, ErrNotAllowed
-	}
-	var swarms []Swarm
-	if u.IsAdmin {
-		swarms, err = s.store.SwarmsByProject(projectID)
-	} else {
-		swarms, err = s.store.SwarmsByOwner(projectID, userID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	out := swarms[:0]
-	for _, sw := range swarms {
-		if sw.State != StateDeleted {
-			out = append(out, sw)
-		}
-	}
-	return out, nil
-}
-
-// AdminSwarms перечисляет все рои установки. Только администратор.
-func (s *Service) AdminSwarms(actorID string) ([]Swarm, error) {
-	if err := s.requireAdmin(actorID); err != nil {
-		return nil, err
-	}
-	swarms, err := s.store.Swarms()
-	if err != nil {
-		return nil, err
-	}
-	out := swarms[:0]
-	for _, sw := range swarms {
-		if sw.State != StateDeleted {
-			out = append(out, sw)
-		}
-	}
-	return out, nil
-}
-
-// AdminProjects перечисляет все проекты установки. Только администратор.
-func (s *Service) AdminProjects(actorID string) ([]Project, error) {
-	if err := s.requireAdmin(actorID); err != nil {
-		return nil, err
-	}
-	return s.store.Projects()
-}
-
-// requireAdmin проверяет, что вызывающий — активный администратор.
-func (s *Service) requireAdmin(actorID string) error {
-	u, ok, err := s.store.UserByID(actorID)
-	if err != nil {
+// requireMember пропускает активного участника проекта и администратора.
+func (s *Service) requireMember(ctx context.Context, userID, projectID string) error {
+	user, err := s.activeUser(ctx, userID)
+	if err != nil || user.IsAdmin {
 		return err
 	}
-	if !ok {
-		return ErrNotAllowed
-	}
-	if u.Disabled || !u.IsAdmin {
-		return ErrNotAllowed
-	}
-	return nil
-}
-
-// authorizeCreateSwarm проверяет активность пользователя и членство
-// в проекте перед созданием роя.
-func (s *Service) authorizeCreateSwarm(userID, projectID string) (User, bool, error) {
-	u, ok, err := s.store.UserByID(userID)
+	member, err := s.store.IsMember(ctx, projectID, userID)
 	if err != nil {
-		return User{}, false, err
-	}
-	if !ok || u.Disabled {
-		return User{}, false, ErrNotAllowed
-	}
-	if u.IsAdmin {
-		return u, true, nil
-	}
-	member, err := s.store.IsMember(projectID, userID)
-	if err != nil {
-		return User{}, false, err
+		return err
 	}
 	if !member {
-		return User{}, false, ErrNotAllowed
+		return ErrNotAllowed
 	}
-	return u, true, nil
+	return nil
 }
 
-// findSwarmByName ищет незавершённый рой с тем же именем в проекте.
-func (s *Service) findSwarmByName(projectID, name string) (Swarm, bool, error) {
-	swarms, err := s.store.SwarmsByProject(projectID)
+// DeleteSwarm deletes a swarm for its owner or an active administrator. It
+// is idempotent; a swarm that still has agents is refused.
+func (s *Service) DeleteSwarm(ctx context.Context, userID, swarmID string) error {
+	sw, err := s.readSwarm(ctx, swarmID, false)
 	if err != nil {
-		return Swarm{}, false, err
+		return err
 	}
-	for _, sw := range swarms {
-		if sw.Name == name && sw.State != StateDeleted {
-			return sw, true, nil
+	if err := s.requireOwner(ctx, userID, sw); err != nil {
+		return err
+	}
+	unlock, err := s.lockProject(ctx, sw.ProjectID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.store.WithTx(ctx, func(ctx context.Context) error {
+		sw, err := s.readSwarm(ctx, swarmID, false)
+		if err != nil {
+			return err
 		}
-	}
-	return Swarm{}, false, nil
+		if err := s.requireOwner(ctx, userID, sw); err != nil {
+			return err
+		}
+		if sw.State == string(StateDeleted) {
+			return nil
+		}
+		agents, err := s.store.HasManagedActorsBySwarm(ctx, sw.ID)
+		if err != nil {
+			return err
+		}
+		if agents {
+			return &APIError{Status: http.StatusConflict, Detail: "The swarm still has agents. Delete them on the Agents page first."}
+		}
+		return s.store.SetSwarmState(ctx, sw.ID, string(StateDeleted))
+	})
+}
+
+// TransferSwarm hands a live swarm to another owner. The caller is its owner
+// or an active administrator; the new owner is an active member of the
+// project or an administrator. Checks and the write share one transaction.
+func (s *Service) TransferSwarm(ctx context.Context, actorID, swarmID, newOwnerID string) error {
+	return s.store.WithTx(ctx, func(ctx context.Context) error {
+		sw, err := s.readSwarm(ctx, swarmID, true)
+		if err != nil {
+			return err
+		}
+		if err := s.requireOwner(ctx, actorID, sw); err != nil {
+			return err
+		}
+		if err := s.requireMember(ctx, newOwnerID, sw.ProjectID); err != nil {
+			return err
+		}
+		return s.store.SetSwarmOwner(ctx, sw.ID, newOwnerID)
+	})
 }

@@ -65,7 +65,7 @@ func (s *Server) swarmFor(w http.ResponseWriter, r *http.Request, user store.Use
 
 func (s *Server) swarmForAction(w http.ResponseWriter, r *http.Request, user store.User, action app.Action) (app.Swarm, bool) {
 	swarmID := r.PathValue("id")
-	ok, err := s.app.Can(user.ID, action, app.SwarmRes(swarmID))
+	ok, err := s.app.Can(r.Context(), user.ID, action, app.SwarmRes(swarmID))
 	if err != nil {
 		apiError(w, r, err)
 		return app.Swarm{}, false
@@ -74,7 +74,7 @@ func (s *Server) swarmForAction(w http.ResponseWriter, r *http.Request, user sto
 		writeDetail(w, http.StatusNotFound, "swarm not found")
 		return app.Swarm{}, false
 	}
-	sw, found, err := s.gateway.SwarmByID(swarmID)
+	sw, found, err := s.app.SwarmByID(r.Context(), swarmID)
 	if err != nil {
 		apiError(w, r, err)
 		return app.Swarm{}, false

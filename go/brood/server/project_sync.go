@@ -70,7 +70,7 @@ func (s *Server) syncProject(ctx context.Context, userID string, declaration sto
 		if errors.Is(err, store.ErrNotFound) {
 			err = write("")
 		} else if err == nil {
-			err = s.app.WithProjectConfiguration(userID, project.ID, func() error { return write(project.ID) })
+			err = s.app.WithProjectConfiguration(ctx, userID, project.ID, func() error { return write(project.ID) })
 		}
 		if errors.Is(err, store.ErrProjectSyncIdentityChanged) || errors.Is(err, app.ErrNotFound) {
 			continue

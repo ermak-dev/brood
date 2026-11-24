@@ -289,21 +289,10 @@ func managedAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-func (g *Gateway) CheckSwarmDeletion(id string) error {
-	has, err := g.store.HasManagedActorsBySwarm(context.Background(), id)
-	if err != nil {
-		return err
-	}
-	if has {
-		return &app.APIError{Status: http.StatusConflict, Detail: "The swarm still has agents. Delete them on the Agents page first."}
-	}
-	return nil
-}
-
-func (s *Server) admitWorkload(userID, swarmID string, op app.WorkloadOperation) error {
+func (s *Server) admitWorkload(ctx context.Context, userID, swarmID string, op app.WorkloadOperation) error {
 	s.managed.admission.Lock()
 	defer s.managed.admission.Unlock()
-	return s.app.AdmitWorkload(userID, swarmID, op)
+	return s.app.AdmitWorkload(ctx, userID, swarmID, op)
 }
 
 func managedTemplateJSON(pool store.ManagedPool) map[string]any {

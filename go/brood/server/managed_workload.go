@@ -31,7 +31,9 @@ type managedWorkloadOperation struct {
 	intent store.ManagedActor
 }
 
-func (s *Server) shardReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
+// agentReservations перечисляет доли всех существующих агентов живых роёв,
+// включая остановленные: по ним считается занятое лимитов проекта.
+func (s *Server) agentReservations(ctx context.Context, swarms []app.Swarm) ([]app.ActorReservation, error) {
 	out := []app.ActorReservation{}
 	for _, sw := range swarms {
 		if sw.State == app.StateDeleted {
@@ -72,7 +74,7 @@ func (o *managedWorkloadOperation) authorize() error {
 			return err
 		}
 	}
-	allowed, err := o.server.app.Can(userID, app.ActionManageSwarm, app.SwarmRes(o.swarm.ID))
+	allowed, err := o.server.app.Can(o.context, userID, app.ActionManageSwarm, app.SwarmRes(o.swarm.ID))
 	if err != nil {
 		return err
 	}
@@ -193,7 +195,7 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	plan.MemoryBytes = resources.MemoryBytes
 	plan.Replace = o.action != "create"
 	var err error
-	plan.Reservations, err = o.server.shardReservations(o.context, swarms)
+	plan.Reservations, err = o.server.agentReservations(o.context, swarms)
 	return plan, err
 }
 
@@ -461,7 +463,7 @@ func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm,
 		return store.ManagedActor{}, err
 	}
 	op.origin = resolved
-	err = s.app.AdmitWorkload(userID, sw.ID, op)
+	err = s.app.AdmitWorkload(ctx, userID, sw.ID, op)
 	return op.saved, err
 }
 
@@ -495,7 +497,7 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 	op := &managedWorkloadOperation{server: s, context: r.Context(), swarm: sw, pool: p, name: a.Name, action: action, actor: a}
-	if err := s.admitWorkload(userID, sw.ID, op); err != nil {
+	if err := s.admitWorkload(r.Context(), userID, sw.ID, op); err != nil {
 		managedAPIError(w, r, err)
 		return
 	}

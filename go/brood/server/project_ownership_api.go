@@ -52,7 +52,7 @@ func (s *Server) handleProjectOwner(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	allowed, err := s.app.Can(user.ID, app.ActionViewProject, app.ProjectRes(r.PathValue("id")))
+	allowed, err := s.app.Can(r.Context(), user.ID, app.ActionViewProject, app.ProjectRes(r.PathValue("id")))
 	if err != nil {
 		apiError(w, r, err)
 		return

@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 
 	"brood.dev/go/brood/app"
@@ -22,8 +23,8 @@ func (s *Server) mountLists() {
 }
 
 // visibleSwarms — живые рои, доступные пользователю, и имена их проектов.
-func (s *Server) visibleSwarms(user store.User) ([]app.Swarm, map[string]string, error) {
-	projects, err := s.gateway.Projects()
+func (s *Server) visibleSwarms(ctx context.Context, user store.User) ([]app.Swarm, map[string]string, error) {
+	projects, err := s.store.ListProjects(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -31,14 +32,14 @@ func (s *Server) visibleSwarms(user store.User) ([]app.Swarm, map[string]string,
 	for _, project := range projects {
 		names[project.ID] = project.Name
 	}
-	all, err := s.gateway.Swarms()
+	rows, err := s.store.ListSwarms(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	out := all[:0]
-	for _, sw := range all {
-		if sw.State != app.StateDeleted && (user.IsAdmin || sw.OwnerID == user.ID) {
-			out = append(out, sw)
+	var out []app.Swarm
+	for _, row := range rows {
+		if row.State != string(app.StateDeleted) && (user.IsAdmin || row.OwnerID == user.ID) {
+			out = append(out, app.SwarmOf(row))
 		}
 	}
 	return out, names, nil
@@ -50,7 +51,7 @@ func (s *Server) handleSwarmList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	swarms, projects, err := s.visibleSwarms(user)
+	swarms, projects, err := s.visibleSwarms(r.Context(), user)
 	if err != nil {
 		apiError(w, r, err)
 		return
@@ -90,7 +91,7 @@ func (s *Server) handleAgentList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	swarms, projects, err := s.visibleSwarms(user)
+	swarms, projects, err := s.visibleSwarms(r.Context(), user)
 	if err != nil {
 		apiError(w, r, err)
 		return

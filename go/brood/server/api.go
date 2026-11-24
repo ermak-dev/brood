@@ -96,7 +96,7 @@ func writeDetail(w http.ResponseWriter, status int, detail string) {
 // человеку нужна сама причина, статус HTTP несёт её род.
 func publicDetail(err error) string {
 	detail := err.Error()
-	for _, sentinel := range []error{app.ErrConflict, app.ErrExists, app.ErrNotFound, app.ErrNotAllowed, app.ErrState, app.ErrInvalidWorkload, app.ErrInvalidCapacity} {
+	for _, sentinel := range []error{app.ErrConflict, app.ErrExists, app.ErrNotFound, app.ErrNotAllowed, app.ErrInvalidWorkload, app.ErrInvalidCapacity} {
 		if rest, ok := strings.CutPrefix(detail, sentinel.Error()+": "); ok {
 			return rest
 		}
@@ -109,18 +109,17 @@ func publicDetail(err error) string {
 func apiError(w http.ResponseWriter, r *http.Request, err error) {
 	detail := publicDetail(err)
 	var status int
-	var capacityError *app.CapacityExceededError
+	var limitError *app.LimitExceededError
 	switch {
 	case errors.Is(err, app.ErrInvalidWorkload), errors.Is(err, app.ErrInvalidCapacity):
 		status = http.StatusBadRequest
-	case errors.As(err, &capacityError):
+	case errors.As(err, &limitError):
 		status = http.StatusConflict
-	case errors.Is(err, app.ErrNotAllowed), errors.Is(err, app.ErrDisabled):
+	case errors.Is(err, app.ErrNotAllowed):
 		status = http.StatusForbidden
 	case errors.Is(err, app.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		status = http.StatusNotFound
-	case errors.Is(err, app.ErrExists), errors.Is(err, app.ErrConflict),
-		errors.Is(err, app.ErrState), errors.Is(err, app.ErrSwarmNotEmpty), errors.Is(err, store.ErrProjectHasSwarms), isMemberExists(err):
+	case errors.Is(err, app.ErrExists), errors.Is(err, app.ErrConflict), errors.Is(err, store.ErrProjectHasSwarms):
 		status = http.StatusConflict
 	default:
 		var apiErr *app.APIError
@@ -166,7 +165,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 // ─── Проекты ───────────────────────────────────────────────────────────────
 
 // handleProjects — GET/POST /api/projects: список и создание. Список —
-// проекты членства вызывающего; админу доступны все (AdminProjects).
+// проекты членства вызывающего; админу доступны все.
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
@@ -174,16 +173,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if user.IsAdmin {
-			projects, err := s.app.AdminProjects(user.ID)
-			if err != nil {
-				apiError(w, r, err)
-				return
-			}
-			s.writeProjects(w, r, user.ID, projects)
-			return
-		}
-		projects, err := s.app.ListProjectsFor(user.ID)
+		projects, err := s.app.ListProjectsFor(r.Context(), user.ID)
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -200,7 +190,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			writeDetail(w, http.StatusBadRequest, "name is required")
 			return
 		}
-		project, err := s.app.CreateProject(user.ID, body.Name)
+		project, err := s.app.CreateProject(r.Context(), user.ID, body.Name)
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -212,7 +202,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 // writeProjects пишет список проектов с числом роёв каждого; пустой список
 // — []. Число роёв — одна выборка на весь список по правилу списка роёв
 // проекта, а не запрос на проект.
-func (s *Server) writeProjects(w http.ResponseWriter, r *http.Request, userID string, projects []app.Project) {
+func (s *Server) writeProjects(w http.ResponseWriter, r *http.Request, userID string, projects []store.Project) {
 	ids := make([]string, 0, len(projects))
 	for _, p := range projects {
 		ids = append(ids, p.ID)
@@ -237,12 +227,12 @@ func (s *Server) writeProjects(w http.ResponseWriter, r *http.Request, userID st
 		for _, member := range members {
 			row.Members = append(row.Members, member.Username)
 		}
-		capacity, err := s.gateway.ProjectCapacity(p.ID)
+		limits, err := s.store.GetProjectCapacity(r.Context(), p.ID)
 		if err != nil {
 			apiError(w, r, err)
 			return
 		}
-		row.Capacity = formatCapacity(capacity)
+		row.Capacity = formatCapacity(limits)
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -316,7 +306,7 @@ func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	if err := s.app.AddMember(user.ID, projectID, target.ID); err != nil {
+	if err := s.app.AddMember(r.Context(), user.ID, projectID, target.ID); err != nil {
 		apiError(w, r, err)
 		return
 	}
@@ -344,7 +334,7 @@ func (s *Server) handleMemberDelete(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	if err := s.app.RemoveMember(user.ID, projectID, target.ID); err != nil {
+	if err := s.app.RemoveMember(r.Context(), user.ID, projectID, target.ID); err != nil {
 		apiError(w, r, err)
 		return
 	}
@@ -361,7 +351,7 @@ func (s *Server) handleProjectSwarms(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("id")
 	switch r.Method {
 	case http.MethodGet:
-		swarms, err := s.app.ListSwarmsFor(user.ID, projectID)
+		swarms, err := s.app.ListSwarmsFor(r.Context(), user.ID, projectID)
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -378,7 +368,7 @@ func (s *Server) handleProjectSwarms(w http.ResponseWriter, r *http.Request) {
 			writeDetail(w, http.StatusBadRequest, "name is required")
 			return
 		}
-		sw, err := s.app.CreateSwarm(user.ID, projectID, body.Name)
+		sw, err := s.app.CreateSwarm(r.Context(), user.ID, projectID, body.Name)
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -450,7 +440,7 @@ func (s *Server) handleSwarm(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		sw, err := s.app.GetSwarm(user.ID, r.PathValue("id"))
+		sw, err := s.app.GetSwarm(r.Context(), user.ID, r.PathValue("id"))
 		if errors.Is(err, app.ErrNotAllowed) {
 			// Чужой рой не выделяется из отсутствующего: существование
 			// роя не раскрывается не-владельцу.
@@ -462,7 +452,7 @@ func (s *Server) handleSwarm(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeSwarm(w, r, http.StatusOK, sw)
 	case http.MethodDelete:
-		if err := s.app.DeleteSwarm(user.ID, r.PathValue("id")); err != nil {
+		if err := s.app.DeleteSwarm(r.Context(), user.ID, r.PathValue("id")); err != nil {
 			apiError(w, r, err)
 			return
 		}
@@ -473,7 +463,7 @@ func (s *Server) handleSwarm(w http.ResponseWriter, r *http.Request) {
 // handleSwarmTransfer allows owners and administrators to transfer an active swarm.
 // The domain layer validates the target and rechecks the grant inside the write.
 func (s *Server) handleSwarmTransfer(w http.ResponseWriter, r *http.Request) {
-	user, swarm, ok := s.accessSwarm(w, r, app.ActionTransferOwnership)
+	user, swarm, ok := s.accessSwarm(w, r)
 	if !ok {
 		return
 	}
@@ -492,7 +482,7 @@ func (s *Server) handleSwarmTransfer(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	if err := s.app.TransferSwarm(user.ID, swarm.ID, target.ID); err != nil {
+	if err := s.app.TransferSwarm(r.Context(), user.ID, swarm.ID, target.ID); err != nil {
 		apiError(w, r, err)
 		return
 	}

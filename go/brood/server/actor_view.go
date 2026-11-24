@@ -59,11 +59,11 @@ func (s *Server) validActorViewAccess(v actorView) bool {
 	if err != nil || user.Disabled {
 		return false
 	}
-	sw, found, err := s.gateway.SwarmByID(v.swarm)
+	sw, found, err := s.app.SwarmByID(ctx, v.swarm)
 	if err != nil || !found || sw.State != app.StateActive || sw.OwnerID != v.owner || sw.ProjectID != v.project {
 		return false
 	}
-	allowed, err := s.app.Can(id, app.ActionManageSwarm, app.SwarmRes(v.swarm))
+	allowed, err := s.app.Can(ctx, id, app.ActionManageSwarm, app.SwarmRes(v.swarm))
 	return err == nil && allowed && s.validManagedView(ctx, v)
 }
 

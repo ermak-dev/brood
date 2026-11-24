@@ -15,7 +15,7 @@ import (
 var managedActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
 func managedAddRefusal(err error) string {
-	var capacity *app.CapacityExceededError
+	var limit *app.LimitExceededError
 	var origin *originRefusal
 	var api *app.APIError
 	const prefix = "The agent was not created: "
@@ -28,7 +28,7 @@ func managedAddRefusal(err error) string {
 		return prefix + "this master is no longer allowed to manage the swarm. Ask the operator."
 	case errors.Is(err, app.ErrExists), store.IsUniqueViolation(err):
 		return prefix + "the name is already taken in this swarm. Choose another name."
-	case errors.Is(err, store.ErrPoolCapacity), errors.As(err, &capacity):
+	case errors.Is(err, store.ErrPoolCapacity), errors.As(err, &limit):
 		return prefix + "the pool or the project has no room for one more agent. Delete an agent or ask the operator to raise the limit."
 	case errors.Is(err, store.ErrPoolUnavailable):
 		return prefix + "the pool does not take new agents. Ask the operator to enable it."

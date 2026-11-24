@@ -51,7 +51,7 @@ func (s *Server) handleArtifactView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, err := s.app.Can(user.ID, app.ActionViewSwarm, app.SwarmRes(swarmID))
+	allowed, err := s.app.Can(r.Context(), user.ID, app.ActionViewSwarm, app.SwarmRes(swarmID))
 	if err != nil {
 		http.Error(w, "Could not check access to the artifact. Try again.", http.StatusInternalServerError)
 		return

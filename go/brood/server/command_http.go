@@ -162,14 +162,14 @@ func (s *Server) commandPreflight(ctx context.Context, user store.User, scope st
 		if inv.Name == "agents" || inv.Name == "artifact_get" {
 			action = app.ActionViewSwarm
 		}
-		allowed, err := s.app.Can(user.ID, action, app.SwarmRes(scope))
+		allowed, err := s.app.Can(ctx, user.ID, action, app.SwarmRes(scope))
 		if err != nil {
 			return nil, err
 		}
 		if !allowed {
 			return command.Refuse(app.ErrNotFound, "swarm not found"), nil
 		}
-		sw, found, err := s.gateway.SwarmByID(scope)
+		sw, found, err := s.app.SwarmByID(ctx, scope)
 		if err != nil {
 			return nil, err
 		}
