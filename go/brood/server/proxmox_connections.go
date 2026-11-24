@@ -15,9 +15,9 @@ import (
 
 func (s *Server) mountProxmoxConnections() {
 	s.mux.HandleFunc("GET /api/proxmox-connections", s.adminProxmoxConnections(func(w http.ResponseWriter, r *http.Request) {
-		rows, err := s.store.ListManagedConnections(r.Context())
+		rows, err := s.store.ListConnections(r.Context())
 		if err != nil {
-			writeDetail(w, 500, "managed connections unavailable")
+			writeDetail(w, 500, "Proxmox connections unavailable")
 			return
 		}
 		items := make([]map[string]any, 0, len(rows))
@@ -51,15 +51,15 @@ func (s *Server) mountProxmoxConnections() {
 			return
 		}
 		// Общий admission lock сериализует активацию и удаление с созданием.
-		s.managed.admission.Lock()
-		defer s.managed.admission.Unlock()
-		if s.managed.registry != nil {
-			if _, exists := s.managed.registry.pools[c.Name]; exists {
+		s.provider.admission.Lock()
+		defer s.provider.admission.Unlock()
+		if s.provider.registry != nil {
+			if _, exists := s.provider.registry.pools[c.Name]; exists {
 				writeDetail(w, 409, "connection name already exists in environment configuration")
 				return
 			}
 		}
-		c, err = s.store.CreateManagedConnection(r.Context(), c)
+		c, err = s.store.CreateConnection(r.Context(), c)
 		if err != nil {
 			writeDetail(w, 409, "connection name already exists or is invalid")
 			return
@@ -68,16 +68,16 @@ func (s *Server) mountProxmoxConnections() {
 	}))
 	s.mux.HandleFunc("POST /api/proxmox-connections/{uid}/clone", s.adminProxmoxConnections(s.cloneProxmoxConnection))
 	s.mux.HandleFunc("DELETE /api/proxmox-connections/{uid}", s.adminProxmoxConnections(func(w http.ResponseWriter, r *http.Request) {
-		s.managed.admission.Lock()
-		defer s.managed.admission.Unlock()
-		if err := s.store.DeleteManagedConnection(r.Context(), r.PathValue("uid")); err != nil {
+		s.provider.admission.Lock()
+		defer s.provider.admission.Unlock()
+		if err := s.store.DeleteConnection(r.Context(), r.PathValue("uid")); err != nil {
 			switch {
-			case errors.Is(err, store.ErrManagedChildren):
-				writeDetail(w, 409, "connection still has a managed pool or actors")
+			case errors.Is(err, store.ErrInUse):
+				writeDetail(w, 409, "connection still has a pool or agents")
 			case errors.Is(err, store.ErrNotFound):
 				writeDetail(w, 404, "connection not found")
 			default:
-				writeDetail(w, 500, "managed connection deletion failed")
+				writeDetail(w, 500, "Proxmox connection deletion failed")
 			}
 			return
 		}
@@ -111,14 +111,14 @@ func (s *Server) cloneProxmoxConnection(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	// Тот же lock защищает UID источника от удаления и сериализует admission.
-	s.managed.admission.Lock()
-	defer s.managed.admission.Unlock()
-	rows, err := s.store.ListManagedConnections(r.Context())
+	s.provider.admission.Lock()
+	defer s.provider.admission.Unlock()
+	rows, err := s.store.ListConnections(r.Context())
 	if err != nil {
-		writeDetail(w, 500, "managed connections unavailable")
+		writeDetail(w, 500, "Proxmox connections unavailable")
 		return
 	}
-	var source *store.ManagedConnection
+	var source *store.Connection
 	for i := range rows {
 		if rows[i].UID == r.PathValue("uid") {
 			source = &rows[i]
@@ -129,9 +129,9 @@ func (s *Server) cloneProxmoxConnection(w http.ResponseWriter, r *http.Request) 
 		writeDetail(w, 404, "connection not found")
 		return
 	}
-	secret, err := s.store.ManagedConnectionSecret(r.Context(), source.Name)
+	secret, err := s.store.ConnectionSecret(r.Context(), source.Name)
 	if err != nil {
-		writeDetail(w, 500, "managed connection unavailable")
+		writeDetail(w, 500, "Proxmox connection unavailable")
 		return
 	}
 	// Только сервер дополняет разрешённый ввод credential и областью источника.
@@ -147,8 +147,8 @@ func (s *Server) cloneProxmoxConnection(w http.ResponseWriter, r *http.Request) 
 		writeDetail(w, 422, err.Error())
 		return
 	}
-	if s.managed.registry != nil {
-		if _, exists := s.managed.registry.pools[c.Name]; exists {
+	if s.provider.registry != nil {
+		if _, exists := s.provider.registry.pools[c.Name]; exists {
 			writeDetail(w, 409, "connection name already exists in environment configuration")
 			return
 		}
@@ -172,7 +172,7 @@ func (s *Server) cloneProxmoxConnection(w http.ResponseWriter, r *http.Request) 
 		writeDetail(w, 403, "administrator access required")
 		return
 	}
-	c, err = s.store.CreateManagedConnection(r.Context(), c)
+	c, err = s.store.CreateConnection(r.Context(), c)
 	if err != nil {
 		writeDetail(w, 409, "connection name already exists or is invalid")
 		return
@@ -198,8 +198,8 @@ func (s *Server) adminProxmoxConnections(next http.HandlerFunc) http.HandlerFunc
 	}
 }
 
-func parseProxmoxConnection(fields map[string]json.RawMessage) (store.ManagedConnection, error) {
-	var c store.ManagedConnection
+func parseProxmoxConnection(fields map[string]json.RawMessage) (store.Connection, error) {
+	var c store.Connection
 	if json.Unmarshal(fields["name"], &c.Name) != nil || len(c.Name) > 63 || !regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`).MatchString(c.Name) {
 		return c, errors.New("name must be a lowercase DNS label of at most 63 characters")
 	}
@@ -232,11 +232,11 @@ func parseProxmoxConnection(fields map[string]json.RawMessage) (store.ManagedCon
 	return c, nil
 }
 
-func connectionDTO(c store.ManagedConnection) map[string]any {
+func connectionDTO(c store.Connection) map[string]any {
 	return map[string]any{"uid": c.UID, "name": c.Name, "endpoint": c.Endpoint, "tokenID": c.TokenID, "node": c.Node, "resourcePool": c.ResourcePool, "storage": c.Storage, "network": c.Network, "credentialConfigured": true}
 }
 
-func connectionConfig(c store.ManagedConnection) (proxmoxPool, error) {
+func connectionConfig(c store.Connection) (proxmoxPool, error) {
 	cfg := proxmoxPool{endpoint: c.Endpoint, tokenID: c.TokenID, caPEM: c.CAPEM, node: c.Node, resourcePool: c.ResourcePool, storage: c.Storage, network: c.Network}
 	if c.RuntimeJSON != "" {
 		fields, err := proxmoxObject(c.RuntimeJSON)
@@ -252,15 +252,15 @@ func connectionConfig(c store.ManagedConnection) (proxmoxPool, error) {
 }
 
 // configuredConnection читает БД на запрос, не изменяя immutable env registry.
-func (m *managedProvider) configuredConnection(ctx context.Context, name string) (proxmoxPool, error) {
+func (m *provider) configuredConnection(ctx context.Context, name string) (proxmoxPool, error) {
 	var env proxmoxPool
 	var exists bool
 	if m.registry != nil {
 		env, exists = m.registry.pools[name]
 	}
-	rows, err := m.server.store.ListManagedConnections(ctx)
+	rows, err := m.server.store.ListConnections(ctx)
 	if err != nil {
-		return proxmoxPool{}, errors.New("managed connections unavailable")
+		return proxmoxPool{}, errors.New("Proxmox connections unavailable")
 	}
 	for _, c := range rows {
 		if c.Name != name {
@@ -277,10 +277,10 @@ func (m *managedProvider) configuredConnection(ctx context.Context, name string)
 	return proxmoxPool{}, app.ErrNotFound
 }
 
-func (m *managedProvider) connectionItems(ctx context.Context) ([]proxmoxPoolDTO, error) {
-	rows, err := m.server.store.ListManagedConnections(ctx)
+func (m *provider) connectionItems(ctx context.Context) ([]proxmoxPoolDTO, error) {
+	rows, err := m.server.store.ListConnections(ctx)
 	if err != nil {
-		return nil, errors.New("managed connections unavailable")
+		return nil, errors.New("Proxmox connections unavailable")
 	}
 	items := make([]proxmoxPoolDTO, 0, len(rows))
 	for _, c := range rows {

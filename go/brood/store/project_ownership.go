@@ -104,33 +104,3 @@ func (s *Store) SetProjectOwner(ctx context.Context, actorID, projectID string, 
 	}
 	return out, nil
 }
-
-// CanManageProjectWorkflowPolicy checks current administrator or explicit owner authority.
-// Membership alone, ownership of a swarm, and historical policy authorship grant nothing.
-func (s *Store) CanManageProjectWorkflowPolicy(ctx context.Context, userID, projectID string) (bool, error) {
-	user, err := s.GetUser(ctx, userID)
-	if errors.Is(err, ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if user.Disabled {
-		return false, nil
-	}
-	if user.IsAdmin {
-		_, err := s.GetProject(ctx, projectID)
-		return err == nil, err
-	}
-	ownership, err := s.ProjectOwnership(ctx, projectID)
-	if errors.Is(err, ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if ownership.OwnerID == "" || ownership.OwnerID != user.ID {
-		return false, nil
-	}
-	return s.IsMember(ctx, projectID, user.ID)
-}

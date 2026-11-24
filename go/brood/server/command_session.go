@@ -45,7 +45,7 @@ const agentOffline = "the agent is not connected, so nothing was sent; check its
 // passed, and a restart without reserve takes it first. The reservation is
 // released when the guest confirms the outcome and kept when the outcome is
 // unknown.
-func (m *managedProvider) callCommandSession(ctx context.Context, target store.ManagedActor, caller string, inv command.Invocation, authorize func() error, reserve func(context.Context) (store.ActorOperation, error)) (result command.Result, err error) {
+func (m *provider) callCommandSession(ctx context.Context, target store.Agent, caller string, inv command.Invocation, authorize func() error, reserve func(context.Context) (store.ActorOperation, error)) (result command.Result, err error) {
 	hub, ok := m.hub.(sessionRelay)
 	if !ok {
 		return result, command.Refuse(nil, agentOffline)
@@ -105,7 +105,7 @@ func (m *managedProvider) callCommandSession(ctx context.Context, target store.M
 	return result, nil
 }
 
-func (m *managedProvider) executeGuestSessionCommand(ctx context.Context, from store.ManagedActor, inv command.Invocation) (command.Result, error) {
+func (m *provider) executeGuestSessionCommand(ctx context.Context, from store.Agent, inv command.Invocation) (command.Result, error) {
 	name, mutate, err := sessionCommandTarget(inv, from.Name)
 	if err != nil {
 		return command.Result{}, err
@@ -154,7 +154,7 @@ func commandSessionValid(ctx context.Context) bool {
 	return true
 }
 
-func (s *Server) operatorSessionAuthority(ctx context.Context, userID, swarmID string, target store.ManagedActor) error {
+func (s *Server) operatorSessionAuthority(ctx context.Context, userID, swarmID string, target store.Agent) error {
 	sw, err := s.store.GetSwarm(ctx, swarmID)
 	if err != nil || sw.State != "active" {
 		return app.ErrNotAllowed
@@ -163,7 +163,7 @@ func (s *Server) operatorSessionAuthority(ctx context.Context, userID, swarmID s
 	if err != nil || !allowed {
 		return app.ErrNotAllowed
 	}
-	if current, err := s.store.GetManagedActor(ctx, target.UID); err != nil || current.Incarnation != target.Incarnation || current.Desired != "running" {
+	if current, err := s.store.GetAgent(ctx, target.UID); err != nil || current.Incarnation != target.Incarnation || current.Desired != "running" {
 		return app.ErrNotAllowed
 	}
 	if !commandSessionValid(ctx) {
@@ -189,14 +189,14 @@ func (s *Server) executeOperatorSessionCommand(ctx context.Context, userID, swar
 	if _, err := s.store.GetSwarm(ctx, swarmID); err != nil {
 		return command.Result{}, err
 	}
-	target, err := s.store.LookupManagedActor(ctx, swarmID, name)
+	target, err := s.store.LookupAgent(ctx, swarmID, name)
 	if err != nil {
 		return command.Result{}, actorCommandError(app.ErrNotFound)
 	}
 	return s.executeOperatorSessionTarget(ctx, userID, caller, inv, target, mutate)
 }
 
-func (s *Server) executeOperatorSessionTarget(ctx context.Context, userID, caller string, inv command.Invocation, target store.ManagedActor, mutate bool) (command.Result, error) {
+func (s *Server) executeOperatorSessionTarget(ctx context.Context, userID, caller string, inv command.Invocation, target store.Agent, mutate bool) (command.Result, error) {
 	swarmID := target.SwarmID
 	owner := s.authorizeSwarmOwnerIntent(ctx, userID, swarmID) == nil
 	before := func() error {
@@ -215,7 +215,7 @@ func (s *Server) executeOperatorSessionTarget(ctx context.Context, userID, calle
 	}
 	if mutate && owner {
 		reserve = func(ctx context.Context) (store.ActorOperation, error) {
-			release, err := s.managed.effects.acquire(ctx, target.UID)
+			release, err := s.provider.effects.acquire(ctx, target.UID)
 			if err != nil {
 				return store.ActorOperation{}, err
 			}
@@ -225,7 +225,7 @@ func (s *Server) executeOperatorSessionTarget(ctx context.Context, userID, calle
 			})
 		}
 	}
-	result, err := s.managed.callCommandSession(ctx, target, caller, inv, before, reserve)
+	result, err := s.provider.callCommandSession(ctx, target, caller, inv, before, reserve)
 	if authErr := before(); authErr != nil {
 		return command.Result{}, authErr
 	}

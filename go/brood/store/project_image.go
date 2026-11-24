@@ -166,7 +166,7 @@ func (s *Store) FailBuildingProjectImages(ctx context.Context) error {
 // ProjectImageInUse reports whether a live worker was cloned from the image.
 func (s *Store) ProjectImageInUse(ctx context.Context, id string) (bool, error) {
 	var used bool
-	err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM managed_actors WHERE phase<>'deleted' AND json_extract(template,'$.URI')=?)`, ProjectImageURI(id)).Scan(&used)
+	err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE phase<>'deleted' AND json_extract(template,'$.URI')=?)`, ProjectImageURI(id)).Scan(&used)
 	return used, err
 }
 

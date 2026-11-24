@@ -114,7 +114,7 @@ func (s *Server) handleSwarmAgents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	pool, err := s.managed.poolByName(r.Context(), input.Pool)
+	pool, err := s.provider.poolByName(r.Context(), input.Pool)
 	if errors.Is(err, store.ErrNotFound) {
 		writeDetail(w, http.StatusBadRequest, "pool "+input.Pool+" not found; no agent was created. Choose a pool from the list")
 		return
@@ -123,7 +123,7 @@ func (s *Server) handleSwarmAgents(w http.ResponseWriter, r *http.Request) {
 		apiError(w, r, err)
 		return
 	}
-	s.createManagedActor(w, r, user.ID, sw, input, pool)
+	s.handleCreateAgent(w, r, user.ID, sw, input, pool)
 }
 
 // handleSwarmAgent — GET/POST/DELETE /api/swarms/{id}/agents/{name}.
@@ -136,7 +136,7 @@ func (s *Server) handleSwarmAgent(w http.ResponseWriter, r *http.Request) {
 	if !allowed {
 		return
 	}
-	a, err := s.managed.actorByName(r.Context(), sw.ID, r.PathValue("name"))
+	a, err := s.provider.actorByName(r.Context(), sw.ID, r.PathValue("name"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeDetail(w, http.StatusNotFound, "agent "+r.PathValue("name")+" not found; it may have been deleted, reload the list")
 		return
@@ -146,7 +146,7 @@ func (s *Server) handleSwarmAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(s.webCommandContext(r, user.ID))
-	s.handleManagedActor(w, r, user.ID, sw, a)
+	s.handleAgentAction(w, r, user.ID, sw, a)
 }
 
 // handleSwarmProfiles — GET /api/swarms/{id}/profiles: имена пулов, в которых

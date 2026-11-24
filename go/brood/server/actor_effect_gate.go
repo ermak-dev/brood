@@ -72,7 +72,7 @@ func (g *actorEffectGates) acquire(ctx context.Context, actors ...string) (func(
 // потенциально задержанным адаптером. Запись намерения и открытие
 // упорядочены; ожидание результата гостя не удерживает gate. Дополнительная проверка
 // authorize читает только локальное состояние, без сетевой авторизации под gate.
-func (m *managedProvider) fenceSessionOpen(ctx context.Context, op store.ActorOperation, authorize func(context.Context) error) context.Context {
+func (m *provider) fenceSessionOpen(ctx context.Context, op store.ActorOperation, authorize func(context.Context) error) context.Context {
 	return relay.WithSessionOpenGuard(ctx, func(ctx context.Context) (func(), error) {
 		release, err := m.effects.acquire(ctx, op.UID)
 		if err != nil {

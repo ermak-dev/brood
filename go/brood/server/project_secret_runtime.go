@@ -60,7 +60,7 @@ type guestRuntime struct {
 	uid        string
 	generation int64
 	token      string
-	actor      store.ManagedActor
+	actor      store.Agent
 	swarm      store.Swarm
 }
 
@@ -116,11 +116,11 @@ func (s *Server) authorizeGuestRuntime(ctx context.Context, w http.ResponseWrite
 		token = strings.TrimPrefix(credentials[0], "Bearer ")
 	}
 	uid := parts[0]
-	if s.managed == nil || s.managed.hub == nil || s.managed.registry == nil || len(s.managed.registry.relaySecret) < 32 || len(token) != 43 || !s.managed.authorizeGuest(uid, generation, token) {
+	if s.provider == nil || s.provider.hub == nil || s.provider.registry == nil || len(s.provider.registry.relaySecret) < 32 || len(token) != 43 || !s.provider.authorizeGuest(uid, generation, token) {
 		writeDetail(w, 401, "guest authorization denied")
 		return g, nil, false
 	}
-	actor, err := s.store.GetManagedActor(ctx, uid)
+	actor, err := s.store.GetAgent(ctx, uid)
 	if err != nil {
 		writeDetail(w, 401, "guest authorization denied")
 		return g, nil, false
@@ -130,18 +130,18 @@ func (s *Server) authorizeGuestRuntime(ctx context.Context, w http.ResponseWrite
 		writeDetail(w, 401, "guest authorization denied")
 		return g, nil, false
 	}
-	if !s.managed.authorizeGuest(uid, generation, token) {
+	if !s.provider.authorizeGuest(uid, generation, token) {
 		writeDetail(w, 401, "guest authorization denied")
 		return g, nil, false
 	}
 	return guestRuntime{uid: uid, generation: generation, token: token, actor: actor, swarm: swarm}, rest, true
 }
 
-// guestRuntimeCurrent повторяет привязку после чтения ответа: тот же проект, активный рой
-// того же atespace и всё ещё действующий token.
+// guestRuntimeCurrent повторяет привязку после чтения ответа: тот же проект,
+// активный рой и всё ещё действующий token.
 func (s *Server) guestRuntimeCurrent(ctx context.Context, g guestRuntime) bool {
 	current, err := s.store.GetSwarm(ctx, g.actor.SwarmID)
-	return err == nil && current.ProjectID == g.swarm.ProjectID && current.State == "active" && s.managed.authorizeGuest(g.uid, g.generation, g.token)
+	return err == nil && current.ProjectID == g.swarm.ProjectID && current.State == "active" && s.provider.authorizeGuest(g.uid, g.generation, g.token)
 }
 
 // writeGuestRuntime отдаёт готовый JSON с ограниченным сроком записи.

@@ -1,6 +1,6 @@
 package gitidentity
 
-// FEATURE: Git identity of a managed actor (#249).
+// FEATURE: Git identity of an agent (#249).
 // SPEC: The installation domain and the actor name derive the author and
 // committer identity "brood <actor>" <actor@domain>. The domain is a lowercase
 // DNS name; name and email are bounded, free of control characters and of the

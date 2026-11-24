@@ -23,7 +23,7 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-// proxmoxAPI is the PVE client of the managed provider (proxmox.Client). A
+// proxmoxAPI is the PVE client of the provider (proxmox.Client). A
 // write that fails without a UPID and without wrapping proxmox.ErrUncertain
 // submitted nothing: it failed on a read before the write (ownership, digest,
 // status) or PVE refused it explicitly (401, 403, 409). Any other failure of a
@@ -57,7 +57,7 @@ type guestRelay interface {
 	Close() error
 }
 
-type managedRuntime struct {
+type providerRuntime struct {
 	hub       guestRelay
 	newClient func(proxmox.Config) (proxmoxAPI, error)
 	clients   map[string]proxmoxAPI
@@ -75,65 +75,65 @@ type managedRuntime struct {
 	// сервера.
 	buildContext  context.Context
 	agentHostKeys sync.Map
-	// Швы прохода reconcile: nil и 0 значат time.Now и managedPassTimeout.
+	// Швы прохода reconcile: nil и 0 значат time.Now и defaultPassTimeout.
 	now         func() time.Time
 	passTimeout time.Duration
 }
 
-// managedPassTimeout — срок одного прохода reconcile для одного актора.
+// defaultPassTimeout — срок одного прохода reconcile для одного актора.
 // Задача PVE может идти дольше: OCI vzcreate на живом стенде шёл 34 с.
-const managedPassTimeout = 20 * time.Second
+const defaultPassTimeout = 20 * time.Second
 
-// managedTaskPendingLimit — сколько идущая задача ждёт без диагностики.
+// taskPendingLimit — сколько идущая задача ждёт без диагностики.
 // Отсчёт от UpdatedAt актора: привязка UPID его обновляет.
-const managedTaskPendingLimit = 15 * time.Minute
+const taskPendingLimit = 15 * time.Minute
 
-const managedTaskPendingError = "Proxmox is still working on the operation. brood keeps waiting; no action is needed."
+const taskPendingError = "Proxmox is still working on the operation. brood keeps waiting; no action is needed."
 
-// errManagedTaskPending — задача ещё идёт; истёк только срок прохода.
-var errManagedTaskPending = errors.New("managed Proxmox task is still running")
+// errTaskPending — задача ещё идёт; истёк только срок прохода.
+var errTaskPending = errors.New("Proxmox task is still running")
 
-func (m *managedRuntime) clock() time.Time {
+func (m *providerRuntime) clock() time.Time {
 	if m.now == nil {
 		return time.Now()
 	}
 	return m.now()
 }
 
-func (m *managedRuntime) actorPassTimeout() time.Duration {
+func (m *providerRuntime) actorPassTimeout() time.Duration {
 	if m.passTimeout <= 0 {
-		return managedPassTimeout
+		return defaultPassTimeout
 	}
 	return m.passTimeout
 }
 
-// managedTaskPending отличает идущую задачу от исхода: WaitTask прервал только
+// taskPending отличает идущую задачу от исхода: WaitTask прервал только
 // истёкший срок этого прохода. Таймаут HTTP-клиента, отмена, сбой сети и отказ
 // PVE не делают задачу «ещё идущей».
-func managedTaskPending(ctx context.Context, err error) bool {
+func taskPending(ctx context.Context, err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
 // pendingQuiet сообщает, что идущую задачу пока не показывают ошибкой: предел
 // ожидания не истёк или диагностика уже записана. Нечитаемая отметка времени
 // не продлевает ожидание.
-func (m *managedRuntime) pendingQuiet(a store.ManagedActor) bool {
-	if a.Phase == "error" && a.Error == managedTaskPendingError {
+func (m *providerRuntime) pendingQuiet(a store.Agent) bool {
+	if a.Phase == "error" && a.Error == taskPendingError {
 		return true
 	}
 	since, err := time.Parse(time.RFC3339Nano, a.UpdatedAt)
-	return err == nil && m.clock().Sub(since) < managedTaskPendingLimit
+	return err == nil && m.clock().Sub(since) < taskPendingLimit
 }
 
-func (m *managedProvider) initialize(cfg Config) error {
-	rows, err := m.server.store.ListManagedConnections(context.Background())
+func (m *provider) initialize(cfg Config) error {
+	rows, err := m.server.store.ListConnections(context.Background())
 	if err != nil {
-		return errors.New("managed connections unavailable")
+		return errors.New("Proxmox connections unavailable")
 	}
 	for _, c := range rows {
 		if m.registry != nil {
 			if _, exists := m.registry.pools[c.Name]; exists {
-				return errors.New("managed connection name conflicts with environment configuration")
+				return errors.New("Proxmox connection name conflicts with environment configuration")
 			}
 		}
 	}
@@ -163,7 +163,7 @@ func (m *managedProvider) initialize(cfg Config) error {
 	}
 	return nil
 }
-func (m *managedProvider) start(ctx context.Context) {
+func (m *provider) start(ctx context.Context) {
 	ctx, m.cancel = context.WithCancel(ctx)
 	m.buildContext = ctx
 	m.workers.Add(1)
@@ -182,13 +182,13 @@ func (m *managedProvider) start(ctx context.Context) {
 		}
 	}()
 }
-func (m *managedProvider) stopReconcile() {
+func (m *provider) stopReconcile() {
 	if m.cancel != nil {
 		m.cancel()
 		m.workers.Wait()
 	}
 }
-func (m *managedProvider) close() {
+func (m *provider) close() {
 	m.stopReconcile()
 	m.lifecycle.Lock()
 	defer m.lifecycle.Unlock()
@@ -202,10 +202,10 @@ func (m *managedProvider) close() {
 
 func guestToken(secret, uid string, generation int64) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("brood/proxmox/guest/v1\x00" + uid + "\x00" + managedDecimal(generation)))
+	mac.Write([]byte("brood/proxmox/guest/v1\x00" + uid + "\x00" + decimal(generation)))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
-func (m *managedProvider) authorizeGuest(uid string, generation int64, token string) bool {
+func (m *provider) authorizeGuest(uid string, generation int64, token string) bool {
 	if m.registry == nil || len(m.registry.relaySecret) < 32 || generation <= 0 {
 		return false
 	}
@@ -215,17 +215,17 @@ func (m *managedProvider) authorizeGuest(uid string, generation int64, token str
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	a, err := m.server.store.GetManagedActor(ctx, uid)
+	a, err := m.server.store.GetAgent(ctx, uid)
 	// Only a start boots the guest. Create leaves the CT stopped, and a reset
 	// keeps the old incarnation until cleanup, even after a failed stage settles.
 	return err == nil && a.Phase != "deleted" && a.Desired == "running" && a.Operation == "start" && a.Incarnation == generation
 }
 
-func managedOwned(a store.ManagedActor) proxmox.OwnedCT {
+func ownedCT(a store.Agent) proxmox.OwnedCT {
 	return proxmox.OwnedCT{VMID: a.CTID, Owner: proxmox.Ownership{PoolUID: a.PoolUID, ActorUID: a.UID, Incarnation: uint64(a.Incarnation), Nonce: a.OwnerNonce}}
 }
 
-func (m *managedProvider) client(p store.ManagedPool) (proxmoxAPI, error) {
+func (m *provider) client(p store.Pool) (proxmoxAPI, error) {
 	if !m.poolAvailable(p) {
 		return nil, fmt.Errorf("%w: activated Proxmox configuration is unavailable or changed", app.ErrConflict)
 	}
@@ -238,9 +238,9 @@ func (m *managedProvider) client(p store.ManagedPool) (proxmoxAPI, error) {
 	}
 	secret := m.registry.tokens[cfg.credentialRef]
 	if cfg.credentialRef == "" {
-		secret, err = m.server.store.ManagedConnectionSecret(context.Background(), p.Connection)
+		secret, err = m.server.store.ConnectionSecret(context.Background(), p.Connection)
 		if err != nil {
-			return nil, fmt.Errorf("%w: managed credential unavailable", app.ErrConflict)
+			return nil, fmt.Errorf("%w: Proxmox credential unavailable", app.ErrConflict)
 		}
 	}
 	templateStorage, _, _ := strings.Cut(p.Template.URI, ":vztmpl/")
@@ -252,27 +252,27 @@ func (m *managedProvider) client(p store.ManagedPool) (proxmoxAPI, error) {
 	return client, nil
 }
 
-func (m *managedProvider) saveObservation(ctx context.Context, a store.ManagedActor, phase, upid, detail string) (store.ManagedActor, error) {
+func (m *provider) saveObservation(ctx context.Context, a store.Agent, phase, upid, detail string) (store.Agent, error) {
 	a.Phase = phase
 	a.Error = detail
 	if upid != "" {
 		a.UPID = upid
 	}
-	return m.server.store.UpdateManagedActor(ctx, a, a.Revision)
+	return m.server.store.UpdateAgent(ctx, a, a.Revision)
 }
-func (m *managedProvider) recordTask(ctx context.Context, a store.ManagedActor, upid string, err error) (store.ManagedActor, error) {
+func (m *provider) recordTask(ctx context.Context, a store.Agent, upid string, err error) (store.Agent, error) {
 	// Provider evidence must survive the browser disconnecting after submission.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if upid != "" {
 		var bindErr error
-		a, bindErr = m.server.store.BindManagedActorTask(ctx, a.UID, a.Revision, a.OperationID, a.Stage, upid)
+		a, bindErr = m.server.store.BindAgentTask(ctx, a.UID, a.Revision, a.OperationID, a.Stage, upid)
 		if bindErr != nil {
 			return a, bindErr
 		}
 	}
 	if err != nil {
-		return m.saveObservation(ctx, a, "error", "", managedProviderError(err))
+		return m.saveObservation(ctx, a, "error", "", providerError(err))
 	}
 	return a, nil
 }
@@ -281,54 +281,54 @@ func (m *managedProvider) recordTask(ctx context.Context, a store.ManagedActor, 
 // и что делать дальше. Код рядом с текстом позволяет панели показать
 // перевод и подсказку; сырой ответ провайдера сюда не попадает.
 const (
-	managedOwnershipError  = "The container in Proxmox no longer matches what brood created: its description, disk or network was changed, or it left the brood resource pool. brood changed nothing. Restore the container in Proxmox or delete the agent."
-	managedPermissionError = "Proxmox refused the operation because the brood API token lacks a permission. Nothing was changed. An administrator should check the roles of the token, then retry."
-	managedTaskFailedError = "Proxmox started the operation and reported that it failed. Open the task log of the container in Proxmox for the reason, then retry or delete the agent."
-	managedAgentWaiting    = "The container is running but does not answer over SSH yet. brood installs the agent as soon as it answers; no action is needed."
-	managedUncertainError  = "Proxmox did not confirm whether the operation started: the request failed or timed out. brood does not repeat it blindly. If the container does not exist in Proxmox, delete the agent; otherwise wait and reload."
-	managedUnavailable     = "brood could not reach Proxmox to check the container. It retries automatically; no action is needed unless this persists."
+	ownershipError    = "The container in Proxmox no longer matches what brood created: its description, disk or network was changed, or it left the brood resource pool. brood changed nothing. Restore the container in Proxmox or delete the agent."
+	permissionError   = "Proxmox refused the operation because the brood API token lacks a permission. Nothing was changed. An administrator should check the roles of the token, then retry."
+	taskFailedError   = "Proxmox started the operation and reported that it failed. Open the task log of the container in Proxmox for the reason, then retry or delete the agent."
+	agentWaitingError = "The container is running but does not answer over SSH yet. brood installs the agent as soon as it answers; no action is needed."
+	uncertainError    = "Proxmox did not confirm whether the operation started: the request failed or timed out. brood does not repeat it blindly. If the container does not exist in Proxmox, delete the agent; otherwise wait and reload."
+	unavailableError  = "brood could not reach Proxmox to check the container. It retries automatically; no action is needed unless this persists."
 )
 
-func managedProviderError(err error) string {
+func providerError(err error) string {
 	switch {
 	case errors.Is(err, proxmox.ErrOwnership):
-		return managedOwnershipError
+		return ownershipError
 	case errors.Is(err, proxmox.ErrPermission):
-		return managedPermissionError
+		return permissionError
 	case errors.Is(err, proxmox.ErrTaskFailed):
-		return managedTaskFailedError
-	case errors.Is(err, errManagedTaskPending):
-		return managedTaskPendingError
+		return taskFailedError
+	case errors.Is(err, errTaskPending):
+		return taskPendingError
 	case errors.Is(err, errAgentWaiting):
-		return managedAgentWaiting
+		return agentWaitingError
 	case errors.Is(err, proxmox.ErrUncertain):
-		return managedUncertainError
+		return uncertainError
 	default:
-		return managedUnavailable
+		return unavailableError
 	}
 }
 
-// managedErrorCode — устойчивый код диагностики для панели; пусто — текст
+// diagnosticCode — устойчивый код диагностики для панели; пусто — текст
 // без известного кода.
-func managedErrorCode(message string) string {
+func diagnosticCode(message string) string {
 	switch message {
 	case "":
 		return ""
-	case managedOwnershipError:
+	case ownershipError:
 		return "ownership"
-	case managedPermissionError:
+	case permissionError:
 		return "permission"
-	case managedTaskFailedError:
+	case taskFailedError:
 		return "task_failed"
-	case managedTaskPendingError:
+	case taskPendingError:
 		return "task_pending"
-	case managedAgentWaiting:
+	case agentWaitingError:
 		return "agent_waiting"
-	case managedUncertainError:
+	case uncertainError:
 		return "uncertain"
-	case managedUnavailable:
+	case unavailableError:
 		return "provider_unavailable"
-	case managedReadinessError:
+	case readinessError:
 		return "agent_not_connected"
 	}
 	if strings.HasPrefix(message, "agent installation failed") {
@@ -337,19 +337,19 @@ func managedErrorCode(message string) string {
 	return "other"
 }
 
-func inspectManaged(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (proxmox.CTConfig, error) {
-	return client.InspectOwned(ctx, managedOwned(a))
+func inspectAgent(ctx context.Context, client proxmoxAPI, a store.Agent) (proxmox.CTConfig, error) {
+	return client.InspectOwned(ctx, ownedCT(a))
 }
 
-func managedObservedState(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (string, error) {
-	_, observed, err := managedObservation(ctx, client, a)
+func observedState(ctx context.Context, client proxmoxAPI, a store.Agent) (string, error) {
+	_, observed, err := observation(ctx, client, a)
 	return observed, err
 }
 
-// managedObservation — managedObservedState вместе с проверенной владением
+// observation — observedState вместе с проверенной владением
 // конфигурацией CT; у отсутствующей CT конфигурация пуста.
-func managedObservation(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (proxmox.CTConfig, string, error) {
-	config, err := inspectManaged(ctx, client, a)
+func observation(ctx context.Context, client proxmoxAPI, a store.Agent) (proxmox.CTConfig, string, error) {
+	config, err := inspectAgent(ctx, client, a)
 	if err != nil {
 		// Scoped PVE read может вернуть 403/500 даже после удаления. Только
 		// положительный global proof заменяет исходный отказ чтения.
@@ -368,7 +368,7 @@ func managedObservation(ctx context.Context, client proxmoxAPI, a store.ManagedA
 	return config, status.Status, nil
 }
 
-func (m *managedProvider) launch(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *provider) launch(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
 	var upid string
 	var err error
 	switch a.Stage {
@@ -398,16 +398,16 @@ func (m *managedProvider) launch(ctx context.Context, client proxmoxAPI, a store
 	case "delete":
 		return m.launchDelete(ctx, client, a)
 	default:
-		return a, fmt.Errorf("%w: unsupported managed intent", app.ErrConflict)
+		return a, fmt.Errorf("%w: unsupported agent intent", app.ErrConflict)
 	}
 	// An API error is durable state, not permission to retry a write or pick a new CTID.
 	return m.recordTask(ctx, a, upid, err)
 }
 
-func (m *managedProvider) reconcileOnce(parent context.Context) {
+func (m *provider) reconcileOnce(parent context.Context) {
 	m.lifecycle.Lock()
 	defer m.lifecycle.Unlock()
-	actors, err := m.server.store.ListManagedActors(parent, "")
+	actors, err := m.server.store.ListAgents(parent, "")
 	if err != nil {
 		return
 	}
@@ -426,20 +426,20 @@ func (m *managedProvider) reconcileOnce(parent context.Context) {
 // прохода становится диагностикой актора. Стадия, чью запись PVE ещё не
 // получал (notRequested), сохраняет фазу и отметку незапрошенной стадии, у
 // остальных фаза — error. Вызывающий держит lifecycle.
-func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedActor) {
+func (m *provider) reconcilePass(parent context.Context, a store.Agent) {
 	ctx, cancel := context.WithTimeout(parent, m.actorPassTimeout())
 	_, err := m.reconcileActor(ctx, a)
 	cancel()
 	if err == nil || parent.Err() != nil {
 		return
 	}
-	current, getErr := m.server.store.GetManagedActor(parent, a.UID)
+	current, getErr := m.server.store.GetAgent(parent, a.UID)
 	if getErr != nil || current.Revision != a.Revision || current.Phase == "deleted" {
 		return
 	}
 	// Идущая задача — не исход: стадия, UPID и ревизия остаются,
 	// следующий проход продолжит ждать тот же UPID.
-	if errors.Is(err, errManagedTaskPending) && m.pendingQuiet(current) {
+	if errors.Is(err, errTaskPending) && m.pendingQuiet(current) {
 		return
 	}
 	// Незапрошенные start, stop и delete не стали неизвестными: проход
@@ -447,10 +447,10 @@ func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedA
 	// прежнем состоянии, следующий проход повторит. Фаза и отметка
 	// незапрошенной стадии сохраняются, меняется только диагностика: без
 	// отметки стадия считалась бы отправленной навсегда (#277).
-	phase, diagnostic := "error", managedProviderError(err)
+	phase, diagnostic := "error", providerError(err)
 	if notRequested(current) {
 		phase = current.Phase
-		diagnostic = store.ManagedUnsentError(current.Unsent(), diagnostic)
+		diagnostic = store.JoinUnsent(current.Unsent(), diagnostic)
 	}
 	m.saveObservation(parent, current, phase, "", diagnostic)
 }
@@ -462,41 +462,41 @@ func (m *managedProvider) reconcilePass(parent context.Context, a store.ManagedA
 // потом зовёт Start. Наблюдение CT эти случаи не различает: Start, чей ответ
 // потерян, может ещё не поднять CT, и повтор по виду остановленной CT
 // запустил бы её дважды.
-func startNotRequested(a store.ManagedActor) bool {
+func startNotRequested(a store.Agent) bool {
 	return a.Operation == "start" && a.Stage == "start" && a.UPID == "" && a.Phase == "stopped" && a.Desired == "running"
 }
 
 // stopNotRequested — стадия stop без задачи, чей Stop ещё не запрошен: так
-// её записывает BeginManagedActorOperation (фаза stopping или deleting с
-// отметкой store.ManagedStopUnsent, #277), так её оставляет отказ Stop до
+// её записывает BeginAgentOperation (фаза stopping или deleting с
+// отметкой store.StopUnsent, #277), так её оставляет отказ Stop до
 // записи (фаза наблюдённой работающей CT running, #275) и возврат
-// незапрошенного delete к остановке (ReopenManagedActorStop). launchStop
+// незапрошенного delete к остановке (ReopenAgentStop). launchStop
 // снимает отметку и ставит фазу остановки перед каждой отправкой: Stop,
 // чей ответ потерян или чей UPID не записан, по ней второй раз не уходит.
 // Stop-стадия без отметки в фазе остановки — запись до #277 или отправка, и
 // исход её неизвестен.
-func stopNotRequested(a store.ManagedActor) bool {
+func stopNotRequested(a store.Agent) bool {
 	if a.Stage != "stop" || a.UPID != "" {
 		return false
 	}
-	return a.Phase == "running" || ((a.Phase == "stopping" || a.Phase == "deleting") && a.Unsent() == store.ManagedStopUnsent)
+	return a.Phase == "running" || ((a.Phase == "stopping" || a.Phase == "deleting") && a.Unsent() == store.StopUnsent)
 }
 
 // deleteNotRequested — стадия delete без задачи, чей Delete ещё не запрошен
-// (#277): CT остановлена (phase stopped), отметка store.ManagedDeleteUnsent.
+// (#277): CT остановлена (phase stopped), отметка store.DeleteUnsent.
 // Так её записывает подтверждённая остановка очистки
-// (ConfirmManagedActorStage) и возвращает отказ Delete до записи
-// (MarkManagedActorDeleteUnsent). launchDelete снимает отметку перед
+// (ConfirmAgentStage) и возвращает отказ Delete до записи
+// (MarkAgentDeleteUnsent). launchDelete снимает отметку перед
 // отправкой. Delete-стадия без отметки, в том числе записанная до #277,
 // могла отправить Delete и не повторяется: одна фаза stopped этого не
 // доказывает.
-func deleteNotRequested(a store.ManagedActor) bool {
-	return a.Stage == "delete" && a.UPID == "" && a.Phase == "stopped" && a.Unsent() == store.ManagedDeleteUnsent
+func deleteNotRequested(a store.Agent) bool {
+	return a.Stage == "delete" && a.UPID == "" && a.Phase == "stopped" && a.Unsent() == store.DeleteUnsent
 }
 
 // notRequested — стадия, чью запись PVE ещё не получал: reconcile повторяет
 // её каждым проходом, а phase хранит наблюдённое состояние CT.
-func notRequested(a store.ManagedActor) bool {
+func notRequested(a store.Agent) bool {
 	return startNotRequested(a) || stopNotRequested(a) || deleteNotRequested(a)
 }
 
@@ -512,9 +512,9 @@ func unsent(upid string, err error) bool {
 // waiting stop or delete is the change that has to happen first. phase is
 // the stage's phase: running or stopped is the container a pass observed;
 // a stop that only its intent recorded (stopping or deleting with
-// store.ManagedStopUnsent) has no observation, and its container may have
+// store.StopUnsent) has no observation, and its container may have
 // stopped or vanished since. last is the public diagnostic without the
-// unsent mark (store.ManagedActor.Diagnostic).
+// unsent mark (store.Agent.Diagnostic).
 type waitingRefusal struct {
 	action, name, stage, phase, last string
 }
@@ -540,17 +540,17 @@ func (e *waitingRefusal) Error() string {
 
 func (e *waitingRefusal) Unwrap() error { return app.ErrConflict }
 
-func newWaitingRefusal(action string, a store.ManagedActor) error {
+func newWaitingRefusal(action string, a store.Agent) error {
 	return &waitingRefusal{action: action, name: a.Name, stage: a.Stage, phase: a.Phase, last: a.Diagnostic()}
 }
 
-func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedActor) (result store.ManagedActor, err error) {
+func (m *provider) reconcileActor(ctx context.Context, a store.Agent) (result store.Agent, err error) {
 	defer func() {
 		if !errors.Is(err, store.ErrRevisionConflict) && (err != nil || result.Phase != "running") {
 			m.verified.Delete(a.UID)
 		}
 	}()
-	current, err := m.server.store.GetManagedActor(ctx, a.UID)
+	current, err := m.server.store.GetAgent(ctx, a.UID)
 	if err != nil {
 		return a, err
 	}
@@ -559,10 +559,10 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	}
 	// Согласованный терминальный отказ требует нового явного намерения.
 	// Диагностика сохраняется даже при недоступной конфигурации провайдера.
-	if a.Stage == "done" && a.Phase == "error" && a.Error == managedProviderError(proxmox.ErrTaskFailed) {
+	if a.Stage == "done" && a.Phase == "error" && a.Error == providerError(proxmox.ErrTaskFailed) {
 		return a, nil
 	}
-	p, err := m.server.store.GetManagedPool(ctx, a.PoolUID)
+	p, err := m.server.store.GetPool(ctx, a.PoolUID)
 	if err != nil {
 		return a, err
 	}
@@ -581,7 +581,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	}
 	// Незапрошенный Delete тоже, после наблюдения CT (#277).
 	if deleteNotRequested(a) {
-		observed, err := managedObservedState(ctx, client, a)
+		observed, err := observedState(ctx, client, a)
 		if err != nil {
 			return a, err
 		}
@@ -593,7 +593,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 			// исход не неизвестен — Delete не запрашивался. Стадия
 			// возвращается к незапрошенной остановке той же операции, и
 			// владение уже проверено наблюдением.
-			a, err = m.server.store.ReopenManagedActorStop(ctx, a.UID, a.Revision, a.OperationID)
+			a, err = m.server.store.ReopenAgentStop(ctx, a.UID, a.Revision, a.OperationID)
 			if err != nil {
 				return a, err
 			}
@@ -617,8 +617,8 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 			}
 			// Срок прохода короче долгих задач PVE: это ожидание, а не отказ.
 			// Ни повторной записи, ни замены UPID.
-			if managedTaskPending(ctx, err) {
-				return a, errManagedTaskPending
+			if taskPending(ctx, err) {
+				return a, errTaskPending
 			}
 			return a, err
 		}
@@ -626,7 +626,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 	if a.Stage == "delete" {
 		return m.finishCleanup(ctx, client, a)
 	}
-	observed, err := managedObservedState(ctx, client, a)
+	observed, err := observedState(ctx, client, a)
 	if err != nil {
 		return a, err
 	}
@@ -643,7 +643,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 			return a, proxmox.ErrUncertain
 		}
 		if a.Stage != "done" {
-			a, err = m.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+			a, err = m.server.store.ConfirmAgentStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 		} else if a.Phase != "stopped" || a.Error != "" {
 			a, err = m.saveObservation(ctx, a, "stopped", "", "")
 		}
@@ -653,7 +653,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		if _, clone, _ := m.workerImage(ctx, a); clone {
 			// Клон наследует ресурсы сборочного контейнера: до первого
 			// старта ему задаётся доля воркера. Повтор безопасен.
-			if err := client.Resize(ctx, managedOwned(a), int(a.Resources.CPUMillicores/1000), int(a.Resources.MemoryBytes/mib)); err != nil {
+			if err := client.Resize(ctx, ownedCT(a), int(a.Resources.CPUMillicores/1000), int(a.Resources.MemoryBytes/mib)); err != nil {
 				return a, err
 			}
 		}
@@ -681,7 +681,7 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		if observed == "absent" && (a.Operation == "delete" || a.Operation == "reset") {
 			return m.cleanupAbsent(ctx, client, a)
 		}
-		a, err = m.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+		a, err = m.server.store.ConfirmAgentStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 		if err != nil || a.Stage == "done" {
 			return a, err
 		}
@@ -719,21 +719,21 @@ func (m *managedProvider) reconcileActor(ctx context.Context, a store.ManagedAct
 		m.verified.Store(a.UID, a.Incarnation)
 		return a, nil
 	}
-	return a, fmt.Errorf("%w: unsupported managed reconciliation intent", app.ErrConflict)
+	return a, fmt.Errorf("%w: unsupported agent reconciliation intent", app.ErrConflict)
 }
 
 // resolveTaskFailure is called only after WaitTask returned ErrTaskFailed for
 // this exact bound slot. Observation alone never proves task terminality.
-func (m *managedProvider) resolveTaskFailure(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
-	observed, err := managedObservedState(ctx, client, a)
+func (m *provider) resolveTaskFailure(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
+	observed, err := observedState(ctx, client, a)
 	if err != nil {
 		return a, err
 	}
 	err = m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
-		a, e = m.saveObservation(tx, a, "error", "", managedProviderError(proxmox.ErrTaskFailed))
+		a, e = m.saveObservation(tx, a, "error", "", providerError(proxmox.ErrTaskFailed))
 		if e == nil {
-			a, e = m.server.store.ResolveManagedActorTaskFailure(tx, a.UID, a.Revision, a.OperationID, a.Stage, a.UPID, observed)
+			a, e = m.server.store.ResolveAgentTaskFailure(tx, a.UID, a.Revision, a.OperationID, a.Stage, a.UPID, observed)
 		}
 		return e
 	})
@@ -743,10 +743,10 @@ func (m *managedProvider) resolveTaskFailure(ctx context.Context, client proxmox
 // confirmStartRunning закрывает стадию start наблюдённой работающей CT.
 // Работающая CT не зависит от readiness гостя: task fence фиксируется без
 // публикации running до настоящего ttyd probe (reconcileActor).
-func (m *managedProvider) confirmStartRunning(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *provider) confirmStartRunning(ctx context.Context, a store.Agent) (store.Agent, error) {
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
-		a, e = m.server.store.ConfirmManagedActorStage(tx, a.UID, a.Revision, a.OperationID, a.Stage, "running")
+		a, e = m.server.store.ConfirmAgentStage(tx, a.UID, a.Revision, a.OperationID, a.Stage, "running")
 		if e == nil {
 			a, e = m.saveObservation(tx, a, "provisioning", "", "")
 		}
@@ -756,14 +756,14 @@ func (m *managedProvider) confirmStartRunning(ctx context.Context, a store.Manag
 }
 
 // beginStart записывает намерение start остановленной CT незапрошенным
-// (startNotRequested, #275): BeginManagedActorOperation ставит provisioning,
+// (startNotRequested, #275): BeginAgentOperation ставит provisioning,
 // а фаза stopped в той же транзакции говорит, что Start не отправлялся. Сбой
 // до Start, в том числе остановка сервера, оставляет start следующему
 // проходу; provisioning ставит launchStart перед самим Start.
-func (m *managedProvider) beginStart(ctx context.Context, a store.ManagedActor, operationID string) (store.ManagedActor, error) {
+func (m *provider) beginStart(ctx context.Context, a store.Agent, operationID string) (store.Agent, error) {
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
 		var e error
-		a, e = m.server.store.BeginManagedActorOperation(tx, a.UID, a.Revision, operationID, "start")
+		a, e = m.server.store.BeginAgentOperation(tx, a.UID, a.Revision, operationID, "start")
 		if e == nil {
 			a, e = m.saveObservation(tx, a, "stopped", "", "")
 		}
@@ -779,8 +779,8 @@ func (m *managedProvider) beginStart(ctx context.Context, a store.ManagedActor, 
 // неизвестен, нет. Стадия согласуется наблюдением без записи в PVE, как
 // start работающей CT (confirmStartRunning), а running публикует только
 // проверка готовности гостя следующим проходом.
-func (m *managedProvider) resumeStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
-	config, observed, err := managedObservation(ctx, client, a)
+func (m *provider) resumeStart(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
+	config, observed, err := observation(ctx, client, a)
 	if err != nil {
 		return a, err
 	}
@@ -788,7 +788,7 @@ func (m *managedProvider) resumeStart(ctx context.Context, client proxmoxAPI, a 
 	case "stopped":
 		return m.launchStart(ctx, client, a, config.Digest)
 	case "absent":
-		return m.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+		return m.server.store.ConfirmAgentStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 	case "running":
 		return m.confirmStartRunning(ctx, a)
 	}
@@ -805,8 +805,8 @@ func (m *managedProvider) resumeStart(ctx context.Context, client proxmoxAPI, a 
 // а запись конфигурации — нет. Перед Start отметка provisioning фиксирует
 // запрос: Start, отправленный до остановки сервера, по ней не уходит второй
 // раз.
-func (m *managedProvider) launchStart(ctx context.Context, client proxmoxAPI, a store.ManagedActor, digest string) (store.ManagedActor, error) {
-	owned := managedOwned(a)
+func (m *provider) launchStart(ctx context.Context, client proxmoxAPI, a store.Agent, digest string) (store.Agent, error) {
+	owned := ownedCT(a)
 	a, err := m.saveObservation(ctx, a, "provisioning", "", "")
 	if err != nil {
 		return a, err
@@ -825,11 +825,11 @@ func (m *managedProvider) launchStart(ctx context.Context, client proxmoxAPI, a 
 
 // launchStop отправляет Stop стадии stop CT, наблюдённой работающей.
 // Незапрошенный Stop (stopNotRequested) сначала снова получает фазу
-// остановки, как от BeginManagedActorOperation: Stop, чей ответ потерян или
+// остановки, как от BeginAgentOperation: Stop, чей ответ потерян или
 // чей UPID не записан, по ней второй раз не уходит. Отказ Stop до записи
 // (чтение владения, явный 403/409) возвращает стадии фазу running: задачи
 // нет, и следующий проход повторит Stop (#275).
-func (m *managedProvider) launchStop(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *provider) launchStop(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
 	if stopNotRequested(a) {
 		marked, err := m.saveObservation(ctx, a, stopPhase(a), "", "")
 		if err != nil {
@@ -837,7 +837,7 @@ func (m *managedProvider) launchStop(ctx context.Context, client proxmoxAPI, a s
 		}
 		a = marked
 	}
-	upid, err := client.Stop(ctx, managedOwned(a))
+	upid, err := client.Stop(ctx, ownedCT(a))
 	if unsent(upid, err) {
 		durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -851,10 +851,10 @@ func (m *managedProvider) launchStop(ctx context.Context, client proxmoxAPI, a s
 // снимается, а фаза становится фазой запрошенного Delete (deletePhase):
 // Delete, чей ответ потерян или чей UPID не записан, по ней второй раз не
 // уходит. Только отказ до записи (чтение владения, явный 403/409)
-// возвращает отметку (MarkManagedActorDeleteUnsent), и следующий проход
+// возвращает отметку (MarkAgentDeleteUnsent), и следующий проход
 // повторит Delete. Delete-стадия без отметки не отправляется: её исход
 // неизвестен.
-func (m *managedProvider) launchDelete(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *provider) launchDelete(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
 	if !deleteNotRequested(a) {
 		return a, proxmox.ErrUncertain
 	}
@@ -863,11 +863,11 @@ func (m *managedProvider) launchDelete(ctx context.Context, client proxmoxAPI, a
 		return a, err
 	}
 	a = marked
-	upid, err := client.Delete(ctx, managedOwned(a))
+	upid, err := client.Delete(ctx, ownedCT(a))
 	if unsent(upid, err) {
 		durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		saved, saveErr := m.server.store.MarkManagedActorDeleteUnsent(durable, a.UID, a.Revision, a.OperationID, managedProviderError(err))
+		saved, saveErr := m.server.store.MarkAgentDeleteUnsent(durable, a.UID, a.Revision, a.OperationID, providerError(err))
 		if saveErr != nil {
 			return a, err
 		}
@@ -877,8 +877,8 @@ func (m *managedProvider) launchDelete(ctx context.Context, client proxmoxAPI, a
 }
 
 // stopPhase — фаза запрошенной стадии stop, как её ставит
-// BeginManagedActorOperation: deleting у delete, stopping у остальных.
-func stopPhase(a store.ManagedActor) string {
+// BeginAgentOperation: deleting у delete, stopping у остальных.
+func stopPhase(a store.Agent) string {
 	if a.Operation == "delete" {
 		return "deleting"
 	}
@@ -888,7 +888,7 @@ func stopPhase(a store.ManagedActor) string {
 // deletePhase — фаза запрошенной стадии delete: deleting у delete и stopped
 // у reset, как до #277: CT остановлена, а старая инкарнация reset ещё
 // получает ответы на свои вопросы (actorAnswerable), пока её CT удаляют.
-func deletePhase(a store.ManagedActor) string {
+func deletePhase(a store.Agent) string {
 	if a.Operation == "delete" {
 		return "deleting"
 	}
@@ -900,35 +900,34 @@ func deletePhase(a store.ManagedActor) string {
 // ошибка прохода. Если записать не удалось, возвращается err: диагностику
 // сохранит проход (reconcilePass), а неснятая отметка отправки оставит исход
 // неизвестным.
-func (m *managedProvider) leavePending(ctx context.Context, a store.ManagedActor, phase string, err error) (store.ManagedActor, error) {
-	saved, saveErr := m.saveObservation(ctx, a, phase, "", managedProviderError(err))
+func (m *provider) leavePending(ctx context.Context, a store.Agent, phase string, err error) (store.Agent, error) {
+	saved, saveErr := m.saveObservation(ctx, a, phase, "", providerError(err))
 	if saveErr != nil {
 		return a, err
 	}
 	return saved, nil
 }
 
-// managedBootstrap — подтверждённая запись bootstrap env стадии start:
-// операция operationID записала env (его SHA-256: значения секретны), и
-// после записи конфигурация CT имела digest. Запись живёт в памяти процесса:
-// после перезапуска сервера первый повтор пишет env снова.
-type managedReadiness struct {
+// readinessWait — с какого момента операция start ждёт подключения агента.
+// Запись живёт в памяти процесса: после перезапуска сервера отсчёт
+// начинается снова.
+type readinessWait struct {
 	operationID string
 	since       time.Time
 }
 
-const managedReadinessError = "The agent did not connect within two minutes after its container started. Stop and start the agent; if it repeats, check the brood-agent service in the container console in Proxmox."
+const readinessError = "The agent did not connect within two minutes after its container started. Stop and start the agent; if it repeats, check the brood-agent service in the container console in Proxmox."
 
-func (m *managedProvider) waitReadiness(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
-	value, _ := m.readiness.LoadOrStore(a.UID, managedReadiness{a.OperationID, time.Now()})
-	waiting := value.(managedReadiness)
+func (m *provider) waitReadiness(ctx context.Context, a store.Agent) (store.Agent, error) {
+	value, _ := m.readiness.LoadOrStore(a.UID, readinessWait{a.OperationID, time.Now()})
+	waiting := value.(readinessWait)
 	if waiting.operationID != a.OperationID {
-		waiting = managedReadiness{a.OperationID, time.Now()}
+		waiting = readinessWait{a.OperationID, time.Now()}
 		m.readiness.Store(a.UID, waiting)
 	}
 	phase, detail := "provisioning", ""
 	if time.Since(waiting.since) >= 2*time.Minute {
-		phase, detail = "error", managedReadinessError
+		phase, detail = "error", readinessError
 	}
 	if a.Phase == phase && a.Error == detail {
 		return a, nil
@@ -936,7 +935,7 @@ func (m *managedProvider) waitReadiness(ctx context.Context, a store.ManagedActo
 	return m.saveObservation(ctx, a, phase, "", detail)
 }
 
-func (m *managedProvider) finishCleanup(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *provider) finishCleanup(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
 	// Config 404 and ACL-filtered inventory are not global absence evidence.
 	if err := client.ConfirmAbsent(ctx, a.CTID); err != nil {
 		return a, err
@@ -945,7 +944,7 @@ func (m *managedProvider) finishCleanup(ctx context.Context, client proxmoxAPI, 
 }
 
 // finishConfirmedCleanup consumes an already-positive global absence proof.
-func (m *managedProvider) finishConfirmedCleanup(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *provider) finishConfirmedCleanup(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
 	a, err := m.releaseCleanup(ctx, a)
 	if err != nil || a.Operation != "reset" {
 		return a, err
@@ -956,12 +955,12 @@ func (m *managedProvider) finishConfirmedCleanup(ctx context.Context, client pro
 // releaseCleanup — запись в базе после подтверждённого отсутствия CT стадии
 // delete: delete освобождает аллокацию, reset начинает новую инкарнацию.
 // PVE не зовётся: Create reset отправляет вызывающий после фиксации.
-func (m *managedProvider) releaseCleanup(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
+func (m *provider) releaseCleanup(ctx context.Context, a store.Agent) (store.Agent, error) {
 	switch a.Operation {
 	case "delete":
-		return m.server.store.ConfirmManagedActorDeleted(ctx, a.UID, a.Revision, a.OperationID)
+		return m.server.store.ConfirmAgentDeleted(ctx, a.UID, a.Revision, a.OperationID)
 	case "reset":
-		return m.server.store.ConfirmManagedActorReset(ctx, a.UID, a.Revision, a.OperationID, store.NewID())
+		return m.server.store.ConfirmAgentReset(ctx, a.UID, a.Revision, a.OperationID, store.NewID())
 	}
 	return a, app.ErrConflict
 }
@@ -973,10 +972,10 @@ func (m *managedProvider) releaseCleanup(ctx context.Context, a store.ManagedAct
 // остановке сервера стадию delete без задачи и без отметки — её исход
 // неизвестен навсегда, хотя Delete не отправлялся (#277). При отказе стадия
 // stop остаётся, и следующий проход снова находит CT отсутствующей.
-func (m *managedProvider) cleanupAbsent(ctx context.Context, client proxmoxAPI, a store.ManagedActor) (store.ManagedActor, error) {
-	var released store.ManagedActor
+func (m *provider) cleanupAbsent(ctx context.Context, client proxmoxAPI, a store.Agent) (store.Agent, error) {
+	var released store.Agent
 	err := m.server.store.WithTx(ctx, func(tx context.Context) error {
-		confirmed, e := m.server.store.ConfirmManagedActorStage(tx, a.UID, a.Revision, a.OperationID, a.Stage, "absent")
+		confirmed, e := m.server.store.ConfirmAgentStage(tx, a.UID, a.Revision, a.OperationID, a.Stage, "absent")
 		if e == nil {
 			released, e = m.releaseCleanup(tx, confirmed)
 		}
@@ -991,7 +990,7 @@ func (m *managedProvider) cleanupAbsent(ctx context.Context, client proxmoxAPI, 
 	return m.launch(ctx, client, released)
 }
 
-func (m *managedProvider) probe(ctx context.Context, a store.ManagedActor) bool {
+func (m *provider) probe(ctx context.Context, a store.Agent) bool {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	conn, err := m.hub.Dial(ctx, a.UID, a.Incarnation)
@@ -1012,15 +1011,15 @@ func (m *managedProvider) probe(ctx context.Context, a store.ManagedActor) bool 
 	return response.StatusCode == 200
 }
 
-func (m *managedProvider) actorByName(ctx context.Context, swarm, name string) (store.ManagedActor, error) {
-	actors, err := m.server.store.ListManagedActors(ctx, swarm)
+func (m *provider) actorByName(ctx context.Context, swarm, name string) (store.Agent, error) {
+	actors, err := m.server.store.ListAgents(ctx, swarm)
 	if err != nil {
-		return store.ManagedActor{}, err
+		return store.Agent{}, err
 	}
 	for _, a := range actors {
 		if a.Name == name && a.Phase != "deleted" {
 			return a, nil
 		}
 	}
-	return store.ManagedActor{}, store.ErrNotFound
+	return store.Agent{}, store.ErrNotFound
 }

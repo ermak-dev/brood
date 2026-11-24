@@ -68,7 +68,7 @@ func (s *Store) AcquireActorOperation(ctx context.Context, uid string, generatio
 
 // guardActorOperation refuses while a workspace operation on the agent is
 // active or its outcome is unconfirmed.
-func (s *Store) guardActorOperation(ctx context.Context, a ManagedActor) error {
+func (s *Store) guardActorOperation(ctx context.Context, a Agent) error {
 	if _, err := s.CurrentActorOperation(ctx, a.UID); err == nil {
 		return newOperationConflict("a restart or slash command on this agent is still running or its outcome is unconfirmed")
 	} else if !errors.Is(err, ErrNotFound) {
@@ -80,7 +80,7 @@ func (s *Store) guardActorOperation(ctx context.Context, a ManagedActor) error {
 // AcquireActorSessionOperation reserves a slash command. Authorize must
 // only read local authority with ctx, without network I/O. Nil denies. The
 // snapshot pins the target scope.
-func (s *Store) AcquireActorSessionOperation(ctx context.Context, target ManagedActor, id, caller, operation string, authorize func(context.Context) error) (ActorOperation, error) {
+func (s *Store) AcquireActorSessionOperation(ctx context.Context, target Agent, id, caller, operation string, authorize func(context.Context) error) (ActorOperation, error) {
 	if operation != "slash" {
 		return ActorOperation{}, newOperationConflict("only a slash command takes a session reservation")
 	}
@@ -89,15 +89,15 @@ func (s *Store) AcquireActorSessionOperation(ctx context.Context, target Managed
 
 // AcquireOwnerActorOperation reserves a workspace or session operation of the
 // swarm owner. Authorize reads local authority with ctx; nil denies.
-func (s *Store) AcquireOwnerActorOperation(ctx context.Context, target ManagedActor, id, caller, operation string, authorize func(context.Context) error) (ActorOperation, error) {
+func (s *Store) AcquireOwnerActorOperation(ctx context.Context, target Agent, id, caller, operation string, authorize func(context.Context) error) (ActorOperation, error) {
 	return s.acquireAuthorizedActorOperation(ctx, target, id, caller, operation, true, authorize)
 }
 
-func (s *Store) acquireAuthorizedActorOperation(ctx context.Context, target ManagedActor, id, caller, operation string, owner bool, authorize func(context.Context) error) (ActorOperation, error) {
+func (s *Store) acquireAuthorizedActorOperation(ctx context.Context, target Agent, id, caller, operation string, owner bool, authorize func(context.Context) error) (ActorOperation, error) {
 	if authorize == nil {
 		return ActorOperation{}, newOperationConflict("authority for the operation is required")
 	}
-	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, owner, func(ctx context.Context, current ManagedActor) error {
+	return s.acquireActorOperation(ctx, target.UID, target.Incarnation, id, caller, operation, owner, func(ctx context.Context, current Agent) error {
 		if current.SwarmID != target.SwarmID {
 			return newOperationConflict("the agent moved to another swarm")
 		}
@@ -108,13 +108,13 @@ func (s *Store) acquireAuthorizedActorOperation(ctx context.Context, target Mana
 	})
 }
 
-func (s *Store) acquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string, owner bool, guard func(context.Context, ManagedActor) error) (ActorOperation, error) {
+func (s *Store) acquireActorOperation(ctx context.Context, uid string, generation int64, id, caller, operation string, owner bool, guard func(context.Context, Agent) error) (ActorOperation, error) {
 	var op ActorOperation
 	if id == "" || caller == "" || len(caller) > 512 || (operation != "restart" && operation != "slash") {
 		return op, newOperationConflict("invalid workspace operation identity")
 	}
 	err := s.WithTx(ctx, func(ctx context.Context) error {
-		a, err := s.GetManagedActor(ctx, uid)
+		a, err := s.GetAgent(ctx, uid)
 		if err != nil {
 			return err
 		}

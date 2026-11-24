@@ -105,7 +105,7 @@ func (r AgentRole) validate() error {
 }
 
 const agentRoleCols = `id,name,prompt,model,permissions,is_default`
-const agentRoleAgents = `(SELECT json_group_array(name ORDER BY name,uid) FROM managed_actors WHERE live_role_id=agent_roles.id)`
+const agentRoleAgents = `(SELECT json_group_array(name ORDER BY name,uid) FROM agents WHERE live_role_id=agent_roles.id)`
 
 func scanAgentRole(row interface{ Scan(...any) error }, includeAgents bool) (AgentRole, error) {
 	var role AgentRole
@@ -182,7 +182,7 @@ func (s *Store) CreateAgentRole(ctx context.Context, role AgentRole) (AgentRole,
 	err := s.WithTx(ctx, func(ctx context.Context) error {
 		_, err := s.conn(ctx).ExecContext(ctx,
 			`INSERT INTO agent_roles (id,name,prompt,model,permissions,is_default) VALUES (?,?,?,?,?,0)`,
-			role.ID, role.Name, role.Prompt, role.Model, encodeManaged(role.Permissions))
+			role.ID, role.Name, role.Prompt, role.Model, encodeJSON(role.Permissions))
 		if err != nil {
 			return wrapUnique(err, fmt.Sprintf("agent role %q", role.Name))
 		}
@@ -217,7 +217,7 @@ func (s *Store) UpdateAgentRole(ctx context.Context, role AgentRole) error {
 		}
 		if role.RequiresDelegation() {
 			var agent string
-			err := s.conn(ctx).QueryRowContext(ctx, `SELECT name FROM managed_actors
+			err := s.conn(ctx).QueryRowContext(ctx, `SELECT name FROM agents
 				WHERE live_role_id=? AND delegator_id='' ORDER BY name LIMIT 1`, role.ID).Scan(&agent)
 			if err == nil {
 				return fmt.Errorf("%w; agent %q has no administrator delegation. Remove delegated permissions or create a separate role", ErrAgentRoleDelegation, agent)
@@ -227,7 +227,7 @@ func (s *Store) UpdateAgentRole(ctx context.Context, role AgentRole) error {
 			}
 		}
 		_, err = s.conn(ctx).ExecContext(ctx, `UPDATE agent_roles SET name=?,prompt=?,model=?,permissions=? WHERE id=?`,
-			role.Name, role.Prompt, role.Model, encodeManaged(append([]string{}, role.Permissions...)), role.ID)
+			role.Name, role.Prompt, role.Model, encodeJSON(append([]string{}, role.Permissions...)), role.ID)
 		if err != nil {
 			return wrapUnique(err, fmt.Sprintf("agent role %q", role.Name))
 		}

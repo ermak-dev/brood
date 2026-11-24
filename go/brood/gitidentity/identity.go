@@ -1,5 +1,5 @@
 // Package gitidentity derives and validates the Git author and committer
-// identity of a managed actor (#249). It is pure: no Git, configuration or
+// identity of an agent (#249). It is pure: no Git, configuration or
 // network. Errors describe the violated rule and never echo the value.
 package gitidentity
 

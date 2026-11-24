@@ -2,7 +2,7 @@
  * brood: users, projects, members and swarms of the Go server.
  *
  * Shapes follow go/brood/server/api.go, api_lists.go, capacity_api.go,
- * managed_images.go and go/brood/auth/service.go. The server stays the
+ * image_build.go and go/brood/auth/service.go. The server stays the
  * authorization authority; a refusal carries its reason in `detail`.
  */
 import { request } from './http';

@@ -13,22 +13,22 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-type managedWorkloadOperation struct {
+type workloadOperation struct {
 	server       *Server
 	context      context.Context
 	swarm        app.Swarm
-	pool         store.ManagedPool
+	pool         store.Pool
 	name, action string
-	actor        store.ManagedActor
-	saved        store.ManagedActor
+	actor        store.Agent
+	saved        store.Agent
 	userID       string
 	role         string
 	delegated    bool
-	parent       *store.ManagedActor
+	parent       *store.Agent
 	origin       string
 	// intent сохраняется до commit и запуска PVE отдельно от saved: запись
 	// задачи может вернуть пустой actor, но не отменяет принятое намерение.
-	intent store.ManagedActor
+	intent store.Agent
 }
 
 // agentReservations перечисляет доли всех существующих агентов живых роёв,
@@ -39,7 +39,7 @@ func (s *Server) agentReservations(ctx context.Context, swarms []app.Swarm) ([]a
 		if sw.State == app.StateDeleted {
 			continue
 		}
-		rows, err := s.store.ListManagedActors(ctx, sw.ID)
+		rows, err := s.store.ListAgents(ctx, sw.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -53,7 +53,7 @@ func (s *Server) agentReservations(ctx context.Context, swarms []app.Swarm) ([]a
 	return out, nil
 }
 
-func (o *managedWorkloadOperation) authorize() error {
+func (o *workloadOperation) authorize() error {
 	// Namespace — сетевое чтение: полномочия могли отозвать, пока оно шло.
 	userID := o.userID
 	if userID == "" {
@@ -87,11 +87,11 @@ func (o *managedWorkloadOperation) authorize() error {
 	return o.context.Err()
 }
 
-func (o *managedWorkloadOperation) authorizeParent(ctx context.Context) error {
+func (o *workloadOperation) authorizeParent(ctx context.Context) error {
 	if o.parent == nil {
 		return nil
 	}
-	current, _, err := o.server.managed.authorizeCommandActorDurable(ctx, *o.parent)
+	current, _, err := o.server.provider.authorizeCommandActorDurable(ctx, *o.parent)
 	if err != nil {
 		return err
 	}
@@ -102,11 +102,11 @@ func (o *managedWorkloadOperation) authorizeParent(ctx context.Context) error {
 	case "delete":
 		permission = "rm"
 	}
-	return o.server.managed.authorizeGuestPermission(ctx, current, permission)
+	return o.server.provider.authorizeGuestPermission(ctx, current, permission)
 }
 
 // authorizeIntent проверяет права по тому же snapshot, в котором сохраняется намерение.
-func (o *managedWorkloadOperation) authorizeIntent(ctx context.Context) error {
+func (o *workloadOperation) authorizeIntent(ctx context.Context) error {
 	userID := o.userID
 	if userID == "" {
 		user, ok := auth.UserFromContext(ctx)
@@ -152,7 +152,7 @@ func (s *Server) authorizeSwarmOwnerIntent(ctx context.Context, userID, swarmID 
 	return s.authorizeSwarmManagerIntent(ctx, userID, swarmID)
 }
 
-func (o *managedWorkloadOperation) beginLifecycle(ctx context.Context, a store.ManagedActor) (store.ManagedActor, error) {
+func (o *workloadOperation) beginLifecycle(ctx context.Context, a store.Agent) (store.Agent, error) {
 	userID := o.userID
 	if userID == "" {
 		if user, ok := auth.UserFromContext(ctx); ok {
@@ -161,14 +161,14 @@ func (o *managedWorkloadOperation) beginLifecycle(ctx context.Context, a store.M
 	}
 	if o.parent != nil {
 		// Мастер управляет своим дочерним воркером в общем порядке шины.
-		return o.server.store.BeginManagedActorOperation(ctx, a.UID, a.Revision, store.NewID(), o.action)
+		return o.server.store.BeginAgentOperation(ctx, a.UID, a.Revision, store.NewID(), o.action)
 	}
-	return o.server.store.BeginOwnerManagedActorOperation(ctx, a, store.NewID(), o.action, func(ctx context.Context) error {
+	return o.server.store.BeginOwnerAgentOperation(ctx, a, store.NewID(), o.action, func(ctx context.Context) error {
 		return o.server.authorizeSwarmOwnerIntent(ctx, userID, o.swarm.ID)
 	})
 }
 
-func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmission, error) {
+func (o *workloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmission, error) {
 	plan := app.WorkloadAdmission{Name: o.name}
 	if err := o.authorize(); err != nil {
 		return plan, err
@@ -177,7 +177,7 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 		plan.NoAllocation = true
 		return plan, nil
 	}
-	if !o.server.managed.poolAvailable(o.pool) {
+	if !o.server.provider.poolAvailable(o.pool) {
 		return plan, fmt.Errorf("%w: the Proxmox connection of this pool is not configured or changed; an administrator should check the Pools page", app.ErrConflict)
 	}
 	if o.pool.State != "enabled" {
@@ -186,7 +186,7 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	resources := o.actor.Resources
 	if o.action == "create" {
 		var err error
-		resources, err = managedActorResources(o.pool)
+		resources, err = agentResources(o.pool)
 		if err != nil {
 			return plan, err
 		}
@@ -199,18 +199,18 @@ func (o *managedWorkloadOperation) Prepare(swarms []app.Swarm) (app.WorkloadAdmi
 	return plan, err
 }
 
-func (o *managedWorkloadOperation) Apply() error {
+func (o *workloadOperation) Apply() error {
 	if err := o.authorize(); err != nil {
 		return err
 	}
-	m := o.server.managed
+	m := o.server.provider
 	m.lifecycle.Lock()
 	defer m.lifecycle.Unlock()
 	client, err := m.client(o.pool)
 	if err != nil {
 		return err
 	}
-	var a store.ManagedActor
+	var a store.Agent
 	if o.action == "create" {
 		if m.hub == nil {
 			return fmt.Errorf("%w: the server cannot accept agent connections: BROOD_PUBLIC_ORIGIN and BROOD_PROXMOX_RELAY_SECRET must be set", app.ErrConflict)
@@ -219,7 +219,7 @@ func (o *managedWorkloadOperation) Apply() error {
 		if err != nil {
 			return err
 		}
-		resources, err := managedActorResources(o.pool)
+		resources, err := agentResources(o.pool)
 		if err != nil {
 			return err
 		}
@@ -237,12 +237,12 @@ func (o *managedWorkloadOperation) Apply() error {
 		if err != nil {
 			return err
 		}
-		a, err = o.server.store.ReserveManagedActor(o.context, store.ManagedActor{Template: template, Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
+		a, err = o.server.store.ReserveAgent(o.context, store.Agent{Template: template, Role: o.role, DelegatorID: delegator, ParentUID: parentUID, UID: store.NewID(), Name: o.name, SwarmID: o.swarm.ID, PoolUID: o.pool.UID, Resources: resources, CTID: id, OwnerNonce: store.NewID(), OperationID: store.NewID(), Origin: o.origin})
 		if err != nil {
 			return err
 		}
 	} else {
-		a, err = o.server.store.GetManagedActor(o.context, o.actor.UID)
+		a, err = o.server.store.GetAgent(o.context, o.actor.UID)
 		if err != nil {
 			return err
 		}
@@ -289,7 +289,7 @@ func (o *managedWorkloadOperation) Apply() error {
 				}
 			}
 		}
-		observed, err := managedObservedState(o.context, client, a)
+		observed, err := observedState(o.context, client, a)
 		if err != nil {
 			return err
 		}
@@ -318,7 +318,7 @@ func (o *managedWorkloadOperation) Apply() error {
 			// Известная задача уже дождана выше; у незапрошенного start
 			// задачи нет вовсе. Слот закрывает наблюдение CT.
 			if a.Stage != "done" {
-				a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+				a, err = o.server.store.ConfirmAgentStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 				if err != nil {
 					return err
 				}
@@ -326,7 +326,7 @@ func (o *managedWorkloadOperation) Apply() error {
 			// Завершённый start может ждать ttyd. Явное recovery диагностирует
 			// это состояние, а не объявляет гостя работающим без проверки.
 			if a.Stage == "done" && a.Phase == "provisioning" {
-				a, err = m.saveObservation(ctx, a, "error", "", managedReadinessError)
+				a, err = m.saveObservation(ctx, a, "error", "", readinessError)
 				if err != nil {
 					return err
 				}
@@ -356,7 +356,7 @@ func (o *managedWorkloadOperation) Apply() error {
 					// согласуется сразу, delete и reset переходят к delete.
 					// Для старой неизвестной отправки наблюдение stopped не
 					// доказывает исход.
-					a, err = o.server.store.ConfirmManagedActorStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
+					a, err = o.server.store.ConfirmAgentStage(ctx, a.UID, a.Revision, a.OperationID, a.Stage, observed)
 				}
 			}
 			if err == nil {
@@ -403,74 +403,74 @@ func (o *managedWorkloadOperation) Apply() error {
 	return err
 }
 
-func (s *Server) createManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input agentInput, pool store.ManagedPool) {
-	a, err := s.createManaged(r.Context(), userID, sw, input.Name, pool, input.RoleID, input.Origin, nil)
+func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, input agentInput, pool store.Pool) {
+	a, err := s.createAgent(r.Context(), userID, sw, input.Name, pool, input.RoleID, input.Origin, nil)
 	if err != nil {
-		managedAPIError(w, r, err)
+		providerAPIError(w, r, err)
 		return
 	}
 	s.writeAgent(w, r, 201, sw, a, pool)
 }
 
-// createManaged is shared by human creation and UID-bound delegated creation.
+// createAgent is shared by human creation and UID-bound delegated creation.
 // A delegated name retry returns its original reservation without provider writes;
 // a retry naming a different origin conflicts. Origin resolution precedes admission.
-func (s *Server) createManaged(ctx context.Context, userID string, sw app.Swarm, name string, pool store.ManagedPool, role, origin string, parent *store.ManagedActor) (store.ManagedActor, error) {
+func (s *Server) createAgent(ctx context.Context, userID string, sw app.Swarm, name string, pool store.Pool, role, origin string, parent *store.Agent) (store.Agent, error) {
 	if name == telegramOperator {
 		// Имя operator на шине занято владельцем роя.
-		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "The name operator is reserved for the human owner of the swarm. Choose another name."}
+		return store.Agent{}, &app.APIError{Status: 400, Detail: "The name operator is reserved for the human owner of the swarm. Choose another name."}
 	}
-	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: name, action: "create", role: role, parent: parent}
-	s.managed.admission.Lock()
-	defer s.managed.admission.Unlock()
+	op := &workloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: name, action: "create", role: role, parent: parent}
+	s.provider.admission.Lock()
+	defer s.provider.admission.Unlock()
 	assigned, err := s.store.GetAgentRole(ctx, role)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.ManagedActor{}, &app.APIError{Status: 400, Detail: "Select a role from the list; no agent was created"}
+		return store.Agent{}, &app.APIError{Status: 400, Detail: "Select a role from the list; no agent was created"}
 	}
 	if err != nil {
-		return store.ManagedActor{}, err
+		return store.Agent{}, err
 	}
 	op.role, op.delegated = assigned.ID, assigned.RequiresDelegation()
 	if op.delegated && parent != nil {
-		return store.ManagedActor{}, app.ErrNotAllowed
+		return store.Agent{}, app.ErrNotAllowed
 	}
 	if err := op.authorize(); err != nil {
-		return store.ManagedActor{}, err
+		return store.Agent{}, err
 	}
 	if parent != nil {
-		a, err := s.store.LookupManagedActor(ctx, sw.ID, op.name)
+		a, err := s.store.LookupAgent(ctx, sw.ID, op.name)
 		if err == nil {
 			if a.ParentUID != parent.UID || a.PoolUID != pool.UID {
-				return store.ManagedActor{}, app.ErrExists
+				return store.Agent{}, app.ErrExists
 			}
 			if origin != "" {
 				canonical, err := gitorigin.FromRemote(origin)
 				if err != nil {
-					return store.ManagedActor{}, &originRefusal{detail: err.Error()}
+					return store.Agent{}, &originRefusal{detail: err.Error()}
 				}
 				if canonical != a.Origin {
-					return store.ManagedActor{}, app.ErrExists
+					return store.Agent{}, app.ErrExists
 				}
 			}
 			return a, nil
 		}
 		if !errors.Is(err, store.ErrNotFound) {
-			return store.ManagedActor{}, err
+			return store.Agent{}, err
 		}
 	}
 	resolved, err := s.resolveActorOrigin(ctx, sw.ProjectID, origin, parent)
 	if err != nil {
-		return store.ManagedActor{}, err
+		return store.Agent{}, err
 	}
 	op.origin = resolved
 	err = s.app.AdmitWorkload(ctx, userID, sw.ID, op)
 	return op.saved, err
 }
 
-func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, a store.ManagedActor) {
-	p, err := s.store.GetManagedPool(r.Context(), a.PoolUID)
+func (s *Server) handleAgentAction(w http.ResponseWriter, r *http.Request, userID string, sw app.Swarm, a store.Agent) {
+	p, err := s.store.GetPool(r.Context(), a.PoolUID)
 	if err != nil {
-		managedAPIError(w, r, err)
+		providerAPIError(w, r, err)
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -485,9 +485,9 @@ func (s *Server) handleManagedActor(w http.ResponseWriter, r *http.Request, user
 			return
 		}
 	}
-	op := &managedWorkloadOperation{server: s, context: r.Context(), swarm: sw, pool: p, name: a.Name, action: action, actor: a}
+	op := &workloadOperation{server: s, context: r.Context(), swarm: sw, pool: p, name: a.Name, action: action, actor: a}
 	if err := s.admitWorkload(r.Context(), userID, sw.ID, op); err != nil {
-		managedAPIError(w, r, err)
+		providerAPIError(w, r, err)
 		return
 	}
 	if r.Method == http.MethodDelete {

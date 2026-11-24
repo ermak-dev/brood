@@ -26,7 +26,7 @@ func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 	if err = json.Unmarshal(parsed.Arguments, &args); err != nil {
 		return args, err
 	}
-	if len(args.Name) > 63 || !managedActorName.MatchString(args.Name) {
+	if len(args.Name) > 63 || !agentNamePattern.MatchString(args.Name) {
 		return args, command.Refuse(nil, "an agent name is lowercase letters, digits and dashes, at most 63 characters; nothing changed")
 	}
 	switch inv.Name {
@@ -45,34 +45,34 @@ func parseActorCommand(inv command.Invocation) (actorCommandArguments, error) {
 // authorizeCommandActor resolves the current relay identity and its swarm.
 // Only UID, generation and binding from the supplied snapshot are used as identity;
 // role and delegation always come from the durable row.
-func (m *managedProvider) authorizeCommandActor(ctx context.Context, original store.ManagedActor) (store.ManagedActor, app.Swarm, error) {
+func (m *provider) authorizeCommandActor(ctx context.Context, original store.Agent) (store.Agent, app.Swarm, error) {
 	a, swarm, err := m.authorizeCommandActorDurable(ctx, original)
 	if err != nil {
-		return store.ManagedActor{}, app.Swarm{}, err
+		return store.Agent{}, app.Swarm{}, err
 	}
 	return a, swarm, nil
 }
 
-func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, original store.ManagedActor) (store.ManagedActor, app.Swarm, error) {
-	a, err := m.server.store.GetManagedActor(ctx, original.UID)
+func (m *provider) authorizeCommandActorDurable(ctx context.Context, original store.Agent) (store.Agent, app.Swarm, error) {
+	a, err := m.server.store.GetAgent(ctx, original.UID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+			return store.Agent{}, app.Swarm{}, app.ErrNotAllowed
 		}
-		return store.ManagedActor{}, app.Swarm{}, err
+		return store.Agent{}, app.Swarm{}, err
 	}
 	if a.Incarnation != original.Incarnation || a.SwarmID != original.SwarmID || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
-		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+		return store.Agent{}, app.Swarm{}, app.ErrNotAllowed
 	}
 	sw, err := m.server.store.GetSwarm(ctx, a.SwarmID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+			return store.Agent{}, app.Swarm{}, app.ErrNotAllowed
 		}
-		return store.ManagedActor{}, app.Swarm{}, err
+		return store.Agent{}, app.Swarm{}, err
 	}
 	if sw.State != "active" {
-		return store.ManagedActor{}, app.Swarm{}, app.ErrNotAllowed
+		return store.Agent{}, app.Swarm{}, app.ErrNotAllowed
 	}
 	return a, app.SwarmOf(sw), nil
 }
@@ -82,10 +82,10 @@ func (m *managedProvider) authorizeCommandActorDurable(ctx context.Context, orig
 // and a mutation additionally requires that the master added the target
 // (masterOwns). Callers must retain the returned UID/generation and recheck
 // before side effects.
-func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original store.ManagedActor, name, tool string, mutate bool) (store.ManagedActor, error) {
+func (m *provider) authorizeCommandTarget(ctx context.Context, original store.Agent, name, tool string, mutate bool) (store.Agent, error) {
 	from, _, err := m.authorizeCommandActor(ctx, original)
 	if err != nil {
-		return store.ManagedActor{}, err
+		return store.Agent{}, err
 	}
 	permission := tool
 	if tool == "tail" {
@@ -95,18 +95,18 @@ func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original s
 		}
 	}
 	if err := m.authorizeGuestPermission(ctx, from, permission); err != nil {
-		return store.ManagedActor{}, err
+		return store.Agent{}, err
 	}
-	target, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, name)
+	target, err := m.server.store.LookupAgent(ctx, from.SwarmID, name)
 	if err != nil {
-		return store.ManagedActor{}, err
+		return store.Agent{}, err
 	}
 	if target.Phase == "deleted" {
-		return store.ManagedActor{}, app.ErrNotAllowed
+		return store.Agent{}, app.ErrNotAllowed
 	}
 	if mutate {
 		if err := m.masterOwns(ctx, from, target); err != nil {
-			return store.ManagedActor{}, err
+			return store.Agent{}, err
 		}
 	}
 	return target, nil
@@ -115,12 +115,12 @@ func (m *managedProvider) authorizeCommandTarget(ctx context.Context, original s
 // masterOwns is the single ownership check behind every guest command that
 // changes an agent: lifecycle, workspace and session control (#152). Its refusal is of class
 // app.ErrNotAllowed, and its text names whose actor the target is.
-func (m *managedProvider) masterOwns(ctx context.Context, from, target store.ManagedActor) error {
+func (m *provider) masterOwns(ctx context.Context, from, target store.Agent) error {
 	owner := ""
 	if target.ParentUID != "" && target.ParentUID != from.UID {
 		// Имя владельца подсказывает, кого спросить; без имени отказ
 		// остаётся отказом.
-		if parent, err := m.server.store.GetManagedActor(ctx, target.ParentUID); err == nil && parent.SwarmID == from.SwarmID {
+		if parent, err := m.server.store.GetAgent(ctx, target.ParentUID); err == nil && parent.SwarmID == from.SwarmID {
 			owner = parent.Name
 		}
 	}
@@ -133,7 +133,7 @@ func (m *managedProvider) masterOwns(ctx context.Context, from, target store.Man
 // ownershipRefusal returns why master from may not change target, or "" when
 // from added target through add. owner names the master that added target, if
 // known.
-func ownershipRefusal(from, target store.ManagedActor, owner string) string {
+func ownershipRefusal(from, target store.Agent, owner string) string {
 	// Master управляет только агентами, добавленными им через add.
 	// ParentUID неизменен с резервирования, а ревизию цели и делегацию
 	// перепроверяет сама операция.
@@ -159,7 +159,7 @@ func ownershipRefusal(from, target store.ManagedActor, owner string) string {
 
 // executeLifecycleCommand executes add, rm, start, stop and reset of a master.
 // Acceptance refers to a durable reservation or operation, never guest readiness.
-func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original store.ManagedActor, inv command.Invocation) (command.Result, error) {
+func (m *provider) executeLifecycleCommand(ctx context.Context, original store.Agent, inv command.Invocation) (command.Result, error) {
 	args, err := parseActorCommand(inv)
 	if err != nil {
 		return command.Result{}, err
@@ -172,13 +172,13 @@ func (m *managedProvider) executeLifecycleCommand(ctx context.Context, original 
 		return command.Result{}, actorCommandError(err)
 	}
 	if inv.Name == "add" {
-		pool, err := m.server.store.GetManagedPool(ctx, from.PoolUID)
+		pool, err := m.server.store.GetPool(ctx, from.PoolUID)
 		if err != nil {
 			return command.Result{}, command.Refuse(nil, "The agent was not created: the pool of this master is no longer available. Ask the operator.")
 		}
-		a, err := m.server.createManaged(ctx, from.DelegatorID, sw, args.Name, pool, "", args.Origin, &from)
+		a, err := m.server.createAgent(ctx, from.DelegatorID, sw, args.Name, pool, "", args.Origin, &from)
 		if err != nil && a.UID == "" {
-			return command.Result{}, command.Refuse(nil, managedAddRefusal(err))
+			return command.Result{}, command.Refuse(nil, addRefusal(err))
 		}
 		return actorCommandResult(a), nil
 	}
@@ -210,7 +210,7 @@ func (s *Server) executeActorCommand(ctx context.Context, userID, swarmID string
 	if inv.Name == "add" {
 		return command.Result{}, command.Refuse(nil, "The agent was not created: this command does not choose a pool. Create the agent in the panel, or let the master of the swarm add it.")
 	}
-	a, err := s.store.LookupManagedActor(ctx, swarmID, args.Name)
+	a, err := s.store.LookupAgent(ctx, swarmID, args.Name)
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
@@ -225,15 +225,15 @@ func lifecycleAction(name string) string {
 	return name
 }
 
-func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Swarm, a store.ManagedActor, action string, parent *store.ManagedActor) (command.Result, error) {
-	if s.managed == nil {
+func (s *Server) applyActorCommand(ctx context.Context, userID string, sw app.Swarm, a store.Agent, action string, parent *store.Agent) (command.Result, error) {
+	if s.provider == nil {
 		return command.Result{}, command.Refuse(nil, "Proxmox pools are not configured on this server; nothing changed")
 	}
-	pool, err := s.store.GetManagedPool(ctx, a.PoolUID)
+	pool, err := s.store.GetPool(ctx, a.PoolUID)
 	if err != nil {
 		return command.Result{}, actorCommandError(err)
 	}
-	op := &managedWorkloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: a.Name, action: action, actor: a, parent: parent}
+	op := &workloadOperation{server: s, context: ctx, userID: userID, swarm: sw, pool: pool, name: a.Name, action: action, actor: a, parent: parent}
 	err = s.admitWorkload(ctx, userID, sw.ID, op)
 	if err != nil && op.saved.UID == "" {
 		if op.intent.UID != "" {
@@ -278,7 +278,7 @@ func actorCommandError(err error) error {
 	}
 }
 
-func actorCommandResult(a store.ManagedActor) command.Result {
+func actorCommandResult(a store.Agent) command.Result {
 	data, _ := json.Marshal(struct {
 		Name       string `json:"name"`
 		Generation int64  `json:"generation"`

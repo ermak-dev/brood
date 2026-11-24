@@ -213,7 +213,7 @@ func (s *Service) DeleteSwarm(ctx context.Context, userID, swarmID string) error
 		if sw.State == string(StateDeleted) {
 			return nil
 		}
-		agents, err := s.store.HasManagedActorsBySwarm(ctx, sw.ID)
+		agents, err := s.store.SwarmHasAgents(ctx, sw.ID)
 		if err != nil {
 			return err
 		}

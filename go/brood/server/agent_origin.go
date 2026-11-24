@@ -15,7 +15,7 @@ func (e *originRefusal) Error() string { return "actor origin refused: " + e.det
 
 // resolveActorOrigin выбирает origin нового актора: явный (канонизированный),
 // иначе origin создающего master, иначе repository проекта, иначе пусто.
-func (s *Server) resolveActorOrigin(ctx context.Context, projectID, requested string, parent *store.ManagedActor) (string, error) {
+func (s *Server) resolveActorOrigin(ctx context.Context, projectID, requested string, parent *store.Agent) (string, error) {
 	if requested != "" {
 		origin, err := gitorigin.FromRemote(requested)
 		if err != nil {

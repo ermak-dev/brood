@@ -76,12 +76,12 @@ func loadAgentIdentity(dbPath string) (*sshboot.Identity, error) {
 
 // agentEnv — настройки агента воркера a: адрес и токен relay его
 // инкарнации. Токен действует только для этого UID и поколения.
-func (m *managedProvider) agentEnv(a store.ManagedActor) map[string]string {
+func (m *provider) agentEnv(a store.Agent) map[string]string {
 	origin := strings.TrimSuffix(m.registry.publicOrigin, "/")
 	env := map[string]string{
 		"BROOD_GUEST_ACTOR_UID":      a.UID,
-		"BROOD_GUEST_GENERATION":     managedDecimal(a.Incarnation),
-		"BROOD_GUEST_RELAY_URL":      "wss" + strings.TrimPrefix(origin, "https") + "/api/proxmox/guest/" + a.UID + "/" + managedDecimal(a.Incarnation),
+		"BROOD_GUEST_GENERATION":     decimal(a.Incarnation),
+		"BROOD_GUEST_RELAY_URL":      "wss" + strings.TrimPrefix(origin, "https") + "/api/proxmox/guest/" + a.UID + "/" + decimal(a.Incarnation),
 		"BROOD_GUEST_RELAY_TOKEN":    guestToken(m.registry.relaySecret, a.UID, a.Incarnation),
 		"BROOD_GUEST_RELAY_HOST_KEY": strings.TrimSpace(m.hub.HostKey()),
 	}
@@ -113,7 +113,7 @@ func agentEnvFile(env map[string]string) ([]byte, error) {
 // Повтор безопасен: файлы пишутся атомарно, сервис перезапускается. Успех
 // запоминается на операцию, чтобы проходы reconcile не перезапускали
 // агента, пока он подключается.
-func (m *managedProvider) installAgent(ctx context.Context, client proxmoxAPI, a store.ManagedActor) error {
+func (m *provider) installAgent(ctx context.Context, client proxmoxAPI, a store.Agent) error {
 	if done, ok := m.agentInstalled.Load(a.UID); ok && done == a.OperationID {
 		return nil
 	}
@@ -129,7 +129,7 @@ func (m *managedProvider) installAgent(ctx context.Context, client proxmoxAPI, a
 		return errAgentWaiting
 	}
 	target := sshboot.Target{Addr: netip.AddrPortFrom(addresses[0], 22)}
-	pinKey := a.UID + "/" + managedDecimal(a.Incarnation)
+	pinKey := a.UID + "/" + decimal(a.Incarnation)
 	if key, ok := m.agentHostKeys.Load(pinKey); ok {
 		target.HostKey = key.(string)
 	}
@@ -206,8 +206,8 @@ var agentTTYDCommand = strings.Join([]string{
 
 // agentSpec — контейнер воркера a: системный Debian с ключом установки и
 // nesting для systemd. Настроек агента в конфигурации PVE нет.
-func (m *managedProvider) agentSpec(a store.ManagedActor) proxmox.CTSpec {
-	spec := proxmox.CTSpec{VMID: a.CTID, Hostname: "brood-" + a.UID, Template: a.Template.URI, Owner: managedOwned(a).Owner, Cores: int(a.Resources.CPUMillicores / 1000), MemoryMiB: int(a.Resources.MemoryBytes / mib), DiskGiB: int(a.Resources.DiskBytes / gib), Nesting: true}
+func (m *provider) agentSpec(a store.Agent) proxmox.CTSpec {
+	spec := proxmox.CTSpec{VMID: a.CTID, Hostname: "brood-" + a.UID, Template: a.Template.URI, Owner: ownedCT(a).Owner, Cores: int(a.Resources.CPUMillicores / 1000), MemoryMiB: int(a.Resources.MemoryBytes / mib), DiskGiB: int(a.Resources.DiskBytes / gib), Nesting: true}
 	if m.identity != nil {
 		spec.SSHPublicKeys = m.identity.AuthorizedKey()
 	}

@@ -1,5 +1,5 @@
 CREATE TABLE actor_operations (
-    actor_uid TEXT PRIMARY KEY NOT NULL REFERENCES managed_actors(uid) ON DELETE CASCADE,
+    actor_uid TEXT PRIMARY KEY NOT NULL REFERENCES agents(uid) ON DELETE CASCADE,
     operation_id TEXT NOT NULL CHECK (operation_id <> ''),
     generation INTEGER NOT NULL CHECK (generation > 0),
     caller TEXT NOT NULL CHECK (caller <> ''),

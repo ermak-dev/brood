@@ -13,19 +13,19 @@ import (
 	"time"
 )
 
-const managedLLMPrefix = "/api/proxmox/llm/"
-const managedLLMBodyLimit = 8 << 20
+const agentLLMPrefix = "/api/proxmox/llm/"
+const agentLLMBodyLimit = 8 << 20
 
 // This bypass selects only the dedicated machine namespace, not native LLM
 // routes. Dispatch directly: ServeMux would redirect noncanonical paths.
-func publicManagedLLMPath(path string) bool { return strings.HasPrefix(path, managedLLMPrefix) }
+func publicAgentLLMPath(path string) bool { return strings.HasPrefix(path, agentLLMPrefix) }
 
-func managedLLMRoute(r *http.Request) (uid string, generation int64, upstream string, ok bool) {
+func agentLLMRoute(r *http.Request) (uid string, generation int64, upstream string, ok bool) {
 	if r.URL.RawPath != "" || r.URL.ForceQuery || r.URL.Fragment != "" || strings.Contains(r.URL.EscapedPath(), "%") {
 		return
 	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, managedLLMPrefix), "/")
-	if !publicManagedLLMPath(r.URL.Path) || (len(parts) != 4 && len(parts) != 5) || parts[2] != "v1" {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, agentLLMPrefix), "/")
+	if !publicAgentLLMPath(r.URL.Path) || (len(parts) != 4 && len(parts) != 5) || parts[2] != "v1" {
 		return
 	}
 	uid = parts[0]
@@ -46,13 +46,13 @@ func managedLLMRoute(r *http.Request) (uid string, generation int64, upstream st
 	if operation != "models" && operation != "messages" && operation != "messages/count_tokens" {
 		return
 	}
-	if !managedLLMQuery(operation, r.URL.RawQuery) {
+	if !agentLLMQuery(operation, r.URL.RawQuery) {
 		return
 	}
 	return uid, generation, "/v1/" + operation, true
 }
 
-func managedLLMQuery(operation, query string) bool {
+func agentLLMQuery(operation, query string) bool {
 	if query == "" {
 		return true
 	}
@@ -67,7 +67,7 @@ func managedLLMQuery(operation, query string) bool {
 	return err == nil && n >= 1 && n <= 1000 && strconv.Itoa(n) == limit
 }
 
-func (s *Server) managedLLMHandler(cfg Config) http.Handler {
+func (s *Server) agentLLMHandler(cfg Config) http.Handler {
 	cfg = actorModelBackend(cfg)
 	target, _ := url.Parse(cfg.CLIProxyURL)
 	transport := cliProxyTransport(cfg)
@@ -80,7 +80,7 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			_, _, upstream, _ := managedLLMRoute(pr.In)
+			_, _, upstream, _ := agentLLMRoute(pr.In)
 			pr.SetURL(target)
 			pr.Out.URL.Path = upstream
 			pr.Out.URL.RawPath = ""
@@ -109,7 +109,7 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uid, generation, upstream, ok := managedLLMRoute(r)
+		uid, generation, upstream, ok := agentLLMRoute(r)
 		if !ok {
 			writeDetail(w, http.StatusNotFound, "not found")
 			return
@@ -130,16 +130,16 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 		}
 		// The existing HMAC token is 43 raw base64url characters; no shared secret
 		// fallback, operator cookie or caller-selected upstream is accepted.
-		if len(token) != 43 || !s.managed.authorizeGuest(uid, generation, token) {
+		if len(token) != 43 || !s.provider.authorizeGuest(uid, generation, token) {
 			writeDetail(w, http.StatusUnauthorized, "guest authorization denied")
 			return
 		}
-		if _, err := s.store.GetManagedActor(r.Context(), uid); err != nil {
+		if _, err := s.store.GetAgent(r.Context(), uid); err != nil {
 			writeDetail(w, http.StatusUnauthorized, "guest authorization denied")
 			return
 		}
 		if cfg.CLIProxyURL == "" || cfg.CLIProxyAPIKey == "" {
-			writeDetail(w, http.StatusServiceUnavailable, "managed model access is not configured: CLIPROXY_URL and CLIPROXY_API_KEY are required")
+			writeDetail(w, http.StatusServiceUnavailable, "agent model access is not configured: CLIPROXY_URL and CLIPROXY_API_KEY are required")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
@@ -152,7 +152,7 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					if !s.managed.authorizeGuest(uid, generation, token) {
+					if !s.provider.authorizeGuest(uid, generation, token) {
 						cancel()
 						return
 					}
@@ -164,7 +164,7 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 		// covers chunked slow uploads before the upstream transport starts.
 		controller := http.NewResponseController(w)
 		_ = controller.SetReadDeadline(time.Now().Add(30 * time.Second))
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, managedLLMBodyLimit))
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, agentLLMBodyLimit))
 		_ = controller.SetReadDeadline(time.Time{})
 		if err != nil {
 			var tooLarge *http.MaxBytesError
@@ -179,7 +179,7 @@ func (s *Server) managedLLMHandler(cfg Config) http.Handler {
 			writeDetail(w, http.StatusBadRequest, "models request must not have a body")
 			return
 		}
-		if !s.managed.authorizeGuest(uid, generation, token) {
+		if !s.provider.authorizeGuest(uid, generation, token) {
 			writeDetail(w, http.StatusUnauthorized, "guest authorization denied")
 			return
 		}

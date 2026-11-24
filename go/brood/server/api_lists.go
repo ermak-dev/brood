@@ -80,7 +80,7 @@ func (s *Server) handleSwarmList(w http.ResponseWriter, r *http.Request) {
 			apiError(w, r, err)
 			return
 		}
-		out = append(out, swarmListJSON{swarmJSON: row, ProjectName: projects[sw.ProjectID], AgentCount: summaries[sw.ID].ManagedActorCount})
+		out = append(out, swarmListJSON{swarmJSON: row, ProjectName: projects[sw.ProjectID], AgentCount: summaries[sw.ID].AgentCount})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

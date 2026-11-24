@@ -12,7 +12,7 @@ import (
 
 const artifactNoticeMarker = "[brood artifact version]"
 
-func (c *telegramChannel) sendArtifactNotice(ctx context.Context, client *telegram.Client, link store.TelegramLink, from store.ManagedActor, question, versionID string) error {
+func (c *telegramChannel) sendArtifactNotice(ctx context.Context, client *telegram.Client, link store.TelegramLink, from store.Agent, question, versionID string) error {
 	if c.server.artifactOrigin == "" {
 		return errors.New("BROOD_PUBLIC_HOST is not configured; the version was saved but no notice was sent")
 	}

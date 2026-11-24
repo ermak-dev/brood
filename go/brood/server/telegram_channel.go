@@ -109,7 +109,7 @@ type telegramSwarm struct {
 }
 
 type telegramRecipient struct {
-	store.ManagedActor
+	store.Agent
 	path string
 }
 
@@ -137,15 +137,15 @@ func (c *telegramChannel) swarms(ctx context.Context, user store.User) ([]telegr
 	return out, nil
 }
 
-func (c *telegramChannel) available(a store.ManagedActor) bool {
-	m := c.server.managed
+func (c *telegramChannel) available(a store.Agent) bool {
+	m := c.server.provider
 	return a.Phase == "running" && a.Desired == "running" && m != nil && m.hub != nil && m.deliverMessage != nil && m.hub.Connected(a.UID, a.Incarnation)
 }
 
 func (c *telegramChannel) recipients(ctx context.Context, swarms []telegramSwarm) ([]telegramRecipient, error) {
 	var out []telegramRecipient
 	for _, sw := range swarms {
-		rows, err := c.server.store.ListManagedActors(ctx, sw.ID)
+		rows, err := c.server.store.ListAgents(ctx, sw.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +250,7 @@ func (c *telegramChannel) receiveReply(ctx context.Context, chat telegramChat, u
 		}
 		swarmID, actorUID = route.swarmID, route.actorUID
 	}
-	a, actorErr := c.server.store.GetManagedActor(ctx, actorUID)
+	a, actorErr := c.server.store.GetAgent(ctx, actorUID)
 	sw, swarmErr := c.server.store.GetSwarm(ctx, swarmID)
 	if actorErr != nil || swarmErr != nil || a.SwarmID != sw.ID || !telegramCanMessage(user, sw) || !c.available(a) {
 		return telegramResponse{text: "The original recipient of this reply is unavailable. Nothing was sent."}
@@ -267,8 +267,8 @@ func (c *telegramChannel) receiveReply(ctx context.Context, chat telegramChat, u
 // отправки. Никогда не повторяет отправку при неизвестном исходе.
 func (c *telegramChannel) deliver(ctx context.Context, chat telegramChat, user store.User, target telegramRecipient, text string) (telegramResponse, bool) {
 	st := c.server.store
-	resolve := func(ctx context.Context) (store.ManagedActor, error) {
-		return st.GetManagedActor(ctx, target.UID)
+	resolve := func(ctx context.Context) (store.Agent, error) {
+		return st.GetAgent(ctx, target.UID)
 	}
 	authorize := func(ctx context.Context) error {
 		if !chat.active(ctx, st) {
@@ -319,7 +319,7 @@ func (c *telegramChannel) sendSlash(ctx context.Context, chat telegramChat, targ
 	}
 	args, _ := json.Marshal(map[string]string{"name": target.Name, "command": text})
 	ctx = context.WithValue(ctx, commandSessionAuthorityKey{}, func(ctx context.Context) bool { return chat.active(ctx, c.server.store) })
-	result, err := c.server.executeOperatorSessionTarget(ctx, chat.userID, "telegram:"+strconv.FormatInt(chat.chatID, 10), command.Invocation{Name: "slash", Arguments: args}, target.ManagedActor, true)
+	result, err := c.server.executeOperatorSessionTarget(ctx, chat.userID, "telegram:"+strconv.FormatInt(chat.chatID, 10), command.Invocation{Name: "slash", Arguments: args}, target.Agent, true)
 	if err == nil {
 		if result.Outcome == "observed" {
 			return telegramResponse{text: fmt.Sprintf("%s · terminal output:\n%s", target.path, result.Text)}
@@ -406,7 +406,7 @@ func (c *telegramChannel) selectRecipient(ctx context.Context, chat telegramChat
 		return telegramResponse{text: "The agent list is unavailable. Your selection did not change. Try /use again later."}
 	}
 	for _, a := range available {
-		if !match(a) || !c.available(a.ManagedActor) {
+		if !match(a) || !c.available(a.Agent) {
 			continue
 		}
 		err := st.SetTelegramActor(ctx, chat.userID, chat.session, a.UID)
@@ -502,11 +502,11 @@ func (c *telegramChannel) useCallback(ctx context.Context, chat telegramChat, da
 
 // toOwner отправляет сообщение агента владельцу его роя в привязанный чат.
 // Ошибка несёт причину для отправителя, без подробностей Telegram.
-func (c *telegramChannel) toOwner(ctx context.Context, from store.ManagedActor, body string) error {
+func (c *telegramChannel) toOwner(ctx context.Context, from store.Agent, body string) error {
 	return c.sendArtifact(ctx, from, body, "")
 }
 
-func (c *telegramChannel) sendArtifact(ctx context.Context, from store.ManagedActor, body, versionID string) error {
+func (c *telegramChannel) sendArtifact(ctx context.Context, from store.Agent, body, versionID string) error {
 	if strings.TrimSpace(body) == "" {
 		return errors.New("message is empty")
 	}

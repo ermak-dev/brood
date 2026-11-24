@@ -80,7 +80,7 @@ type agentJSON struct {
 // запрошенный у PVE (#275), — та же остановка, что stopping или deleting:
 // CT работает лишь до запроса. Незапрошенный Delete (#277) — то же
 // удаление, что запрошенный. Хранимая phase остаётся наблюдением CT.
-func agentPhase(a store.ManagedActor) string {
+func agentPhase(a store.Agent) string {
 	switch {
 	case stopNotRequested(a):
 		return stopPhase(a)
@@ -91,12 +91,12 @@ func agentPhase(a store.ManagedActor) string {
 }
 
 // agentView строит объект агента; project — имя проекта роя.
-func (s *Server) agentView(ctx context.Context, sw app.Swarm, project string, a store.ManagedActor, p store.ManagedPool) agentJSON {
+func (s *Server) agentView(ctx context.Context, sw app.Swarm, project string, a store.Agent, p store.Pool) agentJSON {
 	diagnostic := a.Diagnostic()
 	return agentJSON{
 		Name: a.Name, UID: a.UID, Swarm: sw.ID, SwarmName: sw.Name, ProjectID: sw.ProjectID, ProjectName: project,
 		Role: s.agentRoleName(ctx, a.Role), Phase: agentPhase(a), Desired: a.Desired, Generation: a.Incarnation,
-		Error: diagnostic, ErrorCode: managedErrorCode(diagnostic),
+		Error: diagnostic, ErrorCode: diagnosticCode(diagnostic),
 		Pool: p.Name, Node: p.Source.Node, CTID: a.CTID, Profile: a.Template.Profile, Origin: a.Origin,
 		CPUMillicores: a.Resources.CPUMillicores, MemoryBytes: a.Resources.MemoryBytes, DiskBytes: a.Resources.DiskBytes,
 		CreatedAt: a.CreatedAt,
@@ -113,23 +113,23 @@ func (s *Server) projectName(ctx context.Context, sw app.Swarm) string {
 }
 
 // writeAgent отвечает одним агентом роя.
-func (s *Server) writeAgent(w http.ResponseWriter, r *http.Request, status int, sw app.Swarm, a store.ManagedActor, p store.ManagedPool) {
+func (s *Server) writeAgent(w http.ResponseWriter, r *http.Request, status int, sw app.Swarm, a store.Agent, p store.Pool) {
 	writeJSON(w, status, s.agentView(r.Context(), sw, s.projectName(r.Context(), sw), a, p))
 }
 
 // agentsJSON — живые агенты роя с работой тех, что запущены.
 func (s *Server) agentsJSON(ctx context.Context, sw app.Swarm, project string) ([]agentJSON, error) {
-	actors, err := s.store.ListManagedActors(ctx, sw.ID)
+	actors, err := s.store.ListAgents(ctx, sw.ID)
 	if err != nil {
 		return nil, err
 	}
-	works := s.managed.agentWorks(ctx, actors, false)
+	works := s.provider.agentWorks(ctx, actors, false)
 	out := []agentJSON{}
 	for _, a := range actors {
 		if a.Phase == "deleted" {
 			continue
 		}
-		p, err := s.store.GetManagedPool(ctx, a.PoolUID)
+		p, err := s.store.GetPool(ctx, a.PoolUID)
 		if err != nil {
 			return nil, err
 		}

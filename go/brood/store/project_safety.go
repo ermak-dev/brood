@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// ErrProjectHasSwarms protects bindings to native resources from a local cascade.
+// ErrProjectHasSwarms refuses a delete whose cascade would remove live swarms.
 var ErrProjectHasSwarms = errors.New("project still has swarms; delete them first")
 
 // DeleteProjectWithoutSwarms only deletes empty or tombstone-only projects.

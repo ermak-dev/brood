@@ -30,7 +30,7 @@ func (s *Server) agentViewAuthority(ctx context.Context, v agentView) context.Co
 // stream right before the upgrade request is sent to the agent. Ttyd has no
 // acknowledged detach or effect outcome.
 func (s *Server) beginAgentTerminal(r *http.Request, target proxy.Target) (proxy.UpgradeReservation, error) {
-	agent, err := s.store.GetManagedActor(r.Context(), target.UID)
+	agent, err := s.store.GetAgent(r.Context(), target.UID)
 	if err != nil {
 		return proxy.UpgradeReservation{}, err
 	}
@@ -54,7 +54,7 @@ func (s *Server) beginAgentTerminal(r *http.Request, target proxy.Target) (proxy
 		if err := s.authorizeSwarmManagerIntent(ctx, user.ID, agent.SwarmID); err != nil {
 			return err
 		}
-		current, err := s.store.LookupManagedActor(ctx, agent.SwarmID, agent.Name)
+		current, err := s.store.LookupAgent(ctx, agent.SwarmID, agent.Name)
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ func (s *Server) beginAgentTerminal(r *http.Request, target proxy.Target) (proxy
 	// Право проверяется прямо перед отправкой запроса агенту.
 	return proxy.UpgradeReservation{
 		BeforeSubmit: func() (func(), error) {
-			release, err := s.managed.effects.acquire(ctx, agent.UID)
+			release, err := s.provider.effects.acquire(ctx, agent.UID)
 			if err != nil {
 				return nil, err
 			}

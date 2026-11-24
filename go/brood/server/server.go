@@ -36,12 +36,12 @@ type Options struct {
 
 // Server — собранный сервер: зависимости и маршруты без запуска сети.
 type Server struct {
-	store   *store.Store
-	managed *managedProvider
-	app     *app.Service
-	auth    *auth.Service
-	proxy   *proxy.Proxy
-	views   agentViews
+	store    *store.Store
+	provider *provider
+	app      *app.Service
+	auth     *auth.Service
+	proxy    *proxy.Proxy
+	views    agentViews
 	// telegram — поллеры ботов, telegramChannel — канал шины между
 	// владельцем роя и его агентами.
 	telegram         *telegramBots
@@ -61,7 +61,7 @@ type Server struct {
 	actorModels actormodel.Models
 
 	roleModelCatalog func(context.Context) ([]string, error)
-	managedLLM       http.Handler
+	agentLLM         http.Handler
 	imageSnapshots   chan struct{}
 }
 
@@ -104,8 +104,8 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.telegramChannel = newTelegramChannel(srv, srv.telegram)
 	srv.telegramActivity = newTelegramActivity(srv)
 	srv.telegram.channel = srv.telegramChannel
-	srv.managed = &managedProvider{server: srv, registry: cfg.proxmox}
-	if err := srv.managed.initialize(cfg); err != nil {
+	srv.provider = &provider{server: srv, registry: cfg.proxmox}
+	if err := srv.provider.initialize(cfg); err != nil {
 		return nil, err
 	}
 
@@ -124,9 +124,9 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 		RequestHook:      srv.agentViewRequest,
 		ResponseHook:     srv.agentViewResponse,
 		BeginUpgrade:     srv.beginAgentTerminal,
-		Resolve:          srv.managed.resolveTerminal,
-		Dial:             srv.managed.dialTerminal,
-		TargetValid:      srv.managed.validTerminal,
+		Resolve:          srv.provider.resolveTerminal,
+		Dial:             srv.provider.dialTerminal,
+		TargetValid:      srv.provider.validTerminal,
 		Host:             guestTerminalHost,
 		Revalidate:       srv.validProxySession,
 		RevalidateStream: srv.validProxyStream,
@@ -143,12 +143,12 @@ func newFromStore(ctx context.Context, cfg Config, opts Options, st *store.Store
 	srv.mountLists()
 	srv.mountTelegramProfile()
 	srv.mountLLM(cfg)
-	srv.managedLLM = srv.managedLLMHandler(cfg)
+	srv.agentLLM = srv.agentLLMHandler(cfg)
 	srv.roleModelCatalog = newRoleModelCatalog(cfg)
 	proxyCtx, cancel := context.WithCancel(ctx)
 	srv.cancel = cancel
 	srv.proxy.Start(proxyCtx)
-	srv.managed.start(proxyCtx)
+	srv.provider.start(proxyCtx)
 	srv.telegram.start(proxyCtx)
 	srv.telegramActivity.start(proxyCtx)
 	return srv, nil
@@ -198,7 +198,6 @@ func (s *Server) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	// Диспетчер шагов пишет исход в базу и зовёт hub: закрывается раньше них.
 	// Поллеры и отправитель Telegram пишут в базу: остановлены до её
 	// закрытия.
 	if s.telegramActivity != nil {
@@ -206,7 +205,7 @@ func (s *Server) Close() error {
 	}
 	s.telegram.close()
 	s.proxy.Close()
-	s.managed.close()
+	s.provider.close()
 	return s.store.Close()
 }
 
@@ -235,8 +234,8 @@ func (s *Server) Handler() http.Handler {
 			s.serveGuestArtifacts(w, r)
 			return
 		}
-		if publicManagedLLMPath(r.URL.Path) {
-			s.managedLLM.ServeHTTP(w, r)
+		if publicAgentLLMPath(r.URL.Path) {
+			s.agentLLM.ServeHTTP(w, r)
 			return
 		}
 		if publicGuestPath(r.URL.Path) {

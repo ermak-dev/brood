@@ -22,7 +22,7 @@ var schemaModules = []schemaModule{
 	{id: "core", create: func() string { return currentSchema + ";" + liveSwarmNameIndex }, verify: verifyCoreSchema},
 	{id: "project-capacity", create: func() string { return projectCapacitySchema }, verify: verifyProjectCapacitySchema},
 	{id: "agent-roles", create: func() string { return agentRoleSchema + ";" + agentRoleDefaultIndex }, verify: verifyAgentRoleSchema},
-	{id: "managed", create: managedFullSchema, verify: verifyManagedSchema},
+	{id: "inventory", create: inventoryFullSchema, verify: verifyInventorySchema},
 	{id: "actor-operations", create: func() string { return actorOperationSchema }, verify: verifyActorOperationSchema},
 	{id: "project-secret", create: func() string { return projectSecretSchema }, verify: verifyProjectSecretSchema},
 	{id: "origin", create: func() string { return projectRepositorySchema }, verify: verifyOriginSchema},
@@ -80,10 +80,10 @@ func prepareSchema(ctx context.Context, conn *sql.Conn, want int) error {
 	return nil
 }
 
-// managedFullSchema — инвентарь Proxmox и его ограничения уникальности.
-func managedFullSchema() string {
-	statements := []string{managedSchema}
-	for _, object := range managedConstraints {
+// inventoryFullSchema — инвентарь Proxmox и его ограничения уникальности.
+func inventoryFullSchema() string {
+	statements := []string{inventorySchema}
+	for _, object := range inventoryConstraints {
 		statements = append(statements, object.sql)
 	}
 	return strings.Join(statements, ";")
@@ -102,12 +102,12 @@ func verifyProjectCapacitySchema(ctx context.Context, tx *sql.Tx) error {
 	return checkSchema(ctx, tx, projectCapacitySchema)
 }
 
-// verifyManagedSchema сверяет инвентарь и его ограничения уникальности.
-func verifyManagedSchema(ctx context.Context, tx *sql.Tx) error {
-	if err := checkSchema(ctx, tx, managedSchema); err != nil {
+// verifyInventorySchema сверяет инвентарь и его ограничения уникальности.
+func verifyInventorySchema(ctx context.Context, tx *sql.Tx) error {
+	if err := checkSchema(ctx, tx, inventorySchema); err != nil {
 		return err
 	}
-	for _, object := range managedConstraints {
+	for _, object := range inventoryConstraints {
 		if err := checkObject(ctx, tx, object.kind, object.name, object.sql); err != nil {
 			return err
 		}

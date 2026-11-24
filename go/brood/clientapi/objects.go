@@ -170,7 +170,7 @@ func (c *Client) Pools(ctx context.Context) ([]Pool, error) {
 		Items []struct {
 			Name      string `json:"name"`
 			Available bool   `json:"runtimeAvailable"`
-			Managed   *struct {
+			Usage     *struct {
 				State             string `json:"state"`
 				MaxAgents         int64  `json:"maxActors,string"`
 				UsedAgents        int64  `json:"usedActors,string"`
@@ -187,7 +187,7 @@ func (c *Client) Pools(ctx context.Context) ([]Pool, error) {
 	pools := make([]Pool, 0, len(list.Items))
 	for _, item := range list.Items {
 		pool := Pool{Name: item.Name, Available: item.Available}
-		if m := item.Managed; m != nil {
+		if m := item.Usage; m != nil {
 			pool.State, pool.MaxAgents, pool.UsedAgents = m.State, m.MaxAgents, m.UsedAgents
 			pool.CPUMillicores, pool.UsedCPUMillicores = m.CPUMillicores, m.UsedCPUMillicores
 			pool.MemoryBytes, pool.UsedMemoryBytes = m.MemoryBytes, m.UsedMemoryBytes

@@ -43,7 +43,7 @@ type Sessions struct {
 	ttl   time.Duration
 }
 
-// NewSessions собирает менеджер сессий: store — хранилище #29, ttl —
+// NewSessions собирает менеджер сессий: store — хранилище, ttl —
 // срок жизни сессии (DefaultSessionTTL при неположительном значении).
 func NewSessions(st *store.Store, ttl time.Duration) *Sessions {
 	if ttl <= 0 {

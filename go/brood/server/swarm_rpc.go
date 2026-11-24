@@ -12,9 +12,9 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-var managedActorName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+var agentNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
 
-func managedAddRefusal(err error) string {
+func addRefusal(err error) string {
 	var limit *app.LimitExceededError
 	var origin *originRefusal
 	var api *app.APIError
@@ -42,8 +42,8 @@ func managedAddRefusal(err error) string {
 }
 
 // authorizeMaster rechecks the durable UID/generation and its human approval.
-func (m *managedProvider) authorizeMaster(ctx context.Context, original store.ManagedActor) error {
-	a, err := m.server.store.GetManagedActor(ctx, original.UID)
+func (m *provider) authorizeMaster(ctx context.Context, original store.Agent) error {
+	a, err := m.server.store.GetAgent(ctx, original.UID)
 	if err != nil || a.Incarnation != original.Incarnation || a.DelegatorID == "" || a.Phase != "running" || a.Desired != "running" || a.Operation != "start" || a.Stage != "done" {
 		return app.ErrNotAllowed
 	}
@@ -54,9 +54,9 @@ func (m *managedProvider) authorizeMaster(ctx context.Context, original store.Ma
 	return m.server.authorizeSwarmManagerIntent(ctx, u.ID, a.SwarmID)
 }
 
-func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, generation int64, req relay.SwarmRequest) relay.SwarmResponse {
+func (m *provider) handleSwarmRequest(ctx context.Context, uid string, generation int64, req relay.SwarmRequest) relay.SwarmResponse {
 	refused := relay.SwarmResponse{Text: "swarm operation refused"}
-	from, err := m.server.store.GetManagedActor(ctx, uid)
+	from, err := m.server.store.GetAgent(ctx, uid)
 	if err != nil || from.Incarnation != generation || from.Phase == "deleted" || from.Desired != "running" || from.Operation != "start" {
 		return refused
 	}
@@ -77,7 +77,7 @@ func (m *managedProvider) handleSwarmRequest(ctx context.Context, uid string, ge
 
 // sendFromAgent delivers a message of agent from to another agent of its
 // swarm, or to the human owner of the swarm when to is operator.
-func (m *managedProvider) sendFromAgent(ctx context.Context, from store.ManagedActor, name, message string, wait int) relay.SwarmResponse {
+func (m *provider) sendFromAgent(ctx context.Context, from store.Agent, name, message string, wait int) relay.SwarmResponse {
 	if name == telegramOperator {
 		// Адресат operator — владелец роя; канал к нему — Telegram.
 		if err := m.server.telegramChannel.toOwner(ctx, from, message); err != nil {
@@ -85,7 +85,7 @@ func (m *managedProvider) sendFromAgent(ctx context.Context, from store.ManagedA
 		}
 		return relay.SwarmResponse{OK: true, Text: "delivered to the operator's Telegram chat"}
 	}
-	to, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, name)
+	to, err := m.server.store.LookupAgent(ctx, from.SwarmID, name)
 	if err != nil || to.UID == from.UID || to.Phase == "deleted" {
 		return relay.SwarmResponse{Text: fmt.Sprintf("not sent: %q is not another agent of this swarm; list the agents with agents", name)}
 	}

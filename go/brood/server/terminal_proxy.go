@@ -19,7 +19,7 @@ const guestTerminalHost = "127.0.0.1:8080"
 
 // resolveTerminal выбирает агента роя для прокси терминала: UID и
 // поколение берутся из базы, запрос на них не влияет.
-func (m *managedProvider) resolveTerminal(swarmID, name string) (proxy.Target, error) {
+func (m *provider) resolveTerminal(swarmID, name string) (proxy.Target, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	a, err := m.actorByName(ctx, swarmID, name)
@@ -37,8 +37,8 @@ func (m *managedProvider) resolveTerminal(swarmID, name string) (proxy.Target, e
 }
 
 // terminalAgent — агент цели, если это поколение ещё работает и на связи.
-func (m *managedProvider) terminalAgent(ctx context.Context, target proxy.Target) (store.ManagedActor, error) {
-	a, err := m.server.store.GetManagedActor(ctx, target.UID)
+func (m *provider) terminalAgent(ctx context.Context, target proxy.Target) (store.Agent, error) {
+	a, err := m.server.store.GetAgent(ctx, target.UID)
 	if err != nil {
 		return a, err
 	}
@@ -49,7 +49,7 @@ func (m *managedProvider) terminalAgent(ctx context.Context, target proxy.Target
 	if !ok || verified != target.Generation || a.Phase != "running" || a.Desired != "running" || a.Incarnation != target.Generation || m.hub == nil || !m.hub.Connected(target.UID, target.Generation) {
 		return a, proxy.ErrUnknownAgent
 	}
-	p, err := m.server.store.GetManagedPool(ctx, a.PoolUID)
+	p, err := m.server.store.GetPool(ctx, a.PoolUID)
 	if err != nil {
 		return a, err
 	}
@@ -59,14 +59,14 @@ func (m *managedProvider) terminalAgent(ctx context.Context, target proxy.Target
 	return a, nil
 }
 
-func (m *managedProvider) validTerminal(target proxy.Target) bool {
+func (m *provider) validTerminal(target proxy.Target) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_, err := m.terminalAgent(ctx, target)
 	return err == nil
 }
 
-func (m *managedProvider) dialTerminal(ctx context.Context, target proxy.Target) (net.Conn, error) {
+func (m *provider) dialTerminal(ctx context.Context, target proxy.Target) (net.Conn, error) {
 	a, err := m.terminalAgent(ctx, target)
 	if err != nil {
 		return nil, err
@@ -75,18 +75,18 @@ func (m *managedProvider) dialTerminal(ctx context.Context, target proxy.Target)
 }
 
 func (s *Server) guestRoute(w http.ResponseWriter, r *http.Request) {
-	if s.managed.hub == nil {
+	if s.provider.hub == nil {
 		writeDetail(w, 503, "Proxmox guest relay is not configured")
 		return
 	}
-	s.managed.hub.Handler().ServeHTTP(w, r)
+	s.provider.hub.Handler().ServeHTTP(w, r)
 }
 func publicGuestPath(path string) bool { return strings.HasPrefix(path, "/api/proxmox/guest/") }
 
 // agentViewBinding — UID и поколение работающего агента, к которым
 // привязан пропуск терминала.
 func (s *Server) agentViewBinding(ctx context.Context, swarm, name string) (string, int64, error) {
-	a, err := s.managed.actorByName(ctx, swarm, name)
+	a, err := s.provider.actorByName(ctx, swarm, name)
 	if err != nil {
 		return "", 0, err
 	}

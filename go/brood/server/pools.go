@@ -20,15 +20,16 @@ import (
 	"brood.dev/go/brood/store"
 )
 
-const managedProfile = "claude-proxmox"
+const templateProfile = "claude-proxmox"
 const gib int64 = 1 << 30
 const mib int64 = 1 << 20
 
-// managedProvider owns Brood inventory, never native workers or their identities.
-// admission serializes profile activation with both native publication paths.
-// lifecycle serializes provider operations and reconciliation within this process.
-type managedProvider struct {
-	managedRuntime
+// provider drives agent containers, pools and image builds in Proxmox from
+// the records of the store. admission serializes pool activation and
+// connection and role changes with agent creation. lifecycle serializes
+// provider operations and reconciliation within this process.
+type provider struct {
+	providerRuntime
 	server   *Server
 	registry *proxmoxRegistry
 	// deliverMessage доставляет запрос адресату; обёртка для тестов.
@@ -39,7 +40,7 @@ type managedProvider struct {
 	works          agentWorkCache
 }
 
-type managedPoolJSON struct {
+type poolUsageJSON struct {
 	UID               string `json:"uid"`
 	State             string `json:"state"`
 	Version           string `json:"version"`
@@ -53,14 +54,14 @@ type managedPoolJSON struct {
 	UsedDiskBytes     string `json:"usedDiskBytes"`
 }
 
-func managedDecimal(n int64) string { return strconv.FormatInt(n, 10) }
+func decimal(n int64) string { return strconv.FormatInt(n, 10) }
 
-func (m *managedProvider) pools(ctx context.Context) ([]store.ManagedPool, error) {
-	rows, err := m.server.store.ListManagedPools(ctx)
+func (m *provider) pools(ctx context.Context) ([]store.Pool, error) {
+	rows, err := m.server.store.ListPools(ctx)
 	if err != nil {
 		return nil, err
 	}
-	live := make([]store.ManagedPool, 0, len(rows))
+	live := make([]store.Pool, 0, len(rows))
 	for _, p := range rows {
 		if p.State != "deleted" {
 			live = append(live, p)
@@ -68,17 +69,17 @@ func (m *managedProvider) pools(ctx context.Context) ([]store.ManagedPool, error
 	}
 	return live, nil
 }
-func (m *managedProvider) poolByName(ctx context.Context, name string) (store.ManagedPool, error) {
+func (m *provider) poolByName(ctx context.Context, name string) (store.Pool, error) {
 	rows, err := m.pools(ctx)
 	if err != nil {
-		return store.ManagedPool{}, err
+		return store.Pool{}, err
 	}
 	for _, p := range rows {
 		if p.Name == name {
 			return p, nil
 		}
 	}
-	return store.ManagedPool{}, store.ErrNotFound
+	return store.Pool{}, store.ErrNotFound
 }
 
 func publicCAFingerprint(ca string) string {
@@ -95,54 +96,57 @@ func publicCAFingerprint(ca string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func (m *managedProvider) configuredPool(name string) (store.ManagedPool, error) {
+func (m *provider) configuredPool(name string) (store.Pool, error) {
 	if m.registry == nil {
-		return store.ManagedPool{}, fmt.Errorf("%w: Proxmox runtime is not configured", app.ErrConflict)
+		return store.Pool{}, fmt.Errorf("%w: Proxmox runtime is not configured", app.ErrConflict)
 	}
 	cfg, err := m.configuredConnection(context.Background(), name)
 	if err != nil {
-		return store.ManagedPool{}, err
+		return store.Pool{}, err
 	}
 	if cfg.runtime == nil || m.registry.publicOrigin == "" || len(m.registry.relaySecret) < 32 {
-		return store.ManagedPool{}, fmt.Errorf("%w: runtime requires installed template/capacity, BROOD_PUBLIC_ORIGIN and BROOD_PROXMOX_RELAY_SECRET", app.ErrConflict)
+		return store.Pool{}, fmt.Errorf("%w: runtime requires installed template/capacity, BROOD_PUBLIC_ORIGIN and BROOD_PROXMOX_RELAY_SECRET", app.ErrConflict)
 	}
 	r := cfg.runtime
 	if r.diskGiB > int64(^uint64(0)>>1)/gib {
-		return store.ManagedPool{}, fmt.Errorf("%w: disk capacity exceeds int64", app.ErrInvalidCapacity)
+		return store.Pool{}, fmt.Errorf("%w: disk capacity exceeds int64", app.ErrInvalidCapacity)
 	}
 	ca := publicCAFingerprint(cfg.caPEM)
-	p := store.ManagedPool{Name: name, Connection: name, Source: store.ManagedSourceSnapshot{ClusterIdentity: "pve-" + strings.TrimPrefix(ca, "sha256:"), Endpoint: strings.TrimSuffix(cfg.endpoint, "/"), Node: cfg.node, ResourcePool: cfg.resourcePool, Storage: cfg.storage, Network: cfg.network, CAFingerprint: ca}, Labels: map[string]string{"ate.dev/worker-pool": name, "brood.dev/provider": "proxmox"}, MaxActors: r.actors, Resources: store.ManagedResources{CPUMillicores: r.cpuMillicores, MemoryBytes: r.memoryBytes, DiskBytes: r.diskGiB * gib}, Template: store.ManagedTemplateSnapshot{Profile: managedProfile, URI: r.template, Digest: r.digest}, State: "enabled"}
-	if _, err := managedActorResources(p); err != nil {
+	// Метки входят в сверку poolAvailable с записанным пулом, а записанные
+	// пулы приходят из фикстуры выкладки: прежний ключ ate.dev/worker-pool
+	// меняется только вместе с фикстурой.
+	p := store.Pool{Name: name, Connection: name, Source: store.SourceSnapshot{ClusterIdentity: "pve-" + strings.TrimPrefix(ca, "sha256:"), Endpoint: strings.TrimSuffix(cfg.endpoint, "/"), Node: cfg.node, ResourcePool: cfg.resourcePool, Storage: cfg.storage, Network: cfg.network, CAFingerprint: ca}, Labels: map[string]string{"ate.dev/worker-pool": name, "brood.dev/provider": "proxmox"}, MaxActors: r.actors, Resources: store.Resources{CPUMillicores: r.cpuMillicores, MemoryBytes: r.memoryBytes, DiskBytes: r.diskGiB * gib}, Template: store.TemplateSnapshot{Profile: templateProfile, URI: r.template, Digest: r.digest}, State: "enabled"}
+	if _, err := agentResources(p); err != nil {
 		return p, err
 	}
 	return p, nil
 }
 
-func managedActorResources(p store.ManagedPool) (store.ManagedResources, error) {
+func agentResources(p store.Pool) (store.Resources, error) {
 	if p.MaxActors <= 0 {
-		return store.ManagedResources{}, fmt.Errorf("%w: managed pool requires positive actor capacity", app.ErrInvalidCapacity)
+		return store.Resources{}, fmt.Errorf("%w: pool requires positive agent capacity", app.ErrInvalidCapacity)
 	}
 	// PVE reserves whole cores, MiB and GiB. Equal immutable shares never
 	// round up beyond the installation-approved aggregate capacity.
-	r := store.ManagedResources{CPUMillicores: (p.Resources.CPUMillicores / p.MaxActors / 1000) * 1000, MemoryBytes: (p.Resources.MemoryBytes / p.MaxActors / mib) * mib, DiskBytes: (p.Resources.DiskBytes / p.MaxActors / gib) * gib}
+	r := store.Resources{CPUMillicores: (p.Resources.CPUMillicores / p.MaxActors / 1000) * 1000, MemoryBytes: (p.Resources.MemoryBytes / p.MaxActors / mib) * mib, DiskBytes: (p.Resources.DiskBytes / p.MaxActors / gib) * gib}
 	if r.CPUMillicores < 1000 || r.CPUMillicores > 128000 || r.MemoryBytes < 16*mib || r.MemoryBytes > 1048576*mib || r.DiskBytes < gib || r.DiskBytes > 16384*gib {
 		return r, fmt.Errorf("%w: equal per-actor capacity must fit PVE core, memory and disk bounds", app.ErrInvalidCapacity)
 	}
 	return r, nil
 }
 
-func (m *managedProvider) poolAvailable(p store.ManagedPool) bool {
+func (m *provider) poolAvailable(p store.Pool) bool {
 	configured, err := m.configuredPool(p.Connection)
 	return err == nil && configured.Name == p.Name && configured.Source == p.Source && configured.Template == p.Template && configured.MaxActors == p.MaxActors && configured.Resources == p.Resources && reflect.DeepEqual(configured.Labels, p.Labels)
 }
 
-func (m *managedProvider) poolJSON(ctx context.Context, p store.ManagedPool) (*managedPoolJSON, error) {
-	actors, err := m.server.store.ListManagedActors(ctx, "")
+func (m *provider) poolJSON(ctx context.Context, p store.Pool) (*poolUsageJSON, error) {
+	actors, err := m.server.store.ListAgents(ctx, "")
 	if err != nil {
 		return nil, err
 	}
 	var count int64
-	var used store.ManagedResources
+	var used store.Resources
 	for _, a := range actors {
 		if a.PoolUID == p.UID && a.Phase != "deleted" {
 			count++
@@ -151,10 +155,10 @@ func (m *managedProvider) poolJSON(ctx context.Context, p store.ManagedPool) (*m
 			used.DiskBytes += a.Resources.DiskBytes
 		}
 	}
-	return &managedPoolJSON{UID: p.UID, State: p.State, Version: managedDecimal(p.Revision), MaxActors: managedDecimal(p.MaxActors), UsedActors: managedDecimal(count), CPUMillicores: managedDecimal(p.Resources.CPUMillicores), UsedCPUMillicores: managedDecimal(used.CPUMillicores), MemoryBytes: managedDecimal(p.Resources.MemoryBytes), UsedMemoryBytes: managedDecimal(used.MemoryBytes), DiskBytes: managedDecimal(p.Resources.DiskBytes), UsedDiskBytes: managedDecimal(used.DiskBytes)}, nil
+	return &poolUsageJSON{UID: p.UID, State: p.State, Version: decimal(p.Revision), MaxActors: decimal(p.MaxActors), UsedActors: decimal(count), CPUMillicores: decimal(p.Resources.CPUMillicores), UsedCPUMillicores: decimal(used.CPUMillicores), MemoryBytes: decimal(p.Resources.MemoryBytes), UsedMemoryBytes: decimal(used.MemoryBytes), DiskBytes: decimal(p.Resources.DiskBytes), UsedDiskBytes: decimal(used.DiskBytes)}, nil
 }
 
-func (m *managedProvider) inventory(ctx context.Context) ([]proxmoxPoolDTO, error) {
+func (m *provider) inventory(ctx context.Context) ([]proxmoxPoolDTO, error) {
 	items := m.registry.items()
 	// Подключения панели и env используют один инвентарь и путь активации.
 	dbItems, err := m.connectionItems(ctx)
@@ -180,14 +184,14 @@ func (m *managedProvider) inventory(ctx context.Context) ([]proxmoxPoolDTO, erro
 			i = len(items)
 			items = append(items, proxmoxPoolDTO{Name: p.Name, Endpoint: p.Source.Endpoint, Node: p.Source.Node, ResourcePool: p.Source.ResourcePool, Storage: p.Source.Storage, Network: p.Source.Network})
 		}
-		items[i].ManagedPool = dto
+		items[i].Usage = dto
 		items[i].RuntimeAvailable = m.poolAvailable(p)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 	return items, nil
 }
 
-func emptyManagedBody(w http.ResponseWriter, r *http.Request) bool {
+func emptyBody(w http.ResponseWriter, r *http.Request) bool {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
 	if err != nil {
 		writeDetail(w, 400, "empty request body required")
@@ -204,7 +208,7 @@ func emptyManagedBody(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePoolAction(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(w, r)
 	if !ok {
 		return
@@ -213,10 +217,10 @@ func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 		writeDetail(w, 403, "administrator access required")
 		return
 	}
-	if !emptyManagedBody(w, r) {
+	if !emptyBody(w, r) {
 		return
 	}
-	m := s.managed
+	m := s.provider
 	m.admission.Lock()
 	defer m.admission.Unlock()
 	name := r.PathValue("name")
@@ -231,7 +235,7 @@ func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, store.ErrNotFound) {
 			configured.UID = store.NewID()
-			pool, err = s.store.CreateManagedPool(r.Context(), configured)
+			pool, err = s.store.CreatePool(r.Context(), configured)
 			code = 201
 		} else if err == nil && !m.poolAvailable(pool) {
 			err = fmt.Errorf("%w: activated pool differs from installation configuration", app.ErrConflict)
@@ -247,9 +251,9 @@ func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 			if action == "enable" {
 				pool.State = "enabled"
 			}
-			pool, err = s.store.UpdateManagedPool(r.Context(), pool, pool.Revision)
+			pool, err = s.store.UpdatePool(r.Context(), pool, pool.Revision)
 		case "delete":
-			err = s.store.DeleteManagedPool(r.Context(), pool.UID, pool.Revision)
+			err = s.store.DeletePool(r.Context(), pool.UID, pool.Revision)
 			if err == nil {
 				w.WriteHeader(204)
 				return
@@ -259,7 +263,7 @@ func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		managedAPIError(w, r, err)
+		providerAPIError(w, r, err)
 		return
 	}
 	dto, err := m.poolJSON(r.Context(), pool)
@@ -270,7 +274,7 @@ func (s *Server) handleManagedPool(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, map[string]any{"managedPool": dto})
 }
 
-func managedAPIError(w http.ResponseWriter, r *http.Request, err error) {
+func providerAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	var origin *originRefusal
 	switch {
 	case errors.As(err, &origin):
@@ -278,10 +282,10 @@ func managedAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, store.ErrNotFound):
 		writeDetail(w, 404, "agent or pool not found; it may have been deleted, reload the list")
 	case errors.Is(err, proxmox.ErrPermission):
-		writeDetail(w, 503, managedProviderError(err))
+		writeDetail(w, 503, providerError(err))
 	case errors.Is(err, proxmox.ErrOwnership), errors.Is(err, proxmox.ErrUncertain), errors.Is(err, proxmox.ErrTaskFailed):
-		writeDetail(w, 409, managedProviderError(err))
-	case errors.Is(err, store.ErrPoolCapacity), errors.Is(err, store.ErrPoolUnavailable), errors.Is(err, store.ErrManagedChildren), errors.Is(err, store.ErrManagedBinding), errors.Is(err, store.ErrRevisionConflict), store.IsUniqueViolation(err):
+		writeDetail(w, 409, providerError(err))
+	case errors.Is(err, store.ErrPoolCapacity), errors.Is(err, store.ErrPoolUnavailable), errors.Is(err, store.ErrInUse), errors.Is(err, store.ErrImmutableBinding), errors.Is(err, store.ErrRevisionConflict), store.IsUniqueViolation(err):
 		writeDetail(w, 409, publicDetail(err))
 	default:
 		apiError(w, r, err)
@@ -289,21 +293,21 @@ func managedAPIError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func (s *Server) admitWorkload(ctx context.Context, userID, swarmID string, op app.WorkloadOperation) error {
-	s.managed.admission.Lock()
-	defer s.managed.admission.Unlock()
+	s.provider.admission.Lock()
+	defer s.provider.admission.Unlock()
 	return s.app.AdmitWorkload(ctx, userID, swarmID, op)
 }
 
 // agentProfiles — имена пулов, в которых сейчас можно создать агента:
 // включённых и совпадающих с настройкой установки.
 func (s *Server) agentProfiles(ctx context.Context) ([]string, error) {
-	pools, err := s.managed.pools(ctx)
+	pools, err := s.provider.pools(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := []string{}
 	for _, p := range pools {
-		if p.State == "enabled" && s.managed.poolAvailable(p) {
+		if p.State == "enabled" && s.provider.poolAvailable(p) {
 			out = append(out, p.Name)
 		}
 	}

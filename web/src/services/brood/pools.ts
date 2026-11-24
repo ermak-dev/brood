@@ -1,7 +1,7 @@
 /**
  * brood: Proxmox connections and their pools (administrator only).
  * Shapes follow go/brood/server/proxmox.go, proxmox_connections.go and
- * managed_pools.go. The token secret is write-only.
+ * pools.go. The token secret is write-only.
  */
 import { request } from './http';
 

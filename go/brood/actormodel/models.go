@@ -1,5 +1,5 @@
 // Package actormodel validates the Claude Code models an installation assigns
-// to its managed actors (#263): BROOD_ACTOR_MODEL for the main work and
+// to its agents (#263): BROOD_ACTOR_MODEL for the main work and
 // BROOD_ACTOR_SMALL_MODEL for fast background tasks. It is pure: no
 // configuration, Claude Code or network. Errors name the setting and never
 // echo the value.

@@ -59,7 +59,7 @@ type agentWorkCache struct {
 	entries map[string]agentWorkEntry
 }
 
-func (c *agentWorkCache) get(a store.ManagedActor) (agentWork, bool) {
+func (c *agentWorkCache) get(a store.Agent) (agentWork, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.entries[a.UID]
@@ -69,7 +69,7 @@ func (c *agentWorkCache) get(a store.ManagedActor) (agentWork, bool) {
 	return entry.work, true
 }
 
-func (c *agentWorkCache) put(a store.ManagedActor, work agentWork) {
+func (c *agentWorkCache) put(a store.Agent, work agentWork) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.entries == nil {
@@ -130,7 +130,7 @@ func workVerdict(status relay.AgentStatus) agentWork {
 }
 
 // askAgentWork asks one running agent. No answer is unknown, not free.
-func (m *managedProvider) askAgentWork(ctx context.Context, a store.ManagedActor) agentWork {
+func (m *provider) askAgentWork(ctx context.Context, a store.Agent) agentWork {
 	hub, ok := m.hub.(sessionRelay)
 	if !ok || !m.hub.Connected(a.UID, a.Incarnation) {
 		return agentWork{Activity: workUnknown, Detail: "the agent is not connected"}
@@ -154,7 +154,7 @@ func (m *managedProvider) askAgentWork(ctx context.Context, a store.ManagedActor
 // agentWorks reports the work of the running agents among actors, by UID;
 // the others have no entry. fresh asks every agent again instead of reading
 // a recent answer. An agent without a saved model shows the model of its role.
-func (m *managedProvider) agentWorks(ctx context.Context, actors []store.ManagedActor, fresh bool) map[string]agentWork {
+func (m *provider) agentWorks(ctx context.Context, actors []store.Agent, fresh bool) map[string]agentWork {
 	works := map[string]agentWork{}
 	var mu sync.Mutex
 	var pending sync.WaitGroup

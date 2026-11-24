@@ -23,7 +23,7 @@ const (
 	proxmoxTokensSetting = "BROOD_PROXMOX_TOKENS"
 )
 
-// proxmoxRegistry holds installation-local configuration, not native WorkerPool state.
+// proxmoxRegistry holds the Proxmox configuration of the installation environment.
 // Credentials and trust material stay out of exported Config fields and API DTOs.
 type proxmoxRegistry struct {
 	pools                     map[string]proxmoxPool
@@ -43,16 +43,16 @@ type proxmoxRuntimeConfig struct {
 }
 
 type proxmoxPoolDTO struct {
-	Name                 string           `json:"name"`
-	Endpoint             string           `json:"endpoint"`
-	TokenID              string           `json:"tokenID"`
-	Node                 string           `json:"node"`
-	ResourcePool         string           `json:"resourcePool"`
-	Storage              string           `json:"storage"`
-	Network              string           `json:"network"`
-	CredentialConfigured bool             `json:"credentialConfigured"`
-	RuntimeAvailable     bool             `json:"runtimeAvailable"`
-	ManagedPool          *managedPoolJSON `json:"managedPool,omitempty"`
+	Name                 string         `json:"name"`
+	Endpoint             string         `json:"endpoint"`
+	TokenID              string         `json:"tokenID"`
+	Node                 string         `json:"node"`
+	ResourcePool         string         `json:"resourcePool"`
+	Storage              string         `json:"storage"`
+	Network              string         `json:"network"`
+	CredentialConfigured bool           `json:"credentialConfigured"`
+	RuntimeAvailable     bool           `json:"runtimeAvailable"`
+	Usage                *poolUsageJSON `json:"managedPool,omitempty"`
 }
 
 func loadProxmoxRegistry(get getenv) (*proxmoxRegistry, error) {
@@ -232,7 +232,7 @@ func parseProxmoxRuntime(fields map[string]json.RawMessage) (*proxmoxRuntimeConf
 	if r.diskGiB > int64(^uint64(0)>>1)/gib || strings.Contains(r.template, "..") {
 		return bad()
 	}
-	if _, err := managedActorResources(store.ManagedPool{MaxActors: r.actors, Resources: store.ManagedResources{CPUMillicores: r.cpuMillicores, MemoryBytes: r.memoryBytes, DiskBytes: r.diskGiB * gib}}); err != nil {
+	if _, err := agentResources(store.Pool{MaxActors: r.actors, Resources: store.Resources{CPUMillicores: r.cpuMillicores, MemoryBytes: r.memoryBytes, DiskBytes: r.diskGiB * gib}}); err != nil {
 		return bad()
 	}
 	return r, nil
@@ -325,7 +325,7 @@ func (s *Server) mountProxmoxPools(registry *proxmoxRegistry) {
 			writeDetail(w, http.StatusForbidden, "administrator access required")
 			return
 		}
-		items, err := s.managed.inventory(r.Context())
+		items, err := s.provider.inventory(r.Context())
 		if err != nil {
 			apiError(w, r, err)
 			return
@@ -335,11 +335,11 @@ func (s *Server) mountProxmoxPools(registry *proxmoxRegistry) {
 	for _, action := range []string{"activate", "drain", "enable"} {
 		s.mux.HandleFunc("POST /api/proxmox-pools/{name}/"+action, func(w http.ResponseWriter, r *http.Request) {
 			r.SetPathValue("action", action)
-			s.handleManagedPool(w, r)
+			s.handlePoolAction(w, r)
 		})
 	}
 	s.mux.HandleFunc("DELETE /api/proxmox-pools/{name}", func(w http.ResponseWriter, r *http.Request) {
 		r.SetPathValue("action", "delete")
-		s.handleManagedPool(w, r)
+		s.handlePoolAction(w, r)
 	})
 }

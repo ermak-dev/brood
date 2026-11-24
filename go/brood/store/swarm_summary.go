@@ -8,7 +8,7 @@ import (
 
 // SwarmSummary is the number of live workers of a swarm.
 type SwarmSummary struct {
-	ManagedActorCount int64
+	AgentCount int64
 }
 
 // SwarmSummaries returns the summary of each named swarm in one query. A
@@ -24,7 +24,7 @@ func (s *Store) SwarmSummaries(ctx context.Context, ids []string) (map[string]Sw
 		return nil, err
 	}
 	rows, err := s.conn(ctx).QueryContext(ctx, `
-		SELECT s.id, (SELECT COUNT(*) FROM managed_actors a WHERE a.swarm_id = s.id AND a.phase <> 'deleted')
+		SELECT s.id, (SELECT COUNT(*) FROM agents a WHERE a.swarm_id = s.id AND a.phase <> 'deleted')
 		FROM swarms s WHERE s.id IN (SELECT value FROM json_each(?))`, string(set))
 	if err != nil {
 		return nil, fmt.Errorf("swarm summaries: %w", err)
@@ -33,7 +33,7 @@ func (s *Store) SwarmSummaries(ctx context.Context, ids []string) (map[string]Sw
 	for rows.Next() {
 		var id string
 		var summary SwarmSummary
-		if err := rows.Scan(&id, &summary.ManagedActorCount); err != nil {
+		if err := rows.Scan(&id, &summary.AgentCount); err != nil {
 			return nil, fmt.Errorf("swarm summaries: %w", err)
 		}
 		out[id] = summary

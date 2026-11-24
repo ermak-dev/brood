@@ -54,7 +54,7 @@ func (s *Server) mountProjectImages() {
 
 func (s *Server) imageJSON(ctx context.Context, i store.ProjectImage) imageJSON {
 	pool := ""
-	if p, err := s.store.GetManagedPool(ctx, i.PoolUID); err == nil {
+	if p, err := s.store.GetPool(ctx, i.PoolUID); err == nil {
 		pool = p.Name
 	}
 	return imageJSON{ID: i.ID, Pool: pool, State: i.State, Snapshot: i.Snapshot, Playbook: i.Playbook, CTID: i.CTID, Error: i.Error, Log: i.Log, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt}
@@ -132,7 +132,7 @@ func (s *Server) handleProjectImages(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := s.imageProject(w, r); !ok {
 		return
 	}
-	image, err := s.managed.startImageBuild(r.Context(), projectID, r.URL.Query().Get("pool"), digest, snapshot)
+	image, err := s.provider.startImageBuild(r.Context(), projectID, r.URL.Query().Get("pool"), digest, snapshot)
 	if err != nil {
 		var refusal *imageRefusal
 		switch {
@@ -141,7 +141,7 @@ func (s *Server) handleProjectImages(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrProjectImageBusy):
 			writeDetail(w, http.StatusConflict, err.Error())
 		default:
-			managedAPIError(w, r, err)
+			providerAPIError(w, r, err)
 		}
 		return
 	}
@@ -163,13 +163,13 @@ func (s *Server) handleProjectImage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.imageJSON(r.Context(), image))
 		return
 	}
-	if err := s.managed.deleteImage(r.Context(), image); err != nil {
+	if err := s.provider.deleteImage(r.Context(), image); err != nil {
 		var refusal *imageRefusal
 		if errors.As(err, &refusal) {
 			writeDetail(w, http.StatusConflict, refusal.detail)
 			return
 		}
-		managedAPIError(w, r, err)
+		providerAPIError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -185,7 +185,7 @@ func imageOwned(i store.ProjectImage) proxmox.OwnedCT {
 }
 
 // imagePool выбирает пул сборки: названный или единственный включённый.
-func (m *managedProvider) imagePool(ctx context.Context, name string) (store.ManagedPool, error) {
+func (m *provider) imagePool(ctx context.Context, name string) (store.Pool, error) {
 	if name != "" {
 		p, err := m.poolByName(ctx, name)
 		if err != nil {
@@ -195,23 +195,23 @@ func (m *managedProvider) imagePool(ctx context.Context, name string) (store.Man
 	}
 	pools, err := m.pools(ctx)
 	if err != nil {
-		return store.ManagedPool{}, err
+		return store.Pool{}, err
 	}
-	var enabled []store.ManagedPool
+	var enabled []store.Pool
 	for _, p := range pools {
 		if p.State == "enabled" && m.poolAvailable(p) {
 			enabled = append(enabled, p)
 		}
 	}
 	if len(enabled) != 1 {
-		return store.ManagedPool{}, &imageRefusal{detail: fmt.Sprintf("name the pool: %d enabled pools", len(enabled))}
+		return store.Pool{}, &imageRefusal{detail: fmt.Sprintf("name the pool: %d enabled pools", len(enabled))}
 	}
 	return enabled[0], nil
 }
 
 // startImageBuild проверяет вход, резервирует контейнер и запускает сборку
 // в фоне. Запись сборки фиксируется до первой записи в PVE.
-func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolName, digest string, snapshot *os.File) (store.ProjectImage, error) {
+func (m *provider) startImageBuild(ctx context.Context, projectID, poolName, digest string, snapshot *os.File) (store.ProjectImage, error) {
 	if m.identity == nil || m.buildContext == nil {
 		return store.ProjectImage{}, &imageRefusal{detail: "image builds are unavailable: the installation SSH identity is missing"}
 	}
@@ -226,7 +226,7 @@ func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolNa
 	if pool.State != "enabled" || !m.poolAvailable(pool) {
 		return store.ProjectImage{}, &imageRefusal{detail: "the pool is not enabled"}
 	}
-	resources, err := managedActorResources(pool)
+	resources, err := agentResources(pool)
 	if err != nil {
 		return store.ProjectImage{}, err
 	}
@@ -250,8 +250,8 @@ func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolNa
 	upid, err := client.Create(ctx, spec)
 	m.lifecycle.Unlock()
 	if err != nil {
-		_ = m.server.store.FinishProjectImage(context.WithoutCancel(ctx), image.ID, "failed", "the build container was not created: "+managedProviderError(err))
-		return store.ProjectImage{}, &imageRefusal{detail: "the build container was not created: " + managedProviderError(err)}
+		_ = m.server.store.FinishProjectImage(context.WithoutCancel(ctx), image.ID, "failed", "the build container was not created: "+providerError(err))
+		return store.ProjectImage{}, &imageRefusal{detail: "the build container was not created: " + providerError(err)}
 	}
 	build := &imageBuild{provider: m, client: client, image: image, snapshot: snapshot, binary: binary}
 	m.workers.Add(1)
@@ -266,7 +266,7 @@ func (m *managedProvider) startImageBuild(ctx context.Context, projectID, poolNa
 
 // deleteImage уничтожает контейнер образа и снимает запись. Идущую сборку
 // и образ с живыми клонами удалить нельзя.
-func (m *managedProvider) deleteImage(ctx context.Context, image store.ProjectImage) error {
+func (m *provider) deleteImage(ctx context.Context, image store.ProjectImage) error {
 	if image.State == "building" {
 		return &imageRefusal{detail: "the image is still building"}
 	}
@@ -277,7 +277,7 @@ func (m *managedProvider) deleteImage(ctx context.Context, image store.ProjectIm
 	if used {
 		return &imageRefusal{detail: "workers cloned from this image still exist; delete them first"}
 	}
-	pool, err := m.server.store.GetManagedPool(ctx, image.PoolUID)
+	pool, err := m.server.store.GetPool(ctx, image.PoolUID)
 	if err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func (m *managedProvider) deleteImage(ctx context.Context, image store.ProjectIm
 		return err
 	}
 	if err := destroyImageContainer(ctx, client, image); err != nil {
-		return &imageRefusal{detail: "the image container was not removed: " + managedProviderError(err)}
+		return &imageRefusal{detail: "the image container was not removed: " + providerError(err)}
 	}
 	return m.server.store.DeleteProjectImage(ctx, image.ID)
 }
@@ -318,7 +318,7 @@ func destroyImageContainer(ctx context.Context, client proxmoxAPI, image store.P
 }
 
 type imageBuild struct {
-	provider *managedProvider
+	provider *provider
 	client   proxmoxAPI
 	image    store.ProjectImage
 	snapshot *os.File
@@ -376,14 +376,14 @@ func (b *imageBuild) build(ctx context.Context, createTask string) error {
 	owned := imageOwned(b.image)
 	b.log.printf("== creating build container %d\n", b.image.CTID)
 	if err := b.wait(ctx, createTask); err != nil {
-		return fmt.Errorf("container creation failed: %s", managedProviderError(err))
+		return fmt.Errorf("container creation failed: %s", providerError(err))
 	}
 	upid, err := b.client.Start(ctx, owned)
 	if err == nil {
 		err = b.wait(ctx, upid)
 	}
 	if err != nil {
-		return fmt.Errorf("container start failed: %s", managedProviderError(err))
+		return fmt.Errorf("container start failed: %s", providerError(err))
 	}
 	session, err := b.connect(ctx)
 	if err != nil {
@@ -412,10 +412,10 @@ func (b *imageBuild) build(ctx context.Context, createTask string) error {
 		err = b.wait(ctx, upid)
 	}
 	if err != nil {
-		return fmt.Errorf("container shutdown failed: %s", managedProviderError(err))
+		return fmt.Errorf("container shutdown failed: %s", providerError(err))
 	}
 	if err := b.client.ConvertToTemplate(ctx, owned); err != nil {
-		return fmt.Errorf("conversion to a template failed: %s", managedProviderError(err))
+		return fmt.Errorf("conversion to a template failed: %s", providerError(err))
 	}
 	return nil
 }
@@ -423,10 +423,10 @@ func (b *imageBuild) build(ctx context.Context, createTask string) error {
 // wait ждёт задачу PVE дольше срока одного вызова клиента.
 func (b *imageBuild) wait(ctx context.Context, upid string) error {
 	for {
-		step, cancel := context.WithTimeout(ctx, managedPassTimeout)
+		step, cancel := context.WithTimeout(ctx, defaultPassTimeout)
 		err := b.client.WaitTask(step, upid)
 		cancel()
-		if err == nil || ctx.Err() != nil || !managedTaskPending(step, err) {
+		if err == nil || ctx.Err() != nil || !taskPending(step, err) {
 			return err
 		}
 	}
@@ -518,20 +518,20 @@ func (l *imageLog) take() (string, bool) {
 
 // imageTemplate — шаблон нового воркера проекта в пуле: клон готового
 // образа проекта, если он есть, иначе пусто (базовый шаблон пула).
-func (m *managedProvider) imageTemplate(ctx context.Context, projectID string, pool store.ManagedPool) (store.ManagedTemplateSnapshot, error) {
+func (m *provider) imageTemplate(ctx context.Context, projectID string, pool store.Pool) (store.TemplateSnapshot, error) {
 	image, err := m.server.store.CurrentProjectImage(ctx, projectID, pool.UID)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.ManagedTemplateSnapshot{}, nil
+		return store.TemplateSnapshot{}, nil
 	}
 	if err != nil {
-		return store.ManagedTemplateSnapshot{}, err
+		return store.TemplateSnapshot{}, err
 	}
-	return store.ManagedTemplateSnapshot{Profile: pool.Template.Profile, URI: store.ProjectImageURI(image.ID), Digest: pool.Template.Digest}, nil
+	return store.TemplateSnapshot{Profile: pool.Template.Profile, URI: store.ProjectImageURI(image.ID), Digest: pool.Template.Digest}, nil
 }
 
 // workerImage — образ, клоном которого создаётся воркер a; false — воркер
 // из базового шаблона.
-func (m *managedProvider) workerImage(ctx context.Context, a store.ManagedActor) (store.ProjectImage, bool, error) {
+func (m *provider) workerImage(ctx context.Context, a store.Agent) (store.ProjectImage, bool, error) {
 	id, ok := store.ProjectImageFromURI(a.Template.URI)
 	if !ok {
 		return store.ProjectImage{}, false, nil

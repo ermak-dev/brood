@@ -1,6 +1,6 @@
 package actormodel
 
-// FEATURE: Claude Code models of managed actors set by the installation (#263).
+// FEATURE: Claude Code models of agents set by the installation (#263).
 // SPEC: A model name is 1..MaxName bytes of printable ASCII without spaces
 // (0x21..0x7e); the zero Models means "Claude Code chooses", and each field is
 // optional on its own. Validate names the violated setting and never echoes

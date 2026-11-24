@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// FEATURE: Canonical HTTPS Git origins for managed actors (#146).
+// FEATURE: Canonical HTTPS Git origins for agents (#146).
 // SPEC: Only https with a DNS hostname, optional port 443 and a nonempty clean
 // path; no userinfo, query, fragment, controls or percent-encoding; at most
 // 1024 bytes; lowercase host without a trailing slash. Errors never echo input.

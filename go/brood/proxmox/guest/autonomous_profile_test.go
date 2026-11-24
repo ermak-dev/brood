@@ -2,7 +2,7 @@
 
 package guest
 
-// FEATURE: Autonomous Claude Code profile of managed actors (#164).
+// FEATURE: Autonomous Claude Code profile of agents (#164).
 // SPEC: Messages of other sessions are
 // accepted without the Deliver/Deny dialog (crossSessionInbound "accept"); the
 // built-in tools SendMessage, ListAgents, AskUserQuestion, EnterWorktree,

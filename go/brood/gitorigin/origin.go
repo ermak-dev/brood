@@ -1,5 +1,5 @@
-// Package gitorigin canonicalizes the direct HTTPS or SSH Git origin of a
-// managed actor. It is pure: no network, DNS, configuration or credentials.
+// Package gitorigin canonicalizes the direct HTTPS or SSH Git origin of an
+// agent. It is pure: no network, DNS, configuration or credentials.
 // Errors describe the violated rule and never echo the submitted value, which
 // may contain userinfo.
 package gitorigin

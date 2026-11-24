@@ -15,7 +15,7 @@ CREATE TABLE managed_pools (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
-CREATE TABLE managed_actors (
+CREATE TABLE agents (
     uid TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     swarm_id TEXT NOT NULL,

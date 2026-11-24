@@ -89,7 +89,7 @@ func (s *Server) handleAgentRoles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.managedRoleWrite(ctx, w, r, user.ID, role)
+	s.saveAgentRole(ctx, w, r, user.ID, role)
 }
 
 func (s *Server) validateRoleModel(w http.ResponseWriter, r *http.Request, role store.AgentRole) bool {
@@ -126,10 +126,10 @@ func (s *Server) validateRoleModel(w http.ResponseWriter, r *http.Request, role 
 	return true
 }
 
-func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r *http.Request, userID string, role store.AgentRole) {
-	if s.managed != nil {
-		s.managed.admission.Lock()
-		defer s.managed.admission.Unlock()
+func (s *Server) saveAgentRole(ctx context.Context, w http.ResponseWriter, r *http.Request, userID string, role store.AgentRole) {
+	if s.provider != nil {
+		s.provider.admission.Lock()
+		defer s.provider.admission.Unlock()
 	}
 	if !s.freshAdmin(ctx, userID) {
 		writeDetail(w, 403, "Administrator access changed; nothing changed")
@@ -176,7 +176,7 @@ func (s *Server) managedRoleWrite(ctx context.Context, w http.ResponseWriter, r 
 	}
 }
 
-func (m *managedProvider) authorizeGuestPermission(ctx context.Context, from store.ManagedActor, permission string) error {
+func (m *provider) authorizeGuestPermission(ctx context.Context, from store.Agent, permission string) error {
 	role, err := m.server.store.GetAgentRole(ctx, from.Role)
 	if err != nil || (!slices.Contains(role.Permissions, permission) && !(permission == "tail:self" && slices.Contains(role.Permissions, "tail:swarm"))) {
 		return command.Refuse(app.ErrNotAllowed, "This agent role does not allow "+permission+"; nothing changed. Ask the operator to review the role.")
@@ -196,7 +196,7 @@ func (s *Server) agentRoleName(ctx context.Context, roleID string) string {
 	return role.Name
 }
 
-func (m *managedProvider) guestToolList(ctx context.Context, from store.ManagedActor) relay.SwarmResponse {
+func (m *provider) guestToolList(ctx context.Context, from store.Agent) relay.SwarmResponse {
 	role, err := m.server.store.GetAgentRole(ctx, from.Role)
 	if err != nil {
 		return relay.SwarmResponse{Text: "Agent role unavailable; retry"}

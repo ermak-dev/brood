@@ -18,7 +18,7 @@ import (
 type messageDeliverer func(ctx context.Context, toUID string, toGeneration int64, req relay.MessageRequest) (relay.MessageResponse, error)
 
 // enableSwarmMessages подключает роутер к relay-хабу после initialize.
-func (m *managedProvider) enableSwarmMessages() {
+func (m *provider) enableSwarmMessages() {
 	if m.hub == nil {
 		return
 	}
@@ -33,11 +33,11 @@ func (m *managedProvider) enableSwarmMessages() {
 
 // swarmMessageRouter возвращает роутер: отправитель уже авторизован хабом,
 // здесь проверяется адресат (тот же рой, живой актор) и выполняется доставка.
-func (m *managedProvider) swarmMessageRouter() relay.MessageRouter {
+func (m *provider) swarmMessageRouter() relay.MessageRouter {
 	return func(fromUID string, req relay.MessageRequest) relay.MessageResponse {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		from, err := m.server.store.GetManagedActor(ctx, fromUID)
+		from, err := m.server.store.GetAgent(ctx, fromUID)
 		if err != nil || from.Phase == "deleted" {
 			return relay.MessageResponse{OK: false, Verdict: "sender is not an active actor"}
 		}
@@ -54,7 +54,7 @@ func (m *managedProvider) swarmMessageRouter() relay.MessageRouter {
 			}
 			return relay.MessageResponse{OK: true, Verdict: "delivered to the operator's Telegram chat"}
 		}
-		to, err := m.server.store.LookupManagedActor(ctx, from.SwarmID, req.To)
+		to, err := m.server.store.LookupAgent(ctx, from.SwarmID, req.To)
 		if err != nil {
 			return relay.MessageResponse{OK: false, Verdict: fmt.Sprintf("no actor %s in this swarm", req.To)}
 		}
@@ -87,7 +87,7 @@ func (m *managedProvider) swarmMessageRouter() relay.MessageRouter {
 }
 
 // deliverViaHub — производство messageDeliverer: канал сообщений в гостя.
-func (m *managedProvider) deliverViaHub(ctx context.Context, toUID string, toGeneration int64, req relay.MessageRequest) (relay.MessageResponse, error) {
+func (m *provider) deliverViaHub(ctx context.Context, toUID string, toGeneration int64, req relay.MessageRequest) (relay.MessageResponse, error) {
 	if m.hub == nil {
 		return relay.MessageResponse{}, fmt.Errorf("relay hub unavailable")
 	}

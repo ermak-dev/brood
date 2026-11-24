@@ -1,6 +1,6 @@
 /**
  * brood: agents of the swarms the caller may see
- * (go/brood/server/api_actors.go, api_lists.go, managed_json.go).
+ * (go/brood/server/api_actors.go, api_lists.go, agent_json.go).
  */
 import { request } from './http';
 

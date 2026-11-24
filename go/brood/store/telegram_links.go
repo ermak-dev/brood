@@ -517,7 +517,7 @@ func (s *Store) SetTelegramActor(ctx context.Context, userID, session, actorUID 
 	return s.WithTx(ctx, func(ctx context.Context) error {
 		var allowed bool
 		if err := s.conn(ctx).QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM managed_actors a JOIN swarms w ON w.id = a.swarm_id JOIN users u ON u.id = ?
+			SELECT 1 FROM agents a JOIN swarms w ON w.id = a.swarm_id JOIN users u ON u.id = ?
 			WHERE a.uid = ? AND a.phase = 'running' AND a.desired = 'running' AND w.state = 'active'
 			  AND u.disabled = 0 AND (u.is_admin = 1 OR w.owner_id = u.id))`, userID, actorUID).Scan(&allowed); err != nil {
 			return err

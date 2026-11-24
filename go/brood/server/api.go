@@ -40,7 +40,7 @@ type projectRowJSON struct {
 // swarmRowJSON — строка списка роёв: рой и число его живых воркеров.
 type swarmRowJSON struct {
 	swarmJSON
-	ManagedActorCount int64 `json:"managedActorCount"`
+	AgentCount int64 `json:"agentCount"`
 }
 
 // swarmJSON — публичная форма роя.
@@ -413,7 +413,7 @@ func (s *Server) writeSwarms(w http.ResponseWriter, r *http.Request, swarms []ap
 			apiError(w, r, err)
 			return
 		}
-		out = append(out, swarmRowJSON{swarmJSON: row, ManagedActorCount: summary.ManagedActorCount})
+		out = append(out, swarmRowJSON{swarmJSON: row, AgentCount: summary.AgentCount})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -23,7 +23,7 @@ func commandSwarmResponse(result command.Result) relay.SwarmResponse {
 
 // handleActorCommand executes a catalog command called by an agent. from is
 // the calling agent as the relay authenticated it.
-func (m *managedProvider) handleActorCommand(ctx context.Context, from store.ManagedActor, inv command.Invocation) relay.SwarmResponse {
+func (m *provider) handleActorCommand(ctx context.Context, from store.Agent, inv command.Invocation) relay.SwarmResponse {
 	if inv.Name == "agents" || inv.Name == "diagnose" || inv.Name == "artifact_publish" || inv.Name == "artifact_get" {
 		if err := m.authorizeGuestPermission(ctx, from, inv.Name); err != nil {
 			return relay.SwarmResponse{Text: err.Error()}

@@ -50,25 +50,25 @@ func (s *Server) executeAdminCommand(ctx context.Context, userID, swarmID string
 		if _, err := s.store.CountActiveAdmins(ctx); err != nil {
 			database = "unavailable"
 		}
-		return adminCommandResult("Checks of the running server only; nothing was changed or repaired.", map[string]any{"database": database, "agent_relay_configured": s.managed != nil && s.managed.hub != nil})
+		return adminCommandResult("Checks of the running server only; nothing was changed or repaired.", map[string]any{"database": database, "agent_relay_configured": s.provider != nil && s.provider.hub != nil})
 	}
 	return command.Result{}, command.Refuse(nil, "unknown command")
 }
 
 func (s *Server) commandPoolState(ctx context.Context, userID, name string, enable bool) (command.Result, error) {
-	if s.managed == nil {
+	if s.provider == nil {
 		return command.Result{}, command.Refuse(app.ErrConflict, "Proxmox pools are not configured on this server; nothing changed")
 	}
-	s.managed.admission.Lock()
-	defer s.managed.admission.Unlock()
-	pool, err := s.managed.poolByName(ctx, name)
+	s.provider.admission.Lock()
+	defer s.provider.admission.Unlock()
+	pool, err := s.provider.poolByName(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return command.Result{}, command.Refusef(app.ErrNotFound, "there is no pool named %q; list the pools with the pools command", name)
 	}
 	if err != nil {
 		return command.Result{}, errors.New("the list of pools is unavailable; nothing changed, retry")
 	}
-	if enable && !s.managed.poolAvailable(pool) {
+	if enable && !s.provider.poolAvailable(pool) {
 		return command.Result{}, command.Refusef(app.ErrConflict, "pool %q was not enabled: its Proxmox connection is missing or its settings changed; save the pool settings again in the panel", name)
 	}
 	err = s.store.WithTx(ctx, func(ctx context.Context) error {
@@ -83,7 +83,7 @@ func (s *Server) commandPoolState(ctx context.Context, userID, name string, enab
 		if enable {
 			pool.State = "enabled"
 		}
-		pool, err = s.store.UpdateManagedPool(ctx, pool, pool.Revision)
+		pool, err = s.store.UpdatePool(ctx, pool, pool.Revision)
 		return err
 	})
 	var refusal *command.Refusal
@@ -103,7 +103,7 @@ func (s *Server) commandPoolState(ctx context.Context, userID, name string, enab
 }
 
 func (s *Server) commandPools(ctx context.Context) (command.Result, error) {
-	pools, err := s.store.ListManagedPools(ctx)
+	pools, err := s.store.ListPools(ctx)
 	if err != nil {
 		return command.Result{}, errors.New("the list of pools is unavailable; retry")
 	}

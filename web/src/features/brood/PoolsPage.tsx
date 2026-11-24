@@ -120,7 +120,7 @@ const FORMATS: Partial<Record<TextField, RegExp>> = {
 };
 
 /** What every agent of the pool gets: the server splits the budget equally
- * and rounds down to whole cores, MiB and GiB (managed_pools.go). */
+ * and rounds down to whole cores, MiB and GiB (pools.go). */
 function share(draft: Draft) {
   const actors = Number(draft.actors);
   if (!NUMBER_FIELDS.every((field) => /^[1-9][0-9]{0,8}$/.test(draft[field].trim()))) return null;

@@ -89,7 +89,7 @@ func (s *Server) executeOperatorCommand(ctx context.Context, userID, swarmID, ca
 // data: an agent reads the text, a client the data. state is the phase of the
 // container; a running agent also carries its work, asked from it right now.
 func (s *Server) agentRoster(ctx context.Context, swarmID, self string) (command.Result, error) {
-	agents, err := s.store.ListManagedActors(ctx, swarmID)
+	agents, err := s.store.ListAgents(ctx, swarmID)
 	if err != nil {
 		return command.Result{}, errors.New("the list of agents is unavailable; nothing changed, retry")
 	}
@@ -104,7 +104,7 @@ func (s *Server) agentRoster(ctx context.Context, swarmID, self string) (command
 		Self   string  `json:"self,omitempty"`
 		Agents []agent `json:"agents"`
 	}{Self: self, Agents: []agent{}}
-	works := s.managed.agentWorks(ctx, agents, true)
+	works := s.provider.agentWorks(ctx, agents, true)
 	for _, a := range agents {
 		if a.Phase != "deleted" {
 			row := agent{Name: a.Name, Role: s.agentRoleName(ctx, a.Role), State: a.Phase, Generation: a.Incarnation}

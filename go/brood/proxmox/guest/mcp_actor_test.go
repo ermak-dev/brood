@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// FEATURE: Managed actors use the brood command adapter.
+// FEATURE: Agents use the brood command adapter.
 // SPEC: Explicit guest mode, additive brood namespace, no supervisor binary.
 // The session keeps the actor's own MCP configs.
 func TestClaudeReceivesAdditiveCredentialFreeMCPConfig(t *testing.T) {

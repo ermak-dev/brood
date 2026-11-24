@@ -6,7 +6,7 @@ import (
 )
 
 const telegramSessionErrorsSchema = `CREATE TABLE telegram_session_errors (
-    actor_uid TEXT NOT NULL REFERENCES managed_actors(uid) ON DELETE CASCADE,
+    actor_uid TEXT NOT NULL REFERENCES agents(uid) ON DELETE CASCADE,
     generation INTEGER NOT NULL,
     session_id TEXT NOT NULL,
     turn_id TEXT NOT NULL,
