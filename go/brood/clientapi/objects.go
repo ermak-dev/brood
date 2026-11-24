@@ -35,6 +35,14 @@ type Agent struct {
 	ErrorCode    string `json:"error_code,omitempty"`
 	ErrorMessage string `json:"error_message,omitempty"`
 	CreatedAt    string `json:"created_at"`
+	// Work of a running agent; Activity is empty for any other agent.
+	// Uncommitted and Unpushed are nil when the clone was not measured.
+	Activity    string `json:"activity,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	Uncommitted *int   `json:"uncommitted,omitempty"`
+	Unpushed    *int   `json:"unpushed,omitempty"`
+	Model       string `json:"model,omitempty"`
 }
 
 // agentWire — форма агента в ответах сервера.
@@ -57,6 +65,14 @@ type agentWire struct {
 		ErrorCode    string `json:"errorCode"`
 		ErrorMessage string `json:"errorMessage"`
 	} `json:"status"`
+	Work struct {
+		Activity    string `json:"activity"`
+		Detail      string `json:"detail"`
+		Branch      string `json:"branch"`
+		Uncommitted *int   `json:"uncommitted"`
+		Unpushed    *int   `json:"unpushed"`
+		Model       string `json:"model"`
+	} `json:"work"`
 }
 
 func (w agentWire) agent() Agent {
@@ -64,6 +80,8 @@ func (w agentWire) agent() Agent {
 		Name: w.Metadata.Name, Swarm: w.Metadata.Swarm, SwarmName: w.SwarmName, ProjectName: w.ProjectName,
 		Role: w.Role, Phase: w.Phase, Pool: w.Placement.Pool, CTID: w.Placement.CTID, Origin: w.Origin,
 		ErrorCode: w.Status.ErrorCode, ErrorMessage: w.Status.ErrorMessage, CreatedAt: w.CreatedAt,
+		Activity: w.Work.Activity, Detail: w.Work.Detail, Branch: w.Work.Branch,
+		Uncommitted: w.Work.Uncommitted, Unpushed: w.Work.Unpushed, Model: w.Work.Model,
 	}
 }
 

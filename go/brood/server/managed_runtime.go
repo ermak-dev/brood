@@ -1068,6 +1068,7 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm) ([]any, 
 	if err != nil {
 		return nil, err
 	}
+	works := m.agentWorks(ctx, actors, false)
 	out := []any{}
 	for _, a := range actors {
 		if a.Phase == "deleted" {
@@ -1077,7 +1078,11 @@ func (m *managedProvider) actorsJSON(ctx context.Context, sw app.Swarm) ([]any, 
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, m.server.managedActorRoleJSON(ctx, sw, a, p))
+		row := m.server.managedActorRoleJSON(ctx, sw, a, p)
+		if work, ok := works[a.UID]; ok {
+			row["work"] = work
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }

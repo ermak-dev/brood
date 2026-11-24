@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   IconAlertTriangle,
+  IconCheck,
   IconEye,
   IconSidebarAgents,
   IconTrash2,
@@ -53,6 +54,30 @@ const PHASE_LOOK: Record<string, { tone: BadgeTone; icon?: Icon; busy?: boolean 
   stopped: { tone: 'neutral', icon: IconSquare },
 };
 
+/** The verdicts on a running agent, in the order of the sort: who needs a
+ * look comes first, who can take work last. */
+const ACTIVITIES = [
+  'error',
+  'offline',
+  'needs_action',
+  'waiting',
+  'idle',
+  'unknown',
+  'busy',
+  'free',
+] as const;
+
+const ACTIVITY_LOOK: Record<string, { tone: BadgeTone; icon?: Icon; busy?: boolean }> = {
+  error: { tone: 'problem', icon: IconAlertTriangle },
+  offline: { tone: 'problem', icon: IconAlertTriangle },
+  needs_action: { tone: 'attention' },
+  waiting: { tone: 'attention' },
+  idle: { tone: 'attention' },
+  unknown: { tone: 'neutral' },
+  busy: { tone: 'progress', busy: true },
+  free: { tone: 'neutral', icon: IconCheck },
+};
+
 /** The four counts of the summary strip and the phase each filters by. */
 const SUMMARY: { phase: string; tone: BadgeTone; icon: Icon }[] = [
   { phase: 'running', tone: 'progress', icon: IconPlay },
@@ -80,6 +105,10 @@ const REQUESTED_PHASE: Record<Verb, string> = {
 const phaseRank = (phase: string) => {
   const index = (PHASES as readonly string[]).indexOf(phase);
   return index < 0 ? PHASES.length : index;
+};
+const activityRank = (activity: string) => {
+  const index = (ACTIVITIES as readonly string[]).indexOf(activity);
+  return index < 0 ? ACTIVITIES.length : index;
 };
 /** The phase the state filter and the summary count a row under. */
 const filterPhase = (row: Row) => (row.phase === 'resetting' ? 'provisioning' : row.phase);
@@ -358,6 +387,31 @@ export function AgentsPage() {
     );
   };
 
+  const known = (activity: string) => (ACTIVITIES as readonly string[]).includes(activity);
+  const activityLabel = (activity: string) =>
+    known(activity) ? t(`brood.agents.activities.${activity}`) : activity || DASH;
+  /** What the verdict means, and the server's own words when it has any. */
+  const activityHint = (row: Row) =>
+    [
+      known(row.activity) ? t(`brood.agents.activity_hints.${row.activity}`) : '',
+      row.activityDetail,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  /** The work of a running agent; nothing to say about any other. */
+  const working = (row: Row) => row.phase === 'running' && !row.requested && row.activity !== '';
+  const workBadge = (row: Row) => {
+    if (!working(row)) return DASH;
+    const look = ACTIVITY_LOOK[row.activity] ?? { tone: 'neutral' as const };
+    return (
+      <StatusBadge tone={look.tone} icon={look.icon} busy={look.busy} title={activityHint(row)}>
+        {activityLabel(row.activity)}
+      </StatusBadge>
+    );
+  };
+  const count = (value: number | null) =>
+    value === null ? t('brood.agents.not_measured') : String(value);
+
   /** Sends the action and shows its in-progress state at once; a refusal
    * takes the state back and is reported by whoever asked. */
   const request = (row: Row, verb: Verb) => async () => {
@@ -392,6 +446,27 @@ export function AgentsPage() {
       cell: badge,
       text: (row) => `${phaseLabel(row.phase)} ${row.error}`,
       sort: (row) => phaseRank(row.phase),
+    },
+    {
+      id: 'work',
+      header: t('brood.agents.work'),
+      cell: workBadge,
+      text: (row) => (working(row) ? `${activityLabel(row.activity)} ${row.activityDetail}` : ''),
+      sort: (row) => (working(row) ? activityRank(row.activity) : ACTIVITIES.length + 1),
+    },
+    {
+      id: 'branch',
+      header: t('brood.agents.branch'),
+      cell: (row) => <Truncate mono text={working(row) ? row.branch : ''} />,
+      text: (row) => row.branch,
+      sort: (row) => row.branch,
+    },
+    {
+      id: 'model',
+      header: t('brood.agents.model'),
+      cell: (row) => <Truncate mono text={row.model} />,
+      text: (row) => row.model,
+      sort: (row) => row.model,
     },
     {
       id: 'swarm',
@@ -476,6 +551,12 @@ export function AgentsPage() {
           {row.error && (
             <p className={styles.errorText} role="status" title={row.error}>
               {errorText(row)}
+            </p>
+          )}
+          {working(row) && (
+            <p className={styles.statusLine}>
+              <span>{workBadge(row)}</span>
+              <span>{activityHint(row)}</span>
             </p>
           )}
         </>
@@ -580,6 +661,20 @@ export function AgentsPage() {
               <dd>{resources.join(' · ') || DASH}</dd>
               <dt>{t('brood.agents.origin')}</dt>
               <dd>{row.origin ? <Copyable value={row.origin} /> : t('brood.agents.no_origin')}</dd>
+              <dt>{t('brood.agents.model')}</dt>
+              <dd>{row.model ? <Copyable value={row.model} /> : DASH}</dd>
+              {working(row) && (
+                <>
+                  <dt title={t('brood.agents.work_hint')}>{t('brood.agents.work')}</dt>
+                  <dd>{activityLabel(row.activity)}</dd>
+                  <dt>{t('brood.agents.branch')}</dt>
+                  <dd>{row.branch ? <Copyable value={row.branch} /> : DASH}</dd>
+                  <dt>{t('brood.agents.uncommitted')}</dt>
+                  <dd>{count(row.uncommitted)}</dd>
+                  <dt>{t('brood.agents.unpushed')}</dt>
+                  <dd>{count(row.unpushed)}</dd>
+                </>
+              )}
               <dt>{t('brood.swarms.created_at')}</dt>
               <dd>
                 {row.createdAt
@@ -656,6 +751,16 @@ export function AgentsPage() {
           })),
           value: filterPhase,
           facet: true,
+        },
+        {
+          param: 'work',
+          label: t('brood.agents.work'),
+          all: t('brood.agents.all_work'),
+          options: ACTIVITIES.map((activity) => ({
+            value: activity,
+            label: activityLabel(activity),
+          })),
+          value: (row) => (working(row) ? row.activity : ''),
         },
       ]}
       summary={(scope) =>

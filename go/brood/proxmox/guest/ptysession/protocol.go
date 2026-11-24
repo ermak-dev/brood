@@ -61,6 +61,10 @@ type Reply struct {
 	Proof   string `json:"proof,omitempty"`
 	Screen  string `json:"screen,omitempty"`
 	Replay  []byte `json:"replay,omitempty"`
+	// Turn and TurnError answer only the status action: the state of the
+	// current turn (working, paused, idle or error) and the code of its failure.
+	Turn      string `json:"turn,omitempty"`
+	TurnError string `json:"turnError,omitempty"`
 }
 
 // Frame carries unchanged output or writer-only input and resize operations.

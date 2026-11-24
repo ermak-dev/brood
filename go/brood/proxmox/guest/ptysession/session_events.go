@@ -61,6 +61,7 @@ func SessionErrorCode(code string) string {
 type sessionTurn struct {
 	sessionID, turnID  string
 	state              string
+	errorCode          string
 	pauseTool, pauseID string
 	nextHeartbeat      time.Time
 	pendingEscape      time.Time
@@ -152,7 +153,7 @@ func (h *Host) emitSessionStateLocked(t *sessionTurn, state, code string) {
 	if t.state != state {
 		t.lastTransition = now
 	}
-	t.state = state
+	t.state, t.errorCode = state, code
 	if state == "working" {
 		t.nextHeartbeat = now.Add(sessionHeartbeat)
 	}

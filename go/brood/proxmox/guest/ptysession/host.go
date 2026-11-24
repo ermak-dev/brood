@@ -456,7 +456,11 @@ func (h *Host) requestLocked(r Request) Reply {
 		h.sessionHookLocked(r.Hook)
 		return Reply{OK: true, Outcome: "complete"}
 	case "status":
-		return h.replyLocked()
+		reply := h.replyLocked()
+		if p := h.current; p != nil && reply.State.Running {
+			reply.Turn, reply.TurnError = p.turn.state, p.turn.errorCode
+		}
+		return reply
 	case "ensure":
 		if err := h.startLocked(); err != nil {
 			return fail(err)

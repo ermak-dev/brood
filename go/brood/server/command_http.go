@@ -86,7 +86,8 @@ func (s *Server) executeOperatorCommand(ctx context.Context, userID, swarmID, ca
 
 // agentRoster lists the agents of a swarm. self names the calling agent in
 // guest mode and is empty for an operator. The text is the same JSON as the
-// data: an agent reads the text, a client the data.
+// data: an agent reads the text, a client the data. state is the phase of the
+// container; a running agent also carries its work, asked from it right now.
 func (s *Server) agentRoster(ctx context.Context, swarmID, self string) (command.Result, error) {
 	agents, err := s.store.ListManagedActors(ctx, swarmID)
 	if err != nil {
@@ -97,14 +98,20 @@ func (s *Server) agentRoster(ctx context.Context, swarmID, self string) (command
 		Role       string `json:"role"`
 		State      string `json:"state"`
 		Generation int64  `json:"generation"`
+		*agentWork
 	}
 	roster := struct {
 		Self   string  `json:"self,omitempty"`
 		Agents []agent `json:"agents"`
 	}{Self: self, Agents: []agent{}}
+	works := s.managed.agentWorks(ctx, agents, true)
 	for _, a := range agents {
 		if a.Phase != "deleted" {
-			roster.Agents = append(roster.Agents, agent{Name: a.Name, Role: s.agentRoleName(ctx, a.Role), State: a.Phase, Generation: a.Incarnation})
+			row := agent{Name: a.Name, Role: s.agentRoleName(ctx, a.Role), State: a.Phase, Generation: a.Incarnation}
+			if work, ok := works[a.UID]; ok {
+				row.agentWork = &work
+			}
+			roster.Agents = append(roster.Agents, row)
 		}
 	}
 	data, err := json.Marshal(roster)

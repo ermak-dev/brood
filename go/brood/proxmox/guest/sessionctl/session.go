@@ -100,6 +100,9 @@ func (e *engine) handle(ctx context.Context, req relay.SessionRequest) relay.Ses
 	if req.Operation == "session_terminal" {
 		return e.terminal(ctx, req.Arguments)
 	}
+	if req.Operation == relay.StatusOperation {
+		return e.status(ctx, req.Arguments)
+	}
 	if req.Operation != "tail" && req.Operation != "slash" {
 		return relay.SessionResponse{Text: "unsupported session operation", Outcome: "unsupported"}
 	}

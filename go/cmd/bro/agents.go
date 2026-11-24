@@ -28,6 +28,18 @@ type agentRow struct {
 	CTID    int64  `json:"ctid"`
 	Created string `json:"created_at"`
 	Note    string `json:"note,omitempty"`
+	work
+}
+
+// work — что делает работающий агент и что лежит в его клоне. Activity —
+// вердикт: free, busy, idle, needs_action, waiting, error, offline, unknown.
+type work struct {
+	Activity    string `json:"activity,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	Uncommitted *int   `json:"uncommitted,omitempty"`
+	Unpushed    *int   `json:"unpushed,omitempty"`
+	Model       string `json:"model,omitempty"`
 }
 
 // member — агент в ответе инструмента agents.
@@ -35,6 +47,7 @@ type member struct {
 	Name  string `json:"name"`
 	Role  string `json:"role"`
 	State string `json:"state"`
+	work
 }
 
 // roster — состав текущего роя по каталогу: то же, что видят агенты и MCP.
@@ -87,7 +100,7 @@ func (c *command) swarmRows(ctx context.Context, op *operator, swarm clientapi.S
 	rows := make([]agentRow, 0, len(members))
 	for _, m := range members {
 		agent := details[m.Name]
-		rows = append(rows, agentRow{Name: m.Name, Role: role(m.Role), State: m.State, Pool: agent.Pool, CTID: agent.CTID, Created: agent.CreatedAt, Note: note(agent)})
+		rows = append(rows, agentRow{Name: m.Name, Role: role(m.Role), State: m.State, Pool: agent.Pool, CTID: agent.CTID, Created: agent.CreatedAt, Note: note(agent), work: m.work})
 	}
 	return rows, nil
 }
@@ -95,15 +108,29 @@ func (c *command) swarmRows(ctx context.Context, op *operator, swarm clientapi.S
 func allRows(agents []clientapi.Agent) []agentRow {
 	rows := make([]agentRow, 0, len(agents))
 	for _, agent := range agents {
-		rows = append(rows, agentRow{Name: agent.Name, Swarm: agent.ProjectName + "/" + agent.SwarmName, Role: role(agent.Role), State: agent.Phase, Pool: agent.Pool, CTID: agent.CTID, Created: agent.CreatedAt, Note: note(agent)})
+		rows = append(rows, agentRow{Name: agent.Name, Swarm: agent.ProjectName + "/" + agent.SwarmName, Role: role(agent.Role), State: agent.Phase, Pool: agent.Pool, CTID: agent.CTID, Created: agent.CreatedAt, Note: note(agent),
+			work: work{Activity: agent.Activity, Detail: agent.Detail, Branch: agent.Branch, Uncommitted: agent.Uncommitted, Unpushed: agent.Unpushed, Model: agent.Model}})
 	}
 	return rows
 }
 
-// agentsTable — NAME, ROLE, STATE, POOL, CT, AGE; NOTE с причиной — когда
-// у кого-то ошибка, SWARM — в списке всех роёв.
+// activity — вердикт о работе одной ячейкой: вид и, когда есть, пояснение.
+func activity(w work) string {
+	if w.Activity == "" {
+		return "-"
+	}
+	text := strings.ReplaceAll(w.Activity, "_", " ")
+	if w.Detail != "" {
+		text += ": " + w.Detail
+	}
+	return brief(text, 48)
+}
+
+// agentsTable — NAME, ROLE, STATE, ACTIVITY, BRANCH, MODEL, POOL, CT, AGE; NOTE
+// с причиной — когда у кого-то ошибка, SWARM — в списке всех роёв. STATE —
+// фаза контейнера, ACTIVITY — вердикт о сессии и клоне работающего агента.
 func agentsTable(rows []agentRow, withSwarm bool, now time.Time) table {
-	list := table{header: []string{"NAME", "ROLE", "STATE", "POOL", "CT", "AGE"}}
+	list := table{header: []string{"NAME", "ROLE", "STATE", "ACTIVITY", "BRANCH", "MODEL", "POOL", "CT", "AGE"}}
 	if withSwarm {
 		list.header = append([]string{"SWARM"}, list.header...)
 	}
@@ -123,10 +150,18 @@ func agentsTable(rows []agentRow, withSwarm bool, now time.Time) table {
 		case "error":
 			tone = toneRed
 		case "running":
+			// Свободен только вид free; занятый ходом — обычное дело.
+			switch row.Activity {
+			case "free", "busy", "":
+			case "error", "offline":
+				tone = toneRed
+			default:
+				tone = toneYellow
+			}
 		default:
 			tone = toneYellow
 		}
-		cells := []string{row.Name, row.Role, row.State, dash(row.Pool), ct, age(row.Created, now)}
+		cells := []string{row.Name, row.Role, row.State, activity(row.work), dash(brief(row.Branch, 32)), dash(row.Model), dash(row.Pool), ct, age(row.Created, now)}
 		if withSwarm {
 			cells = append([]string{row.Swarm}, cells...)
 		}

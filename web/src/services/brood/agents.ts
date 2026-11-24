@@ -33,6 +33,20 @@ export interface Agent {
   diskBytes: string;
   /** RFC 3339. */
   createdAt: string;
+  /** The verdict on a running agent: free, busy, idle, needs_action, waiting,
+   * error, offline or unknown; '' for an agent that is not running. Only
+   * `free` means the agent can take new work. */
+  activity: string;
+  /** The server's explanation of the verdict in English; '' when none. */
+  activityDetail: string;
+  /** The branch of the clone; '' when unknown or there is no clone. */
+  branch: string;
+  /** Changed and untracked paths, and commits no remote branch has; null
+   * when the clone was not measured. */
+  uncommitted: number | null;
+  unpushed: number | null;
+  /** The model of the session; '' when unknown. */
+  model: string;
 }
 
 export interface NewAgent {
@@ -57,6 +71,14 @@ interface WireAgent {
     resources?: { cpuMillicores?: string; memoryBytes?: string; diskBytes?: string };
   };
   createdAt?: string;
+  work?: {
+    activity?: string;
+    detail?: string;
+    branch?: string;
+    uncommitted?: number;
+    unpushed?: number;
+    model?: string;
+  };
 }
 
 const fromWire = (wire: WireAgent): Agent => ({
@@ -78,6 +100,12 @@ const fromWire = (wire: WireAgent): Agent => ({
   memoryBytes: wire.templateDefinition?.resources?.memoryBytes ?? '',
   diskBytes: wire.templateDefinition?.resources?.diskBytes ?? '',
   createdAt: wire.createdAt ?? '',
+  activity: wire.work?.activity ?? '',
+  activityDetail: wire.work?.detail ?? '',
+  branch: wire.work?.branch ?? '',
+  uncommitted: wire.work?.uncommitted ?? null,
+  unpushed: wire.work?.unpushed ?? null,
+  model: wire.work?.model ?? '',
 });
 
 const segment = encodeURIComponent;
