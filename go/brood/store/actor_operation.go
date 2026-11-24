@@ -16,15 +16,13 @@ var actorOperationSchema string
 
 // ErrOperationConflict identifies an occupied agent reservation or a stale
 // operation identity.
-//
-// Текст «coordination conflict» остался от прежнего слоя: панель показывает
-// его в отказе start/stop/rm/reset, и он не меняется вместе с именем типа.
-var ErrOperationConflict = errors.New("coordination conflict")
+var ErrOperationConflict = errors.New("another operation on the agent is in progress or its outcome is unconfirmed")
 
-// OperationConflictError is a stable domain conflict, not a SQLite constraint error.
+// OperationConflictError is a stable domain conflict, not a SQLite constraint
+// error. Its text is the reason alone: refusals quote it to a human.
 type OperationConflictError struct{ Reason string }
 
-func (e *OperationConflictError) Error() string { return "coordination conflict: " + e.Reason }
+func (e *OperationConflictError) Error() string { return e.Reason }
 func (e *OperationConflictError) Unwrap() error { return ErrOperationConflict }
 func newOperationConflict(reason string) error  { return &OperationConflictError{Reason: reason} }
 

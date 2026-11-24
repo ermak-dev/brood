@@ -373,7 +373,7 @@ func (o *workloadOperation) Apply() error {
 			// текст отправил бы сверять задачу провайдера.
 			var held *store.OperationConflictError
 			if errors.As(err, &held) {
-				return fmt.Errorf("%w: %w", app.ErrConflict, held)
+				return fmt.Errorf("%w: nothing changed: %w; check the agent and retry", app.ErrConflict, held)
 			}
 			return &app.APIError{Status: http.StatusConflict, Detail: "The agent changed while the request was processed. Reload the list and retry."}
 		}
